@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Final Effect 3D</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<style>
+:root{--bg:#0d0e12;--panel:#121318;--panel2:#181a20;--line:#232630;--line2:#2d3142;--ink:#e2e8f0;--mute:#64748b;--ac:#6366f1;--tb:54px;--sb:env(safe-area-inset-bottom,0px);--st:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{height:100%;height:100dvh;width:100%;background:var(--bg);color:var(--ink);font:13px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+button,select{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+#app{position:fixed;inset:0}
+
+/* ---- screens (home + studios share one switching mechanism) ---- */
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;visibility:hidden;opacity:0;transform:translateY(14px);transition:opacity .22s,transform .22s,visibility 0s .22s}
+.screen.active{visibility:visible;opacity:1;transform:none;transition:opacity .22s,transform .22s,visibility 0s}
+@media(prefers-reduced-motion:reduce){.screen,.screen.active,#drawer,#drawer.open{transition:none}}
+
+/* ---- home ---- */
+#home{padding:calc(var(--st) + 22px) 18px calc(var(--sb) + 18px);overflow-y:auto}
+#home h1{font-size:26px;font-weight:700;color:var(--ac)}
+#home p{color:var(--mute);margin:4px 0 20px}
+#home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;max-width:900px}
+.card{display:flex;align-items:center;gap:14px;text-align:left;background:var(--panel2);border:1px solid var(--line);box-shadow:inset 3px 0 var(--c);border-radius:12px;padding:16px}
+.card:active{background:#1f222b}
+.card i{font-style:normal;font-size:22px;width:44px;height:44px;border-radius:10px;background:#252836;display:grid;place-items:center;flex:none}
+.card b{display:block;font-size:15px}.card small{color:var(--mute)}
+.card .tag{margin-left:auto;font-size:11px;color:var(--mute)}
+.card.locked{opacity:.6}
+
+/* ---- studio chrome ---- */
+.top-bar{flex:none;display:flex;align-items:center;gap:6px;padding:calc(var(--st) + 6px) 10px 6px;background:var(--panel);border-bottom:1px solid var(--line)}
+.top-bar .title{font-weight:700;color:var(--ac);margin:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn,.mode{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;flex:none}
+.mode{color:#818cf8;font-weight:600;max-width:120px}
+[data-act=import]{color:#34d399;border-color:#10b981;margin-left:auto}
+.viewport{flex:1;min-height:0;position:relative;background:#050508;touch-action:none}
+.viewport canvas,.viewport iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+.empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--mute);padding:24px;pointer-events:none}
+.empty b{color:var(--ink);font-size:15px;margin-bottom:4px}
+.live .empty,.embed canvas{display:none}
+.layer-bar{flex:none;height:50px;background:var(--panel);border-top:1px solid var(--line)}
+.toolbar{flex:none;height:calc(var(--tb) + var(--sb));padding:0 12px var(--sb);display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap;background:var(--bg);border-top:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.toolbar::-webkit-scrollbar{display:none}
+.tool{flex:none;display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid #2a2d37;color:#cbd5e1;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500}
+.tool.active,.tool:active{background:#282c3c;border-color:var(--ac);color:#fff;box-shadow:0 0 10px color-mix(in srgb,var(--ac) 35%,transparent)}
+.embed .layer-bar,.embed .toolbar{display:none}
+
+/* ---- slide-up drawer ---- */
+#drawer{position:fixed;left:0;right:0;bottom:calc(var(--tb) + var(--sb));z-index:20;max-height:42dvh;display:flex;flex-direction:column;background:var(--panel);border-top:1px solid var(--line2);border-radius:14px 14px 0 0;transform:translateY(110%);visibility:hidden;transition:transform .22s,visibility 0s .22s}
+#drawer.open{transform:none;visibility:visible;transition:transform .22s,visibility 0s}
+#drawer header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-weight:600}
+#drawer-body{overflow-y:auto;padding:0 14px 14px;display:grid;gap:10px}
+.sl{display:grid;grid-template-columns:84px 1fr 36px;align-items:center;gap:8px}
+.sl input{width:100%;accent-color:var(--ac)}.sl output{color:var(--mute);text-align:right;font-size:11px}
+#toast{position:fixed;left:50%;bottom:calc(var(--tb) + var(--sb) + 14px);transform:translateX(-50%);z-index:30;background:#252836;border:1px solid var(--line2);border-radius:8px;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Home. Studio screens are built from #tpl-studio below, one per entry in STUDIOS. -->
+  <main id="home" class="screen" data-screen="home">
+    <h1>Final Effect 3D</h1>
+    <p>Choose a studio to start.</p>
+    <div id="home-grid"></div>
+  </main>
+</div>
+
+<!-- Shared slide-up drawer (any studio can fill it) -->
+<aside id="drawer" aria-live="polite">
+  <header><span id="drawer-title"></span><button class="btn" id="drawer-close" aria-label="Close panel">✕</button></header>
+  <div id="drawer-body"></div>
+</aside>
+<div id="toast" role="status"></div>
+
+<!--
+  Studio template. IDs are assigned per studio id (<s>):
+  studio-<s> · <s>-home · <s>-undo · <s>-redo · <s>-mode · <s>-import
+  viewport-<s> · canvas-<s> · (frame-<s> if embedded) · layers-<s> · toolbar-<s> · tool-<s>-<key>
+-->
+<template id="tpl-studio">
+  <section class="screen studio">
+    <header class="top-bar">
+      <button class="btn" data-act="home" aria-label="Home">⌂</button>
+      <span class="title"></span>
+      <button class="btn" data-act="undo" aria-label="Undo">↶</button>
+      <button class="btn" data-act="redo" aria-label="Redo">↷</button>
+      <select class="mode" aria-label="Mode"></select>
+      <button class="btn" data-act="import">⤴ Import</button>
+    </header>
+    <div class="viewport"><canvas></canvas><div class="empty"></div></div>
+    <div class="layer-bar"></div>
+    <nav class="toolbar"></nav>
+  </section>
+</template>
+
+<script>
+/* =========================================================
+   1. CONFIG: add or edit studios here, no layout changes needed.
+   tool = [key, icon, label, params?]   key '@id' opens that studio
+   param = [label, key]
+   ========================================================= */
+const BACK=['@core','🧊','Workspace'];
+const STUDIOS={
+  core:{title:'Workspace',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
+    modes:[['object','Object Mode'],['edit','Edit Mode'],['sculpt','Sculpt Mode'],['vpaint','Vertex Paint'],['wpaint','Weight Paint'],['tpaint','Texture Paint']],
+    tools:[['add','➕','Add 3D'],['edit','✏️','Edit'],['mod','🔧','Modification'],['@character','🎭','Character Studio'],['@landscape','🏞️','Landscaping Studio'],['@shader','🎨','Shader Studio'],['@vfx','💥','VFX Studio'],['light','💡','Light'],['camera','🎥','Camera'],['render','⚡','Render Engine']]},
+  character:{title:'Character Studio',icon:'🎭',accent:'#f472b6',desc:'Build and morph characters',
+    modes:[['morph','Morph'],['pose','Pose'],['clothing','Clothing']],
+    tools:[BACK,['body','🧍','Body',[['Height','height'],['Weight','weight'],['Muscle','muscle']]],['face','🙂','Face',[['Jaw','jaw'],['Eyes','eyes'],['Nose','nose']]],['skin','🎨','Skin'],['hair','💇','Hair'],['outfit','👕','Outfit']]},
+  landscape:{title:'Landscaping Studio',icon:'🏞️',accent:'#34d399',desc:'Terrain, water and foliage',
+    embed:'Terrain_system_.html',modes:[['sculpt','Sculpt'],['paint','Paint']],tools:[]},
+  shader:{title:'Shader Studio',icon:'🎨',accent:'#fbbf24',desc:'Materials and surfaces',
+    modes:[['sliders','Sliders'],['nodes','Nodes']],
+    tools:[BACK,['base','🎨','Base',[['Roughness','roughness'],['Metalness','metalness']]],['maps','🗺️','Maps'],['preview','🔮','Preview']]},
+  vfx:{title:'VFX Studio',icon:'💥',accent:'#fb923c',desc:'Particles, fire and smoke',
+    modes:[['emit','Emitters'],['sim','Simulation']],
+    tools:[BACK,['fire','🔥','Fire',[['Intensity','intensity'],['Turbulence','turbulence']]],['smoke','💨','Smoke',[['Density','density'],['Rise','rise']]],['particles','✨','Particles'],['bake','💾','Bake']]}
+};
+const LOCKED=[['🗿','Sculpting Studio'],['🎬','Video Editor'],['🖼️','2D Animation']];
+
+/* =========================================================
+   2. SHELL: build screens, route, switch, drawer, events
+   ========================================================= */
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const emit=(n,d)=>document.dispatchEvent(new CustomEvent('fe:'+n,{detail:d}));
+const mounted=new Set();
+const FE=window.FE={
+  current:null, engines:{},
+  register(id,engine){this.engines[id]=engine; if(this.current===id) enter(id)},
+  open(id){location.hash='#/'+id}, home(){location.hash='#/home'},
+  toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800)}
+};
+
+/* build home cards + studio screens */
+const app=$('#app'), grid=$('#home-grid');
+Object.entries(STUDIOS).forEach(([id,s])=>{
+  grid.insertAdjacentHTML('beforeend',`<button class="card" style="--c:${s.accent}" data-open="${id}"><i>${s.icon}</i><span><b>${s.title}</b><small>${s.desc}</small></span><span class="tag">Open</span></button>`);
+  const el=$('#tpl-studio').content.firstElementChild.cloneNode(true);
+  el.id='studio-'+id; el.dataset.screen=id; el.style.setProperty('--ac',s.accent);
+  $('.title',el).textContent=s.title;
+  $$('[data-act]',el).forEach(b=>b.id=id+'-'+b.dataset.act);
+  const mode=$('.mode',el); mode.id=id+'-mode';
+  mode.innerHTML=s.modes.map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
+  mode.onchange=()=>emit('mode',{studio:id,mode:mode.value});
+  const vp=$('.viewport',el); vp.id='viewport-'+id; $('canvas',el).id='canvas-'+id;
+  $('.layer-bar',el).id='layers-'+id; $('.toolbar',el).id='toolbar-'+id;
+  if(s.embed){el.classList.add('embed');vp.insertAdjacentHTML('afterbegin',`<iframe id="frame-${id}" data-src="${s.embed}" title="${s.title} engine"></iframe>`)}
+  else $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
+  $('.toolbar',el).innerHTML=s.tools.map(([k,i,l])=>`<button class="tool" id="tool-${id}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
+  new ResizeObserver(([e])=>{const{width:w,height:h}=e.contentRect;if(w&&h){FE.engines[id]?.resize?.(w,h);emit('resize',{id,w,h})}}).observe(vp);
+  vp.addEventListener('pointerdown',closeDrawer);
+  app.append(el);
+});
+LOCKED.forEach(([i,n])=>grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:#475569" data-locked="${n}"><i>${i}</i><span><b>${n}</b><small>Coming later</small></span><span class="tag">🔒 Locked</span></button>`));
+
+/* switching: hash routing keeps the phone Back button working */
+function enter(id){
+  const e=FE.engines[id], vp=$('#viewport-'+id), fr=$('iframe',vp);
+  if(fr&&!fr.getAttribute('src')) fr.src=fr.dataset.src;
+  if(!e) return;
+  if(!mounted.has(id)){mounted.add(id);e.mount?.({id,canvas:$('#canvas-'+id),viewport:vp});vp.classList.add('live')}
+  e.resume?.();
+}
+function show(id){
+  const prev=FE.current; if(prev===id) return;
+  if(prev) FE.engines[prev]?.pause?.();
+  FE.current=id; closeDrawer();
+  $$('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
+  if(id!=='home') enter(id);
+  emit('screen',{from:prev,to:id});
+}
+function route(){const id=location.hash.replace('#/','')||'home';show(id==='home'||STUDIOS[id]?id:'home')}
+addEventListener('hashchange',route);
+
+/* drawer */
+function openDrawer(studio,tool){
+  const [,i,l,params]=tool;
+  $('#drawer-title').textContent=i+' '+l;
+  $('#drawer-body').innerHTML=params.map(([pl,k])=>`<label class="sl"><span>${pl}</span><input type="range" min="0" max="100" value="50" id="p-${studio}-${k}" data-studio="${studio}" data-key="${k}"><output>50</output></label>`).join('');
+  $('#drawer').classList.add('open');
+}
+function closeDrawer(){$('#drawer').classList.remove('open')}
+$('#drawer-close').onclick=closeDrawer;
+$('#drawer-body').addEventListener('input',e=>{
+  const r=e.target; r.nextElementSibling.textContent=r.value;
+  emit('param',{studio:r.dataset.studio,key:r.dataset.key,value:+r.value});
+});
+
+/* one delegated click handler for the whole shell */
+app.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  const sid=b.closest('.screen')?.dataset.screen;
+  if(b.dataset.open) return FE.open(b.dataset.open);
+  if(b.dataset.locked) return FE.toast(b.dataset.locked+' is locked in v1.0');
+  if(b.dataset.act==='home') return FE.home();
+  if(b.dataset.act){ if(b.dataset.act==='import') FE.toast('Import to Main Grid'); return emit('action',{studio:sid,action:b.dataset.act}) }
+  if(b.dataset.tool){
+    const k=b.dataset.tool;
+    if(k[0]==='@') return FE.open(k.slice(1));
+    $$('.tool',b.parentNode).forEach(t=>t.classList.toggle('active',t===b));
+    const tool=STUDIOS[sid].tools.find(t=>t[0]===k);
+    tool[3]?openDrawer(sid,tool):closeDrawer();
+    emit('tool',{studio:sid,tool:k});
+  }
+});
+
+/* =========================================================
+   3. ENGINES: the only place you edit when adding 3D logic.
+   Each engine gets {id, canvas, viewport} once, then
+   resume() / pause() on every switch and resize(w,h).
+   ========================================================= */
+FE.register('core',{
+  mount({canvas,viewport}){
+    const w=viewport.clientWidth,h=viewport.clientHeight;
+    const sc=new THREE.Scene();sc.background=new THREE.Color(0x0a0b0e);
+    const cam=new THREE.PerspectiveCamera(60,w/h,.1,1000);cam.position.set(3,3,5);
+    const r=new THREE.WebGLRenderer({canvas,antialias:true});r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(w,h,false);
+    const oc=new THREE.OrbitControls(cam,canvas);oc.enableDamping=true;
+    const d=new THREE.DirectionalLight(0xffffff,.8);d.position.set(5,10,7);
+    sc.add(new THREE.GridHelper(10,10,0x6366f1,0x232630),new THREE.AmbientLight(0xffffff,.6),d);
+    const m=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshStandardMaterial({color:0x6366f1,roughness:.4}));m.position.y=.6;sc.add(m);
+    Object.assign(this,{sc,cam,r,oc});
+  },
+  resize(w,h){this.cam.aspect=w/h;this.cam.updateProjectionMatrix();this.r.setSize(w,h,false)},
+  resume(){const t=()=>{this.raf=requestAnimationFrame(t);this.oc.update();this.r.render(this.sc,this.cam)};t()},
+  pause(){cancelAnimationFrame(this.raf)}
+});
+/* FE.register('character', {...}); FE.register('shader', {...}); FE.register('vfx', {...}); */
+
+route();
+emit('ready',{studios:Object.keys(STUDIOS)});
+</script>
+</body>
+</html>
