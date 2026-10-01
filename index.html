@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Final Effect 3D</title>
+<meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
+<meta property="og:title" content="Final Effect 3D">
+<meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
@@ -21,8 +24,13 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 
 /* ---- home ---- */
 #home{padding:calc(var(--st) + 22px) 18px calc(var(--sb) + 18px);overflow-y:auto}
+.home-title-row{display:flex;align-items:center;justify-content:space-between;max-width:900px;margin-bottom:20px}
 #home h1{font-size:26px;font-weight:700;color:var(--ac)}
-#home p{color:var(--mute);margin:4px 0 20px}
+#home p{color:var(--mute);margin-top:4px}
+.settings-btn{display:flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line2);color:var(--ink);transition:all .18s;flex:none}
+.settings-btn:active{background:#222634;border-color:var(--ac);transform:scale(0.95)}
+.settings-btn svg{width:22px;height:22px}
+
 #home-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;max-width:900px}
 .card{display:flex;align-items:center;gap:14px;text-align:left;background:var(--panel2);border:1px solid var(--line);box-shadow:inset 3px 0 var(--c);border-radius:12px;padding:16px}
 .card:active{background:#1f222b}
@@ -42,7 +50,9 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 .empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--mute);padding:24px;pointer-events:none}
 .empty b{color:var(--ink);font-size:15px;margin-bottom:4px}
 .live .empty,.embed canvas{display:none}
-.layer-bar{flex:none;height:50px;background:var(--panel);border-top:1px solid var(--line)}
+.layer-bar{flex:none;height:50px;background:var(--panel);border-top:1px solid var(--line);display:flex;align-items:center;padding:0 12px;gap:8px;overflow-x:auto;font-size:11px;color:var(--mute)}
+.layer-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:#1a1c24;border:1px solid var(--line);border-radius:6px;color:var(--ink);font-weight:500}
+.layer-pill span{color:var(--ac);font-weight:700}
 .toolbar{flex:none;height:calc(var(--tb) + var(--sb));padding:0 12px var(--sb);display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap;background:var(--bg);border-top:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .toolbar::-webkit-scrollbar{display:none}
 .tool{flex:none;display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid #2a2d37;color:#cbd5e1;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500}
@@ -52,10 +62,13 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 /* ---- slide-up drawer ---- */
 #drawer{position:fixed;left:0;right:0;bottom:calc(var(--tb) + var(--sb));z-index:20;max-height:42dvh;display:flex;flex-direction:column;background:var(--panel);border-top:1px solid var(--line2);border-radius:14px 14px 0 0;transform:translateY(110%);visibility:hidden;transition:transform .22s,visibility 0s .22s}
 #drawer.open{transform:none;visibility:visible;transition:transform .22s,visibility 0s}
-#drawer header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-weight:600}
+#drawer header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-weight:600;border-bottom:1px solid var(--line)}
 #drawer-body{overflow-y:auto;padding:0 14px 14px;display:grid;gap:10px}
 .sl{display:grid;grid-template-columns:84px 1fr 36px;align-items:center;gap:8px}
-.sl input{width:100%;accent-color:var(--ac)}.sl output{color:var(--mute);text-align:right;font-size:11px}
+.sl input{width:100%;accent-color:var(--ac);cursor:pointer}.sl output{color:var(--mute);text-align:right;font-size:11px}
+.row-setting{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
+.row-setting select,.row-setting button{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-weight:600;color:var(--ink)}
+
 #toast{position:fixed;left:50%;bottom:calc(var(--tb) + var(--sb) + 14px);transform:translateX(-50%);z-index:30;background:#252836;border:1px solid var(--line2);border-radius:8px;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
 </style>
@@ -65,8 +78,19 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 <div id="app">
   <!-- Home. Studio screens are built from #tpl-studio below, one per entry in STUDIOS. -->
   <main id="home" class="screen" data-screen="home">
-    <h1>Final Effect 3D</h1>
-    <p>Choose a studio to start.</p>
+    <div class="home-title-row">
+      <div>
+        <h1>Final Effect 3D</h1>
+        <p>Choose a studio to start.</p>
+      </div>
+      <!-- Global Setting Button (Marked in user screenshot) -->
+      <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
     <div id="home-grid"></div>
   </main>
 </div>
@@ -109,7 +133,18 @@ const BACK=['@core','🧊','Workspace'];
 const STUDIOS={
   core:{title:'Workspace',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
     modes:[['object','Object Mode'],['edit','Edit Mode'],['sculpt','Sculpt Mode'],['vpaint','Vertex Paint'],['wpaint','Weight Paint'],['tpaint','Texture Paint']],
-    tools:[['add','➕','Add 3D'],['edit','✏️','Edit'],['mod','🔧','Modification'],['@character','🎭','Character Studio'],['@landscape','🏞️','Landscaping Studio'],['@shader','🎨','Shader Studio'],['@vfx','💥','VFX Studio'],['light','💡','Light'],['camera','🎥','Camera'],['render','⚡','Render Engine']]},
+    tools:[
+      ['add','➕','Add 3D'],
+      ['edit','✏️','Edit'],
+      ['mod','🔧','Modification'],
+      ['@character','🎭','Character Studio'],
+      ['@landscape','🏞️','Landscaping Studio'],
+      ['@shader','🎨','Shader Studio'],
+      ['@vfx','💥','VFX Studio'],
+      ['light','💡','Light',[['Intensity','light_int'],['Height','light_h']]],
+      ['camera','🎥','Camera',[['FOV','cam_fov'],['Distance','cam_dist']]],
+      ['render','⚡','Render Engine']
+    ]},
   character:{title:'Character Studio',icon:'🎭',accent:'#f472b6',desc:'Build and morph characters',
     modes:[['morph','Morph'],['pose','Pose'],['clothing','Clothing']],
     tools:[BACK,['body','🧍','Body',[['Height','height'],['Weight','weight'],['Muscle','muscle']]],['face','🙂','Face',[['Jaw','jaw'],['Eyes','eyes'],['Nose','nose']]],['skin','🎨','Skin'],['hair','💇','Hair'],['outfit','👕','Outfit']]},
@@ -137,6 +172,9 @@ const FE=window.FE={
   toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800)}
 };
 
+/* Global Settings State */
+const GLOBAL_SETTINGS={grid:true, shadows:true, shading:'solid'};
+
 /* build home cards + studio screens */
 const app=$('#app'), grid=$('#home-grid');
 Object.entries(STUDIOS).forEach(([id,s])=>{
@@ -150,10 +188,25 @@ Object.entries(STUDIOS).forEach(([id,s])=>{
   mode.onchange=()=>emit('mode',{studio:id,mode:mode.value});
   const vp=$('.viewport',el); vp.id='viewport-'+id; $('canvas',el).id='canvas-'+id;
   $('.layer-bar',el).id='layers-'+id; $('.toolbar',el).id='toolbar-'+id;
+  
+  if(id==='core'){
+    $('.layer-bar',el).innerHTML=`
+      <div class="layer-pill"><span>📦</span> Cube</div>
+      <div class="layer-pill"><span>📷</span> Camera</div>
+      <div class="layer-pill"><span>💡</span> Light</div>
+    `;
+  }
+
   if(s.embed){el.classList.add('embed');vp.insertAdjacentHTML('afterbegin',`<iframe id="frame-${id}" data-src="${s.embed}" title="${s.title} engine"></iframe>`)}
   else $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
   $('.toolbar',el).innerHTML=s.tools.map(([k,i,l])=>`<button class="tool" id="tool-${id}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
-  new ResizeObserver(([e])=>{const{width:w,height:h}=e.contentRect;if(w&&h){FE.engines[id]?.resize?.(w,h);emit('resize',{id,w,h})}}).observe(vp);
+  
+  // Safe ResizeObserver
+  new ResizeObserver(([e])=>{
+    const{width:w,height:h}=e.contentRect;
+    if(w&&h){FE.engines[id]?.resize?.(w,h);emit('resize',{id,w,h})}
+  }).observe(vp);
+  
   vp.addEventListener('pointerdown',closeDrawer);
   app.append(el);
 });
@@ -185,12 +238,52 @@ function openDrawer(studio,tool){
   $('#drawer-body').innerHTML=params.map(([pl,k])=>`<label class="sl"><span>${pl}</span><input type="range" min="0" max="100" value="50" id="p-${studio}-${k}" data-studio="${studio}" data-key="${k}"><output>50</output></label>`).join('');
   $('#drawer').classList.add('open');
 }
+
+function openGlobalSettings(){
+  $('#drawer-title').textContent='⚙️ Global Settings';
+  $('#drawer-body').innerHTML=`
+    <div class="row-setting">
+      <span>Viewport Shading</span>
+      <select id="cfg-shading">
+        <option value="solid" ${GLOBAL_SETTINGS.shading==='solid'?'selected':''}>Solid</option>
+        <option value="wireframe" ${GLOBAL_SETTINGS.shading==='wireframe'?'selected':''}>Wireframe</option>
+      </select>
+    </div>
+    <div class="row-setting">
+      <span>Floor Grid</span>
+      <button class="btn" id="cfg-grid-btn">${GLOBAL_SETTINGS.grid?'Enabled':'Disabled'}</button>
+    </div>
+    <div class="row-setting">
+      <span>Reset Startup Scene</span>
+      <button class="btn" id="cfg-reset-scene">Reset Object, Cam & Light</button>
+    </div>
+  `;
+  $('#cfg-shading').onchange=(e)=>{
+    GLOBAL_SETTINGS.shading=e.target.value;
+    emit('setting',{key:'shading',value:e.target.value});
+    FE.toast('Shading: '+e.target.value);
+  };
+  $('#cfg-grid-btn').onclick=()=>{
+    GLOBAL_SETTINGS.grid=!GLOBAL_SETTINGS.grid;
+    $('#cfg-grid-btn').textContent=GLOBAL_SETTINGS.grid?'Enabled':'Disabled';
+    emit('setting',{key:'grid',value:GLOBAL_SETTINGS.grid});
+  };
+  $('#cfg-reset-scene').onclick=()=>{
+    emit('setting',{key:'resetScene',value:true});
+    FE.toast('Scene reset');
+  };
+  $('#drawer').classList.add('open');
+}
+
 function closeDrawer(){$('#drawer').classList.remove('open')}
 $('#drawer-close').onclick=closeDrawer;
 $('#drawer-body').addEventListener('input',e=>{
   const r=e.target; r.nextElementSibling.textContent=r.value;
   emit('param',{studio:r.dataset.studio,key:r.dataset.key,value:+r.value});
 });
+
+/* Global Setting Button click on Home UI */
+$('#btn-global-settings').onclick=openGlobalSettings;
 
 /* one delegated click handler for the whole shell */
 app.addEventListener('click',e=>{
@@ -211,27 +304,115 @@ app.addEventListener('click',e=>{
 });
 
 /* =========================================================
-   3. ENGINES: the only place you edit when adding 3D logic.
-   Each engine gets {id, canvas, viewport} once, then
-   resume() / pause() on every switch and resize(w,h).
+   3. BLENDER CAMERA & LIGHT GENERATORS
+   ========================================================= */
+function createBlenderCameraObject() {
+  const group = new THREE.Group();
+  const fw = 0.85, fh = 0.48, fd = 1.0;
+  const vertices = new Float32Array([
+    0, 0, 0,  -fw/2,  fh/2, -fd,
+    0, 0, 0,   fw/2,  fh/2, -fd,
+    0, 0, 0,   fw/2, -fh/2, -fd,
+    0, 0, 0,  -fw/2, -fh/2, -fd,
+    -fw/2,  fh/2, -fd,   fw/2,  fh/2, -fd,
+     fw/2,  fh/2, -fd,   fw/2, -fh/2, -fd,
+     fw/2, -fh/2, -fd,  -fw/2, -fh/2, -fd,
+    -fw/2, -fh/2, -fd,  -fw/2,  fh/2, -fd,
+    -fw/4, fh/2, -fd,   0, fh/2 + 0.22, -fd,
+     0, fh/2 + 0.22, -fd, fw/4, fh/2, -fd
+  ]);
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x10b981 });
+  group.add(new THREE.LineSegments(lineGeo, lineMat));
+  group.position.set(-3.6, 3.8, 4.6);
+  group.lookAt(0, 0.6, 0);
+  return group;
+}
+
+function createBlenderLightObject() {
+  const group = new THREE.Group();
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+  group.add(bulb);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.33, 32), new THREE.MeshBasicMaterial({ color: 0xffcc00, side: THREE.DoubleSide }));
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+  const light = new THREE.PointLight(0xfff6dd, 1.4, 25);
+  light.castShadow = true;
+  group.add(light);
+  group.position.set(3.4, 4.8, 2.6);
+  return group;
+}
+
+/* =========================================================
+   4. ENGINES: Core 3D engine with Cube, Camera & Light
    ========================================================= */
 FE.register('core',{
   mount({canvas,viewport}){
-    const w=viewport.clientWidth,h=viewport.clientHeight;
+    const w=viewport.clientWidth||800, h=viewport.clientHeight||600;
     const sc=new THREE.Scene();sc.background=new THREE.Color(0x0a0b0e);
-    const cam=new THREE.PerspectiveCamera(60,w/h,.1,1000);cam.position.set(3,3,5);
+    const cam=new THREE.PerspectiveCamera(60,w/h,.1,1000);cam.position.set(4,3.5,6);
     const r=new THREE.WebGLRenderer({canvas,antialias:true});r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(w,h,false);
-    const oc=new THREE.OrbitControls(cam,canvas);oc.enableDamping=true;
-    const d=new THREE.DirectionalLight(0xffffff,.8);d.position.set(5,10,7);
-    sc.add(new THREE.GridHelper(10,10,0x6366f1,0x232630),new THREE.AmbientLight(0xffffff,.6),d);
-    const m=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),new THREE.MeshStandardMaterial({color:0x6366f1,roughness:.4}));m.position.y=.6;sc.add(m);
-    Object.assign(this,{sc,cam,r,oc});
+    r.shadowMap.enabled=true; r.shadowMap.type=THREE.PCFSoftShadowMap;
+    const oc=new THREE.OrbitControls(cam,canvas);oc.enableDamping=true; oc.target.set(0,0.6,0);
+    const d=new THREE.DirectionalLight(0xffffff,.7);d.position.set(5,10,7);d.castShadow=true;
+    const amb=new THREE.AmbientLight(0xffffff,.5);
+    const grid=new THREE.GridHelper(16,16,0x6366f1,0x232630);
+    sc.add(grid,amb,d);
+
+    const shadowFloor=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.ShadowMaterial({opacity:0.3}));
+    shadowFloor.rotation.x=-Math.PI/2; shadowFloor.receiveShadow=true; sc.add(shadowFloor);
+
+    const cubeMat=new THREE.MeshStandardMaterial({color:0x6366f1,roughness:.4,metalness:.2});
+    const cube=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2),cubeMat);
+    cube.position.y=0.6; cube.castShadow=true; cube.receiveShadow=true; sc.add(cube);
+
+    const blenderCam=createBlenderCameraObject(); sc.add(blenderCam);
+    const blenderLight=createBlenderLightObject(); sc.add(blenderLight);
+
+    Object.assign(this,{sc,cam,r,oc,cube,blenderCam,blenderLight,grid,d,amb});
   },
-  resize(w,h){this.cam.aspect=w/h;this.cam.updateProjectionMatrix();this.r.setSize(w,h,false)},
-  resume(){const t=()=>{this.raf=requestAnimationFrame(t);this.oc.update();this.r.render(this.sc,this.cam)};t()},
+
+  resize(w,h){
+    if(!this.cam || !this.r) return;
+    this.cam.aspect=w/h;this.cam.updateProjectionMatrix();this.r.setSize(w,h,false);
+  },
+
+  resume(){
+    const t=()=>{this.raf=requestAnimationFrame(t);this.oc.update();this.r.render(this.sc,this.cam)};t();
+  },
   pause(){cancelAnimationFrame(this.raf)}
 });
-/* FE.register('character', {...}); FE.register('shader', {...}); FE.register('vfx', {...}); */
+
+document.addEventListener('fe:param', e=>{
+  const {studio, key, value} = e.detail;
+  if(studio!=='core') return;
+  const eng=FE.engines.core;
+  if(!eng) return;
+  if(key==='light_int' && eng.blenderLight){
+    eng.blenderLight.children.forEach(c=>{ if(c.isLight) c.intensity = (value/100)*2; });
+  } else if(key==='light_h' && eng.blenderLight){
+    eng.blenderLight.position.y = 1 + (value/100)*7;
+  } else if(key==='cam_fov' && eng.cam){
+    eng.cam.fov = 25 + (value/100)*65; eng.cam.updateProjectionMatrix();
+  } else if(key==='cam_dist' && eng.cam){
+    eng.cam.position.setLength(2.5 + (value/100)*8);
+  }
+});
+
+document.addEventListener('fe:setting', e=>{
+  const {key, value} = e.detail;
+  const eng=FE.engines.core;
+  if(!eng) return;
+  if(key==='grid' && eng.grid) eng.grid.visible=value;
+  else if(key==='shading' && eng.cube){
+    eng.cube.material.wireframe = (value==='wireframe');
+  } else if(key==='resetScene' && eng.cube){
+    eng.cube.position.set(0,0.6,0);
+    if(eng.blenderCam) eng.blenderCam.position.set(-3.6,3.8,4.6);
+    if(eng.blenderLight) eng.blenderLight.position.set(3.4,4.8,2.6);
+  }
+});
 
 route();
 emit('ready',{studios:Object.keys(STUDIOS)});

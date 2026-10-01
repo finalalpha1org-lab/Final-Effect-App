@@ -1,0 +1,8 @@
+{
+  "name": "Final Effect 3D",
+  "description": "A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "permissions": []
+}
