@@ -9,6 +9,7 @@
 <meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
 <style>
 :root{--bg:#0d0e12;--panel:#121318;--panel2:#181a20;--line:#232630;--line2:#2d3142;--ink:#e2e8f0;--mute:#64748b;--ac:#6366f1;--tb:54px;--sb:env(safe-area-inset-bottom,0px);--st:env(safe-area-inset-top,0px)}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
@@ -40,10 +41,12 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 .card.locked{opacity:.6}
 
 /* ---- studio chrome ---- */
-.top-bar{flex:none;display:flex;align-items:center;gap:6px;padding:calc(var(--st) + 6px) 10px 6px;background:var(--panel);border-bottom:1px solid var(--line)}
+.top-bar{flex:none;display:flex;align-items:center;gap:6px;padding:calc(var(--st) + 6px) 10px 6px;background:var(--panel);border-bottom:1px solid var(--line);position:relative}
 .top-bar .title{font-weight:700;color:var(--ac);margin:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.btn,.mode{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;flex:none}
+.btn,.mode,.shading-select{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-size:12px;flex:none}
 .mode{color:#818cf8;font-weight:600;max-width:120px}
+.shading-select{color:#e2e8f0;font-weight:500;cursor:pointer}
+.hdri-toggle-btn{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;cursor:pointer}
 [data-act=import]{color:#34d399;border-color:#10b981;margin-left:auto}
 .viewport{flex:1;min-height:0;position:relative;background:#050508;touch-action:none}
 .viewport canvas,.viewport iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
@@ -64,26 +67,35 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 #drawer.open{transform:none;visibility:visible;transition:transform .22s,visibility 0s}
 #drawer header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-weight:600;border-bottom:1px solid var(--line)}
 #drawer-body{overflow-y:auto;padding:0 14px 14px;display:grid;gap:10px}
-.sl{display:grid;grid-template-columns:84px 1fr 36px;align-items:center;gap:8px}
-.sl input{width:100%;accent-color:var(--ac);cursor:pointer}.sl output{color:var(--mute);text-align:right;font-size:11px}
+.sl{display:grid;grid-template-columns:90px 1fr 36px;align-items:center;gap:8px}
+.sl input{width:100%;accent-color:var(--ac);cursor:pointer}.sl output{color:var(--mute);text-align:right;font-size:11px;font-family:monospace}
 .row-setting{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .row-setting select,.row-setting button{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-weight:600;color:var(--ink)}
 
-#toast{position:fixed;left:50%;bottom:calc(var(--tb) + var(--sb) + 14px);transform:translateX(-50%);z-index:30;background:#252836;border:1px solid var(--line2);border-radius:8px;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast{position:fixed;left:50%;bottom:calc(var(--tb) + var(--sb) + 14px);transform:translateX(-50%);z-index:30;background:#252836;border:1px solid var(--line2);border-radius:8px;padding:8px 14px;opacity:0;pointer-events:none;transition:opacity .2s;font-weight:500}
 #toast.show{opacity:1}
+
+/* ---- Material Preview HDRI Settings Popover Menu ---- */
+.hdri-menu{position:absolute;top:54px;right:10px;z-index:50;background:#181a20;border:1px solid #2d3142;border-radius:12px;padding:14px;width:220px;box-shadow:0 12px 30px rgba(0,0,0,0.7);display:none}
+.hdri-menu.open{display:block}
+.preset-title{font-weight:700;font-size:11px;color:#94a3b8;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px}
+.hdri-opt{width:100%;text-align:left;background:#1f222e;border:1px solid #2d3142;border-radius:6px;padding:7px 10px;margin-bottom:6px;color:#e2e8f0;font-size:12px;font-weight:500;transition:background .15s}
+.hdri-opt:hover{background:#2a2e3f;border-color:#6366f1}
+.divider{height:1px;background:#2d3142;margin:8px 0}
+.import-hdr-btn{width:100%;text-align:center;background:#6366f1;border:none;border-radius:6px;padding:8px 10px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s}
+.import-hdr-btn:hover{background:#4f46e5}
 </style>
 </head>
 <body>
 
 <div id="app">
-  <!-- Home. Studio screens are built from #tpl-studio below, one per entry in STUDIOS. -->
+  <!-- Home screen -->
   <main id="home" class="screen" data-screen="home">
     <div class="home-title-row">
       <div>
         <h1>Final Effect 3D</h1>
         <p>Choose a studio to start.</p>
       </div>
-      <!-- Global Setting Button (Marked in user screenshot) -->
       <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -95,18 +107,14 @@ button,select{font:inherit;color:inherit;cursor:pointer}
   </main>
 </div>
 
-<!-- Shared slide-up drawer (any studio can fill it) -->
+<!-- Shared slide-up drawer -->
 <aside id="drawer" aria-live="polite">
   <header><span id="drawer-title"></span><button class="btn" id="drawer-close" aria-label="Close panel">✕</button></header>
   <div id="drawer-body"></div>
 </aside>
 <div id="toast" role="status"></div>
 
-<!--
-  Studio template. IDs are assigned per studio id (<s>):
-  studio-<s> · <s>-home · <s>-undo · <s>-redo · <s>-mode · <s>-import
-  viewport-<s> · canvas-<s> · (frame-<s> if embedded) · layers-<s> · toolbar-<s> · tool-<s>-<key>
--->
+<!-- Studio template -->
 <template id="tpl-studio">
   <section class="screen studio">
     <header class="top-bar">
@@ -115,7 +123,31 @@ button,select{font:inherit;color:inherit;cursor:pointer}
       <button class="btn" data-act="undo" aria-label="Undo">↶</button>
       <button class="btn" data-act="redo" aria-label="Redo">↷</button>
       <select class="mode" aria-label="Mode"></select>
+      
+      <!-- NEW: Viewport Shading Dropdown -->
+      <select class="shading-select" aria-label="Viewport Shading">
+        <option value="solid">🧊 Solid</option>
+        <option value="wireframe">🔳 Wireframe</option>
+        <option value="material">🎨 Material Preview</option>
+        <option value="rendered">🎬 Rendered</option>
+      </select>
+
+      <!-- NEW: HDRI Popover Toggle Button -->
+      <button class="btn hdri-toggle-btn" title="HDRI Environment Settings">⚙️</button>
+
       <button class="btn" data-act="import">⤴ Import</button>
+
+      <!-- Material Preview HDRI Settings Popover Menu -->
+      <div class="hdri-popover hdri-menu">
+        <div class="preset-title">HDRI Presets</div>
+        <button class="hdri-opt" data-preset="studio">☀️ Studio</button>
+        <button class="hdri-opt" data-preset="city">🏙️ City</button>
+        <button class="hdri-opt" data-preset="forest">🌲 Forest</button>
+        <button class="hdri-opt" data-preset="night">🌃 Night</button>
+        <div class="divider"></div>
+        <button class="import-hdr-btn">📂 Import Custom HDR...</button>
+        <input type="file" class="hdr-file-input" accept=".hdr,.exr" style="display: none;" />
+      </div>
     </header>
     <div class="viewport"><canvas></canvas><div class="empty"></div></div>
     <div class="layer-bar"></div>
@@ -125,9 +157,7 @@ button,select{font:inherit;color:inherit;cursor:pointer}
 
 <script>
 /* =========================================================
-   1. CONFIG: add or edit studios here, no layout changes needed.
-   tool = [key, icon, label, params?]   key '@id' opens that studio
-   param = [label, key]
+   1. CONFIG: studios
    ========================================================= */
 const BACK=['@core','🧊','Workspace'];
 const STUDIOS={
@@ -141,26 +171,26 @@ const STUDIOS={
       ['@landscape','🏞️','Landscaping Studio'],
       ['@shader','🎨','Shader Studio'],
       ['@vfx','💥','VFX Studio'],
-      ['light','💡','Light',[['Intensity','light_int'],['Height','light_h']]],
-      ['camera','🎥','Camera',[['FOV','cam_fov'],['Distance','cam_dist']]],
+      ['light','💡','Light',[['Intensity','light_int',0,200,100],['Height','light_h',10,100,50],['Radius','light_r',10,100,40]]],
+      ['camera','🎥','Camera',[['Focal (FOV)','cam_fov',20,100,60],['Distance','cam_dist',20,100,50],['Height','cam_h',10,100,45]]],
       ['render','⚡','Render Engine']
     ]},
   character:{title:'Character Studio',icon:'🎭',accent:'#f472b6',desc:'Build and morph characters',
     modes:[['morph','Morph'],['pose','Pose'],['clothing','Clothing']],
-    tools:[BACK,['body','🧍','Body',[['Height','height'],['Weight','weight'],['Muscle','muscle']]],['face','🙂','Face',[['Jaw','jaw'],['Eyes','eyes'],['Nose','nose']]],['skin','🎨','Skin'],['hair','💇','Hair'],['outfit','👕','Outfit']]},
+    tools:[BACK,['body','🧍','Body',[['Height','height',0,100,50],['Weight','weight',0,100,50],['Muscle','muscle',0,100,50]]],['face','🙂','Face',[['Jaw','jaw',0,100,50],['Eyes','eyes',0,100,50],['Nose','nose',0,100,50]]],['skin','🎨','Skin'],['hair','💇','Hair'],['outfit','👕','Outfit']]},
   landscape:{title:'Landscaping Studio',icon:'🏞️',accent:'#34d399',desc:'Terrain, water and foliage',
     embed:'Terrain_system_.html',modes:[['sculpt','Sculpt'],['paint','Paint']],tools:[]},
   shader:{title:'Shader Studio',icon:'🎨',accent:'#fbbf24',desc:'Materials and surfaces',
     modes:[['sliders','Sliders'],['nodes','Nodes']],
-    tools:[BACK,['base','🎨','Base',[['Roughness','roughness'],['Metalness','metalness']]],['maps','🗺️','Maps'],['preview','🔮','Preview']]},
+    tools:[BACK,['base','🎨','Base',[['Roughness','roughness',0,100,40],['Metalness','metalness',0,100,20]]],['maps','🗺️','Maps'],['preview','🔮','Preview']]},
   vfx:{title:'VFX Studio',icon:'💥',accent:'#fb923c',desc:'Particles, fire and smoke',
     modes:[['emit','Emitters'],['sim','Simulation']],
-    tools:[BACK,['fire','🔥','Fire',[['Intensity','intensity'],['Turbulence','turbulence']]],['smoke','💨','Smoke',[['Density','density'],['Rise','rise']]],['particles','✨','Particles'],['bake','💾','Bake']]}
+    tools:[BACK,['fire','🔥','Fire',[['Intensity','intensity',0,100,50],['Turbulence','turbulence',0,100,50]]],['smoke','💨','Smoke',[['Density','density',0,100,50],['Rise','rise',0,100,50]]],['particles','✨','Particles'],['bake','💾','Bake']]}
 };
 const LOCKED=[['🗿','Sculpting Studio'],['🎬','Video Editor'],['🖼️','2D Animation']];
 
 /* =========================================================
-   2. SHELL: build screens, route, switch, drawer, events
+   2. SHELL
    ========================================================= */
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const emit=(n,d)=>document.dispatchEvent(new CustomEvent('fe:'+n,{detail:d}));
@@ -172,8 +202,7 @@ const FE=window.FE={
   toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800)}
 };
 
-/* Global Settings State */
-const GLOBAL_SETTINGS={grid:true, shadows:true, shading:'solid'};
+const GLOBAL_SETTINGS={grid:true, shadows:true};
 
 /* build home cards + studio screens */
 const app=$('#app'), grid=$('#home-grid');
@@ -186,6 +215,7 @@ Object.entries(STUDIOS).forEach(([id,s])=>{
   const mode=$('.mode',el); mode.id=id+'-mode';
   mode.innerHTML=s.modes.map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   mode.onchange=()=>emit('mode',{studio:id,mode:mode.value});
+  
   const vp=$('.viewport',el); vp.id='viewport-'+id; $('canvas',el).id='canvas-'+id;
   $('.layer-bar',el).id='layers-'+id; $('.toolbar',el).id='toolbar-'+id;
   
@@ -201,18 +231,70 @@ Object.entries(STUDIOS).forEach(([id,s])=>{
   else $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
   $('.toolbar',el).innerHTML=s.tools.map(([k,i,l])=>`<button class="tool" id="tool-${id}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
   
+  // Wire Viewport Shading Dropdown
+  const shadingSel = $('.shading-select', el);
+  shadingSel.onchange = (e) => {
+    emit('shading', { studio: id, shading: e.target.value });
+    FE.toast('Shading: ' + e.target.options[e.target.selectedIndex].text);
+  };
+
+  // Wire HDRI Popover Menu & Import
+  const hdriBtn = $('.hdri-toggle-btn', el);
+  const hdriPopover = $('.hdri-popover', el);
+  const importHdrBtn = $('.import-hdr-btn', el);
+  const hdrFileInput = $('.hdr-file-input', el);
+
+  hdriBtn.onclick = (e) => {
+    e.stopPropagation();
+    $$('.hdri-menu').forEach(m => { if(m !== hdriPopover) m.classList.remove('open'); });
+    hdriPopover.classList.toggle('open');
+  };
+
+  // Preset buttons
+  $$('.hdri-opt', hdriPopover).forEach(btn => {
+    btn.onclick = () => {
+      const preset = btn.dataset.preset;
+      emit('hdriPreset', { studio: id, preset });
+      hdriPopover.classList.remove('open');
+      FE.toast('HDR Preset: ' + btn.textContent);
+    };
+  });
+
+  // 1. Import Button click -> Auto-Open File Browser
+  importHdrBtn.onclick = () => {
+    hdrFileInput.click();
+  };
+
+  // 2. File Select -> Load into Three.js
+  hdrFileInput.onchange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    emit('hdriFile', { studio: id, url, name: file.name });
+    hdriPopover.classList.remove('open');
+    FE.toast(`Loaded custom HDR: ${file.name}`);
+  };
+
   // Safe ResizeObserver
   new ResizeObserver(([e])=>{
     const{width:w,height:h}=e.contentRect;
     if(w&&h){FE.engines[id]?.resize?.(w,h);emit('resize',{id,w,h})}
   }).observe(vp);
   
-  vp.addEventListener('pointerdown',closeDrawer);
+  vp.addEventListener('pointerdown', () => {
+    closeDrawer();
+    $$('.hdri-menu').forEach(m => m.classList.remove('open'));
+  });
   app.append(el);
 });
 LOCKED.forEach(([i,n])=>grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:#475569" data-locked="${n}"><i>${i}</i><span><b>${n}</b><small>Coming later</small></span><span class="tag">🔒 Locked</span></button>`));
 
-/* switching: hash routing keeps the phone Back button working */
+// Close popovers on global click
+window.addEventListener('click', () => {
+  $$('.hdri-menu').forEach(m => m.classList.remove('open'));
+});
+
+/* switching */
 function enter(id){
   const e=FE.engines[id], vp=$('#viewport-'+id), fr=$('iframe',vp);
   if(fr&&!fr.getAttribute('src')) fr.src=fr.dataset.src;
@@ -235,20 +317,19 @@ addEventListener('hashchange',route);
 function openDrawer(studio,tool){
   const [,i,l,params]=tool;
   $('#drawer-title').textContent=i+' '+l;
-  $('#drawer-body').innerHTML=params.map(([pl,k])=>`<label class="sl"><span>${pl}</span><input type="range" min="0" max="100" value="50" id="p-${studio}-${k}" data-studio="${studio}" data-key="${k}"><output>50</output></label>`).join('');
+  $('#drawer-body').innerHTML=params.map(([pl,k,min=0,max=100,def=50])=>`
+    <label class="sl">
+      <span>${pl}</span>
+      <input type="range" min="${min}" max="${max}" value="${def}" id="p-${studio}-${k}" data-studio="${studio}" data-key="${k}">
+      <output>${def}</output>
+    </label>
+  `).join('');
   $('#drawer').classList.add('open');
 }
 
 function openGlobalSettings(){
   $('#drawer-title').textContent='⚙️ Global Settings';
   $('#drawer-body').innerHTML=`
-    <div class="row-setting">
-      <span>Viewport Shading</span>
-      <select id="cfg-shading">
-        <option value="solid" ${GLOBAL_SETTINGS.shading==='solid'?'selected':''}>Solid</option>
-        <option value="wireframe" ${GLOBAL_SETTINGS.shading==='wireframe'?'selected':''}>Wireframe</option>
-      </select>
-    </div>
     <div class="row-setting">
       <span>Floor Grid</span>
       <button class="btn" id="cfg-grid-btn">${GLOBAL_SETTINGS.grid?'Enabled':'Disabled'}</button>
@@ -258,11 +339,6 @@ function openGlobalSettings(){
       <button class="btn" id="cfg-reset-scene">Reset Object, Cam & Light</button>
     </div>
   `;
-  $('#cfg-shading').onchange=(e)=>{
-    GLOBAL_SETTINGS.shading=e.target.value;
-    emit('setting',{key:'shading',value:e.target.value});
-    FE.toast('Shading: '+e.target.value);
-  };
   $('#cfg-grid-btn').onclick=()=>{
     GLOBAL_SETTINGS.grid=!GLOBAL_SETTINGS.grid;
     $('#cfg-grid-btn').textContent=GLOBAL_SETTINGS.grid?'Enabled':'Disabled';
@@ -278,14 +354,15 @@ function openGlobalSettings(){
 function closeDrawer(){$('#drawer').classList.remove('open')}
 $('#drawer-close').onclick=closeDrawer;
 $('#drawer-body').addEventListener('input',e=>{
-  const r=e.target; r.nextElementSibling.textContent=r.value;
-  emit('param',{studio:r.dataset.studio,key:r.dataset.key,value:+r.value});
+  const r=e.target; 
+  if(r.type==='range'){
+    if(r.nextElementSibling) r.nextElementSibling.textContent=r.value;
+    emit('param',{studio:r.dataset.studio,key:r.dataset.key,value:+r.value});
+  }
 });
 
-/* Global Setting Button click on Home UI */
 $('#btn-global-settings').onclick=openGlobalSettings;
 
-/* one delegated click handler for the whole shell */
 app.addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
   const sid=b.closest('.screen')?.dataset.screen;
@@ -298,7 +375,8 @@ app.addEventListener('click',e=>{
     if(k[0]==='@') return FE.open(k.slice(1));
     $$('.tool',b.parentNode).forEach(t=>t.classList.toggle('active',t===b));
     const tool=STUDIOS[sid].tools.find(t=>t[0]===k);
-    tool[3]?openDrawer(sid,tool):closeDrawer();
+    if(tool && tool[3]) openDrawer(sid,tool);
+    else closeDrawer();
     emit('tool',{studio:sid,tool:k});
   }
 });
@@ -345,7 +423,7 @@ function createBlenderLightObject() {
 }
 
 /* =========================================================
-   4. ENGINES: Core 3D engine with Cube, Camera & Light
+   4. ENGINES: Core 3D engine with HDRI & Shading modes
    ========================================================= */
 FE.register('core',{
   mount({canvas,viewport}){
@@ -355,6 +433,7 @@ FE.register('core',{
     const r=new THREE.WebGLRenderer({canvas,antialias:true});r.setPixelRatio(Math.min(devicePixelRatio,2));r.setSize(w,h,false);
     r.shadowMap.enabled=true; r.shadowMap.type=THREE.PCFSoftShadowMap;
     const oc=new THREE.OrbitControls(cam,canvas);oc.enableDamping=true; oc.target.set(0,0.6,0);
+    
     const d=new THREE.DirectionalLight(0xffffff,.7);d.position.set(5,10,7);d.castShadow=true;
     const amb=new THREE.AmbientLight(0xffffff,.5);
     const grid=new THREE.GridHelper(16,16,0x6366f1,0x232630);
@@ -370,7 +449,7 @@ FE.register('core',{
     const blenderCam=createBlenderCameraObject(); sc.add(blenderCam);
     const blenderLight=createBlenderLightObject(); sc.add(blenderLight);
 
-    Object.assign(this,{sc,cam,r,oc,cube,blenderCam,blenderLight,grid,d,amb});
+    Object.assign(this,{sc,cam,r,oc,cube,blenderCam,blenderLight,grid,d,amb,cubeMat});
   },
 
   resize(w,h){
@@ -384,6 +463,92 @@ FE.register('core',{
   pause(){cancelAnimationFrame(this.raf)}
 });
 
+/* Shading mode handler */
+document.addEventListener('fe:shading', e=>{
+  const {studio, shading} = e.detail;
+  if(studio!=='core') return;
+  const eng=FE.engines.core;
+  if(!eng || !eng.cube) return;
+
+  if(shading==='wireframe'){
+    eng.cube.material.wireframe = true;
+    eng.d.visible = true;
+    eng.amb.visible = true;
+  } else if(shading==='solid'){
+    eng.cube.material.wireframe = false;
+    eng.cube.material.color.set(0x6366f1);
+    eng.cube.material.roughness = 0.4;
+    eng.cube.material.metalness = 0.2;
+    eng.d.visible = true;
+    eng.amb.visible = true;
+  } else if(shading==='material'){
+    eng.cube.material.wireframe = false;
+    eng.cube.material.color.set(0x818cf8);
+    eng.cube.material.roughness = 0.15;
+    eng.cube.material.metalness = 0.85;
+    eng.d.visible = true;
+    eng.amb.visible = true;
+  } else if(shading==='rendered'){
+    eng.cube.material.wireframe = false;
+    eng.d.visible = true;
+    eng.amb.visible = false; // Relies strictly on actual scene lights
+  }
+});
+
+/* HDRI Preset generator */
+document.addEventListener('fe:hdriPreset', e=>{
+  const {studio, preset} = e.detail;
+  if(studio!=='core') return;
+  const eng=FE.engines.core;
+  if(!eng) return;
+
+  // Generate procedural gradient background/environment for preset
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+
+  if(preset==='studio'){
+    grad.addColorStop(0, '#334155'); grad.addColorStop(1, '#0f172a');
+  } else if(preset==='city'){
+    grad.addColorStop(0, '#0284c7'); grad.addColorStop(1, '#1e293b');
+  } else if(preset==='forest'){
+    grad.addColorStop(0, '#047857'); grad.addColorStop(1, '#064e3b');
+  } else if(preset==='night'){
+    grad.addColorStop(0, '#311042'); grad.addColorStop(1, '#09050e');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 512, 256);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  eng.sc.background = texture;
+  eng.sc.environment = texture;
+});
+
+/* Custom HDR File Loader */
+document.addEventListener('fe:hdriFile', e=>{
+  const {studio, url, name} = e.detail;
+  if(studio!=='core') return;
+  const eng=FE.engines.core;
+  if(!eng) return;
+
+  const rgbeLoader = new THREE.RGBELoader();
+  rgbeLoader.load(url, (texture) => {
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    eng.sc.environment = texture;
+    eng.sc.background = texture;
+  }, undefined, (err) => {
+    console.warn('RGBELoader fallback to texture loader', err);
+    new THREE.TextureLoader().load(url, (tex) => {
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      eng.sc.environment = tex;
+      eng.sc.background = tex;
+    });
+  });
+});
+
+/* Param sliders */
 document.addEventListener('fe:param', e=>{
   const {studio, key, value} = e.detail;
   if(studio!=='core') return;
@@ -405,9 +570,7 @@ document.addEventListener('fe:setting', e=>{
   const eng=FE.engines.core;
   if(!eng) return;
   if(key==='grid' && eng.grid) eng.grid.visible=value;
-  else if(key==='shading' && eng.cube){
-    eng.cube.material.wireframe = (value==='wireframe');
-  } else if(key==='resetScene' && eng.cube){
+  else if(key==='resetScene' && eng.cube){
     eng.cube.position.set(0,0.6,0);
     if(eng.blenderCam) eng.blenderCam.position.set(-3.6,3.8,4.6);
     if(eng.blenderLight) eng.blenderLight.position.set(3.4,4.8,2.6);
