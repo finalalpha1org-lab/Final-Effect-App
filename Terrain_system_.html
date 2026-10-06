@@ -1,43 +1,39 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-<title>Final Effect - Triplanar PBR Terrain, Dynamic Water & Spherical Gizmo</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Final Effect 3D</title>
+<meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
+<meta property="og:title" content="Final Effect 3D">
+<meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
 <style>
 :root{--bg:#dfe6ee;--pn:rgba(255,255,255,.94);--ink:#18222d;--mu:#5d6d80;--ac:#17915f;--on:#fff;--ln:rgba(0,0,0,.12);--ch:#eaf0f5;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1319;--pn:rgba(20,26,34,.95);--ink:#e8eef5;--mu:#8b9bb0;--ac:#3ddc97;--on:#04160e;--ln:rgba(255,255,255,.12);--ch:#222c38}}
 :root[data-theme="dark"]{--bg:#0e1319;--pn:rgba(20,26,34,.95);--ink:#e8eef5;--mu:#8b9bb0;--ac:#3ddc97;--on:#04160e;--ln:rgba(255,255,255,.12);--ch:#222c38}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--ink);font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
-#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;z-index:0;outline:none}
-#top,#panel,#bar,#info,#navSph{z-index:20}
-#top{position:fixed;top:0;left:0;right:0;display:flex;gap:6px;align-items:center;padding:calc(env(safe-area-inset-top,0px) + 6px) 8px 6px;pointer-events:none}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none}
+#top{position:fixed;top:0;left:0;right:0;display:flex;gap:6px;align-items:center;padding:calc(env(safe-area-inset-top,0px) + 6px) 8px 6px;pointer-events:none;z-index:20}
 #top>*{pointer-events:auto}
 .b{font-weight:700;margin-right:auto;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);pointer-events:none!important}
 button{font:inherit;color:var(--ink);cursor:pointer}
 .pill{background:var(--pn);border:1px solid var(--ln);border-radius:999px;display:flex;overflow:hidden}
 .pill button{border:0;background:none;padding:8px 11px}
 .pill button.on{background:var(--ac);color:var(--on)}
-.ib{background:var(--pn);border:1px solid var(--ln);border-radius:999px;padding:8px 12px;font-weight:600}
-.ib.on{background:var(--ac);color:var(--on)}
+.ib{background:var(--pn);border:1px solid var(--ln);border-radius:999px;padding:8px 12px}
 #fps{color:#fff;text-shadow:0 1px 3px #000;font-size:11px;min-width:44px;text-align:right}
-#dock{position:fixed;left:0;right:0;bottom:0;background:var(--pn);border-top:1px solid var(--ln);padding-bottom:env(safe-area-inset-bottom,0px);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+#dock{position:fixed;left:0;right:0;bottom:0;background:var(--pn);border-top:1px solid var(--ln);padding-bottom:env(safe-area-inset-bottom,0px);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:20}
 #dr{max-height:38vh;overflow-y:auto;padding:8px 10px 2px;display:flex;flex-direction:column;gap:6px}
 #tabs{display:flex;overflow-x:auto}
 .tab{flex:1 0 auto;min-width:64px;border:0;background:none;padding:7px 8px;color:var(--mu);display:flex;flex-direction:column;align-items:center;gap:1px;font-size:11px}
 .tab i{font-style:normal;font-size:19px}
 .tab.on{color:var(--ac);box-shadow:inset 0 2px var(--ac)}
-.row{display:flex;gap:6px;overflow-x:auto;padding:2px 0;scrollbar-width:none}
-.row::-webkit-scrollbar{display:none}
-.chip{flex:none;padding:7px 12px;border-radius:999px;background:var(--ch);border:1px solid var(--ln);font-weight:500}
+.row{display:flex;gap:6px;overflow-x:auto;padding:2px 0}
+.chip{flex:none;padding:7px 12px;border-radius:999px;background:var(--ch);border:1px solid var(--ln)}
 .chip.on{background:var(--ac);color:var(--on);border-color:transparent}
 .g{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:2px 16px}
-.sl{display:grid;grid-template-columns:90px 1fr 44px;align-items:center;gap:8px}
-.sl input[type=range]{width:100%;accent-color:var(--ac);cursor:pointer}
-.sl input[type=color]{width:100%;height:28px;border:0;padding:0;background:none;cursor:pointer}
-.sl output{color:var(--mu);text-align:right;font-size:11px;font-family:monospace}
+.sl{display:grid;grid-template-columns:82px 1fr 40px;align-items:center;gap:8px}
+.sl input[type=range]{width:100%;accent-color:var(--ac)}
+.sl input[type=color]{width:100%;height:28px;border:0;padding:0;background:none}
+.sl output{color:var(--mu);text-align:right;font-size:11px}
 .hint{color:var(--mu);font-size:12px}
 #ov{position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff}
 #ov[hidden]{display:none}
@@ -50,936 +46,1862 @@ button{font:inherit;color:var(--ink);cursor:pointer}
 .sl input[type=number]{width:100%;box-sizing:border-box;background:var(--ch);color:var(--ink);border:1px solid var(--ln);border-radius:4px;padding:4px 6px;font:inherit}
 #dr>*{flex:none}.row{flex:none}.lg{display:none}@media(min-width:640px){.lg{display:inline}}
 #ov textarea{width:92%;height:42%;background:#111;color:#cfe;border:1px solid #444;border-radius:6px;font:11px/1.3 ui-monospace,Menlo,monospace;padding:8px;box-sizing:border-box}#ovt{font-size:12px;padding:0 14px;text-align:center}
-#bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;padding:8px 10px calc(env(safe-area-inset-bottom,0px) + 8px);background:var(--pn);border-top:1px solid var(--ln)}
+#bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;padding:8px 10px calc(env(safe-area-inset-bottom,0px) + 8px);background:var(--pn);border-top:1px solid var(--ln);z-index:20}
 #bar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:7px 4px;border:1px solid var(--ln);border-radius:8px;background:var(--ch);font-size:11px;line-height:1.15;text-align:center}
 #bar button i{font-style:normal;font-size:18px}#bar button.on{background:var(--ac);color:var(--on)}
-#panel{position:fixed;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);max-height:50vh;display:flex;flex-direction:column;background:var(--pn);border:1px solid var(--ln);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.45);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+#panel{position:fixed;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);max-height:48vh;display:flex;flex-direction:column;background:var(--pn);border:1px solid var(--ln);border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,.45);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:20}
 #panel[hidden]{display:none}
 #ph{display:flex;align-items:center;gap:6px;padding:4px 6px;border-bottom:1px solid var(--ln)}
 #ph #tabs{flex:1;min-width:0}#ph .tab{min-width:54px;padding:4px 6px}
 #panel #dr{max-height:none;flex:1;min-height:0;padding:8px 10px 10px}
-#info{position:fixed;left:10px;top:calc(env(safe-area-inset-top,0px) + 50px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none}
-#assetBadge{position:fixed;right:10px;bottom:80px;z-index:10;background:rgba(0,0,0,.75);color:#3ddc97;padding:5px 9px;border-radius:6px;font-size:11px;pointer-events:none;font-weight:600;backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.15)}
-
-/* SPHERICAL AXIS NAVIGATION GIZMO */
-#navSph{position:fixed;right:12px;top:calc(env(safe-area-inset-top,0px) + 48px);width:82px;height:82px;border-radius:50%;background:radial-gradient(circle,rgba(24,30,42,0.88) 0%,rgba(12,16,24,0.96) 100%);border:1px solid rgba(255,255,255,0.22);box-shadow:0 6px 20px rgba(0,0,0,0.55);cursor:pointer;z-index:25}
-#navCanvas{width:100%;height:100%;display:block;border-radius:50%}
-
-@media(max-width:520px){.b{display:none}#top{justify-content:space-between;gap:4px}#fps{display:none}.pill button,.ib{padding:8px 6px;font-size:12px}#navSph{width:68px;height:68px;top:calc(env(safe-area-inset-top,0px) + 44px)}}
+#info{position:fixed;left:10px;top:calc(env(safe-area-inset-top,0px) + 50px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none;z-index:20}
+#ng{position:fixed;right:10px;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07);z-index:20;cursor:pointer}
+#ng b{position:absolute;width:18px;height:18px;margin:-9px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#111;cursor:pointer}
+@media(max-width:520px){.b{display:none}#top{justify-content:space-between;gap:4px}#fps{display:none}.pill button,.ib{padding:8px 6px;font-size:12px}}
 </style>
-<!-- Babylon.js Core, Loaders, Materials, GUI -->
+<!-- Babylon.js Core, Loaders, Materials -->
 <script src="https://cdn.babylonjs.com/babylon.js"></script>
 <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
 <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
-<script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
 </head><body>
-<canvas id="c"></canvas><div id="info"></div>
-<div id="navSph" title="Click spherical axes to align camera view (Top, Front, Side)">
-  <canvas id="navCanvas" width="164" height="164"></canvas>
-</div>
-<div id="assetBadge">⚡ BABYLON.JS • High-Poly PBR & Ocean</div>
-<div id="top">
-  <span class="b">Final Effect</span>
-  <div class="pill" id="sh"></div>
-  <button class="ib" id="un" aria-label="Undo" title="Undo (Ctrl+Z)">↶</button>
-  <button class="ib" id="re" aria-label="Redo" title="Redo (Ctrl+Y)">↷</button>
-  <button class="ib on" id="mode" title="Toggle Sculpt Brush / Camera Orbit Mode">🖌 Brush Active</button>
-  <button class="ib" id="camBtn" title="Toggle Orbit / Fly Camera"><i class="fa-solid fa-arrows-rotate"></i> Orbit</button>
-  <button class="ib" id="imp" title="Import to Main Grid">⤴ Import<span class="lg"> to Main Grid</span></button>
-  <span id="fps"></span>
-</div>
+<canvas id="c"></canvas><div id="info"></div><div id="ng"></div>
+<div id="top"><span class="b">Final Effect</span><div class="pill" id="sh"></div><button class="ib" id="un" aria-label="Undo">↶</button><button class="ib" id="re" aria-label="Redo">↷</button><button class="ib" id="mode"></button><button class="ib" id="imp" title="Import to Main Grid">⤴ Import<span class="lg"> to Main Grid</span></button><span id="fps"></span></div>
 <div id="panel" hidden><div id="ph"><div id="tabs"></div><button class="ib" id="px" aria-label="Close">✕</button></div><div id="dr"></div></div>
-<div id="bar" style="z-index:20">
-  <button id="bw"><i>⌂</i>Workspace</button>
-  <button id="bg"><i>🏝</i>Settings & Tools</button>
-  <button id="bi"><i>🌍</i>Import 3D</button>
-</div>
+<div id="bar"><button id="bw"><i>⌂</i>Workspace</button><button id="bg"><i>🏝</i>Generate New Terrain</button><button id="bi"><i>🌍</i>Import 3D Terrain</button></div>
 <div id="ov" hidden><div id="ovt"></div><textarea id="exp" readonly></textarea><div style="display:flex;gap:8px"><button class="ib" id="cp">Copy JSON</button><button class="ib" id="cl">Close</button></div></div>
 
 <script>
 /* =========================================================================
-   Final Effect 3D Terrain Studio — Restored High-Poly Terrain & PBR Blending
+   Final Effect 3D Terrain Studio — Pure Babylon.js Architecture
    ========================================================================= */
-const $=s=>document.querySelector(s), R=Math.random, cl=(v,a,b)=>Math.min(b,Math.max(a,v));
-const S=120, N=180, D=S/N, W=N+1, cv=$('#c');
-let tab='terrain', mode='render', nav=false, place=null, sel=null, seed=42, wl=0, tod=14, az=45, cov=.5, fogD=.0020, wspd=1.2, wp=0, fl=0;
-const br={tool:'raise', r:7, str:.5, tex:0, kind:'pine', den:12, falloff:'smooth'}, objs=[];
+function showErr(t){let b=document.getElementById('err');if(!b){b=document.createElement('div');b.id='err';b.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:30;background:#7a1f1f;color:#fff;padding:8px 10px;border-radius:8px;font:12px/1.35 system-ui;white-space:pre-wrap;word-break:break-word';b.onclick=()=>b.remove();document.body.appendChild(b)}b.textContent+=(b.textContent?'\n':'')+t}
+addEventListener('error',e=>showErr('Error: '+e.message+' (line '+e.lineno+')'));
+const $=s=>document.querySelector(s),R=Math.random,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+const S=100,N=128,D=S/N,W=N+1,cv=$('#c');
+let tab='terrain',mode='render',nav=false,place=null,sel=null,seed=1,wl=0,tod=15,az=40,cov=.5,fogD=.004,wspd=1,wp=0,fl=0;
+const br={tool:'raise',r:6,str:.5,tex:0,kind:'grass',den:10},objs=[];
 
-// 1. BABYLON.JS SCENE, CAMERAS & VIBRANT ENVIRONMENT LIGHTING SETUP
+// 1. BABYLON.JS ENGINE & SCENE
 const engine=new BABYLON.Engine(cv, true, {preserveDrawingBuffer:true, stencil:true, antialias:true, powerPreference:'high-performance'}, true);
 engine.setHardwareScalingLevel(Math.min(1.5, 1 / (window.devicePixelRatio || 1)));
 const scene=new BABYLON.Scene(engine);
-scene.clearColor=new BABYLON.Color4(0.48, 0.68, 0.88, 1);
-scene.ambientColor=new BABYLON.Color3(0.92, 0.95, 1.0);
+scene.clearColor=new BABYLON.Color4(0.24, 0.24, 0.24, 1);
+scene.ambientColor=new BABYLON.Color3(0.5, 0.5, 0.5);
 
-// Atmospheric Fog & ACES Tone Mapping
-scene.fogMode=BABYLON.Scene.FOGMODE_EXP2;
-scene.fogDensity=fogD;
-scene.fogColor=new BABYLON.Color3(0.82, 0.89, 0.97);
-scene.imageProcessingConfiguration.toneMappingEnabled = true;
-scene.imageProcessingConfiguration.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
-scene.imageProcessingConfiguration.exposure = 1.48;
-scene.imageProcessingConfiguration.contrast = 1.14;
+// Camera
+const cam=new BABYLON.ArcRotateCamera("Camera", -Math.PI*0.35, Math.PI*0.35, 110, new BABYLON.Vector3(0, 4, 0), scene);
+cam.attachControl(cv, true);
+cam.wheelPrecision=25; cam.lowerRadiusLimit=5; cam.upperRadiusLimit=360;
+let ortho=false;
 
-// Cameras (Orbit & Free Fly)
-const orbitCam=new BABYLON.ArcRotateCamera('OrbitCam', -Math.PI*0.25, Math.PI*0.32, 110, new BABYLON.Vector3(0,5,0), scene);
-orbitCam.lowerRadiusLimit=5; orbitCam.upperRadiusLimit=360; orbitCam.wheelPrecision=25;
-orbitCam.attachControl(cv, true); orbitCam.panningSensibility=75;
+// Lighting & Shadows
+const hemi=new BABYLON.HemisphericLight("HemiLight", new BABYLON.Vector3(0, 1, 0), scene);
+hemi.intensity=0.8;
+hemi.diffuse=new BABYLON.Color3(0.85, 0.92, 1.0);
+hemi.groundColor=new BABYLON.Color3(0.35, 0.32, 0.28);
 
-const freeCam=new BABYLON.UniversalCamera('FreeCam', new BABYLON.Vector3(0, 25, -90), scene);
-freeCam.setTarget(new BABYLON.Vector3(0, 4, 0));
-freeCam.speed=1.8;
-
-let isFlyMode=false;
-scene.activeCamera=orbitCam;
-
-// 2. BRIGHT SUN & CLEAN SHADOWS
-const hemi=new BABYLON.HemisphericLight('SkyLight', new BABYLON.Vector3(0,1,0), scene);
-hemi.intensity=1.75;
-hemi.diffuse=new BABYLON.Color3(1.0, 1.0, 1.0);
-hemi.groundColor=new BABYLON.Color3(0.60, 0.55, 0.50);
-
-const sun=new BABYLON.DirectionalLight('SunLight', new BABYLON.Vector3(-0.52, -0.85, 0.40), scene);
-sun.position=new BABYLON.Vector3(90, 160, 65);
-sun.intensity=3.8;
-sun.diffuse=new BABYLON.Color3(1.0, 0.97, 0.90);
+const sun=new BABYLON.DirectionalLight("SunLight", new BABYLON.Vector3(-0.5, -0.85, 0.4), scene);
+sun.position=new BABYLON.Vector3(60, 120, 60);
+sun.intensity=1.8;
+sun.diffuse=new BABYLON.Color3(1.0, 0.95, 0.85);
 sun.shadowEnabled=true;
-sun.shadowMinZ=1;
-sun.shadowMaxZ=380;
 
 let shadow;
 try {
-  shadow = new BABYLON.CascadedShadowGenerator(2048, sun);
-  shadow.cascadeBlendPercentage = 0.35;
-  shadow.stabilizeCascades = true;
-  shadow.usePercentageCloserFiltering = true;
-  shadow.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
-  shadow.lambda = 0.85;
-  shadow.bias = 0.0005;
-  shadow.normalBias = 0.005;
-} catch(e) {
-  shadow = new BABYLON.ShadowGenerator(2048, sun);
-  shadow.usePercentageCloserFiltering = true;
-  shadow.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
-  shadow.bias = 0.0005;
-  shadow.normalBias = 0.005;
+  shadow=new BABYLON.ShadowGenerator(2048, sun);
+  shadow.usePercentageCloserFiltering=true;
+  shadow.filteringQuality=BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+  shadow.bias=0.0005;
+  shadow.normalBias=0.005;
+} catch(e){
+  console.log('Shadow init:', e);
 }
 
-// HDRI Environment Skybox
-let skybox = null;
-try {
-  const hdrTexture = BABYLON.CubeTexture.CreateFromPrefilteredData("https://assets.babylonjs.com/environments/environmentSpecular.env", scene);
-  scene.environmentTexture = hdrTexture;
-  scene.environmentIntensity = 1.4;
-  
-  skybox = BABYLON.MeshBuilder.CreateBox("hdrSkyBox", {size: 980.0}, scene);
-  const skyboxMaterial = new BABYLON.BackgroundMaterial("skyBoxMat", scene);
-  skyboxMaterial.reflectionTexture = hdrTexture.clone();
-  skyboxMaterial.reflectionTexture.coordinatesMode = BABYLON.Texture.SKYBOX_MODE;
-  skyboxMaterial.backFaceCulling = false;
-  skybox.material = skyboxMaterial;
-  skybox.isPickable = false;
-} catch(e) {
-  console.log('HDRI Environment fallback:', e);
-}
+// Fog & ACES Tone Mapping
+scene.fogMode=BABYLON.Scene.FOGMODE_EXP2;
+scene.fogDensity=fogD;
+scene.fogColor=new BABYLON.Color3(0.74, 0.82, 0.90);
+scene.imageProcessingConfiguration.toneMappingEnabled=true;
+scene.imageProcessingConfiguration.toneMappingType=BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+scene.imageProcessingConfiguration.exposure=1.1;
 
-// 3. CONTINUOUS MATHEMATICAL SIMPLEX / PERLIN NOISE ALGORITHM
-const p_perm=new Uint8Array(512);
-const p_p=[151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180];
-for(let i=0;i<256;i++) p_perm[i]=p_perm[i+256]=p_p[i];
+// Grid Ground Lines Helper
+const gridLines = [];
+for(let i=-100; i<=100; i+=20){
+  gridLines.push([new BABYLON.Vector3(i, 0.05, -100), new BABYLON.Vector3(i, 0.05, 100)]);
+  gridLines.push([new BABYLON.Vector3(-100, 0.05, i), new BABYLON.Vector3(100, 0.05, i)]);
+}
+const gridMesh = BABYLON.MeshBuilder.CreateLineSystem("GridHelper", { lines: gridLines }, scene);
+gridMesh.color = new BABYLON.Color3(0.3, 0.3, 0.3);
+gridMesh.isPickable = false;
 
-function fade(t){ return t*t*t*(t*(t*6-15)+10); }
-function lerp(t,a,b){ return a+t*(b-a); }
-function grad(hash,x,y,z){
-  const h=hash&15, u=h<8?x:y, v=h<4?y:h==12||h==14?x:z;
-  return ((h&1)===0?u:-u)+((h&2)===0?v:-v);
-}
-function noise3D(x,y,z){
-  const X=Math.floor(x)&255, Y=Math.floor(y)&255, Z=Math.floor(z)&255;
-  x-=Math.floor(x); y-=Math.floor(y); z-=Math.floor(z);
-  const u=fade(x), v=fade(y), w=fade(z);
-  const A=p_perm[X]+Y, AA=p_perm[A]+Z, AB=p_perm[A+1]+Z, B=p_perm[X+1]+Y, BA=p_perm[B]+Z, BB=p_perm[B+1]+Z;
-  return lerp(w, lerp(v, lerp(u, grad(p_perm[AA], x, y, z), grad(p_perm[BA], x-1, y, z)),
-                         lerp(u, grad(p_perm[AB], x, y-1, z), grad(p_perm[BB], x-1, y-1, z))),
-                 lerp(v, lerp(u, grad(p_perm[AA+1], x, y, z-1), grad(p_perm[BA+1], x-1, y, z-1)),
-                         lerp(u, grad(p_perm[AB+1], x, y-1, z-1), grad(p_perm[BB+1], x-1, y-1, z-1))));
-}
-function fbm3D(x,y,z,oct=5){
-  let val=0, amp=0.5, freq=1.0;
-  for(let i=0;i<oct;i++){
-    val+=noise3D(x*freq, y*freq, z*freq)*amp;
-    amp*=0.5; freq*=2.05;
+// X and Z Axis Guide Lines
+const axisX = BABYLON.MeshBuilder.CreateLines("AxisX", { points: [new BABYLON.Vector3(-100, 0.06, 0), new BABYLON.Vector3(100, 0.06, 0)] }, scene);
+axisX.color = new BABYLON.Color3(1, 0.2, 0.32); axisX.isPickable = false;
+const axisZ = BABYLON.MeshBuilder.CreateLines("AxisZ", { points: [new BABYLON.Vector3(0, 0.06, -100), new BABYLON.Vector3(0, 0.06, 100)] }, scene);
+axisZ.color = new BABYLON.Color3(0.55, 0.86, 0); axisZ.isPickable = false;
+
+// Selection Bounding Box Helper
+const sbx = BABYLON.MeshBuilder.CreateBox("SelBox", { size: 1 }, scene);
+sbx.material = new BABYLON.StandardMaterial("sbxMat", scene);
+sbx.material.wireframe = true;
+sbx.material.emissiveColor = new BABYLON.Color3(1, 0.65, 0.25);
+sbx.material.disableLighting = true;
+sbx.setEnabled(false); sbx.isPickable = false;
+
+// Sky Dome
+const skyDome = BABYLON.MeshBuilder.CreateSphere("SkyDome", { diameter: 800, segments: 16 }, scene);
+const skyMat = new BABYLON.StandardMaterial("SkyMat", scene);
+skyMat.backFaceCulling = false;
+skyMat.disableLighting = true;
+skyDome.material = skyMat;
+skyDome.isPickable = false;
+
+// Water Plane
+const water = BABYLON.MeshBuilder.CreateGround("WaterPlane", { width: 260, height: 260, subdivisions: 64 }, scene);
+water.position.y = wl;
+water.isPickable = false;
+
+function createWaterBumpTexture(){
+  const res = 256, cv = document.createElement('canvas'); cv.width = cv.height = res;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(res, res);
+  for(let y=0; y<res; y++){
+    for(let x=0; x<res; x++){
+      const idx = (y*res + x)*4;
+      const nx = Math.sin(x*0.12) * Math.cos(y*0.08) + Math.sin((x+y)*0.09)*0.5;
+      const ny = Math.cos(x*0.09) * Math.sin(y*0.12) + Math.cos((x-y)*0.09)*0.5;
+      img.data[idx] = Math.floor((nx*0.5 + 0.5)*255);
+      img.data[idx+1] = Math.floor((ny*0.5 + 0.5)*255);
+      img.data[idx+2] = 255;
+      img.data[idx+3] = 255;
+    }
   }
-  return val;
+  ctx.putImageData(img, 0, 0);
+  const tex = new BABYLON.Texture(cv.toDataURL(), scene);
+  tex.uScale = 8; tex.vScale = 8;
+  return tex;
 }
-
-// 4. REALISTIC OCEAN WATER WITH DYNAMIC WAVES
-const water=BABYLON.MeshBuilder.CreateGround('WaterPlane', {width:360, height:360, subdivisions:64}, scene);
-water.position.y=wl;
-water.isPickable=false;
 
 let waterMat;
 try {
-  waterMat=new BABYLON.WaterMaterial('WaterMat', scene, new BABYLON.Vector2(512, 512));
-  waterMat.bumpTexture=new BABYLON.Texture('https://assets.babylonjs.com/textures/waterbump.png', scene);
-  waterMat.windForce=45;
-  waterMat.waveHeight=0.38;
-  waterMat.waveLength=0.16;
-  waterMat.bumpHeight=0.65;
-  waterMat.waterColor=new BABYLON.Color3(0.04, 0.35, 0.58);
-  waterMat.waterColor2=new BABYLON.Color3(0.14, 0.68, 0.85);
-  waterMat.colorBlendFactor=0.25;
-  waterMat.specularPower=64;
-  if(skybox) waterMat.addToRenderList(skybox);
-  water.material=waterMat;
+  waterMat = new BABYLON.WaterMaterial("WaterMat", scene, new BABYLON.Vector2(512, 512));
+  waterMat.bumpTexture = createWaterBumpTexture();
+  waterMat.windForce = 35;
+  waterMat.waveHeight = 0.35;
+  waterMat.waveLength = 0.18;
+  waterMat.bumpHeight = 0.8;
+  waterMat.waterColor = new BABYLON.Color3(0.04, 0.35, 0.58);
+  waterMat.colorBlendFactor = 0.25;
+  water.material = waterMat;
 } catch(e) {
-  const pbrW=new BABYLON.PBRMaterial('FallbackWater', scene);
-  pbrW.albedoColor=new BABYLON.Color3(0.06, 0.34, 0.62);
-  pbrW.roughness=0.08; pbrW.metallic=0.05; pbrW.alpha=0.85;
-  water.material=pbrW;
+  const pbrW = new BABYLON.PBRMaterial("FallbackWater", scene);
+  pbrW.albedoColor = new BABYLON.Color3(0.04, 0.35, 0.58);
+  pbrW.roughness = 0.05; pbrW.metallic = 0.1; pbrW.alpha = 0.88;
+  pbrW.bumpTexture = createWaterBumpTexture();
+  water.material = pbrW;
 }
 
-// 5. DIRECT SEAMLESS EXTERNAL PBR TEXTURES & MULTI-BIOME PALETTES
-const BIO={
-  hills:{
-    name:'Temperate Hills',
-    albedo:'https://assets.babylonjs.com/textures/grass.png',
-    bump:'https://assets.babylonjs.com/textures/grassn.png',
-    // [Meadow Grass, Loamy Soil, Slate Cliff Rock, Shore Sand, Alpine Snow]
-    p:[[.36,.84,.20],[.52,.38,.24],[.42,.44,.48],[.94,.84,.58],[.98,.99,1.0]],
-    s:18, sun:0xfff6ea, fog:0xd8e8f8, water:0x007799
-  },
-  alpine:{
-    name:'Alpine Glaciers',
-    albedo:'https://assets.babylonjs.com/textures/rock.png',
-    bump:'https://assets.babylonjs.com/textures/rockn.png',
-    p:[[.38,.68,.28],[.48,.38,.28],[.52,.54,.58],[.85,.80,.70],[.99,1.0,1.0]],
-    s:10, sun:0xffffff, fog:0xe2f0fc, water:0x1b5b80
-  },
-  desert:{
-    name:'Desert Oasis',
-    albedo:'https://assets.babylonjs.com/textures/sand.jpg',
-    bump:'https://assets.babylonjs.com/textures/rockn.png',
-    p:[[.96,.80,.48],[.85,.62,.38],[.76,.50,.34],[.98,.88,.62],[.94,.88,.80]],
-    s:22, sun:0xffeedd, fog:0xf6ddb8, water:0x0099aa
-  },
-  volc:{
-    name:'Volcanic Caldera',
-    albedo:'https://assets.babylonjs.com/textures/rock.png',
-    bump:'https://assets.babylonjs.com/textures/rockn.png',
-    p:[[.24,.24,.28],[.38,.28,.20],[.30,.30,.34],[.46,.36,.28],[.52,.52,.58]],
-    s:20, sun:0xffaa77, fog:0x524238, water:0x18283a
+const WP = [
+  [[0.02, 0.12, 0.25], [0.04, 0.35, 0.58]],
+  [[0.02, 0.30, 0.35], [0.06, 0.65, 0.75]],
+  [[0.10, 0.14, 0.08], [0.18, 0.32, 0.22]]
+];
+function setWater(i){
+  wp = i;
+  if(waterMat && waterMat.waterColor){
+    waterMat.waterColor = new BABYLON.Color3(...WP[i][1]);
   }
+}
+setWater(0);
+
+// Clouds
+const clouds = [];
+const cloudTexCanvas = document.createElement('canvas'); cloudTexCanvas.width = cloudTexCanvas.height = 64;
+const cx = cloudTexCanvas.getContext('2d');
+const cGr = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+cGr.addColorStop(0, 'rgba(255,255,255,.9)'); cGr.addColorStop(1, 'rgba(255,255,255,0)');
+cx.fillStyle = cGr; cx.fillRect(0, 0, 64, 64);
+const cloudTex = new BABYLON.DynamicTexture("cloudTex", cloudTexCanvas, scene, false);
+cloudTex.hasAlpha = true;
+
+const cloudMat = new BABYLON.StandardMaterial("cloudMat", scene);
+cloudMat.diffuseTexture = cloudTex;
+cloudMat.opacityTexture = cloudTex;
+cloudMat.disableLighting = true;
+cloudMat.backFaceCulling = false;
+
+for(let i=0; i<14; i++){
+  const g = new BABYLON.TransformNode("CloudGroup_" + i, scene);
+  g.position.set((R()-0.5)*500, 70+R()*40, (R()-0.5)*500);
+  for(let k=0; k<7; k++){
+    const s = BABYLON.MeshBuilder.CreatePlane("CloudSprite", { width: 40+R()*30, height: 22+R()*10 }, scene);
+    s.material = cloudMat;
+    s.position.set((R()-0.5)*50, R()*6, (R()-0.5)*20);
+    s.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
+    s.parent = g;
+    s.isPickable = false;
+  }
+  clouds.push(g);
+}
+
+// 2. TERRAIN PROCEDURAL DATA & GENERATION
+const H = new Float32Array(W*W), MI = new Uint8Array(W*W).fill(255);
+let biome = 'hills', hs = 34, rockT = 1.3, snowL = 16, veg = 1;
+const BIO = {
+  hills:  { p: [[.26,.52,.16],[.44,.32,.18],[.38,.36,.34],[.78,.70,.50],[.94,.96,.99]], s: 18, rT: 1.2, v: 1.0, rough: 0.86 },
+  alpine: { p: [[.28,.36,.22],[.36,.32,.26],[.20,.22,.26],[.60,.58,.54],[.97,.98,1.0]], s: 12, rT: 0.95, v: 0.5, rough: 0.88 },
+  desert: { p: [[.82,.70,.48],[.65,.42,.24],[.58,.34,.18],[.88,.80,.58],[.86,.80,.70]], s: 24, rT: 1.4, v: 0.08, rough: 0.85 },
+  volc:   { p: [[.10,.10,.11],[.14,.13,.13],[.08,.08,.09],[.06,.06,.07],[.18,.17,.18]], s: 22, rT: 0.85, v: 0.03, rough: 0.94 }
 };
+const PAL = [];
 
-const H=new Float32Array(W*W), MI=new Uint8Array(W*W).fill(255);
-let biome='hills', hs=34, rockT=0.75, snowL=18;
-let PAL=BIO.hills.p;
-
-function hgt(x,z){
-  const u=cl((x+S/2)/D,0,N-.001), v=cl((z+S/2)/D,0,N-.001);
-  const i=u|0, j=v|0, a=u-i, b=v-j, k=j*W+i;
-  return H[k]*(1-a)*(1-b)+H[k+1]*a*(1-b)+H[k+W]*(1-a)*b+H[k+W+1]*a*b;
+function hash(x, y){ const s = Math.sin(x*127.1 + y*311.7 + seed)*43758.5453; return s - Math.floor(s); }
+function vn(x, y){
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const u = fx*fx*(3 - 2*fx), v = fy*fy*(3 - 2*fy);
+  return hash(ix, iy)*(1-u)*(1-v) + hash(ix+1, iy)*u*(1-v) + hash(ix, iy+1)*(1-u)*v + hash(ix+1, iy+1)*u*v;
+}
+const mx3 = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const sm = (a,b,x) => { const t = cl((x-a)/(b-a), 0, 1); return t*t*(3-2*t); };
+const slopeAt = (i, j) => {
+  const h = H[j*W + i];
+  return Math.abs(H[Math.min(j+1, N)*W + i] - h) + Math.abs(H[j*W + Math.min(i+1, N)] - h);
+};
+function mIdx(i, j){
+  const k = j*W + i, h = H[k];
+  if(MI[k] != 255) return MI[k];
+  return h < wl + 0.9 ? 3 : h > snowL ? 4 : slopeAt(i, j) > rockT ? 2 : h > 11 ? 1 : 0;
+}
+function col(i, j){
+  const k = j*W + i, h = H[k], sl = slopeAt(i, j);
+  let c;
+  if(MI[k] != 255) c = PAL[MI[k]];
+  else if(biome === 'alpine'){
+    // Alpine: Crystalline pure white snow on high summits and flat plateaus, sharp dark jagged granite on steep cliff faces
+    const cliff = sm(rockT - 0.25, rockT + 0.35, sl);
+    const snowCover = sm(snowL - 1.5, snowL + 2.0, h) * (1.0 - sm(rockT - 0.1, rockT + 0.45, sl) * 0.85);
+    const graniteRock = mx3([.22,.24,.28], [.16,.17,.20], sm(rockT + 0.2, rockT + 1.2, sl));
+    const tundraGround = mx3(PAL[0], PAL[1], sm(6, 12, h));
+    c = mx3(tundraGround, graniteRock, cliff);
+    c = mx3(c, PAL[4], snowCover);
+    c = mx3(PAL[3], c, sm(wl + 0.4, wl + 1.2, h));
+  } else if(biome === 'volc'){
+    // Volcanic: Dark basalt rock, cooled obsidian crust, and porous ash. High roughness ~0.94, zero shine
+    const cliff = sm(rockT - 0.25, rockT + 0.3, sl);
+    const ashBase = mx3([.10,.10,.11], [.13,.12,.12], hash(i, j*3)*0.4);
+    const basaltRock = mx3([.08,.08,.09], [.16,.14,.14], cliff);
+    c = mx3(ashBase, basaltRock, cliff);
+    c = mx3(c, [.20,.18,.19], sm(snowL, snowL + 3.0, h) * 0.6); // cooled volcanic pumice crest
+    c = mx3([.06,.06,.07], c, sm(wl + 0.3, wl + 1.0, h)); // shoreline volcanic black sand
+  } else if(biome === 'desert'){
+    // Desert: Golden rippled sand dunes, sandstone canyon walls
+    const cliff = sm(rockT - 0.3, rockT + 0.3, sl);
+    const duneSand = mx3(PAL[0], PAL[3], sm(2, 10, h));
+    const canyonRock = mx3(PAL[1], PAL[2], cliff);
+    c = mx3(duneSand, canyonRock, cliff);
+  } else {
+    // Hills: Lush meadow soil blending into granite cliffs
+    c = mx3(PAL[0], PAL[1], sm(9, 13, h));
+    c = mx3(c, PAL[2], sm(rockT - 0.35, rockT + 0.35, sl));
+    c = mx3(c, PAL[4], sm(snowL, snowL + 2.5, h) * (1 - sm(rockT - 0.2, rockT + 0.6, sl) * 0.7));
+    c = mx3(PAL[3], c, sm(wl + 0.5, wl + 1.4, h));
+  }
+  const v = biome === 'volc' ? 0.92 + 0.15 * hash(i, j*7) : 0.85 + 0.3 * hash(i, j*7);
+  return [c[0]*v, c[1]*v, c[2]*v];
 }
 
-function slope(x,z){
-  const d = D;
-  const dhdx = (hgt(x + d, z) - hgt(x - d, z)) / (2 * d);
-  const dhdz = (hgt(x, z + d) - hgt(x, z - d)) / (2 * d);
-  return Math.hypot(dhdx, dhdz);
+function hgt(x, z){
+  const u = cl((x + S/2)/D, 0, N - 0.001), v = cl((z + S/2)/D, 0, N - 0.001);
+  const i = u|0, j = v|0, a = u - i, b = v - j, k = j*W + i;
+  return H[k]*(1-a)*(1-b) + H[k+1]*a*(1-b) + H[k+W]*(1-a)*b + H[k+W+1]*a*b;
 }
 
-// SMOOTH SLOPE & ELEVATION COLOR BLENDING
-function getTerrainColor(x, z, h){
-  const sl = slope(x, z);
-  const grass = PAL[0], dirt = PAL[1], rock = PAL[2], sand = PAL[3], snow = PAL[4];
-  
-  const shoreFactor = cl((wl + 1.4 - h) / 1.6, 0, 1);
-  const slopeRock = cl((sl - rockT) / 0.55, 0, 1);
-  const altitudeRock = cl((h - 6.5) / 12.0, 0, 1);
-  const rockFactor = Math.max(slopeRock, altitudeRock * 0.88);
-  const snowFactor = cl((h - snowL) / 3.2, 0, 1) * (1.0 - slopeRock * 0.5);
-  const dirtFactor = cl((h - 3.5) / 6.0, 0, 1);
-  
-  let r = lerp(grass[0], dirt[0], dirtFactor);
-  let g = lerp(grass[1], dirt[1], dirtFactor);
-  let b = lerp(grass[2], dirt[2], dirtFactor);
-  
-  r = lerp(r, rock[0], rockFactor);
-  g = lerp(g, rock[1], rockFactor);
-  b = lerp(b, rock[2], rockFactor);
-  
-  r = lerp(r, snow[0], snowFactor);
-  g = lerp(g, snow[1], snowFactor);
-  b = lerp(b, snow[2], snowFactor);
-  
-  r = lerp(r, sand[0], shoreFactor);
-  g = lerp(g, sand[1], shoreFactor);
-  b = lerp(b, sand[2], shoreFactor);
-  
-  return [r, g, b];
+// Terrain Material (PBR with Procedural Normal Bump Map tailored to active biome)
+function mkNormal(bKey = 'hills'){
+  const n = 128, c = document.createElement('canvas'); c.width = c.height = n;
+  const x = c.getContext('2d'), d = x.createImageData(n, n);
+  const g = new Float32Array(n*n);
+  for(let i=0; i<n*n; i++){
+    if(bKey === 'volc') g[i] = R() > 0.82 ? R() * 0.4 : R() * 0.15; // porous micro-cavities
+    else if(bKey === 'alpine') g[i] = R() * 0.25 + Math.sin(i * 0.2) * 0.08; // jagged stratified rock
+    else if(bKey === 'desert') g[i] = Math.sin((i%n)*0.18) * 0.12 + R() * 0.06; // sand ripples
+    else g[i] = R() * 0.2;
+  }
+  const G = (a, b) => g[((b+n)%n)*n + ((a+n)%n)];
+  for(let y=0; y<n; y++) for(let i=0; i<n; i++){
+    const nx = -(G(i+1, y) - G(i-1, y))*2.8, ny = -(G(i, y+1) - G(i, y-1))*2.8;
+    const l = Math.hypot(nx, ny, 1), k = (y*n + i)*4;
+    d.data[k] = (nx/l*0.5 + 0.5)*255;
+    d.data[k+1] = (ny/l*0.5 + 0.5)*255;
+    d.data[k+2] = (1/l)*255;
+    d.data[k+3] = 255;
+  }
+  x.putImageData(d, 0, 0);
+  const t = new BABYLON.Texture(c.toDataURL(), scene);
+  t.uScale = t.vScale = (bKey === 'volc' ? 48 : 36);
+  return t;
 }
 
-// 6. ROCK-SOLID HIGH-POLY MESH CREATION & PBR TEXTURING
-const tmat=new BABYLON.PBRMaterial('TerrainPBRMaterial', scene);
-tmat.roughness=0.76;
-tmat.metallic=0.02;
-tmat.directIntensity=1.45;
-tmat.environmentIntensity=1.35;
-tmat.specularIntensity=0.45;
-tmat.useVertexColors=true;
-tmat.backFaceCulling=false;
+let tm = new BABYLON.PBRMaterial("TerrainMaterial", scene);
+tm.useVertexColors = true;
+tm.roughness = 0.90;
+tm.metallic = 0.0;
+tm.bumpTexture = mkNormal('hills');
+tm.bumpTexture.level = 0.65;
+tm.backFaceCulling = false;
 
-function updateBiomeTextures(bKey){
-  const bio = BIO[bKey] || BIO.hills;
-  
-  if (tmat.albedoTexture) tmat.albedoTexture.dispose();
-  const albTex = new BABYLON.Texture(bio.albedo, scene);
-  albTex.uScale = albTex.vScale = 30;
-  albTex.anisotropicFilteringLevel = 16;
-  tmat.albedoTexture = albTex;
-
-  if (tmat.bumpTexture) tmat.bumpTexture.dispose();
-  const bmpTex = new BABYLON.Texture(bio.bump, scene);
-  bmpTex.uScale = bmpTex.vScale = 30;
-  bmpTex.anisotropicFilteringLevel = 16;
-  tmat.bumpTexture = bmpTex;
-  tmat.bumpTexture.level = 0.85;
+function setBiome(b, init){
+  biome = b; const o = BIO[b] || BIO.hills;
+  PAL.length = 0; PAL.push(...o.p, [.13,.13,.14]);
+  snowL = o.s; rockT = o.rT; veg = o.v;
+  if(tm){
+    tm.roughness = o.rough;
+    tm.metallic = 0.0;
+    if(tm.bumpTexture) tm.bumpTexture.dispose();
+    tm.bumpTexture = mkNormal(b);
+  }
+  if(!init){ push(); upd(); scatter(1); }
 }
+setBiome('hills', 1);
 
-let terrain=null;
-function makeTerrain(){
-  if(terrain) terrain.dispose();
-  const positions=[], indices=[], colors=[], uvs=[];
+let ter = null;
+function upd(x0=0, x1=N, z0=0, z1=N){
+  if(ter) ter.dispose();
+  const positions = [], indices = [], colors = [], uvs = [];
+
   for(let j=0; j<=N; j++){
     for(let i=0; i<=N; i++){
-      const k=j*W+i, x=i*D-S/2, z=j*D-S/2, h=H[k];
+      const k = j*W + i, x = i*D - S/2, z = j*D - S/2, h = H[k];
       positions.push(x, h, z);
-      uvs.push(i / N, j / N);
-      const c = MI[k] !== 255 ? PAL[MI[k]] : getTerrainColor(x, z, h);
+      uvs.push(i/N, j/N);
+      const c = col(i, j);
       colors.push(c[0], c[1], c[2], 1.0);
     }
   }
+
   for(let j=0; j<N; j++){
     for(let i=0; i<N; i++){
-      const a=j*W+i, b=a+1, c=a+W, d=c+1;
-      indices.push(a,c,b, b,c,d);
+      const a = j*W + i, b = a + 1, c = a + W, d = c + 1;
+      indices.push(a, c, b, b, c, d);
     }
   }
-  const vd=new BABYLON.VertexData();
-  vd.positions=positions; vd.indices=indices; vd.colors=colors; vd.uvs=uvs;
 
-  // Continuous Smooth Analytical Surface Normals (Zero Shadow Stepping)
-  const normals = new Float32Array((N + 1) * (N + 1) * 3);
-  for (let j = 0; j <= N; j++) {
-    for (let i = 0; i <= N; i++) {
-      const k = j * W + i;
-      const iL = Math.max(0, i - 1), iR = Math.min(N, i + 1);
-      const jD = Math.max(0, j - 1), jU = Math.min(N, j + 1);
-      const dx = (iR - iL) * D;
-      const dz = (jU - jD) * D;
-      const dhdx = (H[j * W + iR] - H[j * W + iL]) / dx;
-      const dhdz = (H[jU * W + i] - H[jD * W + i]) / dz;
-      
-      let nx = -dhdx, ny = 1.0, nz = -dhdz;
-      const len = Math.hypot(nx, ny, nz) || 1;
-      normals[k * 3]     = nx / len;
-      normals[k * 3 + 1] = ny / len;
-      normals[k * 3 + 2] = nz / len;
-    }
-  }
-  vd.normals = normals;
-
-  terrain=new BABYLON.Mesh('ProceduralTerrain', scene);
-  vd.applyToMesh(terrain, true);
-  terrain.material=tmat;
-  terrain.receiveShadows=true;
-  terrain.isPickable=true;
-  if(shadow) shadow.addShadowCaster(terrain);
-  if(waterMat && waterMat.addToRenderList) waterMat.addToRenderList(terrain);
-  return terrain;
-}
-
-function updateTerrain(){
-  makeTerrain();
-}
-
-// 7. RESTORED PROCEDURAL NOISE TERRAIN GENERATION (INSTANT & ROBUST)
-function gen(){
-  seed=(R()*100000)|0;
-  MI.fill(255);
+  // Analytical Normals
+  const normals = new Float32Array((N+1)*(N+1)*3);
   for(let j=0; j<=N; j++){
     for(let i=0; i<=N; i++){
-      const x=i*D-S/2, z=j*D-S/2;
-      const n1 = fbm3D(x*0.015 + seed*0.1, 0, z*0.015 + seed*0.1, 5);
-      const n2 = Math.abs(noise3D(x*0.032, 10, z*0.032));
-      const ridge = (1.0 - n2) * 11.0;
-      
-      const dist = Math.hypot(x, z) / (S * 0.46);
-      const islandFalloff = Math.max(0, 1.0 - Math.pow(dist, 2.2));
-      H[j*W+i] = (n1 * hs + ridge - 3.5) * islandFalloff + (1.0 - islandFalloff)*(-10.0);
+      const k = j*W + i;
+      const iL = Math.max(0, i-1), iR = Math.min(N, i+1);
+      const jD = Math.max(0, j-1), jU = Math.min(N, j+1);
+      const dx = (iR - iL)*D, dz = (jU - jD)*D;
+      const dhdx = (H[j*W + iR] - H[j*W + iL]) / dx;
+      const dhdz = (H[jU*W + i] - H[jD*W + i]) / dz;
+      let nx = -dhdx, ny = 1.0, nz = -dhdz;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normals[k*3] = nx/len; normals[k*3+1] = ny/len; normals[k*3+2] = nz/len;
     }
   }
-  updateTerrain();
+
+  const vd = new BABYLON.VertexData();
+  vd.positions = positions; vd.indices = indices; vd.colors = colors; vd.normals = normals; vd.uvs = uvs;
+
+  ter = new BABYLON.Mesh("TerrainMesh", scene);
+  vd.applyToMesh(ter, true);
+  ter.material = tm;
+  ter.receiveShadows = true;
+  ter.isPickable = true;
+
+  if(shadow) shadow.addShadowCaster(ter);
+  if(waterMat) waterMat.renderList = [ter];
 }
 
-function setBiome(b, init){
-  biome=b;
-  const bio=BIO[b] || BIO.hills;
-  PAL=bio.p; snowL=bio.s;
-  if(bio.sun) sun.diffuse=BABYLON.Color3.FromHexString('#'+bio.sun.toString(16).padStart(6,'0'));
-  if(bio.fog) scene.fogColor=BABYLON.Color3.FromHexString('#'+bio.fog.toString(16).padStart(6,'0'));
-  if(waterMat && waterMat.waterColor && bio.water){
-    waterMat.waterColor=BABYLON.Color3.FromHexString('#'+bio.water.toString(16).padStart(6,'0'));
-  }
-  updateBiomeTextures(b);
-  if(!init){ gen(); }
-}
-
-// 8. SPHERICAL AXIS VIEWPORT NAVIGATION GIZMO
-const navCanvas = $('#navCanvas');
-const navCtx = navCanvas ? navCanvas.getContext('2d') : null;
-
-function renderSphericalGizmo(){
-  if(!navCtx || !orbitCam) return;
-  const w = navCanvas.width, h = navCanvas.height;
-  navCtx.clearRect(0, 0, w, h);
-  const cx = w / 2, cy = h / 2, radius = w * 0.36;
-
-  const alpha = orbitCam.alpha, beta = orbitCam.beta;
-  const cosA = Math.cos(alpha), sinA = Math.sin(alpha);
-  const cosB = Math.cos(beta), sinB = Math.sin(beta);
-
-  function project(vx, vy, vz){
-    const x1 = vx * sinA - vz * cosA;
-    const z1 = vx * cosA + vz * sinA;
-    const y1 = vy;
-
-    const x2 = x1;
-    const y2 = y1 * sinB - z1 * cosB;
-    const z2 = y1 * cosB + z1 * sinB;
-    return { x: cx + x2 * radius, y: cy - y2 * radius, z: z2 };
-  }
-
-  const axes = [
-    { id:'+X', name:'Right',  vec:[ 1, 0, 0], col:'#ef4444', label:'X', isPos:true,  alpha:0,            beta:Math.PI*0.5 },
-    { id:'-X', name:'Left',   vec:[-1, 0, 0], col:'#ef4444', label:'-X',isPos:false, alpha:Math.PI,      beta:Math.PI*0.5 },
-    { id:'+Y', name:'Top',    vec:[ 0, 1, 0], col:'#22c55e', label:'Y', isPos:true,  alpha:orbitCam.alpha,beta:0.05 },
-    { id:'-Y', name:'Bottom', vec:[ 0,-1, 0], col:'#22c55e', label:'-Y',isPos:false, alpha:orbitCam.alpha,beta:Math.PI-0.05 },
-    { id:'+Z', name:'Front',  vec:[ 0, 0, 1], col:'#3b82f6', label:'Z', isPos:true,  alpha:-Math.PI*0.5, beta:Math.PI*0.5 },
-    { id:'-Z', name:'Back',   vec:[ 0, 0,-1], col:'#3b82f6', label:'-Z',isPos:false, alpha:Math.PI*0.5,  beta:Math.PI*0.5 }
-  ];
-
-  axes.forEach(a => Object.assign(a, project(...a.vec)));
-  axes.sort((a, b) => a.z - b.z);
-
-  axes.forEach(a => {
-    if(a.isPos){
-      navCtx.beginPath();
-      navCtx.moveTo(cx, cy);
-      navCtx.lineTo(a.x, a.y);
-      navCtx.strokeStyle = a.col;
-      navCtx.lineWidth = 3.5;
-      navCtx.stroke();
-    }
-  });
-
-  axes.forEach(a => {
-    navCtx.beginPath();
-    const nodeR = a.isPos ? 13 : 9;
-    navCtx.arc(a.x, a.y, nodeR, 0, Math.PI * 2);
-
-    if(a.isPos){
-      navCtx.fillStyle = a.col;
-      navCtx.fill();
-      navCtx.lineWidth = 1.5;
-      navCtx.strokeStyle = '#ffffff';
-      navCtx.stroke();
-
-      navCtx.fillStyle = '#ffffff';
-      navCtx.font = 'bold 11px system-ui, sans-serif';
-      navCtx.textAlign = 'center';
-      navCtx.textBaseline = 'middle';
-      navCtx.fillText(a.label, a.x, a.y);
-    } else {
-      navCtx.fillStyle = 'rgba(20,25,35,0.7)';
-      navCtx.fill();
-      navCtx.lineWidth = 2.5;
-      navCtx.strokeStyle = a.col;
-      navCtx.stroke();
-    }
-  });
-
-  navCanvas._renderedAxes = axes;
-}
-
-$('#navSph').addEventListener('click', e=>{
-  const rect = navCanvas.getBoundingClientRect();
-  const scale = navCanvas.width / rect.width;
-  const mx = (e.clientX - rect.left) * scale;
-  const my = (e.clientY - rect.top) * scale;
-
-  if(navCanvas._renderedAxes){
-    for(let i = navCanvas._renderedAxes.length - 1; i >= 0; i--){
-      const a = navCanvas._renderedAxes[i];
-      const dist = Math.hypot(mx - a.x, my - a.y);
-      if(dist < 18){
-        animateCamera(a.alpha, a.beta);
-        msg('Aligned to ' + a.name + ' View (' + a.id + ')');
-        break;
+function gen(){
+  seed = R()*100;
+  MI.fill(255);
+  for(let j=0; j<W; j++){
+    for(let i=0; i<W; i++){
+      const x = i*D - S/2, z = j*D - S/2;
+      let n = 0, a = 0.5, f = 0.035;
+      for(let o=0; o<4; o++){
+        n += vn(x*f + o*17, z*f)*a;
+        a /= 2; f *= 2;
       }
+      const r = Math.hypot(x, z) / (S/2);
+      H[j*W + i] = (n - 0.45)*hs - r*r*9 + 2;
     }
   }
-});
-
-function animateCamera(targetAlpha, targetBeta){
-  const startAlpha = orbitCam.alpha, startBeta = orbitCam.beta;
-  const startTime = performance.now();
-  const dur = 320;
-  function step(t){
-    const p = Math.min(1, (t - startTime) / dur);
-    const ease = 0.5 - 0.5 * Math.cos(p * Math.PI);
-    orbitCam.alpha = lerp(ease, startAlpha, targetAlpha);
-    orbitCam.beta = lerp(ease, startBeta, targetBeta);
-    renderSphericalGizmo();
-    if(p < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
+  upd();
 }
 
-// 9. HYDRAULIC EROSION SIMULATION
-function bump(x,z,v){
-  const u=cl((x+S/2)/D,0,N-.001), w=cl((z+S/2)/D,0,N-.001), i=u|0, j=w|0, a=u-i, b=w-j, k=j*W+i;
-  H[k]+=v*(1-a)*(1-b); H[k+1]+=v*a*(1-b); H[k+W]+=v*(1-a)*b; H[k+W+1]+=v*a*b;
+function bump(x, z, v){
+  const u = cl((x + S/2)/D, 0, N - 0.001), w = cl((z + S/2)/D, 0, N - 0.001);
+  const i = u|0, j = w|0, a = u - i, b = w - j, k = j*W + i;
+  H[k] += v*(1-a)*(1-b); H[k+1] += v*a*(1-b); H[k+W] += v*(1-a)*b; H[k+W+1] += v*a*b;
 }
 
 function erode(p){
-  const n=Math.round(25+75*br.str);
+  const n = Math.round(30 + 90*br.str);
   for(let q=0; q<n; q++){
-    const a=R()*Math.PI*2, d=Math.sqrt(R())*br.r;
-    let x=p.x+Math.cos(a)*d, z=p.z+Math.sin(a)*d, vx=0, vz=0, sed=0, sp=1;
-    for(let t=0; t<28; t++){
-      if(Math.abs(x)>S/2-D*2 || Math.abs(z)>S/2-D*2) break;
-      const h0=hgt(x,z), gx=(hgt(x+D,z)-hgt(x-D,z))/(2*D), gz=(hgt(x,z+D)-hgt(x,z-D))/(2*D);
-      vx=vx*0.5-gx; vz=vz*0.5-gz;
-      const l=Math.hypot(vx,vz);
-      if(l<1e-4) break;
-      vx/=l; vz/=l;
-      const nx=x+vx*D, nz=z+vz*D, dh=hgt(nx,nz)-h0, cap=Math.max(-dh,0.03)*sp*6;
-      if(sed>cap||dh>0){
-        const m=dh>0?Math.min(dh,sed):(sed-cap)*0.3;
-        bump(x,z,m); sed-=m;
+    const a = R()*6.283, d = Math.sqrt(R())*br.r;
+    let x = p.x + Math.cos(a)*d, z = p.z + Math.sin(a)*d, vx = 0, vz = 0, sed = 0, sp = 1;
+    for(let t=0; t<32; t++){
+      if(Math.abs(x) > S/2 - D*2 || Math.abs(z) > S/2 - D*2) break;
+      const h0 = hgt(x, z);
+      const gx = (hgt(x+D, z) - hgt(x-D, z)) / (2*D);
+      const gz = (hgt(x, z+D) - hgt(x, z-D)) / (2*D);
+      vx = vx*0.5 - gx; vz = vz*0.5 - gz;
+      const l = Math.hypot(vx, vz);
+      if(l < 1e-4) break;
+      vx /= l; vz /= l;
+      const nx = x + vx*D, nz = z + vz*D, dh = hgt(nx, nz) - h0;
+      const cap = Math.max(-dh, 0.03)*sp*6;
+      if(sed > cap || dh > 0){
+        const m = dh > 0 ? Math.min(dh, sed) : (sed - cap)*0.3;
+        bump(x, z, m); sed -= m;
       } else {
-        const m=Math.min((cap-sed)*0.3,-dh);
-        bump(x,z,-m*0.5); sed+=m*0.5;
+        const m = Math.min((cap - sed)*0.3, -dh);
+        bump(x, z, -m*0.5); sed += m*0.5;
       }
-      sp=Math.sqrt(Math.max(sp*sp-dh*2,0.05));
-      x=nx; z=nz;
+      sp = Math.sqrt(Math.max(sp*sp - dh*2, 0.05));
+      x = nx; z = nz;
     }
   }
-}
-
-// 10. SCULPTING & ZERO-OFFSET CURSOR RAYCASTING
-function getFalloff(d, mode){
-  if(d>=1) return 0;
-  if(mode==='linear') return 1-d;
-  if(mode==='sharp') return (1-d)**3;
-  if(mode==='flat') return 1;
-  return (1-d*d)**2;
 }
 
 function sculpt(p, dt){
-  if(br.tool==='erode'){
-    erode(p);
-    updateTerrain();
-    return;
-  }
-  const r=br.r, x0=Math.max(0,Math.floor((p.x+S/2-r)/D)), x1=Math.min(N,Math.ceil((p.x+S/2+r)/D)), z0=Math.max(0,Math.floor((p.z+S/2-r)/D)), z1=Math.min(N,Math.ceil((p.z+S/2+r)/D)), src=br.tool==='smooth'?H.slice():null;
+  if(br.tool == 'erode'){ erode(p); upd(); return; }
+  const r = br.r;
+  const x0 = Math.max(0, Math.floor((p.x + S/2 - r)/D));
+  const x1 = Math.min(N, Math.ceil((p.x + S/2 + r)/D));
+  const z0 = Math.max(0, Math.floor((p.z + S/2 - r)/D));
+  const z1 = Math.min(N, Math.ceil((p.z + S/2 + r)/D));
+  const src = br.tool == 'smooth' ? H.slice() : null;
+
   for(let j=z0; j<=z1; j++){
     for(let i=x0; i<=x1; i++){
-      const d=Math.hypot(i*D-S/2-p.x, j*D-S/2-p.z)/r;
-      if(d>=1) continue;
-      const f=getFalloff(d, br.falloff), k=j*W+i;
+      const d = Math.hypot(i*D - S/2 - p.x, j*D - S/2 - p.z) / r;
+      if(d >= 1) continue;
+      const f = (1 - d*d)**2, k = j*W + i;
       switch(br.tool){
-        case'raise': H[k]+=br.str*f*dt*15; break;
-        case'lower': H[k]-=br.str*f*dt*15; break;
-        case'flat': H[k]+=(fl-H[k])*Math.min(1,f*dt*12*br.str); break;
-        case'smooth':{
-          const a=(src[k-(i>0)]+src[k+(i<N)]+src[k-(j>0)*W]+src[k+(j<N)*W])/4;
-          H[k]+=(a-H[k])*Math.min(1,f*dt*16*br.str); break;
+        case 'raise': H[k] += br.str*f*dt*10; break;
+        case 'lower': H[k] -= br.str*f*dt*10; break;
+        case 'flat':  H[k] += (fl - H[k])*Math.min(1, f*dt*10*br.str); break;
+        case 'smooth': {
+          const a = (src[k - (i>0)] + src[k + (i<N)] + src[k - (j>0)*W] + src[k + (j<N)*W])/4;
+          H[k] += (a - H[k])*Math.min(1, f*dt*14*br.str);
+          break;
         }
-        case'terrace': H[k]+=(Math.round(H[k]/3)*3-H[k])*Math.min(1,f*dt*10*br.str); break;
-        case'paint': if(f>0.2) MI[k]=br.tex; break;
+        case 'terrace': H[k] += (Math.round(H[k]/3)*3 - H[k])*Math.min(1, f*dt*10*br.str); break;
+        case 'paint': if(f > 0.2) MI[k] = br.tex; break;
       }
     }
   }
-  updateTerrain();
+  upd(Math.max(0, x0-1), Math.min(N, x1+1), Math.max(0, z0-1), Math.min(N, z1+1));
 }
 
-let painting=false, lastT=0, down=null;
-function pickGround(){
-  const p = scene.pick(scene.pointerX, scene.pointerY, m => m === terrain);
-  return (p && p.hit && p.pickedPoint) ? p.pickedPoint : null;
-}
-
-const brushRing = BABYLON.MeshBuilder.CreateTorus('brushRing', {diameter:br.r*2, thickness:0.18, tessellation:32}, scene);
-const ringMat = new BABYLON.StandardMaterial('ringMat', scene);
-ringMat.emissiveColor = new BABYLON.Color3(0.24, 0.86, 0.58);
-ringMat.disableLighting = true;
-brushRing.material = ringMat;
-brushRing.isPickable = false;
-
-scene.onPointerObservable.add(pi=>{
-  if(pi.type===BABYLON.PointerEventTypes.POINTERDOWN){
-    down={x:pi.event.clientX, y:pi.event.clientY};
-    if(pi.event.button===2 || pi.event.button===1 || pi.event.altKey || nav) return;
-    if(tab==='terrain'){
-      const p = pickGround();
-      if(p){
-        push();
-        painting=true;
-        orbitCam.detachControl(cv);
-        fl=p.y;
-        lastT=performance.now();
-        sculpt(p, 0.04);
-      }
-    }
-  } else if(pi.type===BABYLON.PointerEventTypes.POINTERMOVE){
-    renderSphericalGizmo();
-    const p = pickGround();
-    if(p && !nav && tab==='terrain'){
-      brushRing.position.set(p.x, p.y + 0.3, p.z);
-      brushRing.scaling.set(br.r/7.0, 1.0, br.r/7.0);
-      brushRing.setEnabled(true);
-    } else {
-      brushRing.setEnabled(false);
-    }
-
-    if(!painting) return;
-    if(p){
-      const t = performance.now();
-      if(t-lastT > 30){
-        sculpt(p, Math.min(0.06, (t-lastT)/1000));
-        lastT=t;
-      }
-    }
-  } else if(pi.type===BABYLON.PointerEventTypes.POINTERUP){
-    if(painting){
-      painting=false;
-      orbitCam.attachControl(cv, true);
-    }
-  }
-});
-
-// 11. PRESERVED UI NAVIGATION DOCK & SUB-TABS
-function updSky(){
-  const day=Math.max(0,Math.sin((tod-6)/12*Math.PI));
-  sun.intensity=1.2+2.8*day;
-  hemi.intensity=0.70+1.0*day;
-  scene.fogDensity=fogD*(mode==='render'?1:0);
-}
-
-function shade(){
-  const wire=mode==='wire';
-  if(terrain) terrain.material.wireframe=wire;
-}
-
-const el=h=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild};
-const G=(...c)=>{const d=el('<div class="g"></div>');d.append(...c);return d};
-const btn=(t,f)=>{const b=el(`<button class="chip">${t}</button>`);b.onclick=f;return b};
-function sl(l,a,b,s,v,f){
-  const d=el(`<label class="sl"><span>${l}</span><input type="range" min="${a}" max="${b}" step="${s}" value="${v}"><output>${Number(v).toFixed(2)}</output></label>`);
-  const i=d.querySelector('input'),o=d.querySelector('output');
-  i.oninput=()=>{f(+i.value);o.value=(+i.value).toFixed(2)};
-  return d;
-}
-function chips(items,cur,cb){
-  const r=el('<div class="row"></div>');
-  items.forEach(([id,l])=>{
-    const b=el(`<button class="chip${id===cur?' on':''}">${l}</button>`);
-    b.onclick=()=>{cb(id);build()};
-    r.append(b);
-  });
-  return r;
-}
-
-const realCtl=()=>[
-  el('<div class="hint">Babylon.js • Triplanar World-Space PBR & Ocean Shader</div>'),
-  chips([[1024,'Shadows: Low'],[2048,'Medium'],[4096,'Ultra']],2048,v=>{ if(shadow) shadow.mapSize=v; }),
-  G(sl('Exposure',0.5,2.5,0.05,1.48,v=>{ scene.imageProcessingConfiguration.exposure=v; }), sl('Sun Angle',0,360,5,az,v=>{ az=v; }))
-];
-
-const PN={
-  terrain:()=>[
-    chips([['raise','⛰ Raise'],['lower','🕳 Lower'],['flat','▬ Flatten'],['smooth','≈ Smooth'],['terrace','▤ Terrace'],['erode','💧 Erode'],['paint','🎨 Paint']],br.tool,v=>br.tool=v),
-    ...(br.tool==='paint'?[chips([[0,'Grass'],[1,'Dirt'],[2,'Rock'],[3,'Sand'],[4,'Snow']],br.tex,v=>br.tex=v)]:[]),
-    G(sl('Brush radius',2,25,0.5,br.r,v=>br.r=v), sl('Strength',0.05,2,0.05,br.str,v=>br.str=v)),
-    chips([['hills','🌿 Hills'],['alpine','🏔 Alpine'],['desert','🏜 Desert'],['volc','🌋 Volcanic']], biome, setBiome),
-    G(sl('Height scale',10,80,1,hs,v=>{const f=v/hs;hs=v;for(let k=0;k<W*W;k++)H[k]*=f;updateTerrain()}), sl('Rock slope',0.3,2.0,0.05,rockT,v=>{rockT=v;updateTerrain()}), sl('Snow line',2,24,0.5,snowL,v=>{snowL=v;updateTerrain()})),
-    btn('🎲 Generate new terrain', ()=>{ push(); gen(); msg('Generated new landscape'); })
-  ],
-  plants:()=>[
-    el('<div class="hint">Step 1 focuses purely on ultra-realistic terrain shading and materials. Foliage spawning disabled.</div>')
-  ],
-  sky:()=>[
-    G(sl('Time of day',0,24,0.1,tod,v=>{tod=v;updSky()}), sl('Sun angle',0,360,5,az,v=>{az=v;updSky()}), sl('Fog Density',0,15,0.5,fogD*1000,v=>{fogD=v/1000;scene.fogDensity=fogD;updSky()})),
-    ...realCtl()
-  ],
-  water:()=>[
-    chips([[0,'Ocean Blue'],[1,'Lagoon Cyan'],[2,'Murky Deep'],['v','👁 Toggle Water']],wp,v=>{
-      if(v==='v') water.setEnabled(!water.isEnabled());
-      else {
-        wp=v;
-        if(waterMat && waterMat.waterColor){
-          if(v===0) waterMat.waterColor=new BABYLON.Color3(0.04, 0.35, 0.58);
-          else if(v===1) waterMat.waterColor=new BABYLON.Color3(0.06, 0.65, 0.75);
-          else waterMat.waterColor=new BABYLON.Color3(0.20, 0.38, 0.22);
-        }
-      }
-    }),
-    G(
-      sl('Water Level', -8, 8, 0.1, wl, v=>{ wl=v; water.position.y=v; updateTerrain(); }),
-      sl('Wave Agitation', 0, 1.5, 0.05, waterMat?waterMat.waveHeight:0.38, v=>{ if(waterMat) waterMat.waveHeight=v; }),
-      sl('Wind Force', 5, 100, 2, waterMat?waterMat.windForce:45, v=>{ if(waterMat) waterMat.windForce=v; })
-    )
-  ],
-  obj:()=>[
-    el('<div class="hint">Object tools and scene placements</div>')
-  ],
-  import:()=>[
-    el('<div class="hint">Import a real-world 3D model (GLB / GLTF / OBJ) or heightmap image into the workspace.</div>'),
-    fileBtn('🌍 Import 3D Model (GLB / GLTF)','',importModel),
-    G(sl('Heightmap relief (m)',5,80,1,22,v=>dem=v)),
-    fileBtn('🗻 Import Heightmap (PNG / JPG)','image/*',importHeightmap)
-  ]
+// 3. PROCEDURAL FOLIAGE & CITY BUILDING SYSTEMS
+const KIND = {};
+let season = 'summer';
+const SEAS = {
+  spring: { grass: [.9, 1.25, .7], oak: [.95, 1.35, .8], birch: [.95, 1.3, .8], shrub: [.95, 1.3, .8] },
+  summer: {},
+  autumn: { grass: [1.5, 1.1, .5], oak: [3, .95, .3], birch: [3.2, 1.6, .35], shrub: [2.4, 1, .35] },
+  winter: { grass: [1.6, 1.5, 1.2], oak: [1.3, 1, .8], birch: [1.2, 1.1, .9], shrub: [1.1, 1, .9], pine: [.85, 1, 1.1] }
 };
-
-let panelOpen=false, dem=22;
-function build(){
-  $('#dr').replaceChildren(...(PN[tab]?PN[tab]():[]));
-}
-
-const TABS=[['terrain','⛰','Terrain'],['plants','🌲','Foliage'],['sky','☀️','Lighting'],['water','🌊','Water'],['obj','🪑','Objects'],['import','🌍','Import']];
-TABS.forEach(([id,i,l])=>{
-  const b=el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);
-  b.onclick=()=>setTab(id);
-  $('#tabs').append(b);
-});
-
-function setTab(id){
-  tab=id;
-  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
-  build();
-  showPanel(true);
-}
-
-function showPanel(v){
-  panelOpen=v;
-  $('#panel').hidden=!v;
-  $('#bg').classList.toggle('on',v);
-  if(!v) painting=false;
-}
-
-$('#px').onclick=()=>showPanel(false);
-$('#bg').onclick=()=>showPanel(!panelOpen);
-$('#bw').onclick=()=>{
-  showPanel(false);
-  orbitCam.alpha=-Math.PI*0.25; orbitCam.beta=Math.PI*0.32; orbitCam.radius=110;
-  orbitCam.target.set(0,5,0);
-  renderSphericalGizmo();
+const RULE = {
+  grass: [.8, 0], flower: [.6, 0], shrub: [.9, 1.4], pine: [.75, 3], oak: [.6, 4.2], birch: [.6, 2.8],
+  palm: [.5, 3.5], rock: [9, 0], house: [.32, 0], block: [.28, 0], mid: [.27, 0], tower: [.26, 0]
 };
-$('#bi').onclick=()=>setTab('import');
+const BLD = { house: 4, block: 5.6, mid: 6.2, tower: 4.4 };
+const SM = { house: 1, block: 1, mid: 1, tower: 1, grass: 1.35, flower: 1.05, pine: 1.05, oak: 1.05, birch: 1.05, palm: 1.05, shrub: 1.05, rock: 0.8 };
+const RATE = { grass: 1.6, flower: .6, shrub: .25, pine: .15, oak: .12, birch: .14, palm: .1, rock: .12, house: .07, block: .05, mid: .04, tower: .03 };
+const TAB = [['grass',.62],['flower',.09],['pine',.03],['oak',.03],['birch',.025],['palm',.05],['shrub',.13],['rock',.025]];
 
-// Undo / Redo Stack
-let hist=[], future=[];
-function push(){
-  hist.push(H.slice());
-  if(hist.length>30) hist.shift();
-  future=[];
-}
-function undo(){
-  if(!hist.length) return;
-  future.push(H.slice());
-  H.set(hist.pop());
-  updateTerrain();
-}
-function redo(){
-  if(!future.length) return;
-  hist.push(H.slice());
-  H.set(future.pop());
-  updateTerrain();
-}
-$('#un').onclick=undo;
-$('#re').onclick=redo;
-
-// Single Compact Camera Toggle Button
-$('#camBtn').onclick=()=>{
-  isFlyMode=!isFlyMode;
-  if(isFlyMode){
-    scene.activeCamera.detachControl(cv);
-    freeCam.position.set(orbitCam.position.x, orbitCam.position.y, orbitCam.position.z);
-    freeCam.setTarget(orbitCam.target);
-    scene.activeCamera=freeCam;
-    freeCam.attachControl(cv, true);
-    $('#camBtn').innerHTML='<i class="fa-solid fa-compass"></i> Fly';
+// =========================================================================
+// PROCEDURAL TEXTURE GENERATION SUITE (BARK, LEAVES, GRASS, ROCK, BUMP)
+// =========================================================================
+function createProceduralBarkTexture(species){
+  const res = 512, cv = document.createElement('canvas'); cv.width = cv.height = res;
+  const ctx = cv.getContext('2d');
+  
+  if(species === 'oak'){
+    ctx.fillStyle = "#2c1d11"; ctx.fillRect(0, 0, res, res);
+    for(let i=0; i<3500; i++){
+      ctx.fillStyle = Math.random() > 0.5 ? "#190f07" : Math.random() > 0.5 ? "#3d2817" : "#4a321d";
+      const x = Math.random() * res, y = Math.random() * res;
+      ctx.fillRect(x, y, Math.random()*3 + 1, Math.random()*50 + 15);
+    }
+    // Deep vertical furrow crevices
+    ctx.fillStyle = "rgba(15, 8, 4, 0.4)";
+    for(let i=0; i<30; i++){
+      const gx = Math.random() * res;
+      ctx.fillRect(gx, 0, Math.random()*4 + 2, res);
+    }
+  } else if(species === 'pine'){
+    ctx.fillStyle = "#3e2417"; ctx.fillRect(0, 0, res, res);
+    for(let i=0; i<2500; i++){
+      ctx.fillStyle = Math.random() > 0.5 ? "#24120a" : Math.random() > 0.5 ? "#55311e" : "#683d26";
+      const x = Math.random() * res, y = Math.random() * res;
+      ctx.fillRect(x, y, Math.random()*12 + 4, Math.random()*18 + 6);
+    }
+  } else if(species === 'birch'){
+    ctx.fillStyle = "#e5e8e3"; ctx.fillRect(0, 0, res, res);
+    // Subtle beige-gray gradient undertones
+    for(let i=0; i<1500; i++){
+      ctx.fillStyle = "rgba(180, 175, 165, 0.15)";
+      ctx.fillRect(Math.random()*res, Math.random()*res, Math.random()*20+5, Math.random()*4+1);
+    }
+    // Horizontal dark lenticels & peeling paper bark
+    for(let i=0; i<120; i++){
+      ctx.fillStyle = Math.random() > 0.4 ? "#18181a" : "#383633";
+      const x = Math.random() * res, y = Math.random() * res;
+      ctx.fillRect(x, y, Math.random()*45 + 12, Math.random()*3 + 1.5);
+    }
+  } else if(species === 'palm'){
+    ctx.fillStyle = "#4a3d31"; ctx.fillRect(0, 0, res, res);
+    for(let y=0; y<res; y+=18){
+      ctx.fillStyle = "rgba(25, 18, 12, 0.6)";
+      ctx.fillRect(0, y, res, 4);
+    }
   } else {
-    scene.activeCamera.detachControl(cv);
-    scene.activeCamera=orbitCam;
-    orbitCam.attachControl(cv, true);
-    $('#camBtn').innerHTML='<i class="fa-solid fa-arrows-rotate"></i> Orbit';
+    ctx.fillStyle = "#35281e"; ctx.fillRect(0, 0, res, res);
+    for(let i=0; i<2000; i++){
+      ctx.fillStyle = Math.random() > 0.5 ? "#1f150e" : "#4a392b";
+      ctx.fillRect(Math.random()*res, Math.random()*res, Math.random()*3+1, Math.random()*25+5);
+    }
   }
-};
-
-$('#mode').onclick=()=>{
-  nav=!nav;
-  $('#mode').classList.toggle('on', !nav);
-  $('#mode').textContent=nav?'✋ Camera Orbit':'🖌 Brush Active';
-};
-
-function fileBtn(l,acc,cb){
-  const d=el(`<label class="chip" style="text-align:center">${l}<input type="file" hidden${acc?' accept="'+acc+'"':''}></label>`);
-  d.querySelector('input').onchange=e=>{
-    const f=e.target.files[0];
-    if(f) cb(f);
-    e.target.value='';
-  };
-  return d;
+  const tex = new BABYLON.DynamicTexture(species + "_BarkTex", cv, scene, true);
+  tex.uScale = 1; tex.vScale = (species === 'birch' ? 4 : 3);
+  return tex;
 }
 
-async function importModel(f){
-  const url=URL.createObjectURL(f);
-  try{
-    const r=await BABYLON.SceneLoader.ImportMeshAsync(null,url,'',scene);
-    const root=new BABYLON.TransformNode('ImportedModel_' + f.name, scene);
-    r.meshes.forEach(m=>{
-      m.parent=root; m.receiveShadows=true;
-      if(shadow) shadow.addShadowCaster(m,true);
-    });
-    root.position.y=hgt(0,0);
-    objs.push(root);
-    msg('Imported '+f.name);
-  }catch(e){
-    msg('Import failed: '+e.message);
-  }finally{
-    URL.revokeObjectURL(url);
+function createProceduralLeafTexture(species){
+  const res = 512, cv = document.createElement('canvas'); cv.width = cv.height = res;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, res, res);
+
+  if(species === 'oak' || species === 'shrub'){
+    // Clustered realistic broadleaf sprigs with veins
+    const count = 38;
+    for(let i=0; i<count; i++){
+      const cx = res/2 + (Math.random()-0.5)*320, cy = res/2 + (Math.random()-0.5)*320;
+      const rot = Math.random()*Math.PI*2, len = Math.random()*45 + 50, wid = len * 0.55;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      
+      // Leaf Body
+      ctx.beginPath();
+      ctx.moveTo(0, -len/2);
+      ctx.bezierCurveTo(wid, -len*0.2, wid*0.8, len*0.3, 0, len/2);
+      ctx.bezierCurveTo(-wid*0.8, len*0.3, -wid, -len*0.2, 0, -len/2);
+      ctx.fillStyle = species === 'shrub' 
+        ? (Math.random() > 0.5 ? "#326e1e" : "#458a28") 
+        : (Math.random() > 0.5 ? "#245818" : Math.random() > 0.5 ? "#317420" : "#428d2a");
+      ctx.fill();
+
+      // Center Vein
+      ctx.strokeStyle = "rgba(160, 220, 110, 0.45)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(0, -len/2); ctx.lineTo(0, len/2); ctx.stroke();
+      ctx.restore();
+    }
+  } else if(species === 'pine'){
+    // Dense radiating conifer pine needle clusters
+    const clusters = 16;
+    for(let c=0; c<clusters; c++){
+      const cx = res/2 + (Math.random()-0.5)*280, cy = res/2 + (Math.random()-0.5)*280;
+      const twigAngle = Math.random()*Math.PI*2;
+      
+      // Twig
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(twigAngle);
+      ctx.strokeStyle = "#2b1a10"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(0, -50); ctx.lineTo(0, 50); ctx.stroke();
+
+      // Needles
+      for(let n=0; n<65; n++){
+        const ty = (Math.random() - 0.5) * 90;
+        const side = Math.random() > 0.5 ? 1 : -1;
+        const nLen = Math.random()*35 + 25;
+        const nAng = (side * (0.35 + Math.random()*0.35));
+        ctx.strokeStyle = Math.random() > 0.4 ? "#123a16" : Math.random() > 0.5 ? "#194e1e" : "#24662a";
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(0, ty);
+        ctx.lineTo(Math.sin(nAng)*nLen * side, ty + Math.cos(nAng)*nLen);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  } else if(species === 'birch'){
+    // Serrated bright golden-green birch leaves
+    const count = 44;
+    for(let i=0; i<count; i++){
+      const cx = res/2 + (Math.random()-0.5)*300, cy = res/2 + (Math.random()-0.5)*300;
+      const rot = Math.random()*Math.PI*2, len = Math.random()*38 + 36, wid = len * 0.65;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rot);
+      ctx.beginPath();
+      ctx.moveTo(0, -len/2);
+      ctx.quadraticCurveTo(wid, 0, 0, len/2);
+      ctx.quadraticCurveTo(-wid, 0, 0, -len/2);
+      ctx.fillStyle = Math.random() > 0.5 ? "#4da822" : Math.random() > 0.5 ? "#62be28" : "#7ed634";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(210, 255, 140, 0.55)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(0, -len/2); ctx.lineTo(0, len/2); ctx.stroke();
+      ctx.restore();
+    }
+  } else if(species === 'palm'){
+    // Arching pinnate palm fronds
+    ctx.strokeStyle = "#382816"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(res*0.1, res*0.9); ctx.quadraticCurveTo(res*0.4, res*0.4, res*0.9, res*0.1); ctx.stroke();
+    for(let t=0.1; t<=0.95; t+=0.02){
+      const px = (1-t)*(1-t)*(res*0.1) + 2*(1-t)*t*(res*0.4) + t*t*(res*0.9);
+      const py = (1-t)*(1-t)*(res*0.9) + 2*(1-t)*t*(res*0.4) + t*t*(res*0.1);
+      for(const side of [-1, 1]){
+        ctx.strokeStyle = Math.random() > 0.5 ? "#28681e" : "#3b882a";
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + side*80*(1-t*0.5), py + 60);
+        ctx.stroke();
+      }
+    }
   }
+
+  const tex = new BABYLON.DynamicTexture(species + "_LeafTex", cv, scene, true);
+  tex.hasAlpha = true;
+  return tex;
+}
+
+function createProceduralGrassTexture(){
+  const res = 256, cv = document.createElement('canvas'); cv.width = cv.height = res;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, res, res);
+
+  for(let i=0; i<18; i++){
+    const bx = res/2 + (Math.random()-0.5)*50;
+    const by = res - 10;
+    const curve = (Math.random()-0.5)*70;
+    const h = Math.random()*120 + 110;
+    
+    ctx.beginPath();
+    ctx.moveTo(bx - 4, by);
+    ctx.quadraticCurveTo(bx + curve*0.5, by - h*0.5, bx + curve, by - h);
+    ctx.quadraticCurveTo(bx + curve*0.5 + 3, by - h*0.5, bx + 4, by);
+    ctx.fillStyle = Math.random() > 0.5 ? "#3b8820" : Math.random() > 0.5 ? "#4fa82a" : "#68c838";
+    ctx.fill();
+  }
+  const tex = new BABYLON.DynamicTexture("GrassBladeTex", cv, scene, true);
+  tex.hasAlpha = true;
+  return tex;
+}
+
+// UNIVERSAL PARAMETRIC TREE GENERATOR ENGINE (OAK, PINE, BIRCH, PALM, SHRUB)
+function generateProceduralTree(species, treeSeed = 42){
+  const parts = [];
+  const barkMat = new BABYLON.PBRMaterial(species + "_BarkMat", scene);
+  barkMat.roughness = species === 'birch' ? 0.72 : species === 'pine' ? 0.88 : 0.90;
+  barkMat.metallic = 0.02;
+  barkMat.albedoTexture = createProceduralBarkTexture(species);
+
+  const leafMat = new BABYLON.PBRMaterial(species + "_LeafMat", scene);
+  leafMat.backFaceCulling = false;
+  leafMat.twoSidedLighting = true;
+  leafMat.roughness = species === 'pine' ? 0.75 : 0.55;
+  leafMat.metallic = 0.0;
+  leafMat.albedoTexture = createProceduralLeafTexture(species);
+  leafMat.opacityTexture = leafMat.albedoTexture;
+  leafMat.subSurface.isTranslucencyEnabled = true;
+
+  if(species === 'oak'){
+    // Oak: Broadleaf Deciduous. SSS ~0.45, rich boughs & multi-plane cross-clusters
+    leafMat.albedoColor = new BABYLON.Color3(0.85, 0.95, 0.85);
+    leafMat.subSurface.translucencyIntensity = 0.45;
+
+    const t1 = BABYLON.MeshBuilder.CreateCylinder("t1", { height: 2.8, diameterBottom: 0.75, diameterTop: 0.52, tessellation: 8 }, scene);
+    t1.position.set(0, 1.4, 0);
+    const t2 = BABYLON.MeshBuilder.CreateCylinder("t2", { height: 2.4, diameterBottom: 0.52, diameterTop: 0.35, tessellation: 8 }, scene);
+    t2.position.set(0.12, 3.8, 0.08); t2.rotation.z = -0.06;
+
+    const boughs = [];
+    const bAngles = [0, 1.25, 2.4, 3.65, 4.9];
+    bAngles.forEach((ang, i) => {
+      const bLen = 2.8 + (i%3)*0.4;
+      const b = BABYLON.MeshBuilder.CreateCylinder("b_" + i, { height: bLen, diameterBottom: 0.32, diameterTop: 0.15, tessellation: 6 }, scene);
+      b.position.set(Math.cos(ang)*0.45, 3.4 + i*0.25, Math.sin(ang)*0.45);
+      b.rotation.set(Math.sin(ang)*0.7, -ang, Math.cos(ang)*0.7);
+      boughs.push(b);
+
+      for(let k=0; k<4; k++){
+        const lq = BABYLON.MeshBuilder.CreatePlane("lq_" + i + "_" + k, { size: 2.6 }, scene);
+        const endX = b.position.x + Math.sin(b.rotation.z)*bLen*0.95 + (k-1.5)*0.4;
+        const endY = b.position.y + Math.cos(b.rotation.z)*bLen*0.85 + 0.3;
+        const endZ = b.position.z + Math.sin(b.rotation.x)*bLen*0.95;
+        lq.position.set(endX, endY, endZ);
+        lq.rotation.set(0.4 + k*0.5, ang + k*1.1, 0.2);
+        lq.material = leafMat;
+        parts.push(lq);
+      }
+    });
+
+    for(let k=0; k<6; k++){
+      const topP = BABYLON.MeshBuilder.CreatePlane("topP_" + k, { size: 3.4 }, scene);
+      topP.position.set(0.1, 5.2 + k*0.35, 0.1);
+      topP.rotation.set(0.35, k * 0.75, 0.25);
+      topP.material = leafMat;
+      parts.push(topP);
+    }
+    const mergedTrunk = BABYLON.Mesh.MergeMeshes([t1, t2, ...boughs], true, true, undefined, false, true);
+    mergedTrunk.material = barkMat;
+    parts.unshift(mergedTrunk);
+
+  } else if(species === 'pine'){
+    // Pine: Evergreen Alpine Conifer. SSS ~0.20, dark needle clusters, tiered conical whorls
+    leafMat.albedoColor = new BABYLON.Color3(0.75, 0.90, 0.75);
+    leafMat.subSurface.translucencyIntensity = 0.20;
+
+    const trunk = BABYLON.MeshBuilder.CreateCylinder("p_trunk", { height: 9.2, diameterBottom: 0.55, diameterTop: 0.08, tessellation: 8 }, scene);
+    trunk.position.set(0, 4.6, 0);
+    trunk.material = barkMat;
+    parts.push(trunk);
+
+    for(let tier=0; tier<7; tier++){
+      const y = 2.0 + tier * 1.05;
+      const tierLen = (7 - tier) * 0.5 + 0.6;
+      const branchCount = 6;
+      for(let b=0; b<branchCount; b++){
+        const ang = (b / branchCount) * Math.PI * 2 + tier * 0.45;
+        const needle = BABYLON.MeshBuilder.CreatePlane("ndl_" + tier + "_" + b, { width: tierLen * 1.1, height: 1.4 }, scene);
+        needle.position.set(Math.cos(ang) * tierLen * 0.55, y, Math.sin(ang) * tierLen * 0.55);
+        needle.rotation.set(0.4, -ang, 0);
+        needle.material = leafMat;
+        parts.push(needle);
+      }
+    }
+    const spire = BABYLON.MeshBuilder.CreatePlane("spire", { size: 2.5 }, scene);
+    spire.position.set(0, 8.8, 0); spire.material = leafMat;
+    parts.push(spire);
+
+  } else if(species === 'birch'){
+    // Birch: Slender graceful white trunk with dark lenticels, vibrant light-green foliage
+    leafMat.albedoColor = new BABYLON.Color3(0.9, 1.0, 0.85);
+    leafMat.subSurface.translucencyIntensity = 0.60;
+
+    const t1 = BABYLON.MeshBuilder.CreateCylinder("b_t1", { height: 3.5, diameterBottom: 0.35, diameterTop: 0.24, tessellation: 7 }, scene);
+    t1.position.set(0, 1.75, 0);
+    const t2 = BABYLON.MeshBuilder.CreateCylinder("b_t2", { height: 3.2, diameterBottom: 0.24, diameterTop: 0.12, tessellation: 7 }, scene);
+    t2.position.set(0.18, 4.8, 0.12); t2.rotation.z = -0.08;
+
+    const boughs = [];
+    for(let i=0; i<7; i++){
+      const ang = i * 1.05;
+      const b = BABYLON.MeshBuilder.CreateCylinder("bb_" + i, { height: 2.5, diameterBottom: 0.16, diameterTop: 0.06, tessellation: 5 }, scene);
+      b.position.set(Math.cos(ang)*0.22, 3.6 + i*0.4, Math.sin(ang)*0.22);
+      b.rotation.set(Math.sin(ang)*0.75, -ang, Math.cos(ang)*0.75);
+      boughs.push(b);
+
+      const leaf = BABYLON.MeshBuilder.CreatePlane("bl_" + i, { size: 2.2 }, scene);
+      leaf.position.set(b.position.x + Math.sin(b.rotation.z)*2.0, b.position.y + Math.cos(b.rotation.z)*1.7, b.position.z + Math.sin(b.rotation.x)*2.0);
+      leaf.rotation.set(0.5, ang + 0.3, -0.2);
+      leaf.material = leafMat;
+      parts.push(leaf);
+    }
+    const mergedTrunk = BABYLON.Mesh.MergeMeshes([t1, t2, ...boughs], true, true, undefined, false, true);
+    mergedTrunk.material = barkMat;
+    parts.unshift(mergedTrunk);
+
+  } else if(species === 'palm'){
+    leafMat.albedoColor = new BABYLON.Color3(0.9, 1.0, 0.9);
+    leafMat.subSurface.translucencyIntensity = 0.40;
+    const trunk = BABYLON.MeshBuilder.CreateCylinder("p_tr", { height: 7.2, diameterBottom: 0.46, diameterTop: 0.24, tessellation: 8 }, scene);
+    trunk.position.set(0.35, 3.6, 0); trunk.rotation.z = -0.09;
+    trunk.material = barkMat;
+    parts.push(trunk);
+
+    for(let i=0; i<10; i++){
+      const ang = (i / 10) * Math.PI * 2;
+      const frond = BABYLON.MeshBuilder.CreatePlane("fr_" + i, { width: 3.6, height: 1.4 }, scene);
+      frond.position.set(trunk.position.x + Math.cos(ang)*1.6, 7.1, trunk.position.z + Math.sin(ang)*1.6);
+      frond.rotation.set(0.55, -ang, 0);
+      frond.material = leafMat;
+      parts.push(frond);
+    }
+  } else if(species === 'shrub'){
+    leafMat.albedoColor = new BABYLON.Color3(0.85, 0.95, 0.85);
+    leafMat.subSurface.translucencyIntensity = 0.40;
+    for(let i=0; i<5; i++){
+      const s = BABYLON.MeshBuilder.CreatePlane("sh_" + i, { size: 2.0 }, scene);
+      s.position.set((Math.random()-0.5)*0.7, 0.9 + i*0.25, (Math.random()-0.5)*0.7);
+      s.rotation.set(0.3, i * 0.78, 0.1);
+      s.material = leafMat;
+      parts.push(s);
+    }
+  }
+
+  const masterTree = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true);
+  return masterTree;
+}
+
+function createMasterMesh(k){
+  let mesh;
+  if(['oak', 'pine', 'birch', 'palm', 'shrub'].includes(k)){
+    mesh = generateProceduralTree(k);
+  } else if(k === 'grass'){
+    const g1 = BABYLON.MeshBuilder.CreatePlane("g1", { size: 1.4 }, scene);
+    const g2 = BABYLON.MeshBuilder.CreatePlane("g2", { size: 1.4 }, scene);
+    g2.rotation.y = Math.PI / 3;
+    const g3 = BABYLON.MeshBuilder.CreatePlane("g3", { size: 1.4 }, scene);
+    g3.rotation.y = Math.PI * 2 / 3;
+    mesh = BABYLON.Mesh.MergeMeshes([g1, g2, g3], true, true, undefined, false, true);
+    mesh.position.y = 0.7;
+    const mat = new BABYLON.PBRMaterial("grass_MasterMat", scene);
+    mat.roughness = 0.80; mat.metallic = 0.0;
+    mat.albedoTexture = createProceduralGrassTexture();
+    mat.opacityTexture = mat.albedoTexture;
+    mat.subSurface.isTranslucencyEnabled = true;
+    mat.subSurface.translucencyIntensity = 0.55;
+    mat.backFaceCulling = false; mat.twoSidedLighting = true;
+    mesh.material = mat;
+  } else if(k === 'flower'){
+    const stem = BABYLON.MeshBuilder.CreateCylinder("stem", { height: 0.6, diameter: 0.04 }, scene);
+    stem.position.y = 0.3;
+    const pet = BABYLON.MeshBuilder.CreateSphere("pet", { diameter: 0.32, segments: 6 }, scene);
+    pet.position.y = 0.62;
+    mesh = BABYLON.Mesh.MergeMeshes([stem, pet], true, true, undefined, false, true);
+    const mat = new BABYLON.PBRMaterial("flower_MasterMat", scene);
+    mat.albedoColor = new BABYLON.Color3(0.98, 0.45, 0.68);
+    mat.roughness = 0.65;
+    mesh.material = mat;
+  } else if(k === 'rock'){
+    mesh = BABYLON.MeshBuilder.CreateIcoSphere("rock", { radius: 1.2, subdivisions: 2 }, scene);
+    const pos = mesh.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+    for(let i=0; i<pos.length; i+=3){
+      pos[i] += (Math.random()-0.5)*0.3; pos[i+1] *= 0.68 + (Math.random()-0.5)*0.2; pos[i+2] += (Math.random()-0.5)*0.3;
+    }
+    mesh.setVerticesData(BABYLON.VertexBuffer.PositionKind, pos);
+    mesh.createNormals(false);
+    mesh.position.y = 0.48;
+    const mat = new BABYLON.PBRMaterial("rock_MasterMat", scene);
+    mat.roughness = 0.94; mat.metallic = 0.02;
+    mat.albedoColor = new BABYLON.Color3(0.35, 0.36, 0.38);
+    mesh.material = mat;
+  } else if(k === 'house'){
+    const base = BABYLON.MeshBuilder.CreateBox("hBase", { width: 6, height: 3.5, depth: 6 }, scene);
+    base.position.y = 1.75;
+    const roof = BABYLON.MeshBuilder.CreateCylinder("hRoof", { height: 6, diameter: 4.5, tessellation: 3 }, scene);
+    roof.position.y = 4.6; roof.rotation.z = Math.PI / 2;
+    mesh = BABYLON.Mesh.MergeMeshes([base, roof], true, true, undefined, false, true);
+    const mat = new BABYLON.PBRMaterial("house_MasterMat", scene);
+    mat.albedoColor = new BABYLON.Color3(0.82, 0.76, 0.68);
+    mesh.material = mat;
+  } else if(k === 'block'){
+    mesh = BABYLON.MeshBuilder.CreateBox("block", { width: 8, height: 12, depth: 8 }, scene);
+    mesh.position.y = 6;
+    const mat = new BABYLON.PBRMaterial("block_MasterMat", scene);
+    mat.albedoColor = new BABYLON.Color3(0.65, 0.62, 0.58);
+    mesh.material = mat;
+  } else if(k === 'mid'){
+    mesh = BABYLON.MeshBuilder.CreateBox("mid", { width: 9, height: 24, depth: 9 }, scene);
+    mesh.position.y = 12;
+    const mat = new BABYLON.PBRMaterial("mid_MasterMat", scene);
+    mat.albedoColor = new BABYLON.Color3(0.55, 0.58, 0.62);
+    mesh.material = mat;
+  } else if(k === 'tower'){
+    const b1 = BABYLON.MeshBuilder.CreateBox("t1", { width: 6, height: 48, depth: 6 }, scene);
+    b1.position.y = 24;
+    const spire = BABYLON.MeshBuilder.CreateCylinder("spire", { height: 8, diameterBottom: 0.6, diameterTop: 0 }, scene);
+    spire.position.y = 52;
+    mesh = BABYLON.Mesh.MergeMeshes([b1, spire], true, true, undefined, false, true);
+    const mat = new BABYLON.PBRMaterial("tower_MasterMat", scene);
+    mat.albedoColor = new BABYLON.Color3(0.45, 0.55, 0.68);
+    mesh.material = mat;
+  }
+
+  if(mesh){
+    if(typeof mesh.setEnabled === 'function') mesh.setEnabled(false); // Master mesh kept hidden
+    if(shadow) shadow.addShadowCaster(mesh);
+  }
+  return mesh;
+}
+
+['grass','flower','pine','oak','birch','palm','shrub','rock','house','block','mid','tower'].forEach(k => {
+  KIND[k] = {
+    list: [],
+    max: k==='grass'?20000:k==='flower'?3000:k==='house'?1500:800,
+    size: 1,
+    vr: BLD[k]?0.08:k==='rock'?0.7:0.35,
+    tint: [1, 1, 1],
+    master: createMasterMesh(k),
+    instances: []
+  };
+});
+
+function sync(k){
+  const K = KIND[k];
+  if(!K.master) return;
+
+  // Rebuild Babylon instances for this kind
+  K.instances.forEach(inst => inst.dispose());
+  K.instances.length = 0;
+
+  K.list.forEach((o, idx) => {
+    const inst = K.master.createInstance(`${k}_inst_${idx}`);
+    inst.position.set(o.x, o.y - (k === 'rock' ? 0.12 * o.s : 0), o.z);
+    inst.rotation.set(0, o.r, 0);
+    const bw = BLD[k] ? K.size * o.a : o.s * o.a * K.size;
+    const bh = o.s * K.size;
+    inst.scaling.set(bw, bh, bw);
+    inst.isPickable = false;
+    K.instances.push(inst);
+  });
+}
+
+const bY = (x, z, b) => Math.min(
+  hgt(x, z),
+  hgt(x + b*0.6, z + b*0.6), hgt(x - b*0.6, z + b*0.6),
+  hgt(x + b*0.6, z - b*0.6), hgt(x - b*0.6, z - b*0.6)
+);
+
+const slope = (x, z) => Math.hypot(hgt(x+1, z) - hgt(x-1, z), hgt(x, z+1) - hgt(x, z-1)) / 2;
+
+function add(k, x, z, f=1, yaw=0){
+  const K = KIND[k], bd = BLD[k];
+  if(!bd && k != 'rock' && k != 'palm' && f < 1.5 && R() > veg) return 0;
+  if(K.list.length >= K.max || Math.abs(x) > S/2 - 1 - (bd||0) || Math.abs(z) > S/2 - 1 - (bd||0)) return 0;
+
+  const y = bd ? bY(x, z, bd) : hgt(x, z);
+  const [ms, sp] = RULE[k];
+  const sl = slope(x, z);
+
+  if(y < wl + (bd ? 0.7 : k == 'rock' ? -0.3 : 0.25) || sl > ms) return 0;
+  if(k == 'grass' && vn(x*0.09 + 9, z*0.09 + 4)*f < 0.32) return 0;
+  if((k == 'pine' || k == 'oak' || k == 'birch') && vn(x*0.05 + 3, z*0.05 + 8)*f < 0.38) return 0;
+  if(k == 'rock' && f < 1.5 && R() > 0.25 + sl*0.8) return 0;
+
+  const s = SM[k] * (1 + (R() - 0.5)*2*K.vr);
+  if(bd){
+    for(const q in BLD){
+      if(KIND[q].list.some(o => (o.x - x)**2 + (o.z - z)**2 < (bd + BLD[q])**2 * 0.8)) return 0;
+    }
+  } else if(sp && K.list.some(o => (o.x - x)**2 + (o.z - z)**2 < (sp*(o.s + s)*0.5)**2)){
+    return 0;
+  }
+
+  K.list.push({
+    x, y, z, s,
+    r: bd ? yaw + Math.floor(R()*4)*1.5708 : R()*6.28,
+    a: bd ? 0.94 + R()*0.12 : 0.88 + R()*0.24,
+    v: 0.82 + R()*0.3
+  });
+  return 1;
+}
+
+function plantAt(p){
+  if(br.kind == 'erase'){
+    for(const k in KIND){
+      if(tab == 'city' && !BLD[k] || tab == 'plants' && BLD[k]) continue;
+      const K = KIND[k], n = K.list.length;
+      K.list = K.list.filter(o => Math.hypot(o.x - p.x, o.z - p.z) > br.r);
+      if(K.list.length != n) sync(k);
+    }
+    return;
+  }
+
+  const k = br.kind;
+  const n = Math.max(1, Math.round(br.den * RATE[k])) * 2;
+  for(let i=0; i<n; i++){
+    const a = R()*6.283, d = Math.sqrt(R())*br.r;
+    add(k, p.x + Math.cos(a)*d, p.z + Math.sin(a)*d, 1.7, cityAng);
+  }
+  if(BLD[k]){
+    for(const q in KIND){
+      if(!BLD[q]){
+        const Q = KIND[q], n0 = Q.list.length;
+        Q.list = Q.list.filter(o => Math.hypot(o.x - p.x, o.z - p.z) > br.r);
+        if(Q.list.length != n0) sync(q);
+      }
+    }
+  }
+  sync(k);
+}
+
+function clearUnderB(){
+  const B = [];
+  for(const q in BLD){
+    KIND[q].list.forEach(o => B.push([o.x, o.z, BLD[q]*KIND[q].size*0.95 + 1]));
+  }
+  if(!B.length) return;
+  for(const k in KIND){
+    if(BLD[k]) continue;
+    const K = KIND[k], n = K.list.length;
+    K.list = K.list.filter(o => !B.some(b => (o.x - b[0])**2 + (o.z - b[1])**2 < b[2]*b[2]));
+    if(K.list.length != n) sync(k);
+  }
+}
+
+function scatter(kb){
+  for(const k in KIND){
+    if(!(kb && BLD[k])) KIND[k].list = [];
+  }
+  for(let i=0; i<18000; i++){
+    const x = (R() - 0.5)*S*0.96, z = (R() - 0.5)*S*0.96;
+    let r = R(), k = 'rock';
+    for(const [n, w] of TAB){
+      if(r < w){ k = n; break; }
+      r -= w;
+    }
+    add(k, x, z);
+  }
+  if(kb) clearUnderB();
+  for(const k in KIND) sync(k);
+}
+
+function resnap(){
+  for(const k in KIND){
+    KIND[k].list.forEach(o => o.y = BLD[k] ? bY(o.x, o.z, BLD[k]) : hgt(o.x, o.z));
+    sync(k);
+  }
+}
+
+function setSeason(s){
+  season = s;
+  for(const k in KIND){
+    KIND[k].tint = SEAS[s][k] || [1, 1, 1];
+    sync(k);
+  }
+}
+
+// City Building Helpers
+let cityTap = false, cityR = 30, cityD = 0.8, cityLvl = true, cityRoad = true, cityAng = 0;
+const cityCell = 12;
+
+function level(cx, cz, r, t){
+  if(t === undefined){
+    let s = hgt(cx, cz);
+    for(let a=0; a<12; a++) s += hgt(cx + Math.cos(a*0.5236)*r*0.5, cz + Math.sin(a*0.5236)*r*0.5);
+    t = Math.max(s/13, wl + 0.9);
+  }
+  for(let j=0; j<W; j++){
+    for(let i=0; i<W; i++){
+      const k = j*W + i, d = Math.hypot(i*D - S/2 - cx, j*D - S/2 - cz) / (r*1.15);
+      if(d >= 1 || H[k] < wl + 0.3) continue;
+      H[k] += (t - H[k])*(1 - sm(0.6, 1, d))*0.9;
+    }
+  }
+  upd();
+}
+
+function genCity(c){
+  push();
+  const r = cityR, cs = cityCell, ang = cityAng = (R() - 0.5)*0.5;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  if(cityLvl) level(c.x, c.z, r);
+
+  const n = Math.ceil(r/cs), L = [];
+  for(let i=-n; i<=n; i++) for(let j=-n; j<=n; j++){
+    const u = i*cs, w = j*cs, d = Math.hypot(u, w)/r;
+    if(d <= 1) L.push({ x: c.x + u*ca - w*sa, z: c.z + u*sa + w*ca, d });
+  }
+
+  let made = 0;
+  L.forEach(l => {
+    if(R() > cityD*(1.15 - l.d*0.55)) return;
+    const p = R();
+    const t = l.d < 0.28 ? (p < 0.6 ? 'tower' : 'mid') :
+              l.d < 0.60 ? (p < 0.15 ? 'tower' : p < 0.6 ? 'mid' : 'block') :
+              l.d < 0.80 ? (p < 0.5 ? 'block' : 'house') : 'house';
+    if(add(t, l.x + (R() - 0.5)*0.6, l.z + (R() - 0.5)*0.6, 1.7, ang)) made++;
+  });
+
+  if(cityRoad && made){
+    for(let j=0; j<W; j++) for(let i=0; i<W; i++){
+      const x = i*D - S/2 - c.x, z = j*D - S/2 - c.z;
+      const u = x*ca + z*sa, w = -x*sa + z*ca;
+      if(Math.hypot(u, w) > r*0.97) continue;
+      const fu = u/cs - Math.floor(u/cs), fw = w/cs - Math.floor(w/cs);
+      if((Math.abs(fu - 0.5)*cs < 1.5 || Math.abs(fw - 0.5)*cs < 1.5) && H[j*W + i] > wl + 0.4){
+        MI[j*W + i] = 5;
+      }
+    }
+  }
+  upd();
+  clearUnderB();
+  resnap();
+  msg(made ? made + ' buildings generated' : 'No valid flat land here. Try a flatter location.');
+}
+
+// 4. OBJECT ASSET LIBRARY & MODAL TRANSFORMS
+const LIB = {
+  Pine: () => {
+    const root = new BABYLON.TransformNode("Pine", scene);
+    const trunk = BABYLON.MeshBuilder.CreateCylinder("t", { height: 2.6, diameterBottom: 0.35, diameterTop: 0.25 }, scene);
+    trunk.position.y = 1.3; trunk.parent = root;
+    const c1 = BABYLON.MeshBuilder.CreateCylinder("c1", { height: 4.6, diameterBottom: 3.6, diameterTop: 0 }, scene);
+    c1.position.y = 4.6; c1.parent = root;
+    const c2 = BABYLON.MeshBuilder.CreateCylinder("c2", { height: 3.4, diameterBottom: 2.8, diameterTop: 0 }, scene);
+    c2.position.y = 6.6; c2.parent = root;
+    const m1 = new BABYLON.StandardMaterial("tMat", scene); m1.diffuseColor = new BABYLON.Color3(0.42, 0.29, 0.18); trunk.material = m1;
+    const m2 = new BABYLON.StandardMaterial("lMat", scene); m2.diffuseColor = new BABYLON.Color3(0.18, 0.42, 0.22); c1.material = c2.material = m2;
+    return root;
+  },
+  Oak: () => {
+    const root = new BABYLON.TransformNode("Oak", scene);
+    const trunk = BABYLON.MeshBuilder.CreateCylinder("t", { height: 3, diameterBottom: 0.45, diameterTop: 0.3 }, scene);
+    trunk.position.y = 1.5; trunk.parent = root;
+    const crown = BABYLON.MeshBuilder.CreateSphere("c", { diameter: 4.4, segments: 8 }, scene);
+    crown.position.y = 4.3; crown.parent = root;
+    const m1 = new BABYLON.StandardMaterial("tMat", scene); m1.diffuseColor = new BABYLON.Color3(0.42, 0.29, 0.18); trunk.material = m1;
+    const m2 = new BABYLON.StandardMaterial("lMat", scene); m2.diffuseColor = new BABYLON.Color3(0.31, 0.56, 0.23); crown.material = m2;
+    return root;
+  },
+  Shrub: () => {
+    const root = new BABYLON.TransformNode("Shrub", scene);
+    const s = BABYLON.MeshBuilder.CreateSphere("s", { diameter: 2, segments: 7 }, scene);
+    s.position.y = 0.7; s.parent = root;
+    const m = new BABYLON.StandardMaterial("shMat", scene); m.diffuseColor = new BABYLON.Color3(0.25, 0.49, 0.22); s.material = m;
+    return root;
+  },
+  Rock: () => {
+    const root = new BABYLON.TransformNode("Rock", scene);
+    const r = BABYLON.MeshBuilder.CreateIcoSphere("r", { radius: 1.2, subdivisions: 2 }, scene);
+    r.position.y = 0.6; r.parent = root;
+    const m = new BABYLON.StandardMaterial("rMat", scene); m.diffuseColor = new BABYLON.Color3(0.49, 0.50, 0.52); r.material = m;
+    return root;
+  },
+  Fence: () => {
+    const root = new BABYLON.TransformNode("Fence", scene);
+    [-1.5, 0, 1.5].forEach(x => {
+      const p = BABYLON.MeshBuilder.CreateBox("p", { width: 0.15, height: 1.3, depth: 0.15 }, scene);
+      p.position.set(x, 0.65, 0); p.parent = root;
+    });
+    const r1 = BABYLON.MeshBuilder.CreateBox("r1", { width: 3.2, height: 0.12, depth: 0.06 }, scene);
+    r1.position.set(0, 0.5, 0); r1.parent = root;
+    const r2 = BABYLON.MeshBuilder.CreateBox("r2", { width: 3.2, height: 0.12, depth: 0.06 }, scene);
+    r2.position.set(0, 1.0, 0); r2.parent = root;
+    return root;
+  },
+  Bench: () => {
+    const root = new BABYLON.TransformNode("Bench", scene);
+    const seat = BABYLON.MeshBuilder.CreateBox("s", { width: 1.7, height: 0.1, depth: 0.5 }, scene);
+    seat.position.set(0, 0.5, 0); seat.parent = root;
+    const back = BABYLON.MeshBuilder.CreateBox("b", { width: 1.7, height: 0.45, depth: 0.08 }, scene);
+    back.position.set(0, 0.85, -0.22); back.parent = root;
+    return root;
+  },
+  Lamp: () => {
+    const root = new BABYLON.TransformNode("Lamp", scene);
+    const pole = BABYLON.MeshBuilder.CreateCylinder("p", { height: 3.2, diameter: 0.12 }, scene);
+    pole.position.y = 1.6; pole.parent = root;
+    const bulb = BABYLON.MeshBuilder.CreateSphere("b", { diameter: 0.44 }, scene);
+    bulb.position.y = 3.3; bulb.parent = root;
+    const lt = new BABYLON.PointLight("lampLt", new BABYLON.Vector3(0, 3.3, 0), scene);
+    lt.diffuse = new BABYLON.Color3(1.0, 0.85, 0.6);
+    lt.intensity = 1.5; lt.parent = root;
+    return root;
+  }
+};
+
+const nm = b => {
+  const n = objs.filter(o => o.name.split('.')[0] == b).length;
+  return n ? b + '.' + String(n).padStart(3, '0') : b;
+};
+
+// Babylon Gizmo Manager for Object Manipulation
+const gizmoManager = new BABYLON.GizmoManager(scene);
+gizmoManager.positionGizmoEnabled = true;
+gizmoManager.rotationGizmoEnabled = false;
+gizmoManager.scaleGizmoEnabled = false;
+
+function select(o){
+  sel = o;
+  if(o){
+    const meshTarget = o.getChildMeshes ? o.getChildMeshes()[0] : o;
+    gizmoManager.attachToMesh(meshTarget || o);
+    sbx.setEnabled(true);
+    if(meshTarget) {
+      const bInfo = meshTarget.getBoundingInfo();
+      sbx.position.copyFrom(o.position);
+      sbx.scaling.set(bInfo.maximum.x - bInfo.minimum.x + 0.4, bInfo.maximum.y - bInfo.minimum.y + 0.4, bInfo.maximum.z - bInfo.minimum.z + 0.4);
+    }
+  } else {
+    gizmoManager.attachToMesh(null);
+    sbx.setEnabled(false);
+  }
+  if(tab == 'obj') build();
+}
+
+function dup(){
+  if(!sel) return;
+  push();
+  const baseName = sel.name.split('.')[0];
+  const c = LIB[baseName] ? LIB[baseName]() : sel.clone(nm(baseName));
+  c.name = nm(baseName);
+  c.position.copyFrom(sel.position);
+  c.position.x += 2;
+  objs.push(c);
+  select(c);
+}
+
+function del(){
+  if(!sel) return;
+  push();
+  const o = sel;
+  select(null);
+  o.dispose();
+  objs.splice(objs.indexOf(o), 1);
+  if(tab == 'obj') build();
+}
+
+// 5. IMPORT 3D MODEL & HEIGHTMAP
+let mapRoot = null, mapName = '', mapBase = 1, mapK = 1, mapY = 0, mapR = 0, dem = 22;
+
+function fitMap(){
+  if(!mapRoot) return;
+  mapRoot.scaling.setAll(mapBase * mapK);
+  mapRoot.rotation.y = mapR * Math.PI / 180;
+  mapRoot.position.set(0, Math.max(hgt(0, 0), wl + 0.1) + mapY, 0);
+}
+
+async function parseModel(data, ext, name){
+  try {
+    const res = await BABYLON.SceneLoader.ImportMeshAsync("", "", data, scene);
+    if(mapRoot) mapRoot.dispose();
+    mapRoot = new BABYLON.TransformNode("ImportedMapRoot", scene);
+    res.meshes.forEach(m => {
+      m.parent = mapRoot;
+      m.receiveShadows = true;
+      if(shadow) shadow.addShadowCaster(m);
+    });
+    mapName = name; mapBase = 1.0; mapK = 1.0; mapY = 0; mapR = 0;
+    fitMap();
+    build();
+    msg('Imported ' + name);
+  } catch(er){
+    msg('Import failed: ' + er.message);
+  }
+}
+
+function importModel(f){
+  const ext = f.name.split('.').pop().toLowerCase();
+  const url = URL.createObjectURL(f);
+  parseModel(url, ext, f.name);
 }
 
 function importHeightmap(f){
-  const rd=new FileReader();
-  rd.onload=()=>{
-    const im=new Image();
-    im.onload=()=>{
-      const c=document.createElement('canvas'); c.width=c.height=W;
-      const x=c.getContext('2d');
-      x.drawImage(im,0,0,W,W);
-      const d=x.getImageData(0,0,W,W).data;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas'); c.width = c.height = W;
+      const x = c.getContext('2d'); x.drawImage(im, 0, 0, W, W);
+      const d = x.getImageData(0, 0, W, W).data;
       push();
-      for(let k=0; k<W*W; k++) H[k]=(d[k*4]*0.3+d[k*4+1]*0.59+d[k*4+2]*0.11)/255*dem - dem*0.3;
-      updateTerrain();
+      for(let k=0; k<W*W; k++) H[k] = (d[k*4]*0.3 + d[k*4+1]*0.59 + d[k*4+2]*0.11)/255*dem - dem*0.3;
+      MI.fill(255);
+      upd();
+      scatter(1);
       msg('Heightmap imported');
     };
-    im.src=rd.result;
+    im.src = rd.result;
   };
   rd.readAsDataURL(f);
 }
 
-function msg(t){
-  $('#info').textContent=t;
-  setTimeout(()=>{$('#info').textContent=''},4500);
+function flattenUnder(){
+  if(!mapRoot) return;
+  push();
+  level(mapRoot.position.x, mapRoot.position.z, 25, mapRoot.position.y);
+  resnap();
 }
 
-// 12. EXPORT TO MAIN WORKSPACE
-function buildPayload(){
-  return {
-    app:'final-effect',
-    engine:'babylonjs',
-    version:2,
-    units:'m',
-    terrain:{
-      size:S, segments:N,
-      heights:Array.from(H),
-      biome:biome,
-      waterLevel:wl
-    },
-    water:{level:wl, visible:true},
-    foliage:[]
+function rmMap(){
+  if(mapRoot) mapRoot.dispose();
+  mapRoot = null;
+  build();
+}
+
+// 6. UI CONSTRUCTION & LIGHTING UPDATES
+const el = h => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstChild; };
+const G = (...c) => { const d = el('<div class="g"></div>'); d.append(...c); return d; };
+const btn = (t, f) => { const b = el(`<button class="chip">${t}</button>`); b.onclick = f; return b; };
+function chips(items, cur, cb){
+  const r = el('<div class="row"></div>');
+  items.forEach(([id, l]) => {
+    const b = el(`<button class="chip${id === cur ? ' on' : ''}">${l}</button>`);
+    b.onclick = () => { cb(id); build(); };
+    r.append(b);
+  });
+  return r;
+}
+function sl(l, min, max, st, v, cb){
+  const d = el(`<label class="sl"><span>${l}</span><input type="range" min="${min}" max="${max}" step="${st}" value="${v}"><output></output></label>`);
+  const i = d.children[1], o = d.children[2], u = () => o.textContent = +(+i.value).toFixed(2);
+  i.oninput = () => { u(); cb(+i.value); };
+  u();
+  return d;
+}
+function fileBtn(l, acc, cb){
+  const d = el(`<label class="chip" style="text-align:center">${l}<input type="file" hidden${acc ? ' accept="'+acc+'"' : ''}></label>`);
+  d.querySelector('input').onchange = e => { const f = e.target.files[0]; if(f) cb(f); e.target.value = ''; };
+  return d;
+}
+
+let shQ = 2048, pxQ = Math.min(typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1, 2), groundDetail = 1.0;
+const realCtl = () => [
+  el('<div class="hint">Realism and quality</div>'),
+  chips([[1024, 'Shadows: Low'], [2048, 'Medium'], [4096, 'Ultra']], shQ, v => {
+    shQ = v;
+    if(shadow && shadow.getShadowMap) shadow.getShadowMap().resize(v);
+  }),
+  chips([[1, 'Res: Fast'], [1.5, 'Balanced'], [2, 'Ultra']], pxQ, v => {
+    pxQ = v;
+    engine.setHardwareScalingLevel(1 / v);
+  }),
+  G(
+    sl('Exposure', 0.4, 2.2, 0.05, scene.imageProcessingConfiguration.exposure, v => scene.imageProcessingConfiguration.exposure = v),
+    sl('Ground detail', 0, 2, 0.05, groundDetail, v => { groundDetail = v; if(tm.bumpTexture) tm.bumpTexture.level = 0.6 * v; })
+  )
+];
+
+const plantCtl = () => {
+  const K = KIND[br.kind];
+  if(!K) return [];
+  return [
+    G(
+      sl('Size ×', 0.3, 3, 0.05, K.size, v => { K.size = v; sync(br.kind); }),
+      sl('Variation', 0, 0.9, 0.05, K.vr, v => { K.vr = v; }),
+      sl('Wind', 0, 3, 0.1, wspd, v => { wspd = v; })
+    )
+  ];
+};
+
+const PN = {
+  terrain: () => [
+    chips([['raise','⛰ Raise'],['lower','🕳 Lower'],['flat','▬ Flatten'],['smooth','≈ Smooth'],['terrace','▤ Terrace'],['erode','💧 Erode'],['paint','🎨 Paint']], br.tool, v => br.tool = v),
+    ...(br.tool == 'paint' ? [chips([[0,'Grass'],[1,'Dirt'],[2,'Rock'],[3,'Sand'],[4,'Snow'],[5,'Road']], br.tex, v => br.tex = v)] : []),
+    G(sl('Radius', 2, 20, 1, br.r, v => br.r = v), sl('Strength', 0.1, 1, 0.05, br.str, v => br.str = v), sl('Roughness', 0.2, 1, 0.05, tm.roughness, v => tm.roughness = v), sl('Normal map', 0, 2, 0.1, tm.bumpTexture?tm.bumpTexture.level:0.6, v => { if(tm.bumpTexture) tm.bumpTexture.level = v; })),
+    chips([['hills','🌿 Hills'],['alpine','🏔 Alpine'],['desert','🏜 Desert'],['volc','🌋 Volcanic']], biome, setBiome),
+    G(sl('Height scale', 10, 80, 1, hs, v => { const f = v/hs; hs = v; for(let k=0; k<W*W; k++) H[k] *= f; upd(); resnap(); }), sl('Rock slope', 0.5, 3, 0.1, rockT, v => { rockT = v; upd(); }), sl('Snow line', 2, 16, 0.5, snowL, v => { snowL = v; upd(); })),
+    btn('🎲 Generate new terrain', () => { push(); gen(); scatter(); })
+  ],
+  plants: () => [
+    chips([['grass','🌿 Grass'],['flower','🌼 Flowers'],['pine','🌲 Pine'],['oak','🌳 Oak'],['birch','🌿 Birch'],['palm','🌴 Palm'],['shrub','🪴 Shrubs'],['rock','🪨 Rocks'],['erase','🧽 Erase']], br.kind, v => br.kind = v),
+    G(sl('Radius', 2, 20, 1, br.r, v => br.r = v), sl('Density', 1, 30, 1, br.den, v => br.den = v)),
+    ...plantCtl(),
+    chips([['spring','🌱 Spring'],['summer','☀️ Summer'],['autumn','🍂 Autumn'],['winter','❄️ Winter']], season, setSeason),
+    btn('🌱 Auto-scatter (natural)', () => { push(); scatter(1); }),
+    btn('Clear all foliage', () => { push(); for(const k in KIND){ KIND[k].list = []; sync(k); } })
+  ],
+  city: () => [
+    chips([['house','🏠 Houses'],['block','🏢 Blocks'],['mid','🏬 Mid-rise'],['tower','🏙 Towers'],['erase','🧽 Erase']], br.kind, v => br.kind = v),
+    G(sl('Brush radius', 2, 20, 1, br.r, v => br.r = v), sl('Density', 1, 30, 1, br.den, v => br.den = v), sl('City radius', 12, 70, 1, cityR, v => cityR = v), sl('City density', 0.3, 1, 0.05, cityD, v => cityD = v)),
+    chips([['l','Level ground: ' + (cityLvl?'on':'off')], ['r','Roads: ' + (cityRoad?'on':'off')], ['t','Tap to place: ' + (cityTap?'on':'off')]], 0, v => {
+      if(v == 'l') cityLvl = !cityLvl;
+      else if(v == 'r') cityRoad = !cityRoad;
+      else { cityTap = !cityTap; setNav(); }
+    }),
+    btn('🏙 Generate City at view center', () => genCity({ x: cam.target.x, z: cam.target.z })),
+    ...plantCtl(),
+    btn('Clear all buildings', () => { push(); for(const q in BLD){ KIND[q].list = []; sync(q); } })
+  ],
+  sky: () => [
+    G(
+      sl('Time of day', 0, 24, 0.1, tod, v => { tod = v; updSky(); }),
+      sl('Sun Angle / Position', 0, 360, 5, az, v => { az = v; updSky(); })
+    ),
+    G(
+      sl('Fog Density', 0, 20, 0.5, fogD * 1000, v => { fogD = v / 1000; updSky(); }),
+      sl('Exposure', 0.4, 2.5, 0.05, scene.imageProcessingConfiguration.exposure || 1.1, v => { scene.imageProcessingConfiguration.exposure = v; })
+    ),
+    chips([[1024, 'Shadows: Low'], [2048, 'Medium'], [4096, 'Ultra']], shQ, v => {
+      shQ = v;
+      if(shadow && shadow.getShadowMap) shadow.getShadowMap().resize(v);
+    })
+  ],
+  water: () => [
+    chips([[0, 'Ocean'], [1, 'Lagoon'], [2, 'Murky'], ['v', water.isEnabled() ? '👁 Shown' : 'Hidden']], wp, v => {
+      if(v == 'v') water.setEnabled(!water.isEnabled());
+      else setWater(v);
+    }),
+    G(
+      sl('Level', -6, 8, 0.1, wl, v => { wl = v; water.position.y = v; upd(); }),
+      sl('Wave height', 0, 2, 0.05, waterMat?waterMat.waveHeight:0.38, v => { if(waterMat) waterMat.waveHeight = v; }),
+      sl('Wave speed', 0, 3, 0.1, wspd, v => { wspd = v; if(waterMat) waterMat.windForce = 45 * v; })
+    )
+  ],
+  obj: () => {
+    const r = [
+      chips(Object.keys(LIB).map(k => [k, k]), place, v => place = place == v ? null : v),
+      el(`<div class="hint">${place ? 'Tap the terrain to place a '+place+'. Tap '+place+' again to stop.' : sel ? 'Editing '+sel.name+'. Drag the gizmo handles in the viewport.' : 'Choose an asset, then tap the terrain. Tap a placed object to edit it.'}</div>`)
+    ];
+    if(objs.length){
+      r.push(el('<div class="hint">Scene Collection</div>'), chips(objs.map((o, i) => [i, o.name]), objs.indexOf(sel), i => select(objs[i])));
+    }
+    if(sel){
+      r.push(
+        chips([['translate', 'Move'], ['rotate', 'Rotate'], ['scale', 'Scale']], gizmoManager.positionGizmoEnabled ? 'translate' : gizmoManager.rotationGizmoEnabled ? 'rotate' : 'scale', v => {
+          gizmoManager.positionGizmoEnabled = (v == 'translate');
+          gizmoManager.rotationGizmoEnabled = (v == 'rotate');
+          gizmoManager.scaleGizmoEnabled = (v == 'scale');
+        }),
+        G(
+          sl('Size', 0.2, 4, 0.05, sel.scaling.x, v => sel.scaling.setAll(v))
+        ),
+        chips([['d', '⧉ Duplicate'], ['x', '🗑 Delete']], 0, v => v == 'd' ? dup() : del())
+      );
+    }
+    return r;
+  },
+  import: () => [
+    el('<div class="hint">Bring a real-world 3D map or city into the landscape: GLB / GLTF / OBJ models, or a heightmap image.</div>'),
+    fileBtn('🏙 Import 3D model / city (GLB, GLTF, OBJ)', '', importModel),
+    G(sl('Heightmap relief (m)', 5, 80, 1, dem, v => dem = v)),
+    fileBtn('🗻 Import heightmap image (PNG / JPG)', 'image/*', importHeightmap),
+    ...(mapRoot ? [
+      Object.assign(el('<div class="hint"></div>'), { textContent: 'Imported: ' + mapName }),
+      G(
+        sl('Model size', 0.1, 4, 0.05, mapK, v => { mapK = v; fitMap(); }),
+        sl('Raise / lower', -20, 40, 0.5, mapY, v => { mapY = v; fitMap(); }),
+        sl('Rotate', 0, 360, 5, mapR, v => { mapR = v; fitMap(); })
+      ),
+      chips([['f', '▭ Flatten terrain under model'], ['x', '🗑 Remove model']], 0, v => v == 'f' ? flattenUnder() : rmMap())
+    ] : [])
+  ]
+};
+
+function build(){
+  $('#dr').replaceChildren(...PN[tab]());
+}
+
+const TABS = [
+  ['terrain', '⛰', 'Terrain'],
+  ['plants', '🌲', 'Foliage'],
+  ['city', '🏙', 'City'],
+  ['sky', '☀️', 'Lighting'],
+  ['water', '🌊', 'Water'],
+  ['obj', '🪑', 'Objects'],
+  ['import', '🌍', 'Import']
+];
+TABS.forEach(([id, i, l]) => {
+  const b = el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);
+  b.onclick = () => setTab(id);
+  $('#tabs').append(b);
+});
+
+function brushTab(){
+  return panelOpen && (tab == 'terrain' || tab == 'plants' || tab == 'city' && !cityTap);
+}
+
+function setNav(){
+  const p = brushTab() && !nav;
+  if(p) cam.detachControl(cv); else cam.attachControl(cv, true);
+  $('#mode').style.display = brushTab() ? '' : 'none';
+  $('#mode').textContent = nav ? '✋ Orbit' : '🖌 Brush';
+}
+
+function setTab(id){
+  tab = id; place = null; select(null); ring.setEnabled(false);
+  if(id == 'city' && !BLD[br.kind] && br.kind != 'erase') br.kind = 'house';
+  if(id == 'plants' && BLD[br.kind]) br.kind = 'grass';
+  panelOpen = true;
+  $('#panel').hidden = false;
+  $('#bg').classList.add('on');
+  [...$('#tabs').children].forEach(b => b.classList.toggle('on', b.dataset.id == id));
+  setNav();
+  build();
+}
+
+// Shading modes (Wire, Solid, Render)
+[['wire', 'Wire'], ['solid', 'Solid'], ['render', 'Render']].forEach(([id, l]) => {
+  const b = el(`<button class="${id == mode ? 'on' : ''}">${l}</button>`);
+  b.onclick = () => {
+    mode = id;
+    [...$('#sh').children].forEach(c => c.classList.toggle('on', c === b));
+    shade();
   };
+  $('#sh').append(b);
+});
+
+function shade(){
+  const isWire = (mode == 'wire');
+  if(ter) ter.material.wireframe = isWire;
+  if(water) water.material.wireframe = isWire;
+  objs.forEach(o => o.getChildMeshes && o.getChildMeshes().forEach(m => m.material && (m.material.wireframe = isWire)));
+  updSky();
 }
 
-function importToGrid(){
-  const payload=buildPayload();
-  try{
-    const host=window.parent!==window?window.parent:window;
-    if(host){
-      host.postMessage({type:'IMPORT_TERRAIN', payload}, '*');
-      host.postMessage({type:'final-effect:import', payload}, '*');
-      host.postMessage({type:'final-effect:close-studio'}, '*');
-      if(typeof host.FE?.toast==='function'){
-        host.FE.toast('Imported Babylon.js Landscape into Main Workspace!');
+function updSky(){
+  const A = az * Math.PI / 180, a = (tod - 6)/12 * Math.PI;
+  const e = Math.sin(a);
+  const sunDir = new BABYLON.Vector3(-Math.cos(a)*Math.cos(A), -Math.max(0.08, e), -Math.cos(a)*Math.sin(A)).normalize();
+  sun.direction = sunDir;
+  sun.position = new BABYLON.Vector3(-sunDir.x*160, -sunDir.y*160, -sunDir.z*160);
+
+  const day = cl(e*3 + 0.2, 0, 1);
+  const solid = (mode != 'render');
+
+  sun.intensity = solid ? 0.5 : 2.2 * cl(e*3, 0, 1);
+  hemi.intensity = solid ? 1.1 : 0.1 + 0.55 * day;
+  sun.shadowEnabled = !solid;
+
+  scene.fogDensity = (mode == 'render' && !ortho) ? fogD : 0;
+  if(mode == 'render'){
+    const skyC = new BABYLON.Color3(0.1 + 0.45*day, 0.15 + 0.55*day, 0.3 + 0.6*day);
+    scene.clearColor = new BABYLON.Color4(skyC.r, skyC.g, skyC.b, 1.0);
+    skyMat.emissiveColor = skyC;
+  } else {
+    scene.clearColor = new BABYLON.Color4(0.24, 0.24, 0.24, 1.0);
+  }
+
+  clouds.forEach((g, i) => {
+    g.setEnabled(i < cov * clouds.length);
+  });
+}
+
+// Brush Cursor Ring
+const ring = BABYLON.MeshBuilder.CreateTorus("brushRing", { diameter: 2, thickness: 0.15, tessellation: 32 }, scene);
+const ringMat = new BABYLON.StandardMaterial("ringMat", scene);
+ringMat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+ringMat.disableLighting = true;
+ring.material = ringMat;
+ring.isPickable = false;
+ring.setEnabled(false);
+
+// Navigation Gizmo Helper Buttons (#ng)
+const AX = {
+  x: new BABYLON.Vector3(1, 0, 0),
+  y: new BABYLON.Vector3(0, 1, 0),
+  z: new BABYLON.Vector3(0, 0, 1)
+};
+const ngb = [
+  ['x', '#ff3352', 1], ['y', '#8bdc00', 1], ['z', '#2890ff', 1],
+  ['x', '#7a2030', -1], ['y', '#4d7000', -1], ['z', '#134a91', -1]
+].map(([a, c, s]) => {
+  const b = document.createElement('b');
+  b.style.background = c;
+  if(s > 0) b.textContent = a.toUpperCase();
+  b.onclick = () => view(AX[a].scale(s));
+  $('#ng').append(b);
+  return { b, a, s };
+});
+
+function navg(){
+  const viewMat = cam.getViewMatrix();
+  ngb.forEach(({ b, a, s }) => {
+    const v = BABYLON.Vector3.TransformNormal(AX[a].scale(s), viewMat);
+    b.style.left = (44 + v.x * 32) + 'px';
+    b.style.top = (44 - v.y * 32) + 'px';
+    b.style.zIndex = v.z > 0 ? 2 : 1;
+    b.style.opacity = v.z > 0 ? 1 : 0.6;
+  });
+}
+
+function view(d){
+  const newAlpha = Math.atan2(d.x, d.z);
+  const newBeta = Math.acos(cl(d.y, -0.999, 0.999));
+  BABYLON.Animation.CreateAndStartAnimation('camA', cam, 'alpha', 30, 12, cam.alpha, newAlpha, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+  BABYLON.Animation.CreateAndStartAnimation('camB', cam, 'beta', 30, 12, cam.beta, newBeta, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+}
+
+function toggleOrtho(){
+  ortho = !ortho;
+  if(ortho){
+    cam.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+    syncOrtho();
+  } else {
+    cam.mode = BABYLON.Camera.PERSPECTIVE_CAMERA;
+  }
+  updSky();
+}
+
+function syncOrtho(){
+  if(cam.mode === BABYLON.Camera.ORTHOGRAPHIC_CAMERA){
+    const halfH = cam.radius * 0.45;
+    const aspect = engine.getAspectRatio(cam);
+    cam.orthoTop = halfH; cam.orthoBottom = -halfH;
+    cam.orthoLeft = -halfH * aspect; cam.orthoRight = halfH * aspect;
+  }
+}
+$('#ng').onclick = e => { if(e.target.id == 'ng') toggleOrtho(); };
+
+// Undo / Redo Stack
+const US = [], RS = [];
+const enc = l => { const a = new Float32Array(l.length*7); l.forEach((o, i) => a.set([o.x, o.y, o.z, o.s, o.r, o.a, o.v], i*7)); return a; };
+const dec = a => { const l = []; for(let i=0; i<a.length; i+=7) l.push({ x: a[i], y: a[i+1], z: a[i+2], s: a[i+3], r: a[i+4], a: a[i+5], v: a[i+6] }); return l; };
+
+const snap = () => ({
+  H: H.slice(),
+  M: MI.slice(),
+  K: Object.fromEntries(Object.keys(KIND).map(k => [k, enc(KIND[k].list)])),
+  O: objs.map(o => ({
+    t: o.name.split('.')[0],
+    n: o.name,
+    p: [o.position.x, o.position.y, o.position.z],
+    r: [o.rotation.x, o.rotation.y, o.rotation.z],
+    s: [o.scaling.x, o.scaling.y, o.scaling.z]
+  }))
+});
+
+function restore(s){
+  H.set(s.H); MI.set(s.M);
+  upd();
+  for(const k in KIND){
+    KIND[k].list = dec(s.K[k]);
+    sync(k);
+  }
+  select(null);
+  objs.splice(0).forEach(o => o.dispose());
+  s.O.forEach(d => {
+    if(LIB[d.t]){
+      const o = LIB[d.t]();
+      o.name = d.n;
+      o.position.set(...d.p);
+      o.rotation.set(...d.r);
+      o.scaling.set(...d.s);
+      objs.push(o);
+    }
+  });
+  shade();
+  if(tab == 'obj') build();
+}
+
+function push(){
+  US.push(snap());
+  if(US.length > 20) US.shift();
+  RS.length = 0;
+}
+function undo(){ if(!US.length) return; RS.push(snap()); restore(US.pop()); }
+function redo(){ if(!RS.length) return; US.push(snap()); restore(RS.pop()); }
+$('#un').onclick = undo; $('#re').onclick = redo;
+
+function msg(t){
+  $('#info').textContent = t;
+  setTimeout(() => { $('#info').textContent = ''; }, 4500);
+}
+
+// 7. POINTER EVENTS & INTERACTION LOOP
+let painting = false, lastT = 0, down = null;
+
+function pickGround(){
+  const pick = scene.pick(scene.pointerX, scene.pointerY, m => m === ter);
+  return (pick && pick.hit && pick.pickedPoint) ? pick.pickedPoint : null;
+}
+
+function pickObject(){
+  const pick = scene.pick(scene.pointerX, scene.pointerY, m => {
+    return objs.some(o => o === m || (o.getChildMeshes && o.getChildMeshes().includes(m)));
+  });
+  if(pick && pick.hit && pick.pickedMesh){
+    let node = pick.pickedMesh;
+    while(node && node.parent && objs.includes(node.parent)) node = node.parent;
+    return node;
+  }
+  return null;
+}
+
+const applyBrush = (p, dt) => (tab == 'terrain' ? sculpt(p, dt) : plantAt(p));
+
+function tap(e){
+  if(tab == 'city' && cityTap){
+    const p = pickGround();
+    if(p) genCity(p);
+    return;
+  }
+  if(place && LIB[place]){
+    const p = pickGround();
+    if(p){
+      const o = LIB[place]();
+      o.name = nm(place);
+      o.position.copyFrom(p);
+      o.rotation.y = R()*6.28;
+      push();
+      objs.push(o);
+      shade();
+      select(o);
+    }
+    return;
+  }
+  const o = pickObject();
+  select(o);
+}
+
+scene.onPointerObservable.add(pi => {
+  if(pi.type === BABYLON.PointerEventTypes.POINTERDOWN){
+    down = { x: scene.pointerX, y: scene.pointerY };
+    if(pi.event.button === 2) return;
+    if(brushTab() && !nav){
+      const p = pickGround();
+      if(p){
+        painting = true;
+        push();
+        fl = p.y;
+        lastT = performance.now();
+        applyBrush(p, 0.03);
       }
     }
-  }catch(e){
-    console.warn('Import error:', e);
+  } else if(pi.type === BABYLON.PointerEventTypes.POINTERMOVE){
+    if(!brushTab() || nav){
+      ring.setEnabled(false);
+      return;
+    }
+    const p = pickGround();
+    if(p){
+      ring.setEnabled(true);
+      ring.position.set(p.x, p.y + 0.3, p.z);
+      ring.scaling.set(br.r, 1, br.r);
+    } else {
+      ring.setEnabled(false);
+    }
+
+    if(painting && p){
+      const t = performance.now();
+      if(t - lastT > 30){
+        applyBrush(p, Math.min(0.06, (t - lastT)/1000));
+        lastT = t;
+      }
+    }
+  } else if(pi.type === BABYLON.PointerEventTypes.POINTERUP){
+    if(painting){
+      painting = false;
+      if(tab == 'terrain') resnap();
+    }
+    if(down && Math.hypot(scene.pointerX - down.x, scene.pointerY - down.y) < 6){
+      tap(pi.event);
+    }
+    down = null;
   }
+});
+
+$('#mode').onclick = () => { nav = !nav; setNav(); };
+$('#px').onclick = () => showPanel(false);
+$('#bg').onclick = () => { showPanel(!panelOpen); if(panelOpen) build(); };
+$('#bw').onclick = () => {
+  showPanel(false);
+  cam.alpha = -Math.PI*0.35; cam.beta = Math.PI*0.35; cam.radius = 110;
+  cam.target.set(0, 4, 0);
+};
+$('#bi').onclick = () => setTab('import');
+
+function showPanel(v){
+  panelOpen = v;
+  $('#panel').hidden = !v;
+  $('#bg').classList.toggle('on', v);
+  if(!v){ select(null); ring.setEnabled(false); }
+  setNav();
 }
 
-$('#imp').onclick=importToGrid;
-window.importToMainGrid=importToGrid;
-window.importToGrid=importToGrid;
-
-$('#bw').onclick=()=>{
-  const payload=buildPayload();
-  $('#exp').value=JSON.stringify(payload,null,2);
-  $('#ov').hidden=false;
+// 8. DATA EXPORT TO MAIN GRID & HOST APP
+const b64 = a => {
+  const u = new Uint8Array(a.buffer);
+  let s = '';
+  for(let i=0; i<u.length; i+=8192) s += String.fromCharCode.apply(null, u.subarray(i, i+8192));
+  return btoa(s);
 };
-$('#cl').onclick=()=>$('#ov').hidden=true;
-$('#cp').onclick=()=>{
-  const t=$('#exp'); t.select();
+
+function importToGrid(){
+  const f = {};
+  for(const k in KIND){
+    const K = KIND[k];
+    f[k] = { count: K.list.length, size: K.size, tint: K.tint, data: b64(enc(K.list)) };
+  }
+  const d = {
+    app: 'final-effect',
+    engine: 'babylonjs',
+    version: 2,
+    units: 'm',
+    terrain: {
+      size: S, segments: N, vertexCount: W*W,
+      heights: b64(H), materials: b64(MI),
+      biome, heightScale: hs, rockSlope: rockT, snowLine: snowL
+    },
+    water: { level: wl, visible: water.isEnabled(), palette: wp },
+    sky: { timeOfDay: tod, sunAngle: az, fog: fogD },
+    foliage: f,
+    objects: objs.map(o => ({
+      name: o.name,
+      position: [o.position.x, o.position.y, o.position.z],
+      rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
+      scale: [o.scaling.x, o.scaling.y, o.scaling.z]
+    }))
+  };
+
+  const js = JSON.stringify(d, null, 2);
+  const host = window.parent !== window ? window.parent : window.opener;
+  let sent = false;
+  try {
+    if(host){
+      host.postMessage({ type: 'final-effect:import', payload: d }, '*');
+      sent = true;
+    }
+  } catch(e){}
+
+  $('#exp').value = js;
+  $('#ovt').textContent = (sent ? 'Posted to host app (postMessage "final-effect:import"). ' : 'Scene export JSON: ') + Math.round(js.length/1024) + ' KB';
+  $('#ov').hidden = false;
+}
+$('#imp').onclick = importToGrid;
+$('#cp').onclick = () => {
+  const t = $('#exp'); t.select();
   navigator.clipboard.writeText(t.value);
-  $('#cp').textContent='Copied!';
-  setTimeout(()=>$('#cp').textContent='Copy JSON',1400);
+  msg('Copied JSON to clipboard');
 };
-
-// Shading Mode Switcher
-$('#sh').innerHTML='<button class="on" data-mode="render">Render</button><button data-mode="solid">Solid</button><button data-mode="wire">Wire</button>';
-$('#sh').addEventListener('click', e=>{
-  if(e.target.dataset.mode){
-    mode=e.target.dataset.mode;
-    document.querySelectorAll('#sh button').forEach(b=>b.classList.toggle('on',b===e.target));
-    shade();
-    scene.clearColor=mode==='render'?new BABYLON.Color4(0.48, 0.68, 0.88, 1):new BABYLON.Color4(0.24, 0.24, 0.24, 1);
-  }
-});
-
-// Render Loop
-let lastFpsTime=performance.now(), frameCount=0;
-engine.runRenderLoop(()=>{
-  scene.render();
-  renderSphericalGizmo();
-  frameCount++;
-  const now=performance.now();
-  if(now-lastFpsTime>=500){
-    $('#fps').textContent=Math.round((frameCount*1000)/(now-lastFpsTime))+' fps';
-    frameCount=0;
-    lastFpsTime=now;
-  }
-});
-
-addEventListener('resize', ()=>engine.resize());
+$('#cl').onclick = () => $('#ov').hidden = true;
 
 // Keyboard Shortcuts
-window.addEventListener('keydown', e=>{
-  if(e.key==='z'&&(e.ctrlKey||e.metaKey)){ if(e.shiftKey) redo(); else undo(); }
-  else if(e.key==='y'&&(e.ctrlKey||e.metaKey)) redo();
+addEventListener('keydown', e => {
+  const a = document.activeElement;
+  if(/INPUT|TEXTAREA/.test(a.tagName) && a.type != 'range') return;
+  const k = e.key.toLowerCase();
+
+  if((e.ctrlKey || e.metaKey) && (k == 'z' || k == 'y')){
+    (k == 'y' || e.shiftKey ? redo : undo)();
+    e.preventDefault(); return;
+  }
+  if(k == 'x' || k == 'delete'){ if(sel) del(); }
+  else if(k == 'd' && e.shiftKey){ if(sel) dup(); }
+  else if(k == 'z'){
+    mode = (mode == 'solid' ? 'render' : mode == 'render' ? 'wire' : 'solid');
+    [...$('#sh').children].forEach(c => c.classList.toggle('on', c.textContent.toLowerCase() == mode));
+    shade();
+  }
 });
 
-// Initialize scene with Restored Procedural Terrain & Direct PBR Textures
-setBiome('hills', true);
-gen();
-updSky();
-setTab('terrain');
-showPanel(false);
-renderSphericalGizmo();
-</script>
-</body></html>
+// Render Loop & Animation
+let lastFpsTime = performance.now(), frameCount = 0;
+let loopTime = 0;
+
+engine.runRenderLoop(() => {
+  loopTime += 0.02 * wspd;
+  scene.render();
+  navg();
+  syncOrtho();
+
+  clouds.forEach(g => {
+    g.position.x += 0.12 * wspd;
+    if(g.position.x > 260) g.position.x = -260;
+  });
+
+  frameCount++;
+  const now = performance.now();
+  if(now - lastFpsTime >= 500){
+    $('#fps').textContent = Math.round((frameCount*1000)/(now - lastFpsTime)) + ' fps';
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+});
+
+addEventListener('resize', () => {
+  engine.resize();
+  syncOrtho();
+});
+
+// 9. INITIALIZATION
+[() => gen(), () => scatter(1), () => updSky(), () => setTab('terrain'), () => showPanel(false)].forEach(f => {
+  try { f(); } catch(e){ showErr('Init: ' + e.message); }
+});
+</script></body></html>
