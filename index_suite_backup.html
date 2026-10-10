@@ -1529,12 +1529,139 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .global-settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: 18px 20px 24px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
+  color: #e2e8f0;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #181b24;
+  border: 1px solid #282d3e;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.settings-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #818cf8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #202434;
+}
+.setting-item:last-child {
+  border-bottom: none;
+}
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.setting-label span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e2e8f0;
+}
+.setting-label small {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.setting-toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.setting-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.setting-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: #2b3145;
+  border-radius: 24px;
+  transition: all 0.2s ease;
+}
+.setting-toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #cbd5e1;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+.setting-toggle input:checked + .setting-toggle-slider {
+  background: #4f46e5;
+}
+.setting-toggle input:checked + .setting-toggle-slider::before {
+  transform: translateX(20px);
+  background: #ffffff;
+}
+.setting-range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 170px;
+}
+.setting-range-wrap input[type=range] {
+  flex: 1;
+  accent-color: #6366f1;
+}
+.setting-range-val {
+  font-size: 11px;
+  color: #94a3b8;
+  min-width: 38px;
+  text-align: right;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.settings-action-btn {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #374151;
+  background: #202434;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.settings-action-btn:hover {
+  background: #2a3146;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+.settings-action-btn.danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.1);
+}
+.settings-action-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+  color: #ffffff;
 }
 </style>
 </head>
@@ -1583,7 +1710,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   </main>
 </div>
 
-<!-- Global Settings Clean Modal (Almost half-screen / full-screen empty UI with close button) -->
+<!-- Global Settings Modal (Working Settings) -->
 <aside id="global-settings-modal" class="global-settings-modal" style="display:none;" onclick="if(event.target===this)closeGlobalSettingsModal()">
   <div class="global-settings-card" onclick="event.stopPropagation()">
     <header class="global-settings-header">
@@ -1594,7 +1721,107 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings">✕</button>
     </header>
     <div class="global-settings-body">
-      <!-- Clean, minimal empty UI as requested -->
+      <!-- 1. Viewport & 3D Workspace -->
+      <div class="settings-section">
+        <div class="settings-section-title">
+          <span>🧊</span> Viewport & 3D Workspace
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Floor Grid</span>
+            <small>Show coordinate ground plane grid in 3D viewport</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-grid" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Real-time Shadows</span>
+            <small>Dynamic soft shadows from directional sunlight</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-shadows" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>3D Navigation Gizmo</span>
+            <small>Show orientation compass widget in top right corner</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-gizmo" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Exposure (ACES Filmic)</span>
+            <small>Tone mapping exposure brightness level</small>
+          </div>
+          <div class="setting-range-wrap">
+            <input type="range" id="set-exposure" min="0.5" max="2.5" step="0.05" value="1.25">
+            <span class="setting-range-val" id="val-exposure">1.25</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Finger Navigation & Controls -->
+      <div class="settings-section">
+        <div class="settings-section-title">
+          <span>🖐</span> Navigation & Touch Gestures
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Orbit Sensitivity</span>
+            <small>Speed of rotation when dragging with fingers or mouse</small>
+          </div>
+          <div class="setting-range-wrap">
+            <input type="range" id="set-sensitivity" min="0.5" max="2.5" step="0.1" value="1.0">
+            <span class="setting-range-val" id="val-sensitivity">1.0x</span>
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Touch Gestures</span>
+            <small>1 finger orbits, 2 fingers pinch-zoom & pan</small>
+          </div>
+          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">Multi-Touch Active</span>
+        </div>
+      </div>
+
+      <!-- 3. Workflow & Projects -->
+      <div class="settings-section">
+        <div class="settings-section-title">
+          <span>📁</span> Workflow & Projects
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Confirm Delete</span>
+            <small>Show safety confirmation before deleting objects</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-delete-warn" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Reset 3D Scene</span>
+            <small>Reset default cube, lighting and camera position</small>
+          </div>
+          <button class="settings-action-btn" id="btn-reset-scene">🔄 Reset Scene</button>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Recent Projects</span>
+            <small>Clear saved recent project sessions</small>
+          </div>
+          <button class="settings-action-btn danger" id="btn-clear-recents">🗑️ Clear Recents</button>
+        </div>
+      </div>
     </div>
   </div>
 </aside>
@@ -2077,8 +2304,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <canvas></canvas>
       <div class="empty"></div>
 
-      <!-- Interactive 3D Navigation Gizmo & Viewport Tools (Blender Style - STRICTLY Top Left Corner) -->
-      <div id="nav-gizmo-wrapper" style="position:absolute; top:12px; left:12px; z-index:125; pointer-events:auto; touch-action:none; display:flex; flex-direction:column; align-items:center; gap:8px;" title="Viewport Navigation Gizmo (Drag to orbit, click axis to snap view)">
+      <!-- Interactive 3D Navigation Gizmo & Viewport Tools (Top Right Corner) -->
+      <div id="nav-gizmo-wrapper" style="position:absolute; top:12px; right:14px; left:auto; z-index:125; pointer-events:auto; touch-action:none; display:flex; flex-direction:column; align-items:center; gap:8px;" title="Viewport Navigation Gizmo (Drag to orbit, click axis to snap view)">
         <div style="position:relative; width:98px; height:98px; display:flex; align-items:center; justify-content:center;">
           <canvas id="nav-gizmo-canvas" width="196" height="196" style="width:98px; height:98px; display:block; cursor:grab; filter:drop-shadow(0 6px 14px rgba(0,0,0,0.7));"></canvas>
         </div>
@@ -2680,9 +2907,131 @@ function deleteRecentProject(id) {
 window.deleteRecentProject = deleteRecentProject;
 
 /* Global Settings Modal */
+function syncGlobalSettingsUI() {
+  const chkGrid = document.getElementById('set-grid');
+  if (chkGrid) chkGrid.checked = !!GLOBAL_SETTINGS.grid;
+
+  const chkShadows = document.getElementById('set-shadows');
+  if (chkShadows) chkShadows.checked = !!GLOBAL_SETTINGS.shadows;
+
+  const chkGizmo = document.getElementById('set-gizmo');
+  const gizmoWrap = document.getElementById('nav-gizmo-wrapper');
+  if (chkGizmo && gizmoWrap) chkGizmo.checked = (gizmoWrap.style.display !== 'none');
+
+  const rangeExposure = document.getElementById('set-exposure');
+  const valExposure = document.getElementById('val-exposure');
+  if (rangeExposure && window.renderer) {
+    rangeExposure.value = window.renderer.toneMappingExposure || 1.25;
+    if (valExposure) valExposure.textContent = (+rangeExposure.value).toFixed(2);
+  }
+
+  const rangeSensitivity = document.getElementById('set-sensitivity');
+  const valSensitivity = document.getElementById('val-sensitivity');
+  const eng = FE.engines?.core;
+  if (rangeSensitivity && eng?.oc) {
+    rangeSensitivity.value = eng.oc.rotateSpeed || 1.0;
+    if (valSensitivity) valSensitivity.textContent = (+rangeSensitivity.value).toFixed(1) + 'x';
+  }
+
+  const chkDeleteWarn = document.getElementById('set-delete-warn');
+  if (chkDeleteWarn) {
+    chkDeleteWarn.checked = localStorage.getItem('fe_suppress_delete_warning') !== 'true';
+  }
+}
+window.syncGlobalSettingsUI = syncGlobalSettingsUI;
+
+let globalSettingsInitialized = false;
+function initGlobalSettingsEvents() {
+  if (globalSettingsInitialized) return;
+  globalSettingsInitialized = true;
+
+  const chkGrid = document.getElementById('set-grid');
+  if (chkGrid) {
+    chkGrid.onchange = (e) => {
+      GLOBAL_SETTINGS.grid = e.target.checked;
+      document.dispatchEvent(new CustomEvent('fe:setting', { detail: { key: 'grid', value: e.target.checked } }));
+      FE.toast(e.target.checked ? 'Floor Grid Enabled' : 'Floor Grid Disabled');
+    };
+  }
+
+  const chkShadows = document.getElementById('set-shadows');
+  if (chkShadows) {
+    chkShadows.onchange = (e) => {
+      GLOBAL_SETTINGS.shadows = e.target.checked;
+      const eng = FE.engines?.core;
+      if (eng?.blenderLight) eng.blenderLight.castShadow = e.target.checked;
+      if (window.renderer) {
+        window.renderer.shadowMap.enabled = e.target.checked;
+        if (eng?.sc) eng.sc.traverse(o => { if (o.material) o.material.needsUpdate = true; });
+      }
+      FE.toast(e.target.checked ? 'Real-time Shadows Enabled' : 'Real-time Shadows Disabled');
+    };
+  }
+
+  const chkGizmo = document.getElementById('set-gizmo');
+  if (chkGizmo) {
+    chkGizmo.onchange = (e) => {
+      const gizmoWrap = document.getElementById('nav-gizmo-wrapper');
+      if (gizmoWrap) gizmoWrap.style.display = e.target.checked ? 'flex' : 'none';
+      FE.toast(e.target.checked ? '3D Navigation Gizmo Shown' : '3D Navigation Gizmo Hidden');
+    };
+  }
+
+  const rangeExposure = document.getElementById('set-exposure');
+  const valExposure = document.getElementById('val-exposure');
+  if (rangeExposure) {
+    rangeExposure.oninput = (e) => {
+      const v = +e.target.value;
+      if (valExposure) valExposure.textContent = v.toFixed(2);
+      if (window.renderer) window.renderer.toneMappingExposure = v;
+    };
+  }
+
+  const rangeSensitivity = document.getElementById('set-sensitivity');
+  const valSensitivity = document.getElementById('val-sensitivity');
+  if (rangeSensitivity) {
+    rangeSensitivity.oninput = (e) => {
+      const v = +e.target.value;
+      if (valSensitivity) valSensitivity.textContent = v.toFixed(1) + 'x';
+      const eng = FE.engines?.core;
+      if (eng?.oc) eng.oc.rotateSpeed = v;
+    };
+  }
+
+  const chkDeleteWarn = document.getElementById('set-delete-warn');
+  if (chkDeleteWarn) {
+    chkDeleteWarn.onchange = (e) => {
+      if (e.target.checked) localStorage.removeItem('fe_suppress_delete_warning');
+      else localStorage.setItem('fe_suppress_delete_warning', 'true');
+      FE.toast(e.target.checked ? 'Delete Confirmations Enabled' : 'Delete Confirmations Silenced');
+    };
+  }
+
+  const btnResetScene = document.getElementById('btn-reset-scene');
+  if (btnResetScene) {
+    btnResetScene.onclick = () => {
+      document.dispatchEvent(new CustomEvent('fe:setting', { detail: { key: 'resetScene' } }));
+      closeGlobalSettingsModal();
+    };
+  }
+
+  const btnClearRecents = document.getElementById('btn-clear-recents');
+  if (btnClearRecents) {
+    btnClearRecents.onclick = () => {
+      localStorage.removeItem('fe_recent_projects');
+      if (typeof renderRecentProjectsList === 'function') renderRecentProjectsList();
+      FE.toast('Recent Projects Cleared');
+    };
+  }
+}
+
 function openGlobalSettings() {
   const modal = document.getElementById('global-settings-modal');
-  if (modal) modal.style.display = 'flex';
+  if (modal) {
+    modal.style.display = 'flex';
+    initGlobalSettingsEvents();
+    syncGlobalSettingsUI();
+  }
 }
 window.openGlobalSettings = openGlobalSettings;
 
@@ -5799,8 +6148,13 @@ FE.register('core',{
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.25;
 
-    // OrbitControls initialized on viewportCamera
+    // OrbitControls initialized on viewportCamera with smooth finger navigation
     const oc=new THREE.OrbitControls(viewportCamera,canvas);
+    oc.enableDamping = true;
+    oc.dampingFactor = 0.08;
+    oc.rotateSpeed = 1.0;
+    oc.enableTouch = true;
+    oc.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
     
     window.renderer = r;
     window.camera = viewportCamera;
@@ -7534,8 +7888,17 @@ document.addEventListener('fe:setting', e=>{
   const eng=FE.engines.core;
   if(!eng) return;
   if(key==='grid' && eng.grid) eng.grid.visible=value;
+  else if(key==='shadows'){
+    GLOBAL_SETTINGS.shadows = value;
+    if(eng.blenderLight) eng.blenderLight.castShadow = value;
+    if(window.renderer) {
+      window.renderer.shadowMap.enabled = value;
+      if(eng.sc) eng.sc.traverse(o=>{ if(o.material) o.material.needsUpdate = true; });
+    }
+  }
   else if(key==='resetScene' && eng.cube){
     eng.cube.position.set(0,0,0);
+    eng.cube.rotation.set(0,0,0);
     if(eng.blenderCam) {
       eng.blenderCam.position.set(-4.5,3.5,4.5);
       alignCameraToCube(eng.blenderCam, eng.cube.position);
@@ -7550,6 +7913,7 @@ document.addEventListener('fe:setting', e=>{
       alignCameraToCube(eng.viewportCamera, eng.cube.position);
       eng.oc.target.set(0,0,0);
     }
+    FE.toast('Scene reset to default');
   }
 });
 
