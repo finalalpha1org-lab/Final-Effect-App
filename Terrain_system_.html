@@ -239,7 +239,7 @@ function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',n
 function foliage(vols,cnt,sz,c0,c1){const g=GA();vols.forEach(([cx,cy_,cz,rx,ry,rz])=>{for(let i=0;i<cnt;i++){let x,y,z;do{x=R()*2-1;y=R()*2-1;z=R()*2-1}while(x*x+y*y+z*z>1);const d=Math.hypot(x,y,z)||1,ox=x/d,oy=y/d,oz=z/d;
 const a=R()*6.283,e=(R()-.4)*1.5,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*Math.sin(e),uz=Math.cos(a)*Math.sin(e),uy=Math.cos(e),s=sz*(.7+R()*.6),px=cx+x*rx,py=cy_+y*ry,pz=cz+z*rz;
 const nx=ox*.85+ux*.15,ny=oy*.85+uy*.15+.12,nz=oz*.85+uz*.15,nl=Math.hypot(nx,ny,nz),n=[nx/nl,ny/nl,nz/nl],t=cl(.45+oy*.35+(d-.5)*.45,0,1)*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],h=s/2;
-gaQ(g,[[px-r2x*h-ux*h,py-uy*h,pz-r2z*h-uz*h],[px+r2x*h-ux*h,py-uy*h,pz+r2z*h-uz*h],[px+r2x*h+ux*h,py+uy*h,pz+r2z*h+uz*h],[px-r2x*h+ux*h,py+uy*h,pz-r2z*h+uz*h]],n,c)}});return gaGeo(g)}
+gaQ(g,[[px-r2x*h-ux*h,py-uy*h,pz-r2z*h-uz*h],[px+r2x*h-ux*h,py-uy*h,pz+r2z*h-uz*h],[px+r2x*h+ux*h,py+uy*h,pz+r2z*h+uz*h],[px-r2x*h+ux*h,py+uy*h,pz-r2z*h-uz*h]],n,c)}});return gaGeo(g)}
 function strip(g,b,d,len,w,drop,c,rows){const hl=Math.hypot(d[0],d[2])||1,sx=-d[2]/hl,sz=d[0]/hl,ids=[];for(let i=0;i<=rows;i++){const t=i/rows,wd=w*(1-t*.35)*(i==rows?.5:1),p=[b[0]+d[0]*len*t,b[1]+d[1]*len*t-drop*t*t,b[2]+d[2]*len*t],n=[d[0]*.5,.8,d[2]*.5],cc=c.map(v=>v*(.75+.25*t));
 ids.push(gaV(g,[p[0]-sx*wd,p[1],p[2]-sz*wd],n,cc,[0,t]),gaV(g,[p[0]+sx*wd,p[1],p[2]+sz*wd],n,cc,[1,t]))}
 for(let i=0;i<rows;i++){const a=ids[i*2],b2=ids[i*2+1],c2=ids[i*2+2],d2=ids[i*2+3];g.I.push(a,b2,c2,b2,d2,c2)}}
@@ -571,7 +571,61 @@ for(let j=0;j<W;j++)for(let i=0;i<W;i++){const e2=Math.max(Math.abs(i*D-S/2),Mat
 function flattenUnder(){if(!mapRoot)return;push();const bb=new THREE.Box3().setFromObject(mapRoot),c=bb.getCenter(new THREE.Vector3()),r=Math.max(bb.max.x-bb.min.x,bb.max.z-bb.min.z)/2*.9;level(c.x,c.z,r,mapRoot.position.y);for(const k in KIND){const K=KIND[k];K.list=K.list.filter(o=>Math.hypot(o.x-c.x,o.z-c.z)>r*1.05)}resnap()}
 function rmMap(){if(mapRoot)scene.remove(mapRoot);mapRoot=null;build()}
 function fileBtn(l,acc,cb){const d=el(`<label class="chip" style="text-align:center">${l}<input type="file" hidden${acc?' accept="'+acc+'"':''}></label>`);d.querySelector('input').onchange=e=>{const f=e.target.files[0];if(f)cb(f);e.target.value=''};return d}
-addEventListener('message',e=>{const d=e.data;if(d&&d.type=='final-effect:load-model'&&d.buffer)parseModel(d.buffer,(d.name||'x.glb').split('.').pop().toLowerCase(),d.name||'host-model.glb')});
+addEventListener('message',e=>{
+  const d=e.data;
+  if(!d)return;
+  if(d.type=='final-effect:load-model'&&d.buffer){
+    parseModel(d.buffer,(d.name||'x.glb').split('.').pop().toLowerCase(),d.name||'host-model.glb');
+  } else if(d.type==='TOGGLE_TERRAIN_PANEL'||d.type==='TOGGLE_PANEL'){
+    showPanel(!panelOpen);
+    if(panelOpen)build();
+  } else if(d.type==='OPEN_TERRAIN_PANEL'){
+    showPanel(true);
+    build();
+  } else if(d.type==='OPEN_3D_MAP_MODAL'||d.type==='OPEN_IMPORT'){
+    setTab('import');
+  } else if(d.type==='SET_MODE'&&d.mode){
+    if(d.mode==='sculpt'){tab='terrain';bt='terrain';nav=false;showPanel(true);build();}
+    else if(d.mode==='navigate'){nav=true;setNav();}
+    else if(d.mode==='paint'){tab='terrain';bt='terrain';br.tool='paint';nav=false;showPanel(true);build();}
+  } else if(d.type==='SET_SHADING'&&d.shading){
+    mode=d.shading==='wireframe'?'wire':(d.shading==='rendered'?'render':'solid');
+    syncMode();
+  } else if(d.type==='RESTORE_LANDSCAPE'&&d.payload){
+    const p = d.payload;
+    if(p.terrain && p.terrain.heights){
+      const bstr = atob(p.terrain.heights);
+      const buf = new ArrayBuffer(bstr.length);
+      const view = new Uint8Array(buf);
+      for(let i=0;i<bstr.length;i++) view[i]=bstr.charCodeAt(i);
+      H.set(new Float32Array(buf));
+      if(p.terrain.materials){
+        const mb = atob(p.terrain.materials);
+        const mbuf = new ArrayBuffer(mb.length);
+        const mview = new Uint8Array(mbuf);
+        for(let i=0;i<mb.length;i++) mview[i]=mb.charCodeAt(i);
+        MI.set(new Uint8Array(mbuf));
+      }
+      upd();
+    }
+    if(p.foliage && p.foliage.kinds){
+      for(const k in p.foliage.kinds){
+        if(!KIND[k]) continue;
+        const it = p.foliage.kinds[k];
+        if(!it || !it.data) continue;
+        const bstr = atob(it.data);
+        const buf = new ArrayBuffer(bstr.length);
+        const view = new Uint8Array(buf);
+        for(let i=0;i<bstr.length;i++) view[i]=bstr.charCodeAt(i);
+        KIND[k].list = dec(new Float32Array(buf));
+        if(it.tint) KIND[k].tint = it.tint;
+        sync(k);
+      }
+    }
+    showPanel(true);
+    build();
+  }
+});
 function showPanel(v){panelOpen=v;$('#panel').hidden=!v;$('#bg').classList.toggle('on',v);if(!v){select(null);ring.visible=false}if(v&&(tab=='terrain'||tab=='plants'||tab=='city')){bt=tab;nav=false}setNav()}
 $('#px').onclick=()=>showPanel(false);
 $('#bg').onclick=()=>{showPanel(!panelOpen);if(panelOpen)build()};
@@ -662,11 +716,11 @@ function importToGrid(){const f={};for(const k in KIND){const K=KIND[k];f[k]={co
 const d={app:'final-effect',version:1,units:'m',axes:{up:'Y',note:'data is three.js Y-up; the UI shows Blender-style Z-up'},
 terrain:{size:S,segments:N,vertexCount:W*W,heights:b64(H),materials:b64(MI),materialNames:['grass','dirt','rock','sand','snow'],palette:PAL,biome,heightScale:hs,rockSlope:rockT,snowLine:snowL,roughness:tm.roughness,normalStrength:tm.normalScale.x},
 water:{level:wl,visible:water.visible,waveHeight:U.amp.value,palette:wp},
-sky:{timeOfDay:tod,sunAngle:az,clouds:cov,fog:fogD},
+sky:{timeOfDay:tod,sunAngle:az,clouds:cov,fog:fogD,sunColor:sun.color.getHex(),sunIntensity:sun.intensity,sunPosition:sun.position.toArray(),hemiSkyColor:hemi.color.getHex(),hemiGroundColor:hemi.groundColor.getHex(),hemiIntensity:hemi.intensity,fogColor:scene.fog.color.getHex()},lighting:{sun:{color:sun.color.getHex(),intensity:sun.intensity,position:sun.position.toArray()},hemi:{skyColor:hemi.color.getHex(),groundColor:hemi.groundColor.getHex(),intensity:hemi.intensity}},pointLights:objs.flatMap(o=>{const l=[];o.traverse(c=>{if(c.isPointLight)l.push({color:c.color.getHex(),intensity:c.intensity,distance:c.distance,position:c.getWorldPosition(new THREE.Vector3()).toArray()})});return l}),
 foliage:{layout:'float32 x7 per instance: x,y,z,scale,rotY,aspect,brightness',kinds:f},
 map:mapRoot?{name:mapName,scale:mapBase*mapK,rotationDeg:mapR,y:mapRoot.position.y}:null,objects:objs.map(o=>({type:o.userData.n.split('.')[0],name:o.userData.n,position:o.position.toArray(),quaternion:o.quaternion.toArray(),scale:o.scale.toArray(),colors:tints(o).map(m=>m.material.color.getHexString())}))};
 const js=JSON.stringify(d),host=window.parent!==window?window.parent:window.opener;let sent=false;
-try{if(host){host.postMessage({type:'final-effect:import',payload:d},'*');sent=true}}catch(e){}
+try{if(host){host.postMessage({type:'final-effect:import',payload:d},'*');host.postMessage({type:'IMPORT_TERRAIN',payload:d},'*');sent=true}}catch(e){}
 $('#exp').value=js;$('#ovt').textContent=(sent?'Posted to the embedding app (postMessage "final-effect:import"). ':'Not embedded, so nothing was posted. ')+'Scene data, '+Math.round(js.length/1024)+' KB:';$('#ov').hidden=false}
 $('#imp').onclick=importToGrid;
 $('#cp').onclick=()=>{const t=$('#exp');t.focus();t.select();t.setSelectionRange(0,1e9);try{navigator.clipboard.writeText(t.value)}catch(e){}try{document.execCommand('copy')}catch(e){}};
