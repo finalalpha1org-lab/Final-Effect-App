@@ -233,7 +233,7 @@ function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',n
 function foliage(vols,cnt,sz,c0,c1){const g=GA();vols.forEach(([cx,cy_,cz,rx,ry,rz])=>{for(let i=0;i<cnt;i++){let x,y,z;do{x=R()*2-1;y=R()*2-1;z=R()*2-1}while(x*x+y*y+z*z>1);const d=Math.hypot(x,y,z)||1,ox=x/d,oy=y/d,oz=z/d;
 const a=R()*6.283,e=(R()-.4)*1.5,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*Math.sin(e),uz=Math.cos(a)*Math.sin(e),uy=Math.cos(e),s=sz*(.7+R()*.6),px=cx+x*rx,py=cy_+y*ry,pz=cz+z*rz;
 const nx=ox*.85+ux*.15,ny=oy*.85+uy*.15+.12,nz=oz*.85+uz*.15,nl=Math.hypot(nx,ny,nz),n=[nx/nl,ny/nl,nz/nl],t=cl(.45+oy*.35+(d-.5)*.45,0,1)*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],h=s/2;
-gaQ(g,[[px-r2x*h-ux*h,py-uy*h,pz-r2z*h-uz*h],[px+r2x*h-ux*h,py-uy*h,pz+r2z*h-uz*h],[px+r2x*h+ux*h,py+uy*h,pz+r2z*h+uz*h],[px-r2x*h+ux*h,py+uy*h,pz-r2z*h-uz*h]],n,c)}});return gaGeo(g)}
+gaQ(g,[[px-r2x*h-ux*h,py-uy*h,pz-r2z*h-uz*h],[px+r2x*h-ux*h,py-uy*h,pz+r2z*h-uz*h],[px+r2x*h+ux*h,py+uy*h,pz+r2z*h+uz*h],[px-r2x*h+ux*h,py+uy*h,pz-r2z*h+uz*h]],n,c)}});return gaGeo(g)}
 function strip(g,b,d,len,w,drop,c,rows){const hl=Math.hypot(d[0],d[2])||1,sx=-d[2]/hl,sz=d[0]/hl,ids=[];for(let i=0;i<=rows;i++){const t=i/rows,wd=w*(1-t*.35)*(i==rows?.5:1),p=[b[0]+d[0]*len*t,b[1]+d[1]*len*t-drop*t*t,b[2]+d[2]*len*t],n=[d[0]*.5,.8,d[2]*.5],cc=c.map(v=>v*(.75+.25*t));
 ids.push(gaV(g,[p[0]-sx*wd,p[1],p[2]-sz*wd],n,cc,[0,t]),gaV(g,[p[0]+sx*wd,p[1],p[2]+sz*wd],n,cc,[1,t]))}
 for(let i=0;i<rows;i++){const a=ids[i*2],b2=ids[i*2+1],c2=ids[i*2+2],d2=ids[i*2+3];g.I.push(a,b2,c2,b2,d2,c2)}}
@@ -302,7 +302,7 @@ for(let i=1;i<=N;i++){const t=.1+.88*(i+(R()-.5)*.5)/N,P=pos(t),P2=pos(t+.02),Tx
 strip(L,P,[dx0*cw-dz0*sw,dy1,dx0*sw+dz0*cw],ll,.1+R()*.03,ll*(.35+R()*.25),dead?[.9,.65,.35]:[.7+R()*.3,.85+R()*.15,.55],2)})}}
 function palmTree(){const W=GA(),L=GA(),Hh=8+R()*2,lean=.7+R()*1.2,la=R()*6.283,lx=Math.cos(la)*lean,lz=Math.sin(la)*lean;let p=[0,-.2,0];{const pts=[],rad=[],N=26,ph=R()*6;for(let i=0;i<=N;i++){const t=i/N;pts.push([lx*t*t+Math.sin(t*5+ph)*.07,-.2+(Hh+.2)*t,lz*t*t+Math.cos(t*4+ph)*.07]);rad.push(.3*(1-t*.45)+.16*Math.exp(-t*14))}tubePath(W,pts,rad,10,[1,.14]);p=pts[N]}
 const top=p,tp=[top[0],top[1]+.7,top[2]];tube(W,top,tp,.2,.16,7,[1,1]);
-for(let f=0;f<15;f++){const dead=f>=12;frond(L,W,[tp[0],tp[1]-.1,tp[2]],f*2.4+R()*.25,dead?-.7:.75-(f%4)*.12+(R()-.5)*.15,(dead?2.4:3.4)+R(),dead)}
+for(let f=0;f<15;f++){const dead=f>=12;frond(L,W,[tp[0],tp[1]-.1,tp[2]],f*2.4+R()*.25,dead?-.7:.75-(f%4)*.12+(R()*.5)*.15,(dead?2.4:3.4)+R(),dead)}
 for(let k=0;k<5;k++){const a=R()*6.283,c=Math.cos(a),s=Math.sin(a);tube(W,[top[0]+c*.22,top[1]+.3,top[2]+s*.22],[top[0]+c*.3,top[1]+.05,top[2]+s*.3],.13,.13,6,[.2,.2])}return[gaGeo(W),gaGeo(L)]}
 function leafletTex(){const[c,x]=cv2(32,128),g=x.createLinearGradient(0,128,0,0);g.addColorStop(0,'#2f4a16');g.addColorStop(1,'#6f9a2c');x.fillStyle=g;x.beginPath();x.moveTo(16,128);x.bezierCurveTo(28,90,26,30,16,2);x.bezierCurveTo(6,30,4,90,16,128);x.fill();x.strokeStyle='rgba(210,230,140,.55)';x.lineWidth=1.5;x.beginPath();x.moveTo(16,126);x.lineTo(16,6);x.stroke();return mkTex(c)}
 const LLT=leafletTex();
@@ -378,7 +378,7 @@ if(bd?m>1:k=='palm'?m!=3:k!='rock'&&((k=='grass'||k=='flower')?m!=0:m>1))return 
 if(k=='grass'&&vn(x*.09+9,z*.09+4)*f<.32)return 0;
 if((k=='pine'||k=='oak'||k=='birch')&&vn(x*.05+3,z*.05+8)*f<.38)return 0;
 if(k=='rock'&&f<1.5&&R()>.25+sl*.8)return 0;
-const s=SM[k]*(1+(R()*.5)*2*K.vr);
+const s=SM[k]*(1+(R()-.5)*2*K.vr);
 if(bd){for(const q in BLD)if(KIND[q].list.some(o=>(o.x-x)**2+(o.z-z)**2<(bd+BLD[q])**2*.8))return 0}
 else if(sp&&K.list.some(o=>(o.x-x)**2+(o.z-z)**2<(sp*(o.s+s)*.5)**2))return 0;
 K.list.push({x,y,z,s,r:bd?yaw+Math.floor(R()*4)*1.5708:R()*6.28,a:bd?.94+R()*.12:.88+R()*.24,v:.82+R()*.3});return 1}
@@ -426,7 +426,7 @@ o.scale.copy(m.s);if(!m.ax)o.scale.multiplyScalar(f);else{const k=m.ax=='x'?'x':
 info.textContent=txt+(m.num!==''?'  [typing: '+m.num+']':'')+'   Enter/Click confirm, Esc/Right-click cancel'}
 function view(d){const t=oc.target,r=cam.position.distanceTo(t);d.x+=1e-4;cam.position.copy(t).addScaledVector(d.normalize(),r);oc.update()}
 function frame(){const b=new THREE.Box3().setFromObject(sel||ter),c=b.getCenter(new THREE.Vector3()),r=b.getSize(new THREE.Vector3()).length(),d=cam.position.clone().sub(oc.target).normalize();oc.target.copy(c);cam.position.copy(c).addScaledVector(d,Math.max(6,r*1.3)*(ortho?OK:1))}
-function syncMode(){[...$('#sh').children].forEach((c,i)=>c.classList.toggle('on',['wire','solid','render'][i]==mode));shade()}
+function syncMode(){[...$('#sh'].children].forEach((c,i)=>c.classList.toggle('on',['wire','solid','render'][i]==mode));shade()}
 addEventListener('keydown',e=>{const a=document.activeElement;if(/INPUT|TEXTAREA/.test(a.tagName)&&a.type!='range')return;const k=e.key.toLowerCase();
 if(mo){if(k=='enter')mend(1);else if(k=='escape')mend(0);else if(k.length==1&&'xyz'.includes(k))mo.ax=mo.ax==k?null:k;else if(/^[0-9.\-]$/.test(e.key))mo.num+=e.key;else if(k=='backspace')mo.num=mo.num.slice(0,-1);else return;e.preventDefault();if(mo)mdo();return}
 const n=e.code.slice(-1),V={1:[0,0,1],3:[1,0,0],7:[0,1,0]}[n];
@@ -571,7 +571,7 @@ G(sl('Heightmap relief (m)',5,80,1,dem,v=>dem=v)),fileBtn('🗻 Import heightmap
 function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
 const TABS=[['terrain','⛰','Terrain'],['plants','🌲','Foliage'],['city','🏙','City'],['sky','☀️','Lighting'],['water','🌊','Water'],['obj','🪑','Objects'],['import','🌍','Import']];
 TABS.forEach(([id,i,l])=>{const b=el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);b.onclick=()=>setTab(id);$('#tabs').append(b)});
-const brushTab=()=>(bt=='terrain'||bt=='plants'||bt=='city'&&!cityTap);
+const brushTab=()=>(bt=='terrain'||bt=='plants'||bt&&bt=='city'&&!cityTap);
 function setNav(){const p=brushTab()&&!nav;oc.mouseButtons={LEFT:p?-1:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.ROTATE,RIGHT:THREE.MOUSE.PAN};oc.touches={ONE:p?-1:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
 $('#mode').style.display='';$('#mode').textContent=nav?'✋ Orbit':'🖌 Brush';$('#mode').classList.toggle('on',!nav)}
 const ring=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length:64},(_,i)=>new THREE.Vector3(Math.cos(i/64*6.283),0,Math.sin(i/64*6.283)))),new THREE.LineBasicMaterial({color:0xffffff,depthTest:false,transparent:true}));
