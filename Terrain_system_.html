@@ -251,7 +251,7 @@ const grassG=(()=>{const g=GA();[[1.15,.95,0,0,0],[.7,.55,.2,.15,.5]].forEach(([
 const FPs=[[-.07,0,.55],[.12,.06,.45],[-.1,-.08,.4]];
 const stemG=mergeG(FPs.map(([x,z,h])=>[cy(.01,.018,h,4).translate(x,h/2,z),t=>[.35+.3*t,.5+.3*t,.2],[1,1,0]]));
 const fleafG=foliage([[0,.12,0,.28,.14,.28]],7,.34,[.6,.65,.55],[1,1,.9]);
-const petG=(()=>{const g=GA();FPs.forEach(([x,z,h])=>{const a=R()*6.283,t=.25,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*t,uz=Math.cos(a)*t,uy=Math.cos(t),s=.17;gaQ(g,[[x-r2x*s-ux*s,h-uy*s,z-r2z*s-uz*s],[x+r2x*s-ux*s,h-uy*s,z+r2z*s-uz*s],[x+r2x*s+ux*s,h+uy*s,z+r2z*s+uz*s],[x-r2x*s+ux*s,h+uy*s,z-r2z*s-uz*s]],[0,1,0],[1,1,1])});return gaGeo(g)})();
+const petG=(()=>{const g=GA();FPs.forEach(([x,z,h])=>{const a=R()*6.283,t=.25,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*t,uz=Math.cos(a)*t,uy=Math.cos(t),s=.17;gaQ(g,[[x-r2x*s-ux*s,h-uy*s,z-r2z*s-uz*s],[x+r2x*s-ux*s,h-uy*s,z+r2z*s-uz*s],[x+r2x*s+ux*s,h+uy*s,z+r2z*s+uz*s],[x-r2x*s+ux*s,h+uy*s,z-r2z*s+uz*s]],[0,1,0],[1,1,1])});return gaGeo(g)})();
 const centG=mergeG(FPs.map(([x,z,h])=>[blob(.032,x,h+.01,z,.1),flc([.9,.7,.15]),[1,1,0]]));
 /* ---- branching trees: wood is real tubes, leaf cards start ON the twigs ---- */
 function tube(g,a,b,r0,r1,sd,us,v0,cap){const dx=b[0]-a[0],dy=b[1]-a[1],dz=b[2]-a[2],L=Math.hypot(dx,dy,dz)||1e-6,d=[dx/L,dy/L,dz/L];let ux,uy=0,uz;if(Math.abs(d[1])<.97){ux=d[2];uz=-d[0]}else{ux=1;uz=0}const ul=Math.hypot(ux,uy,uz)||1;ux/=ul;uz/=ul;
@@ -302,7 +302,7 @@ for(let i=1;i<=N;i++){const t=.1+.88*(i+(R()-.5)*.5)/N,P=pos(t),P2=pos(t+.02),Tx
 strip(L,P,[dx0*cw-dz0*sw,dy1,dx0*sw+dz0*cw],ll,.1+R()*.03,ll*(.35+R()*.25),dead?[.9,.65,.35]:[.7+R()*.3,.85+R()*.15,.55],2)})}}
 function palmTree(){const W=GA(),L=GA(),Hh=8+R()*2,lean=.7+R()*1.2,la=R()*6.283,lx=Math.cos(la)*lean,lz=Math.sin(la)*lean;let p=[0,-.2,0];{const pts=[],rad=[],N=26,ph=R()*6;for(let i=0;i<=N;i++){const t=i/N;pts.push([lx*t*t+Math.sin(t*5+ph)*.07,-.2+(Hh+.2)*t,lz*t*t+Math.cos(t*4+ph)*.07]);rad.push(.3*(1-t*.45)+.16*Math.exp(-t*14))}tubePath(W,pts,rad,10,[1,.14]);p=pts[N]}
 const top=p,tp=[top[0],top[1]+.7,top[2]];tube(W,top,tp,.2,.16,7,[1,1]);
-for(let f=0;f<15;f++){const dead=f>=12;frond(L,W,[tp[0],tp[1]-.1,tp[2]],f*2.4+R()*.25,dead?-.7:.75-(f%4)*.12+(R()*.5)*.15,(dead?2.4:3.4)+R(),dead)}
+for(let f=0;f<15;f++){const dead=f>=12;frond(L,W,[tp[0],tp[1]-.1,tp[2]],f*2.4+R()*.25,dead?-.7:.75-(f%4)*.12+(R()-.5)*.15,(dead?2.4:3.4)+R(),dead)}
 for(let k=0;k<5;k++){const a=R()*6.283,c=Math.cos(a),s=Math.sin(a);tube(W,[top[0]+c*.22,top[1]+.3,top[2]+s*.22],[top[0]+c*.3,top[1]+.05,top[2]+s*.3],.13,.13,6,[.2,.2])}return[gaGeo(W),gaGeo(L)]}
 function leafletTex(){const[c,x]=cv2(32,128),g=x.createLinearGradient(0,128,0,0);g.addColorStop(0,'#2f4a16');g.addColorStop(1,'#6f9a2c');x.fillStyle=g;x.beginPath();x.moveTo(16,128);x.bezierCurveTo(28,90,26,30,16,2);x.bezierCurveTo(6,30,4,90,16,128);x.fill();x.strokeStyle='rgba(210,230,140,.55)';x.lineWidth=1.5;x.beginPath();x.moveTo(16,126);x.lineTo(16,6);x.stroke();return mkTex(c)}
 const LLT=leafletTex();
@@ -426,7 +426,7 @@ o.scale.copy(m.s);if(!m.ax)o.scale.multiplyScalar(f);else{const k=m.ax=='x'?'x':
 info.textContent=txt+(m.num!==''?'  [typing: '+m.num+']':'')+'   Enter/Click confirm, Esc/Right-click cancel'}
 function view(d){const t=oc.target,r=cam.position.distanceTo(t);d.x+=1e-4;cam.position.copy(t).addScaledVector(d.normalize(),r);oc.update()}
 function frame(){const b=new THREE.Box3().setFromObject(sel||ter),c=b.getCenter(new THREE.Vector3()),r=b.getSize(new THREE.Vector3()).length(),d=cam.position.clone().sub(oc.target).normalize();oc.target.copy(c);cam.position.copy(c).addScaledVector(d,Math.max(6,r*1.3)*(ortho?OK:1))}
-function syncMode(){[...$('#sh'].children].forEach((c,i)=>c.classList.toggle('on',['wire','solid','render'][i]==mode));shade()}
+function syncMode(){[...$('#sh').children].forEach((c,i)=>c.classList.toggle('on',['wire','solid','render'][i]==mode));shade()}
 addEventListener('keydown',e=>{const a=document.activeElement;if(/INPUT|TEXTAREA/.test(a.tagName)&&a.type!='range')return;const k=e.key.toLowerCase();
 if(mo){if(k=='enter')mend(1);else if(k=='escape')mend(0);else if(k.length==1&&'xyz'.includes(k))mo.ax=mo.ax==k?null:k;else if(/^[0-9.\-]$/.test(e.key))mo.num+=e.key;else if(k=='backspace')mo.num=mo.num.slice(0,-1);else return;e.preventDefault();if(mo)mdo();return}
 const n=e.code.slice(-1),V={1:[0,0,1],3:[1,0,0],7:[0,1,0]}[n];
@@ -571,7 +571,7 @@ G(sl('Heightmap relief (m)',5,80,1,dem,v=>dem=v)),fileBtn('🗻 Import heightmap
 function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
 const TABS=[['terrain','⛰','Terrain'],['plants','🌲','Foliage'],['city','🏙','City'],['sky','☀️','Lighting'],['water','🌊','Water'],['obj','🪑','Objects'],['import','🌍','Import']];
 TABS.forEach(([id,i,l])=>{const b=el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);b.onclick=()=>setTab(id);$('#tabs').append(b)});
-const brushTab=()=>(bt=='terrain'||bt=='plants'||bt&&bt=='city'&&!cityTap);
+const brushTab=()=>(bt=='terrain'||bt=='plants'||bt=='city'&&!cityTap);
 function setNav(){const p=brushTab()&&!nav;oc.mouseButtons={LEFT:p?-1:THREE.MOUSE.ROTATE,MIDDLE:THREE.MOUSE.ROTATE,RIGHT:THREE.MOUSE.PAN};oc.touches={ONE:p?-1:THREE.TOUCH.ROTATE,TWO:THREE.TOUCH.DOLLY_PAN};
 $('#mode').style.display='';$('#mode').textContent=nav?'✋ Orbit':'🖌 Brush';$('#mode').classList.toggle('on',!nav)}
 const ring=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({length:64},(_,i)=>new THREE.Vector3(Math.cos(i/64*6.283),0,Math.sin(i/64*6.283)))),new THREE.LineBasicMaterial({color:0xffffff,depthTest:false,transparent:true}));
