@@ -52,8 +52,8 @@ button{font:inherit;color:var(--ink);cursor:pointer}
 #ph #tabs{flex:1;min-width:0}#ph .tab{min-width:54px;padding:4px 6px}
 #panel #dr{max-height:none;flex:1;min-height:0;padding:8px 10px 10px}
 #mode.on{background:var(--ac);color:var(--on)}
-#info{position:fixed;left:10px;top:calc(env(safe-area-inset-top,0px) + 50px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none}
-#ng{position:fixed;right:10px;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07)}
+#info{position:fixed;left:8px;top:calc(env(safe-area-inset-top,0px) + 148px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none}
+#ng{position:fixed;left:6px;right:auto;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07)}
 #ng b{position:absolute;width:18px;height:18px;margin:-9px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#111;cursor:pointer}
 @media(max-width:520px){.b{display:none}#top{justify-content:space-between;gap:4px}#fps{display:none}.pill button,.ib{padding:8px 6px;font-size:12px}}
 </style></head><body>
@@ -636,7 +636,7 @@ $('#mode').onclick=()=>{nav=!nav;setNav()};
 const b64=a=>{const u=new Uint8Array(a.buffer);let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)};
 function importToGrid(){const f={};for(const k in KIND){const K=KIND[k];f[k]={count:K.list.length,size:K.size,tint:K.tint,data:b64(enc(K.list))}}
 const d={app:'final-effect',version:1,units:'m',axes:{up:'Y',note:'data is three.js Y-up; the UI shows Blender-style Z-up'},
-terrain:{size:S,segments:N,vertexCount:W*W,heights:b64(H),materials:b64(MI),materialNames:['grass','dirt','rock','sand','snow'],palette:PAL,biome,heightScale:hs,rockSlope:rockT,snowLine:snowL,roughness:tm.roughness,normalStrength:tm.normalScale.x},
+terrain:{size:S,segments:N,vertexCount:W*W,heights:b64(H),materials:b64(MI),colors:b64(C.array),materialNames:['grass','dirt','rock','sand','snow'],palette:PAL,biome,heightScale:hs,rockSlope:rockT,snowLine:snowL,roughness:tm.roughness,normalStrength:tm.normalScale.x},
 water:{level:wl,visible:water.visible,waveHeight:U.amp.value,palette:wp},
 sky:{timeOfDay:tod,sunAngle:az,clouds:cov,fog:fogD,sunColor:sun.color.getHex(),sunIntensity:sun.intensity,sunPosition:sun.position.toArray(),hemiSkyColor:hemi.color.getHex(),hemiGroundColor:hemi.groundColor.getHex(),hemiIntensity:hemi.intensity,fogColor:scene.fog.color.getHex()},lighting:{sun:{color:sun.color.getHex(),intensity:sun.intensity,position:sun.position.toArray()},hemi:{skyColor:hemi.color.getHex(),groundColor:hemi.groundColor.getHex(),intensity:hemi.intensity}},pointLights:objs.flatMap(o=>{const l=[];o.traverse(c=>{if(c.isPointLight)l.push({color:c.color.getHex(),intensity:c.intensity,distance:c.distance,position:c.getWorldPosition(new THREE.Vector3()).toArray()})});return l}),
 foliage:{layout:'float32 x7 per instance: x,y,z,scale,rotY,aspect,brightness',kinds:f},

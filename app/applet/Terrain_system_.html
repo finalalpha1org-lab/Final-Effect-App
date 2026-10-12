@@ -52,8 +52,8 @@ button{font:inherit;color:var(--ink);cursor:pointer}
 #ph #tabs{flex:1;min-width:0}#ph .tab{min-width:54px;padding:4px 6px}
 #panel #dr{max-height:none;flex:1;min-height:0;padding:8px 10px 10px}
 #mode.on{background:var(--ac);color:var(--on)}
-#info{position:fixed;left:10px;top:calc(env(safe-area-inset-top,0px) + 50px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none}
-#ng{position:fixed;right:10px;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07)}
+#info{position:fixed;left:12px;top:calc(env(safe-area-inset-top,0px) + 144px);color:#fff;text-shadow:0 1px 2px #000;font-size:12px;pointer-events:none}
+#ng{position:fixed;left:5px;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07)}
 #ng b{position:absolute;width:18px;height:18px;margin:-9px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#111;cursor:pointer}
 @media(max-width:520px){.b{display:none}#top{justify-content:space-between;gap:4px}#fps{display:none}.pill button,.ib{padding:8px 6px;font-size:12px}}
 </style></head><body>
@@ -559,10 +559,16 @@ let made=0;L.forEach(l=>{if(R()>cityD*(1.15-l.d*.55))return;const p=R(),t=l.d<.2
 if(cityRoad&&made){for(let j=0;j<W;j++)for(let i=0;i<W;i++){const x=i*D-S/2-c.x,z=j*D-S/2-c.z,u=x*ca+z*sa,w=-x*sa+z*ca;if(Math.hypot(u,w)>r*.97)continue;const fu=u/cs-Math.floor(u/cs),fw=w/cs-Math.floor(w/cs);if((Math.abs(fu-.5)*cs<1.5||Math.abs(fw-.5)*cs<1.5)&&H[j*W+i]>wl+.4)MI[j*W+i]=5}}
 upd();clearUnderB();resnap();msg(made?made+' buildings generated':'No valid land here (water, steep or rocky). Try a flatter spot.')}
 function fitMap(){if(!mapRoot)return;mapRoot.scale.setScalar(mapBase*mapK);mapRoot.rotation.y=mapR*Math.PI/180;mapRoot.position.set(0,Math.max(hgt(0,0),wl+.1)+mapY,0)}
-function setMap(o,name){if(mapRoot)scene.remove(mapRoot);const b=new THREE.Box3().setFromObject(o),c=b.getCenter(new THREE.Vector3()),z=b.getSize(new THREE.Vector3());o.position.set(-c.x,-b.min.y,-c.z);
-o.traverse(m=>{if(m.isMesh){m.castShadow=m.receiveShadow=true;[].concat(m.material).forEach(t=>{t.side=THREE.DoubleSide;if(t.map){t.map.encoding=THREE.LinearEncoding;t.map.needsUpdate=true}})}});
-mapRoot=new THREE.Group();mapRoot.add(o);mapName=name;mapBase=60/Math.max(z.x,z.z,1e-3);mapK=1;mapY=0;mapR=0;scene.add(mapRoot);fitMap();shade();build();msg('Imported '+name)}
-function parseModel(data,ext,name){try{if(ext=='obj')setMap(new THREE.OBJLoader().parse(data),name);else new THREE.GLTFLoader().parse(data,'',g=>setMap(g.scene,name),()=>msg('Could not read '+name))}catch(er){msg('Import failed: '+er.message)}}
+function setMap(gResult,name){if(mapRoot)scene.remove(mapRoot);const o=gResult.scene||gResult;const lights=[];if(gResult.lights)lights.push(...gResult.lights);
+o.traverse(m=>{if(m.isLight)lights.push(m);if(m.isMesh){m.castShadow=m.receiveShadow=true;if(!m.material||(Array.isArray(m.material)&&m.material.length===0)){m.material=new THREE.MeshStandardMaterial({color:0x3b82f6,roughness:.6,metalness:.1,side:THREE.DoubleSide})}const mats=[].concat(m.material);m.material=mats.map(mat=>{let t=mat;if(t.isMeshBasicMaterial||t.isMeshLambertMaterial){t=new THREE.MeshStandardMaterial({color:t.color?t.color.clone():new THREE.Color(0xffffff),map:t.map||null,roughness:0.6,metalness:0.1,side:THREE.DoubleSide})}if(t.color&&t.color.getHex()===0){t.color.setHex(t.map?0xffffff:0x3b82f6)}t.side=THREE.DoubleSide;t.needsUpdate=true;if(t.map){t.map.encoding=THREE.LinearEncoding;t.map.needsUpdate=true}if(t.roughnessMap)t.roughnessMap.needsUpdate=true;if(t.metalnessMap)t.metalnessMap.needsUpdate=true;if(t.normalMap)t.normalMap.needsUpdate=true;if(t.bumpMap)t.bumpMap.needsUpdate=true;if(t.emissiveMap)t.emissiveMap.needsUpdate=true;if(t.roughness===undefined||t.roughness===0)t.roughness=.6;if(t.metalness===undefined)t.metalness=.1;return t});if(m.material.length===1)m.material=m.material[0];if(m.geometry&&m.geometry.hasAttribute('color')){[].concat(m.material).forEach(t=>t.vertexColors=true)}}});
+const b=new THREE.Box3().setFromObject(o),c=b.getCenter(new THREE.Vector3()),z=b.getSize(new THREE.Vector3());o.position.set(-c.x,-b.min.y,-c.z);
+mapRoot=new THREE.Group();mapRoot.add(o);
+const amb=new THREE.AmbientLight(0xffffff,1.2);mapRoot.add(amb);
+const dir=new THREE.DirectionalLight(0xfff5e6,2.0);dir.position.set(20,Math.max(z.y,10)+15,20);dir.castShadow=true;mapRoot.add(dir);
+if(lights.length===0){const l=new THREE.PointLight(0xffd9a0,3.0,50);l.position.set(0,Math.max(z.y,10)+5,0);lights.push(l)}
+lights.forEach(l=>{l.castShadow=true;if(l.intensity===undefined||l.intensity===0)l.intensity=2.5;mapRoot.add(l)});
+mapName=name;mapBase=60/Math.max(z.x,z.z,1e-3);mapK=1;mapY=0;mapR=0;scene.add(mapRoot);fitMap();shade();build();msg('Imported '+name+' (with materials & light sources)')}
+function parseModel(data,ext,name){try{if(ext=='obj')setMap(new THREE.OBJLoader().parse(data),name);else new THREE.GLTFLoader().parse(data,'',g=>setMap(g,name),()=>msg('Could not read '+name))}catch(er){msg('Import failed: '+er.message)}}
 function importModel(f){const ext=f.name.split('.').pop().toLowerCase(),rd=new FileReader();rd.onload=()=>parseModel(rd.result,ext,f.name);ext=='obj'?rd.readAsText(f):rd.readAsArrayBuffer(f)}
 function importHeightmap(f){const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onerror=()=>msg('Could not read image');im.onload=()=>{const c=document.createElement('canvas');c.width=c.height=W;const x=c.getContext('2d');x.drawImage(im,0,0,W,W);const d=x.getImageData(0,0,W,W).data;push();
 for(let k=0;k<W*W;k++)H[k]=(d[k*4]*.3+d[k*4+1]*.59+d[k*4+2]*.11)/255*dem-dem*.3;

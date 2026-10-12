@@ -156,8 +156,13 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .toolbar{flex:none;height:calc(var(--tb) + var(--sb));padding:0 12px var(--sb);display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap;background:var(--bg);border-top:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none;position:relative;z-index:20}
 .toolbar::-webkit-scrollbar{display:none}
 .tool{flex:none;display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid #2a2d37;color:#cbd5e1;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500}
-.tool.active,.tool:active{background:#282c3c;border-color:var(--ac);color:#fff;box-shadow:0 0 10px color-mix(in srgb,var(--ac) 35%,transparent)}
 .embed .top-bar, .embed .toolbar, .embed .layer-bar, .embed #nav-gizmo-wrapper, .embed .timeline-bar, .embed #studio-timeline-bar, .embed .timeline-container, .embed #camera-view-container, .embed #scene-hierarchy-panel{display:none !important}
+#nav-gizmo-wrapper {
+  position: absolute !important;
+  top: 12px !important;
+  left: 6px !important;
+  right: auto !important;
+}
 
 /* =========================================================
    CAMERA SETTINGS: STRICT SCROLLABLE BOTTOM SHEET STYLING
@@ -2304,8 +2309,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <canvas></canvas>
       <div class="empty"></div>
 
-      <!-- Interactive 3D Navigation Gizmo & Viewport Tools (Top Right Corner) -->
-      <div id="nav-gizmo-wrapper" style="position:absolute; top:12px; right:14px; left:auto; z-index:125; pointer-events:auto; touch-action:none; display:flex; flex-direction:column; align-items:center; gap:8px;" title="Viewport Navigation Gizmo (Drag to orbit, click axis to snap view)">
+      <!-- Interactive 3D Navigation Gizmo & Viewport Tools (Top Left Corner) -->
+      <div id="nav-gizmo-wrapper" style="position:absolute; top:12px; left:6px; right:auto; z-index:125; pointer-events:auto; touch-action:none; display:flex; flex-direction:column; align-items:center; gap:8px;" title="Viewport Navigation Gizmo (Drag to orbit, click axis to snap view)">
         <div style="position:relative; width:98px; height:98px; display:flex; align-items:center; justify-content:center;">
           <canvas id="nav-gizmo-canvas" width="196" height="196" style="width:98px; height:98px; display:block; cursor:grab; filter:drop-shadow(0 6px 14px rgba(0,0,0,0.7));"></canvas>
         </div>
@@ -3967,35 +3972,76 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
       const W = N + 1;
       const terGeom = new T.PlaneGeometry(S, S, N, N).rotateX(-Math.PI / 2);
       const posAttr = terGeom.attributes.position;
-      const colors = new Float32Array(W * W * 3);
+      let colors = null;
+      if (payload.terrain.colors && typeof payload.terrain.colors === 'string') {
+        try {
+          const cb = atob(payload.terrain.colors);
+          const cbuf = new ArrayBuffer(cb.length);
+          const cview = new Uint8Array(cbuf);
+          for (let i = 0; i < cb.length; i++) cview[i] = cb.charCodeAt(i);
+          colors = new Float32Array(cbuf);
+        } catch (e) {
+          colors = null;
+        }
+      } else if (Array.isArray(payload.terrain.colors) || payload.terrain.colors instanceof Float32Array) {
+        colors = new Float32Array(payload.terrain.colors);
+      }
 
       const pal = (payload.terrain.palette && payload.terrain.palette.length >= 4)
         ? payload.terrain.palette
         : [[0.28, 0.5, 0.16], [0.42, 0.29, 0.17], [0.42, 0.42, 0.44], [0.64, 0.56, 0.38], [0.92, 0.94, 0.98]];
 
-      for (let j = 0; j < W; j++) {
-        for (let i = 0; i < W; i++) {
-          const idx = j * W + i;
-          const h = (heights && heights[idx] !== undefined) ? heights[idx] : 0;
-          posAttr.setY(idx, h);
+      if (!colors || colors.length !== W * W * 3) {
+        colors = new Float32Array(W * W * 3);
+        const rockT = payload.terrain.rockSlope || 1.3;
+        const snowL = payload.terrain.snowLine || 8;
+        const wl = (payload.water && typeof payload.water.level === 'number') ? payload.water.level : 0;
+        const slopeAt = (i, j) => {
+          const h = (heights && heights[j * W + i] !== undefined) ? heights[j * W + i] : 0;
+          const h1 = (heights && heights[Math.min(j + 1, N) * W + i] !== undefined) ? heights[Math.min(j + 1, N) * W + i] : h;
+          const h2 = (heights && heights[j * W + Math.min(i + 1, N)] !== undefined) ? heights[j * W + Math.min(i + 1, N)] : h;
+          return Math.abs(h1 - h) + Math.abs(h2 - h);
+        };
+        const sm = (a, b, x) => {
+          const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+          return t * t * (3 - 2 * t);
+        };
+        const mx3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+        const hash = (x, y) => {
+          const s = Math.sin(x * 127.1 + y * 311.7 + 42) * 43758.5453;
+          return s - Math.floor(s);
+        };
 
-          let r = 0.3, g = 0.55, b = 0.2;
-          if (materials && materials[idx] !== 255 && pal[materials[idx]]) {
-            const c = pal[materials[idx]];
-            r = c[0]; g = c[1]; b = c[2];
-          } else {
-            const v = Math.min(1.0, Math.max(0.45, 0.78 + (h / 28)));
-            if (h > 15) {
-              r = 0.75 * v; g = 0.75 * v; b = 0.78 * v;
-            } else if (h < 1.2) {
-              r = 0.65 * v; g = 0.58 * v; b = 0.40 * v;
+        for (let j = 0; j < W; j++) {
+          for (let i = 0; i < W; i++) {
+            const idx = j * W + i;
+            const h = (heights && heights[idx] !== undefined) ? heights[idx] : 0;
+            posAttr.setY(idx, h);
+
+            let c;
+            if (materials && materials[idx] !== 255 && pal[materials[idx]]) {
+              c = pal[materials[idx]];
             } else {
-              r = 0.28 * v; g = 0.52 * v; b = 0.20 * v;
+              const sl = slopeAt(i, j);
+              c = mx3(pal[0], pal[1], sm(9, 13, h));
+              c = mx3(c, pal[2], sm(rockT - 0.35, rockT + 0.35, sl));
+              const snowPal = pal[4] || [0.92, 0.94, 0.98];
+              c = mx3(c, snowPal, sm(snowL, snowL + 2.5, h) * (1 - sm(rockT - 0.2, rockT + 0.6, sl) * 0.7));
+              c = mx3(pal[3], c, sm(wl + 0.5, wl + 1.4, h));
             }
+            const v = 0.85 + 0.3 * hash(i, j * 7);
+            colors[idx * 3] = c[0] * v;
+            colors[idx * 3 + 1] = c[1] * v;
+            colors[idx * 3 + 2] = c[2] * v;
           }
-          colors[idx * 3] = r;
-          colors[idx * 3 + 1] = g;
-          colors[idx * 3 + 2] = b;
+        }
+      } else {
+        for (let j = 0; j < W; j++) {
+          for (let i = 0; i < W; i++) {
+            const idx = j * W + i;
+            const h = (heights && heights[idx] !== undefined) ? heights[idx] : 0;
+            posAttr.setY(idx, h);
+          }
         }
       }
 
@@ -4006,12 +4052,11 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
       const terrainTex = createProceduralTerrainTexturesHost(T);
       const terMat = new T.MeshStandardMaterial({
         color: new T.Color(0xffffff),
-        map: terrainTex.map,
-        bumpMap: terrainTex.bump,
+        bumpMap: terrainTex ? terrainTex.bump : null,
         bumpScale: 0.08,
         vertexColors: true,
-        roughness: payload.terrain.roughness || 0.88,
-        metalness: 0.02,
+        roughness: payload.terrain.roughness || 0.92,
+        metalness: 0.0,
         side: T.DoubleSide
       });
 
@@ -4154,18 +4199,102 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
     }
   }
 
-  // 4. Placed Objects
+  // 4. Placed Objects (Authentic geometries with real materials and light sources)
   if (payload.objects && Array.isArray(payload.objects)) {
+    const bx = (w, h, d) => new T.BoxGeometry(w, h, d);
+    const cy = (rt, rb, h, s) => new T.CylinderGeometry(rt, rb, h, s);
+    const part = (geom, colorHex, pos = [0, 0, 0], emissiveHex = 0) => {
+      const mat = new T.MeshStandardMaterial({
+        color: new T.Color(colorHex),
+        roughness: 0.82,
+        metalness: 0.05,
+        emissive: new T.Color(emissiveHex),
+        emissiveIntensity: emissiveHex ? 1.0 : 0.0,
+        side: T.DoubleSide
+      });
+      const mesh = new T.Mesh(geom, mat);
+      mesh.position.set(...pos);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+
+    const buildObjectMesh = (type, colors = []) => {
+      const g = new T.Group();
+      if (type === 'Bench') {
+        const woodCol = colors[0] ? ('#' + colors[0]) : 0xa9794a;
+        const ironCol = colors[1] ? ('#' + colors[1]) : 0x333a42;
+        g.add(
+          part(bx(1.7, 0.1, 0.5), woodCol, [0, 0.5, 0]),
+          part(bx(1.7, 0.45, 0.08), woodCol, [0, 0.85, -0.22]),
+          part(bx(0.1, 0.5, 0.45), ironCol, [-0.7, 0.25, 0]),
+          part(bx(0.1, 0.5, 0.45), ironCol, [0.7, 0.25, 0])
+        );
+      } else if (type === 'Lamp') {
+        const postCol = colors[0] ? ('#' + colors[0]) : 0x2b3138;
+        const lightSphere = part(new T.SphereGeometry(0.22, 12, 10), 0xfff0c0, [0, 3.3, 0], 0xffc870);
+        const lampLight = new T.PointLight(0xffd9a0, 3.2, 20);
+        lampLight.position.set(0, 3.3, 0);
+        lampLight.castShadow = true;
+        g.add(
+          part(cy(0.06, 0.09, 3.2, 8), postCol, [0, 1.6, 0]),
+          lightSphere,
+          lampLight
+        );
+      } else if (type === 'Fence') {
+        const woodCol = colors[0] ? ('#' + colors[0]) : 0x9a6b3f;
+        [-1.5, 0, 1.5].forEach(x => g.add(part(bx(0.15, 1.3, 0.15), woodCol, [x, 0.65, 0])));
+        g.add(part(bx(3.2, 0.12, 0.06), woodCol, [0, 0.5, 0]));
+        g.add(part(bx(3.2, 0.12, 0.06), woodCol, [0, 1.0, 0]));
+      } else {
+        const col = colors[0] ? ('#' + colors[0]) : 0x818cf8;
+        g.add(part(bx(1.5, 1.5, 1.5), col, [0, 0.75, 0]));
+      }
+      return g;
+    };
+
     payload.objects.forEach(o => {
-      const g = new T.BoxGeometry(1.5, 1.5, 1.5);
-      const m = new T.MeshStandardMaterial({ color: 0x818cf8, side: T.DoubleSide });
-      const mesh = new T.Mesh(g, m);
-      mesh.name = o.name || 'Object';
-      if (o.position) mesh.position.fromArray(o.position);
-      if (o.quaternion) mesh.quaternion.fromArray(o.quaternion);
-      if (o.scale) mesh.scale.fromArray(o.scale);
-      mesh.userData.isLandscape = true;
-      group.add(mesh);
+      const type = o.type || (o.name ? o.name.split('.')[0] : 'Object');
+      const objGroup = buildObjectMesh(type, o.colors || []);
+      objGroup.name = o.name || type;
+      if (o.position) objGroup.position.fromArray(o.position);
+      if (o.quaternion) objGroup.quaternion.fromArray(o.quaternion);
+      if (o.scale) objGroup.scale.fromArray(o.scale);
+      objGroup.userData.isLandscape = true;
+      group.add(objGroup);
+    });
+  }
+
+  // 5. Direct Light Sources attached to the Imported Landscape Group
+  const sunData = payload.lighting?.sun || payload.sky || {};
+  const hemiData = payload.lighting?.hemi || payload.sky || {};
+  const sunCol = sunData.color !== undefined ? sunData.color : (sunData.sunColor !== undefined ? sunData.sunColor : 0xfff3e0);
+  const sunInt = Math.max(2.0, sunData.intensity || sunData.sunIntensity || 2.4);
+  const sunPos = sunData.position || sunData.sunPosition || [40, 60, 40];
+
+  const groupSun = new T.DirectionalLight(sunCol, sunInt);
+  groupSun.name = 'LandscapeSun';
+  groupSun.position.fromArray(sunPos);
+  groupSun.castShadow = true;
+  groupSun.shadow.mapSize.set(2048, 2048);
+  groupSun.shadow.bias = -0.0001;
+  groupSun.shadow.normalBias = 0.035;
+  group.add(groupSun);
+
+  const hemiSky = hemiData.skyColor !== undefined ? hemiData.skyColor : (hemiData.hemiSkyColor !== undefined ? hemiData.hemiSkyColor : 0xddeeff);
+  const hemiGnd = hemiData.groundColor !== undefined ? hemiData.groundColor : (hemiData.hemiGroundColor !== undefined ? hemiData.hemiGroundColor : 0x4a3a2a);
+  const hemiInt = Math.max(0.75, hemiData.intensity || hemiData.hemiIntensity || 0.95);
+  const groupHemi = new T.HemisphereLight(hemiSky, hemiGnd, hemiInt);
+  groupHemi.name = 'LandscapeSkyHemi';
+  group.add(groupHemi);
+
+  if (payload.pointLights && Array.isArray(payload.pointLights)) {
+    payload.pointLights.forEach((pl, idx) => {
+      const pt = new T.PointLight(pl.color || 0xffeedd, pl.intensity || 2.5, pl.distance || 20);
+      if (pl.position) pt.position.fromArray(pl.position);
+      pt.name = 'LandscapeLight_' + (idx + 1);
+      pt.castShadow = true;
+      group.add(pt);
     });
   }
 
@@ -4203,6 +4332,38 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
       eng.oc.target.set(0, 4, 0);
       eng.viewportCamera.lookAt(0, 4, 0);
       eng.oc.update();
+    }
+
+    // Synchronize host engine lights with Landscaping Studio
+    if (eng.d) {
+      eng.d.color.set(sunCol);
+      eng.d.intensity = sunInt;
+      eng.d.position.fromArray(sunPos);
+      eng.d.visible = true;
+      eng.d.castShadow = true;
+    }
+    if (eng.hemiLight) {
+      eng.hemiLight.color.set(hemiSky);
+      eng.hemiLight.groundColor.set(hemiGnd);
+      eng.hemiLight.intensity = hemiInt;
+      eng.hemiLight.visible = true;
+    }
+    if (eng.amb) {
+      eng.amb.intensity = 0.55;
+    }
+    if (payload.sky?.fogColor && targetScene) {
+      targetScene.fog = new T.FogExp2(payload.sky.fogColor, payload.sky.fog || 0.0012);
+    }
+
+    // Switch viewport shading to Rendered mode to ensure light sources & materials are vibrant and visible
+    if (typeof applyShadingMode === 'function') {
+      applyShadingMode('rendered');
+    } else {
+      const coreShadingSel = document.querySelector('.screen.active .shading-select') || document.querySelector('.shading-select');
+      if (coreShadingSel) {
+        coreShadingSel.value = 'rendered';
+        coreShadingSel.dispatchEvent(new Event('change'));
+      }
     }
   }
 }
