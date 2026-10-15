@@ -6,5 +6,10 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
     hmr: false,
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
   },
 });

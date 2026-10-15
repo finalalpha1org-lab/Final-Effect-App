@@ -3,10 +3,10 @@
    Optimized 60 FPS Continuous Glossy Liquids & Volumetric VFX
    ============================================================================ */
 
-class UltraSimEngine {
+var UltraSimEngine = class UltraSimEngine {
   constructor() {
     this.simMeshes = new Map();
-    this.clock = new THREE.Clock();
+    this.clock = (typeof THREE !== 'undefined' && THREE.Clock) ? new THREE.Clock() : null;
     this.frameCount = 0;
   }
 
@@ -382,5 +382,10 @@ class UltraSimEngine {
   }
 }
 
+var SimulationEngine = UltraSimEngine;
 window.SimulationEngine = UltraSimEngine;
-window.SimEngine = new UltraSimEngine();
+try {
+  window.SimEngine = new UltraSimEngine();
+} catch (e) {
+  console.warn("UltraSimEngine instantiation deferred:", e);
+}
