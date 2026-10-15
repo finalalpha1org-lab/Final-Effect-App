@@ -6249,8 +6249,15 @@ FE.register('core',{
     document.addEventListener('fe:setting', settingListener);
     this._settingListener = settingListener;
 
-    const shadowFloor=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.ShadowMaterial({opacity:0.35}));
-    shadowFloor.rotation.x=-Math.PI/2; shadowFloor.receiveShadow=true; sc.add(shadowFloor);
+    // Shadow-only receiver aligned just below the viewport grid. ShadowMaterial has no base-color surface.
+    const shadowFloor=new THREE.Mesh(new THREE.PlaneGeometry(50,50),new THREE.ShadowMaterial({opacity:0.35, depthWrite:false}));
+    shadowFloor.name='ShadowFloor';
+    shadowFloor.rotation.x=-Math.PI/2;
+    shadowFloor.position.y=-0.002;
+    shadowFloor.receiveShadow=true;
+    shadowFloor.castShadow=false;
+    shadowFloor.visible=false;
+    sc.add(shadowFloor);
 
     // Default Cube at [0, 0, 0] with Blender Workbench clay appearance
     const cubeMat=new THREE.MeshStandardMaterial({color:0x82899d, roughness:.65, metalness:0.0, emissive:0x000000});
@@ -6283,20 +6290,7 @@ FE.register('core',{
     dirTarget.position.set(0, 0, 0);
     sc.add(dirTarget);
 
-    // Studio ground plane receiving light and shadows in Material Preview & Rendered modes
-    const studioFloorGeo = new THREE.PlaneGeometry(60, 60, 32, 32);
-    const studioFloorMat = new THREE.MeshStandardMaterial({
-      color: 0x141620,
-      roughness: 0.85,
-      metalness: 0.05
-    });
-    const studioFloor = new THREE.Mesh(studioFloorGeo, studioFloorMat);
-    studioFloor.name = 'StudioFloor';
-    studioFloor.rotation.x = -Math.PI / 2;
-    studioFloor.position.y = -0.01;
-    studioFloor.receiveShadow = true;
-    studioFloor.visible = false;
-    sc.add(studioFloor);
+    // No opaque StudioFloor: the viewport grid is the visible ground; only the transparent shadow receiver remains.
 
     // Raycaster selection for intentional tapping of objects in viewport
     const raycaster = new THREE.Raycaster();
@@ -6523,7 +6517,7 @@ FE.register('core',{
     });
 
     Object.assign(this,{
-      sc,viewportCamera,sceneCamera,r,oc,transformControls,viewHelper,cube,blenderCam,blenderCamLines:blenderCam.lines,blenderLight,light:blenderLight.light,shadowFloor,studioFloor,spotTarget,dirTarget,grid,cursor3d,d,fillLight,amb,cubeMat
+      sc,viewportCamera,sceneCamera,r,oc,transformControls,viewHelper,cube,blenderCam,blenderCamLines:blenderCam.lines,blenderLight,light:blenderLight.light,shadowFloor,spotTarget,dirTarget,grid,cursor3d,d,fillLight,amb,cubeMat
     });
 
     window.sceneCube = cube;
@@ -7779,7 +7773,7 @@ function applyShadingMode(shading) {
         mesh.receiveShadow = true;
       }
     });
-    // Active scene light with floor light reception and soft shadow
+    // Active scene light; the transparent grid-aligned receiver shows shadows only.
     if (activeLight) {
       activeLight.visible = true;
       activeLight.castShadow = true;
@@ -7790,11 +7784,11 @@ function applyShadingMode(shading) {
         activeLight.shadow.radius = 2;
       }
     }
-    if (eng.studioFloor) { eng.studioFloor.visible = true; eng.studioFloor.receiveShadow = true; }
+    if (eng.studioFloor) eng.studioFloor.visible = false;
     if (eng.shadowFloor) { eng.shadowFloor.visible = true; eng.shadowFloor.receiveShadow = true; }
     if (eng.r) { eng.r.shadowMap.enabled = true; eng.r.shadowMap.type = THREE.PCFSoftShadowMap; }
     
-    // Balanced studio key light casting clean soft contact shadows on the floor
+    // Balanced studio key light casting clean soft shadows onto the grid-aligned receiver.
     if (eng.d) {
       eng.d.visible = true;
       eng.d.position.set(5, 9, 6);
@@ -7831,7 +7825,7 @@ function applyShadingMode(shading) {
         mesh.receiveShadow = true;
       }
     });
-    // Activate dynamic scene lights with full shadows on floor and meshes
+    // Activate dynamic scene lights with full shadows on the grid receiver and meshes
     if (activeLight) {
       activeLight.visible = true;
       activeLight.castShadow = true;
@@ -7842,7 +7836,7 @@ function applyShadingMode(shading) {
         activeLight.shadow.radius = 2;
       }
     }
-    if (eng.studioFloor) { eng.studioFloor.visible = true; eng.studioFloor.receiveShadow = true; }
+    if (eng.studioFloor) eng.studioFloor.visible = false;
     if (eng.shadowFloor) { eng.shadowFloor.visible = true; eng.shadowFloor.receiveShadow = true; }
     if (eng.r) { eng.r.shadowMap.enabled = true; eng.r.shadowMap.type = THREE.PCFSoftShadowMap; }
     // Turn off default studio directional light so the scene light realistically defines lighting
