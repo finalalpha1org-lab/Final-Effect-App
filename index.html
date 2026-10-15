@@ -3949,7 +3949,7 @@ function getAllSceneMeshes() {
   if (!eng || !eng.sc) return [];
   const meshes = [];
   eng.sc.traverse(child => {
-    if ((child.isMesh || child.isInstancedMesh) && child !== eng.shadowFloor && child !== eng.grid) {
+    if ((child.isMesh || child.isInstancedMesh) && child !== eng.shadowFloor && child !== eng.studioFloor && child !== eng.grid && child.name !== 'StudioFloor' && child.name !== 'ShadowFloor') {
       meshes.push(child);
     }
   });
