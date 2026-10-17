@@ -28,6 +28,16 @@ fn safe_dt(dt: f32) -> f32 {
 }
 
 #[inline]
+fn sqrtf(value: f32) -> f32 {
+    if value <= 0.0 { return 0.0; }
+    let mut root = if value < 1.0 { 1.0 } else { value };
+    for _ in 0..5 {
+        root = 0.5 * (root + value / root);
+    }
+    root
+}
+
+#[inline]
 fn collide_axis(position: &mut f32, velocity: &mut f32, low: f32, high: f32, restitution: f32, friction: f32) {
     if *position < low {
         *position = low;
@@ -119,7 +129,7 @@ fn deformable_step_inner(
             let dx = positions[ib] - positions[ia];
             let dy = positions[ib + 1] - positions[ia + 1];
             let dz = positions[ib + 2] - positions[ia + 2];
-            let length = (dx * dx + dy * dy + dz * dz).sqrt();
+            let length = sqrtf(dx * dx + dy * dy + dz * dz);
             let target = rest_lengths[edge].max(1.0e-6);
             if length <= 1.0e-6 { continue; }
             let wa = if pinned[a] == 0 { 1.0 } else { 0.0 };
@@ -212,7 +222,7 @@ fn sph_step_inner(
             let delta = [positions[pi] - positions[pj], positions[pi + 1] - positions[pj + 1], positions[pi + 2] - positions[pj + 2]];
             let r2 = delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2];
             if r2 <= 1.0e-10 || r2 >= h2 { continue; }
-            let r = r2.sqrt();
+            let r = sqrtf(r2);
             let density_j = densities[j].max(1.0e-5);
             let pressure_gradient = spiky * (h - r) * (h - r) / r;
             let pressure_scale = -mass * (pressures[i] + pressures[j]) / (2.0 * density_j) * pressure_gradient;
@@ -383,7 +393,7 @@ mod tests {
         let rc = deformable_step_inner(&mut pos, &mut prev, &rest, &pins, &edges, &lengths, &bounds, 1.0 / 60.0, 9.8, 0.0, 1.0, 0.0, 12, 0.0, 0.0);
         assert_eq!(rc, 1);
         assert_eq!(&pos[0..3], &rest[0..3]);
-        let edge = ((pos[3] - pos[0]).powi(2) + (pos[4] - pos[1]).powi(2) + (pos[5] - pos[2]).powi(2)).sqrt();
+        let edge = sqrtf((pos[3] - pos[0]).powi(2) + (pos[4] - pos[1]).powi(2) + (pos[5] - pos[2]).powi(2));
         assert!((edge - 1.0).abs() < 1.0e-3);
         assert!(pos[4] < 0.0);
     }
