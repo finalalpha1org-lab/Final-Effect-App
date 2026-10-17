@@ -47,13 +47,13 @@ jobs:
           PY
           base64 -w0 wasm/simulation_solver.wasm > wasm/simulation_solver.wasm.b64
           rm -f wasm/simulation_solver.wasm.b64.part-*
-          split -b 12000 -d -a 3 wasm/simulation_solver.wasm.b64 wasm/simulation_solver.wasm.b64.part-
+          split -b 24000 -d -a 3 wasm/simulation_solver.wasm.b64 wasm/simulation_solver.wasm.b64.part-
 
       - name: Commit generated browser artifact
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add wasm/simulation_solver.wasm wasm/simulation_solver.wasm.b64 wasm/simulation_solver.wasm.b64.part-*
+          git add -A wasm
           if ! git diff --cached --quiet; then
             git commit -m '[wasm-build] Generate simulation solver artifact'
             git push origin "HEAD:${GITHUB_REF_NAME}"
