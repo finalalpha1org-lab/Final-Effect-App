@@ -93,54 +93,67 @@ var UltraSimEngine = class UltraSimEngine {
       const radiusBottom = sizeX * 0.38;
       const height = sizeY * 0.85;
 
-      const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 24, 24, true);
+      const geometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 48, 40, true);
       geometry.userData.basePositions = geometry.attributes.position.array.slice();
 
-      let liquidColor = 0x0ea5e9;
-      let deepColor = 0x0369a1;
-      let roughness = 0.04;
-      let metalness = 0.10;
-      let transmission = 0.90;
-      let thickness = 1.2;
+      // Water defaults favor a clear, dielectric surface with restrained blue-green absorption.
+      let liquidColor = 0x73c5d6;
+      let deepColor = 0x073c50;
+      let roughness = 0.025;
+      let metalness = 0.01;
+      let transmission = 0.96;
+      let thickness = 1.4;
       let ior = 1.333;
+      let clearcoat = 1.0;
+      let clearcoatRoughness = 0.018;
 
       if (liquidPreset === 'Honey') {
         liquidColor = 0xffaa00;
         deepColor = 0xb45309;
-        roughness = 0.12;
-        metalness = 0.05;
-        transmission = 0.82;
+        roughness = 0.10;
+        metalness = 0.03;
+        transmission = 0.84;
         thickness = 2.4;
         ior = 1.50;
+        clearcoat = 0.9;
+        clearcoatRoughness = 0.045;
       } else if (liquidPreset === 'Oil') {
         liquidColor = 0xd97706;
         deepColor = 0x78350f;
-        roughness = 0.08;
-        metalness = 0.20;
-        transmission = 0.75;
+        roughness = 0.055;
+        metalness = 0.10;
+        transmission = 0.82;
         thickness = 1.8;
         ior = 1.48;
+        clearcoat = 1.0;
+        clearcoatRoughness = 0.025;
       } else if (liquidPreset === 'Slime') {
         liquidColor = 0x10b981;
         deepColor = 0x064e3b;
-        roughness = 0.18;
+        roughness = 0.12;
         metalness = 0.02;
-        transmission = 0.70;
+        transmission = 0.76;
         thickness = 1.6;
         ior = 1.38;
+        clearcoat = 0.85;
+        clearcoatRoughness = 0.06;
       }
 
       const material = new THREE.MeshPhysicalMaterial({
         color: liquidColor,
-        emissive: deepColor,
-        emissiveIntensity: 0.15,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
         metalness: metalness,
         roughness: roughness,
         transmission: transmission,
         thickness: thickness,
         ior: ior,
+        clearcoat: clearcoat,
+        clearcoatRoughness: clearcoatRoughness,
+        reflectivity: 0.95,
+        envMapIntensity: 1.4,
         transparent: true,
-        opacity: 0.92,
+        opacity: 0.97,
         side: THREE.DoubleSide,
         depthWrite: false
       });
@@ -149,27 +162,32 @@ var UltraSimEngine = class UltraSimEngine {
       simMesh.position.set(centerX, centerY, centerZ);
       eng.sc.add(simMesh);
 
-      const poolGeo = new THREE.PlaneGeometry(sizeX * 0.96, sizeZ * 0.96, 20, 20);
+      const poolGeo = new THREE.PlaneGeometry(sizeX * 0.96, sizeZ * 0.96, 64, 64);
       poolGeo.rotateX(-Math.PI / 2);
       poolGeo.userData.basePositions = poolGeo.attributes.position.array.slice();
 
       const poolMat = new THREE.MeshPhysicalMaterial({
         color: liquidColor,
-        emissive: deepColor,
-        emissiveIntensity: 0.10,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
         metalness: metalness,
         roughness: roughness,
         transmission: transmission,
         thickness: thickness,
         ior: ior,
+        clearcoat: clearcoat,
+        clearcoatRoughness: clearcoatRoughness,
+        reflectivity: 0.95,
+        envMapIntensity: 1.4,
         transparent: true,
-        opacity: 0.90,
+        opacity: 0.96,
         side: THREE.DoubleSide,
         depthWrite: false
       });
 
       poolMesh = new THREE.Mesh(poolGeo, poolMat);
       poolMesh.position.set(centerX, box.min.y + 0.04, centerZ);
+      mesh.userData.fluidSurfaceScale = Math.max(0.5, Math.max(sizeX, sizeZ));
       eng.sc.add(poolMesh);
 
     } else if (domainType === 'Fire' || domainType === 'Smoke' || domainType === 'Fire + Smoke') {
@@ -294,7 +312,9 @@ var UltraSimEngine = class UltraSimEngine {
     const elapsedTime = performance.now() * 0.001;
     const params = mesh.userData.fluidSim?.params || {};
     const flowSpeed = parseFloat(params["Flow Speed"] || 3.5);
-    const turbulence = parseFloat(params["Turbulence"] !== undefined ? params["Turbulence"] : 0.35);
+    const turbulence = Math.max(0, Math.min(1, parseFloat(params["Turbulence"] !== undefined ? params["Turbulence"] : 0.35)));
+    const fluidScale = Math.max(0.5, mesh.userData.fluidSurfaceScale || 1);
+    const waveTime = elapsedTime * flowSpeed;
 
     const pos = simMesh.geometry.attributes.position;
     const base = simMesh.geometry.userData.basePositions;
@@ -309,10 +329,15 @@ var UltraSimEngine = class UltraSimEngine {
       const bz = base[idx + 2];
 
       if (isLiquid) {
-        const wave = Math.sin(elapsedTime * flowSpeed + by * 6.0) * (0.02 + turbulence * 0.04);
-        const swirl = Math.cos(elapsedTime * (flowSpeed * 0.8) + by * 4.0) * (0.02 + turbulence * 0.04);
-        pos.setX(i, bx * (1.0 + wave));
-        pos.setZ(i, bz * (1.0 + swirl));
+        // Layered traveling waves gently deform the liquid body without the old uniform cylinder pulse.
+        const phaseA = bx * 2.1 + bz * 0.7 + waveTime * 1.1 + by * 1.8;
+        const phaseB = bz * 2.4 - bx * 0.6 - waveTime * 0.82 + by * 2.3;
+        const phaseC = (bx + bz) * 4.2 + waveTime * 1.7;
+        const swell = Math.sin(phaseA) * 0.55 + Math.sin(phaseB) * 0.32 + Math.sin(phaseC) * 0.13;
+        const radialScale = 0.006 + turbulence * 0.018;
+        pos.setX(i, bx * (1.0 + swell * radialScale));
+        pos.setZ(i, bz * (1.0 + (Math.sin(phaseB) * 0.62 + Math.sin(phaseC) * 0.38) * radialScale));
+        pos.setY(i, by + Math.sin(phaseA + phaseB * 0.35) * fluidScale * radialScale * 0.12);
       } else {
         const turbX = Math.cos(elapsedTime * (flowSpeed * 1.2) + by * 4.0) * (0.04 + turbulence * 0.08);
         const turbZ = Math.sin(elapsedTime * (flowSpeed * 1.2) + by * 4.0) * (0.04 + turbulence * 0.08);
@@ -327,15 +352,25 @@ var UltraSimEngine = class UltraSimEngine {
       const pPos = poolMesh.geometry.attributes.position;
       const pBase = poolMesh.geometry.userData.basePositions;
       if (pPos && pBase) {
+        const surfaceAmplitude = fluidScale * (0.012 + turbulence * 0.018);
         for (let i = 0; i < pPos.count; i++) {
           const idx = i * 3;
           const px = pBase[idx];
           const pz = pBase[idx + 2];
-          const ripple = Math.sin(px * 8.0 + elapsedTime * 4.0) * Math.cos(pz * 8.0 + elapsedTime * 3.5) * 0.035;
-          pPos.setY(i, ripple);
+          const waveA = Math.sin(px * 0.82 + pz * 0.33 + waveTime * 1.15);
+          const waveB = Math.sin(-px * 0.37 + pz * 0.94 - waveTime * 0.78 + 1.7);
+          const waveC = Math.sin((px + pz) * 1.65 + waveTime * 1.52 + 3.1);
+          const waveD = Math.sin((px - pz) * 3.1 - waveTime * 1.9);
+          const ripple = surfaceAmplitude * (waveA * 0.42 + waveB * 0.28 + waveC * 0.20 + waveD * 0.10);
+          pPos.setY(i, pBase[idx + 1] + ripple);
         }
         pPos.needsUpdate = true;
       }
+    }
+
+    if (this.frameCount % 2 === 0) {
+      if (simMesh.geometry.computeVertexNormals) simMesh.geometry.computeVertexNormals();
+      if (poolMesh?.geometry.computeVertexNormals) poolMesh.geometry.computeVertexNormals();
     }
   }
 
