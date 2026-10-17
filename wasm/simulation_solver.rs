@@ -28,16 +28,6 @@ fn safe_dt(dt: f32) -> f32 {
 }
 
 #[inline]
-fn sqrtf(value: f32) -> f32 {
-    if value <= 0.0 { return 0.0; }
-    let mut root = if value < 1.0 { 1.0 } else { value };
-    for _ in 0..5 {
-        root = 0.5 * (root + value / root);
-    }
-    root
-}
-
-#[inline]
 fn collide_axis(position: &mut f32, velocity: &mut f32, low: f32, high: f32, restitution: f32, friction: f32) {
     if *position < low {
         *position = low;
@@ -62,13 +52,18 @@ fn deformable_step_inner(
     rest: &[f32],
     pinned: &[u8],
     edges: &[u32],
-    rest_lengths: &[f32],
+    rest_lengths: &mut [f32],
+    edge_weights: &[f32],
     bounds: &Bounds,
     dt: f32,
     gravity: f32,
     damping: f32,
     stiffness: f32,
     goal_strength: f32,
+    stretch_resistance: f32,
+    compression_resistance: f32,
+    plasticity: f32,
+    collision_margin: f32,
     iterations: u32,
     restitution: f32,
     friction: f32,
@@ -76,7 +71,7 @@ fn deformable_step_inner(
     let nodes = positions.len() / 3;
     let edge_count = edges.len() / 2;
     if nodes == 0 || positions.len() % 3 != 0 || previous.len() != positions.len() || rest.len() != positions.len()
-        || pinned.len() != nodes || rest_lengths.len() < edge_count || edges.len() % 2 != 0
+        || pinned.len() != nodes || rest_lengths.len() < edge_count || edge_weights.len() < edge_count || edges.len() % 2 != 0
         || nodes > MAX_DEFORMABLE_NODES || edge_count > MAX_CONSTRAINTS {
         return -1;
     }
@@ -87,6 +82,11 @@ fn deformable_step_inner(
     let goal = clamp(goal_strength, 0.0, 1.0);
     let bounce = clamp(restitution, 0.0, 1.0);
     let friction = clamp(friction, 0.0, 1.0);
+    let stretch = clamp(stretch_resistance, 0.0, 1.0);
+    let compression = clamp(compression_resistance, 0.0, 1.0);
+    let plasticity = clamp(plasticity, 0.0, 1.0);
+    let margin = clamp(collision_margin, 0.0, 0.5);
+    let safe_bounds: Bounds = [bounds[0] + margin, bounds[1] + margin, bounds[2] + margin, bounds[3] - margin, bounds[4] - margin, bounds[5] - margin];
     let iterations = iterations.clamp(1, 64) as usize;
     let dt2 = dt * dt;
 
@@ -115,7 +115,7 @@ fn deformable_step_inner(
         }
         let mut p = [positions[i], positions[i + 1], positions[i + 2]];
         let mut v = [positions[i] - old[0], positions[i + 1] - old[1], positions[i + 2] - old[2]];
-        collide_box(&mut p, &mut v, bounds, bounce, friction);
+        collide_box(&mut p, &mut v, &safe_bounds, bounce, friction);
         positions[i..i + 3].copy_from_slice(&p);
     }
 
@@ -129,14 +129,19 @@ fn deformable_step_inner(
             let dx = positions[ib] - positions[ia];
             let dy = positions[ib + 1] - positions[ia + 1];
             let dz = positions[ib + 2] - positions[ia + 2];
-            let length = sqrtf(dx * dx + dy * dy + dz * dz);
+            let length = (dx * dx + dy * dy + dz * dz).sqrt();
             let target = rest_lengths[edge].max(1.0e-6);
             if length <= 1.0e-6 { continue; }
             let wa = if pinned[a] == 0 { 1.0 } else { 0.0 };
             let wb = if pinned[b] == 0 { 1.0 } else { 0.0 };
             let total = wa + wb;
             if total == 0.0 { continue; }
-            let correction = ((length - target) / length) * stiffness;
+            let error = length - target;
+            let directional = if error > 0.0 { stretch } else { compression };
+            let correction = (error / length) * stiffness * clamp(edge_weights[edge], 0.0, 1.0) * directional;
+            if plasticity > 0.0 && error.abs() / target > 0.08 {
+                rest_lengths[edge] = target + error * plasticity * dt * 0.05;
+            }
             let scale_a = correction * wa / total;
             let scale_b = correction * wb / total;
             positions[ia] += dx * scale_a;
@@ -151,7 +156,7 @@ fn deformable_step_inner(
             let i = node * 3;
             let mut p = [positions[i], positions[i + 1], positions[i + 2]];
             let mut v = [positions[i] - previous[i], positions[i + 1] - previous[i + 1], positions[i + 2] - previous[i + 2]];
-            collide_box(&mut p, &mut v, bounds, bounce, friction);
+            collide_box(&mut p, &mut v, &safe_bounds, bounce, friction);
             positions[i..i + 3].copy_from_slice(&p);
         }
     }
@@ -164,6 +169,7 @@ fn sph_step_inner(
     densities: &mut [f32],
     pressures: &mut [f32],
     forces: &mut [f32],
+    active: &mut [u8],
     bounds: &Bounds,
     dt: f32,
     particle_mass: f32,
@@ -171,13 +177,15 @@ fn sph_step_inner(
     smoothing_length: f32,
     pressure_k: f32,
     viscosity: f32,
+    surface_tension: f32,
     gravity: [f32; 3],
     restitution: f32,
     damping: f32,
+    outflow: bool,
 ) -> i32 {
     let count = positions.len() / 3;
     if count == 0 || positions.len() % 3 != 0 || velocities.len() != positions.len()
-        || densities.len() < count || pressures.len() < count || forces.len() < positions.len() || count > MAX_FLUID_PARTICLES {
+        || densities.len() < count || pressures.len() < count || forces.len() < positions.len() || active.len() < count || count > MAX_FLUID_PARTICLES {
         return -1;
     }
     let dt = safe_dt(dt);
@@ -195,8 +203,10 @@ fn sph_step_inner(
 
     for i in 0..count {
         let pi = i * 3;
+        if active[i] == 0 { densities[i] = 0.0; pressures[i] = 0.0; continue; }
         let mut rho = 0.0;
         for j in 0..count {
+            if active[j] == 0 { continue; }
             let pj = j * 3;
             let dx = positions[pi] - positions[pj];
             let dy = positions[pi + 1] - positions[pj + 1];
@@ -213,22 +223,25 @@ fn sph_step_inner(
 
     let restitution = clamp(restitution, 0.0, 1.0);
     let damping = clamp(damping, 0.0, 1.0);
+    let surface_tension = clamp(surface_tension, 0.0, 2.0);
     for i in 0..count {
         let pi = i * 3;
+        if active[i] == 0 { forces[pi..pi + 3].fill(0.0); continue; }
         let mut force = [0.0; 3];
         for j in 0..count {
-            if i == j { continue; }
+            if i == j || active[j] == 0 { continue; }
             let pj = j * 3;
             let delta = [positions[pi] - positions[pj], positions[pi + 1] - positions[pj + 1], positions[pi + 2] - positions[pj + 2]];
             let r2 = delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2];
             if r2 <= 1.0e-10 || r2 >= h2 { continue; }
-            let r = sqrtf(r2);
+            let r = r2.sqrt();
             let density_j = densities[j].max(1.0e-5);
             let pressure_gradient = spiky * (h - r) * (h - r) / r;
             let pressure_scale = -mass * (pressures[i] + pressures[j]) / (2.0 * density_j) * pressure_gradient;
             let visc_scale = viscosity.max(0.0) * mass * viscosity_lap * (h - r) / density_j;
+            let cohesion_scale = surface_tension.max(0.0) * mass * (h - r) * (h - r) / (h2 * density_j) * 0.02;
             for axis in 0..3 {
-                force[axis] += delta[axis] * pressure_scale + (velocities[pj + axis] - velocities[pi + axis]) * visc_scale;
+                force[axis] += delta[axis] * pressure_scale + (velocities[pj + axis] - velocities[pi + axis]) * visc_scale - delta[axis] / r * cohesion_scale;
             }
         }
         let rho = densities[i].max(1.0e-5);
@@ -242,6 +255,11 @@ fn sph_step_inner(
         }
         let mut p = [positions[pi], positions[pi + 1], positions[pi + 2]];
         let mut v = [velocities[pi], velocities[pi + 1], velocities[pi + 2]];
+        if outflow && (p[0] < bounds[0] || p[0] > bounds[3] || p[1] < bounds[1] || p[1] > bounds[4] || p[2] < bounds[2] || p[2] > bounds[5]) {
+            active[i] = 0;
+            velocities[pi..pi + 3].fill(0.0);
+            continue;
+        }
         collide_box(&mut p, &mut v, bounds, restitution, 0.0);
         positions[pi..pi + 3].copy_from_slice(&p);
         velocities[pi..pi + 3].copy_from_slice(&v);
@@ -278,7 +296,7 @@ fn buoyant_tracer_step_inner(
             continue;
         }
         let base = i * 3;
-        let lift = buoyancy * temperatures[i].max(0.0) - gravity;
+        let lift = gravity.max(0.0) * buoyancy * (temperatures[i].max(0.0) - 0.2);
         velocities[base + 1] = (velocities[base + 1] + lift * dt) * drag_factor;
         velocities[base] *= drag_factor;
         velocities[base + 2] *= drag_factor;
@@ -316,46 +334,52 @@ unsafe fn u8_ref<'a>(ptr: u32, len: usize) -> Option<&'a [u8]> {
     Some(core::slice::from_raw_parts(ptr as *const u8, len))
 }
 
+unsafe fn u8_mut<'a>(ptr: u32, len: usize) -> Option<&'a mut [u8]> {
+    if ptr == 0 || len == 0 { return None; }
+    Some(core::slice::from_raw_parts_mut(ptr as *mut u8, len))
+}
+
 #[no_mangle]
-pub extern "C" fn sim_solver_abi_version() -> u32 { 1 }
+pub extern "C" fn sim_solver_abi_version() -> u32 { 2 }
 
 #[no_mangle]
 pub extern "C" fn sim_solver_deformable_step(
     positions_ptr: u32, previous_ptr: u32, rest_ptr: u32, pinned_ptr: u32,
-    edges_ptr: u32, rest_lengths_ptr: u32, node_count: u32, edge_count: u32,
+    edges_ptr: u32, rest_lengths_ptr: u32, edge_weights_ptr: u32, node_count: u32, edge_count: u32,
     dt: f32, gravity: f32, damping: f32, stiffness: f32, goal_strength: f32,
+    stretch_resistance: f32, compression_resistance: f32, plasticity: f32, collision_margin: f32,
     iterations: u32, bounds_ptr: u32, restitution: f32, friction: f32,
 ) -> i32 {
     let nodes = node_count as usize;
     let edge_count = edge_count as usize;
     if nodes == 0 || nodes > MAX_DEFORMABLE_NODES || edge_count > MAX_CONSTRAINTS { return -2; }
     unsafe {
-        let (Some(pos), Some(prev), Some(rest), Some(pins), Some(edges), Some(lengths), Some(b)) = (
+        let (Some(pos), Some(prev), Some(rest), Some(pins), Some(edges), Some(lengths), Some(weights), Some(b)) = (
             f32_mut(positions_ptr, nodes * 3), f32_mut(previous_ptr, nodes * 3), f32_ref(rest_ptr, nodes * 3),
-            u8_ref(pinned_ptr, nodes), u32_ref(edges_ptr, edge_count * 2), f32_ref(rest_lengths_ptr, edge_count),
-            f32_ref(bounds_ptr, 6),
+            u8_ref(pinned_ptr, nodes), u32_ref(edges_ptr, edge_count * 2), f32_mut(rest_lengths_ptr, edge_count),
+            f32_ref(edge_weights_ptr, edge_count), f32_ref(bounds_ptr, 6),
         ) else { return -3; };
         let bounds: Bounds = [b[0], b[1], b[2], b[3], b[4], b[5]];
-        deformable_step_inner(pos, prev, rest, pins, edges, lengths, &bounds, dt, gravity, damping, stiffness, goal_strength, iterations, restitution, friction)
+        deformable_step_inner(pos, prev, rest, pins, edges, lengths, weights, &bounds, dt, gravity, damping, stiffness, goal_strength, stretch_resistance, compression_resistance, plasticity, collision_margin, iterations, restitution, friction)
     }
 }
 
 #[no_mangle]
 pub extern "C" fn sim_solver_sph_step(
-    positions_ptr: u32, velocities_ptr: u32, densities_ptr: u32, pressures_ptr: u32, forces_ptr: u32,
+    positions_ptr: u32, velocities_ptr: u32, densities_ptr: u32, pressures_ptr: u32, forces_ptr: u32, active_ptr: u32,
     particle_count: u32, dt: f32, mass: f32, rest_density: f32, smoothing_length: f32,
-    pressure_k: f32, viscosity: f32, gravity_x: f32, gravity_y: f32, gravity_z: f32,
-    bounds_ptr: u32, restitution: f32, damping: f32,
+    pressure_k: f32, viscosity: f32, surface_tension: f32, gravity_x: f32, gravity_y: f32, gravity_z: f32,
+    bounds_ptr: u32, restitution: f32, damping: f32, outflow: u32,
 ) -> i32 {
     let count = particle_count as usize;
     if count == 0 || count > MAX_FLUID_PARTICLES { return -2; }
     unsafe {
-        let (Some(pos), Some(vel), Some(rho), Some(pressure), Some(forces), Some(b)) = (
+        let (Some(pos), Some(vel), Some(rho), Some(pressure), Some(forces), Some(active), Some(b)) = (
             f32_mut(positions_ptr, count * 3), f32_mut(velocities_ptr, count * 3),
-            f32_mut(densities_ptr, count), f32_mut(pressures_ptr, count), f32_mut(forces_ptr, count * 3), f32_ref(bounds_ptr, 6),
+            f32_mut(densities_ptr, count), f32_mut(pressures_ptr, count), f32_mut(forces_ptr, count * 3), u8_mut(active_ptr, count), f32_ref(bounds_ptr, 6),
         ) else { return -3; };
         let bounds: Bounds = [b[0], b[1], b[2], b[3], b[4], b[5]];
-        sph_step_inner(pos, vel, rho, pressure, forces, &bounds, dt, mass, rest_density, smoothing_length, pressure_k, viscosity, [gravity_x, gravity_y, gravity_z], restitution, damping)
+        sph_step_inner(pos, vel, rho, pressure, forces, active, &bounds, dt, mass, rest_density, smoothing_length, pressure_k, viscosity, surface_tension, [gravity_x, gravity_y, gravity_z], restitution, damping, outflow != 0)
     }
 }
 
@@ -389,11 +413,12 @@ mod tests {
         let rest = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         let pins = [1, 0];
         let edges = [0, 1];
-        let lengths = [1.0];
-        let rc = deformable_step_inner(&mut pos, &mut prev, &rest, &pins, &edges, &lengths, &bounds, 1.0 / 60.0, 9.8, 0.0, 1.0, 0.0, 12, 0.0, 0.0);
+        let mut lengths = [1.0];
+        let weights = [1.0];
+        let rc = deformable_step_inner(&mut pos, &mut prev, &rest, &pins, &edges, &mut lengths, &weights, &bounds, 1.0 / 60.0, 9.8, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 12, 0.0, 0.0);
         assert_eq!(rc, 1);
         assert_eq!(&pos[0..3], &rest[0..3]);
-        let edge = sqrtf((pos[3] - pos[0]).powi(2) + (pos[4] - pos[1]).powi(2) + (pos[5] - pos[2]).powi(2));
+        let edge = ((pos[3] - pos[0]).powi(2) + (pos[4] - pos[1]).powi(2) + (pos[5] - pos[2]).powi(2)).sqrt();
         assert!((edge - 1.0).abs() < 1.0e-3);
         assert!(pos[4] < 0.0);
     }
@@ -406,11 +431,26 @@ mod tests {
         let mut rho = [0.0; 2];
         let mut pressure = [0.0; 2];
         let mut forces = [0.0; 6];
-        let rc = sph_step_inner(&mut pos, &mut vel, &mut rho, &mut pressure, &mut forces, &bounds, 1.0 / 60.0, 1.0, 1.0, 0.5, 8.0, 0.1, [0.0, -9.8, 0.0], 0.1, 0.001);
+        let mut active = [1; 2];
+        let rc = sph_step_inner(&mut pos, &mut vel, &mut rho, &mut pressure, &mut forces, &mut active, &bounds, 1.0 / 60.0, 1.0, 1.0, 0.5, 8.0, 0.1, 0.25, [0.0, -9.8, 0.0], 0.1, 0.001, false);
         assert_eq!(rc, 1);
         assert!(rho.iter().all(|value| value.is_finite() && *value > 0.0));
         assert!(pos.iter().all(|value| value.is_finite()));
         assert!(pos[1] >= -1.0 && pos[4] >= -1.0);
+    }
+
+    #[test]
+    fn sph_outflow_deactivates_particles_that_leave_the_domain() {
+        let bounds = [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
+        let mut pos = [0.95, 0.0, 0.0];
+        let mut vel = [10.0, 0.0, 0.0];
+        let mut rho = [0.0];
+        let mut pressure = [0.0];
+        let mut forces = [0.0; 3];
+        let mut active = [1];
+        let rc = sph_step_inner(&mut pos, &mut vel, &mut rho, &mut pressure, &mut forces, &mut active, &bounds, 1.0 / 30.0, 1.0, 1.0, 0.5, 8.0, 0.1, 0.25, [0.0; 3], 0.0, 0.0, true);
+        assert_eq!(rc, 1);
+        assert_eq!(active[0], 0);
     }
 
     #[test]
