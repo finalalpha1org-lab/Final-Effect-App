@@ -424,6 +424,36 @@ mod tests {
     }
 
     #[test]
+    fn soft_body_plasticity_adapts_constraint_rest_length() {
+        let bounds = [-5.0, -5.0, -5.0, 5.0, 5.0, 5.0];
+        let mut pos = [0.0, 0.0, 0.0, 1.2, 0.0, 0.0];
+        let mut prev = pos;
+        let rest = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let pins = [1, 0];
+        let edges = [0, 1];
+        let mut lengths = [1.0];
+        let weights = [1.0];
+        let rc = deformable_step_inner(&mut pos, &mut prev, &rest, &pins, &edges, &mut lengths, &weights, &bounds, 0.1, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1, 0.0, 0.0);
+        assert_eq!(rc, 1);
+        assert!(lengths[0] > 1.0 && lengths[0] < 1.1);
+        assert!((pos[3] - lengths[0]).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn sph_surface_tension_attracts_neighboring_particles() {
+        let bounds = [-2.0, -2.0, -2.0, 2.0, 2.0, 2.0];
+        let mut pos = [-0.1, 0.0, 0.0, 0.1, 0.0, 0.0];
+        let mut vel = [0.0; 6];
+        let mut rho = [0.0; 2];
+        let mut pressure = [0.0; 2];
+        let mut forces = [0.0; 6];
+        let mut active = [1; 2];
+        let rc = sph_step_inner(&mut pos, &mut vel, &mut rho, &mut pressure, &mut forces, &mut active, &bounds, 0.1, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, [0.0; 3], 0.0, 0.0, false);
+        assert_eq!(rc, 1);
+        assert!((pos[3] - pos[0]).abs() < 0.2);
+    }
+
+    #[test]
     fn sph_fluid_produces_finite_density_and_respects_box_collision() {
         let bounds = [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0];
         let mut pos = [0.0, 0.0, 0.0, 0.2, 0.0, 0.0];
