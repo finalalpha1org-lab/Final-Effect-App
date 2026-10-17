@@ -18,10 +18,8 @@ jobs:
   test-and-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout solver branch
+      - name: Checkout triggering branch
         uses: actions/checkout@v6
-        with:
-          ref: wasm-physics-solver
 
       - name: Install Rust and WebAssembly target
         uses: dtolnay/rust-toolchain@stable
@@ -56,5 +54,5 @@ jobs:
           git add wasm/simulation_solver.wasm wasm/simulation_solver.wasm.b64
           if ! git diff --cached --quiet; then
             git commit -m '[wasm-build] Generate simulation solver artifact'
-            git push origin wasm-physics-solver
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
