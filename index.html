@@ -166,6 +166,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .layer-action-btn:active{transform:scale(0.95)}
 .layer-action-btn.active-off{color:#ef4444;background:rgba(239, 68, 68, 0.18);border-color:#ef4444}
 .layer-action-btn.active-locked{color:#f59e0b;background:rgba(245, 158, 11, 0.18);border-color:#f59e0b}
+#btn-edit-landscape[hidden]{display:none!important}
 
 /* ---- bottom toolbar ---- */
 .toolbar{flex:none;height:calc(var(--tb) + var(--sb));padding:0 12px var(--sb);display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap;background:var(--bg);border-top:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none;position:relative;z-index:20}
@@ -1238,24 +1239,30 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   font-size: 18px;
 }
 
-/* ---- Edit Sub-Toolbar Floating Panels ---- */
+/* ---- Edit Sub-Toolbar Settings: mobile-friendly bottom sheets ---- */
 .floating-panels-container {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 100;
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1000;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: stretch;
+  gap: 0;
   pointer-events: none;
 }
 .floating-panel {
-  width: 270px;
-  background: rgba(22, 24, 34, 0.95);
-  backdrop-filter: blur(8px);
-  border: 1px solid #2d3245;
-  border-radius: 10px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.65);
+  width: 100%;
+  max-width: none;
+  max-height: 52vh;
+  background: rgba(17, 20, 28, 0.98);
+  backdrop-filter: blur(12px);
+  border: 1px solid #34394d;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1263,6 +1270,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   pointer-events: auto;
 }
 .panel-header {
+  flex: none;
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1281,7 +1290,11 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 }
 .panel-close:hover { color: #ffffff; }
 .panel-body {
-  padding: 10px;
+  max-height: calc(52vh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1678,10 +1691,32 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   border-color: #ef4444;
   color: #ffffff;
 }
+/* App-wide settings redesign */
+.global-settings-modal{align-items:center;padding:24px;background:rgba(4,6,12,.78)}
+.global-settings-card{width:min(920px,100%);height:min(86vh,820px);min-height:420px;max-height:92vh;border:1px solid #30364a;border-radius:20px;box-shadow:0 24px 90px rgba(0,0,0,.65);animation:settingsIn .2s ease-out}
+@keyframes settingsIn{from{transform:translateY(12px) scale(.99);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.global-settings-header{padding:18px 22px;background:linear-gradient(120deg,#171a25,#1b2030);}
+.global-settings-title{gap:12px;font-size:15px}
+.global-settings-title>div{display:flex;flex-direction:column;gap:3px}
+.global-settings-title strong{font-size:17px;letter-spacing:.01em}
+.global-settings-title small{font-size:11px;font-weight:400;color:#94a3b8}
+.global-settings-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:12px;background:rgba(99,102,241,.18);border:1px solid rgba(129,140,248,.38);font-size:19px}
+.global-settings-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:14px;padding:18px 22px 26px}
+.settings-section{min-width:0;background:linear-gradient(160deg,#181b24,#141720);border-color:#2b3040;border-radius:15px;padding:15px 16px}
+.settings-section-title{font-size:11px;color:#a5b4fc;letter-spacing:.08em;padding-bottom:3px}
+.settings-recovery-section{border-color:rgba(129,140,248,.45);background:linear-gradient(155deg,rgba(54,61,101,.3),#151823 70%)}
+.setting-select,.setting-number-wrap input{height:36px;border:1px solid #353c52;background:#10131b;color:#e2e8f0;border-radius:9px;padding:0 10px;font:500 12px system-ui;outline:none}
+.setting-select{min-width:148px;max-width:180px}
+.setting-number-wrap{width:134px;gap:8px}
+.setting-number-wrap input{width:78px;text-align:center;font:600 13px ui-monospace,monospace}
+.setting-number-wrap span{font-size:11px;color:#a5b4fc;min-width:36px;text-align:right}
+.autosave-status{font-size:11px;color:#86efac;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.17);border-radius:8px;padding:8px 10px}
+@media(max-width:640px){.global-settings-modal{align-items:flex-end;padding:0}.global-settings-card{width:100%;height:min(88dvh,850px);min-height:0;max-height:92dvh;border-radius:20px 20px 0 0;border-bottom:0;animation:slideUpSettings .22s ease-out}.global-settings-body{grid-template-columns:1fr;padding:14px 14px calc(22px + env(safe-area-inset-bottom,0px));gap:10px}.global-settings-header{padding:14px 16px}.setting-item{gap:8px}.setting-label small{max-width:240px}.setting-select{min-width:136px}}
 </style>
 </head>
 <body>
 <script src="simulationCore.js"></script>
+<script src="modifier-engine.js"></script>
 
 <div id="app">
   <!-- Home screen -->
@@ -1739,8 +1774,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   <div class="global-settings-card" onclick="event.stopPropagation()">
     <header class="global-settings-header">
       <div class="global-settings-title">
-        <span>⚙️</span>
-        <strong>Global Settings</strong>
+        <span class="global-settings-icon">⚙</span>
+        <div><strong>Application Settings</strong><small>One place for Workspace and all active studios</small></div>
       </div>
       <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings">✕</button>
     </header>
@@ -1819,7 +1854,25 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         </div>
       </div>
 
-      <!-- 3. Workflow & Projects -->
+      <!-- 3. Editing, undo and recovery -->
+      <div class="settings-section settings-recovery-section">
+        <div class="settings-section-title"><span>↶</span> Editing & Recovery</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Undo / Redo History</span><small>Maximum retained actions in each active editor (1–1,000)</small></div>
+          <div class="setting-range-wrap setting-number-wrap"><input type="number" id="set-undo-limit" min="1" max="1000" step="1" value="100" inputmode="numeric"><span id="val-undo-limit">100</span></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Automatic Project Save</span><small>Save recoverable editor checkpoints on this device</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="set-autosave" checked><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Auto-save interval</span><small>Choose how often the active project is saved</small></div>
+          <select class="setting-select" id="set-autosave-interval"><option value="2">Every 2 minutes</option><option value="5">Every 5 minutes</option><option value="10">Every 10 minutes</option><option value="60">Every hour</option></select>
+        </div>
+        <div class="autosave-status" id="autosave-status" role="status">Auto-save is on · interval: 2 minutes</div>
+      </div>
+
+      <!-- 4. Workflow & Projects -->
       <div class="settings-section">
         <div class="settings-section-title">
           <span>📁</span> Workflow & Projects
@@ -1950,7 +2003,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <details class="cam-section" open><summary>3. Focus</summary><div class="cam-section-content">
         <div class="cam-control"><span>Focus Distance</span><input id="cam-focus-distance" type="range" min=".1" max="50" step=".01" value="6"><output id="out-focus-distance">6.00 m</output></div>
         <div class="cam-toggle"><span>Autofocus</span><input id="cam-autofocus" type="checkbox"></div>
-        <div class="cam-control"><span>Focus Point</span><select id="cam-focus-point"><option value="active">Active Mesh</option><option value="cube">Cube</option><option value="center">Scene Center</option><option value="camera">Camera Forward</option></select></div>
+        <div class="cam-control"><span>Focus Point</span><select id="cam-focus-point"><option value="active">Active Mesh</option><option value="cube">Cube</option><option value="center" selected>Scene Center [0, 0, 0]</option><option value="camera">Camera Forward</option></select></div>
         <div class="cam-control"><span>Tracking</span><select id="cam-focus-tracking"><option value="none" selected>None (Free Rotation)</option><option value="active">Active Mesh</option><option value="cube">Cube</option></select></div>
         <div class="cam-toggle"><span>Focus Peaking</span><input id="cam-focus-peaking" type="checkbox"></div>
         <div style="display:flex; gap:8px; margin-top:2px;">
@@ -2297,7 +2350,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <span class="title"></span>
       <button class="btn" data-act="undo" aria-label="Undo">↶</button>
       <button class="btn" data-act="redo" aria-label="Redo">↷</button>
-      <button class="btn" onclick="saveCurrentProjectAsRecent(); FE.toast('Project saved successfully to Recent! 💾');" title="Save Project">💾 Save</button>
+      <button class="btn" onclick="saveProjectNow()" title="Save Project locally on this device">💾 Save</button>
       <select class="mode" aria-label="Mode"></select>
 
       <!-- Viewport Shading Dropdown -->
@@ -2583,7 +2636,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
         </div>
         <div class="timeline-right-info">
-          <span id="tb-status-badge">Physics: Realtime Sim</span>
+          <span id="tb-status-badge">Physics: Loading Rust/WASM…</span>
         </div>
       </div>
       <div class="timeline-tracks-wrapper" id="timeline-tracks-wrapper">
@@ -2690,7 +2743,11 @@ try {
   console.warn('SimulationEngine init deferred:', e);
 }
 
-const GLOBAL_SETTINGS={grid:true, shadows:true};
+const APP_SETTINGS_KEY='fe_global_settings_v1';
+const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
+function loadGlobalSettings(){try{const saved=JSON.parse(localStorage.getItem(APP_SETTINGS_KEY)||'{}');return{...DEFAULT_GLOBAL_SETTINGS,...saved,undoLimit:Math.min(1000,Math.max(1,Math.round(Number(saved.undoLimit)||100))),autoSaveMinutes:[2,5,10,60].includes(Number(saved.autoSaveMinutes))?Number(saved.autoSaveMinutes):2}}catch{return{...DEFAULT_GLOBAL_SETTINGS}}}
+let GLOBAL_SETTINGS=loadGlobalSettings();
+const initialGizmo=document.getElementById('nav-gizmo-wrapper');if(initialGizmo)initialGizmo.style.display=GLOBAL_SETTINGS.gizmo?'flex':'none';
 
 /* build home cards + studio screens */
 const app=$('#app'), grid=$('#home-grid');
@@ -2780,6 +2837,7 @@ HOME_WORKSPACES.forEach((item)=>{
       $$('.hdri-menu').forEach(m => m.classList.remove('open'));
     }
   });
+  if(id==='core'){const edit=document.createElement('button');edit.type='button';edit.className='layer-action-btn';edit.id='btn-edit-landscape';edit.title='Edit the selected landscape in Landscaping Studio';edit.setAttribute('aria-label',edit.title);edit.textContent='✎';edit.hidden=true;edit.onclick=editImportedLandscape;$('.layer-actions',el)?.appendChild(edit)}
   app.append(el);
 });
 
@@ -2791,14 +2849,18 @@ window.addEventListener('click', (e) => {
 
 /* switching */
 function enter(id){
-  const e=FE.engines[id], vp=$('#viewport-'+id), fr=$('iframe',vp);
-  if(fr&&!fr.getAttribute('src')) fr.src=fr.dataset.src;
-  if(!e) return;
+  const e=FE.engines[id],vp=$('#viewport-'+id),fr=$('iframe',vp);
+  if(fr&&!fr.dataset.feGlobalSettingsBound){fr.dataset.feGlobalSettingsBound='1';fr.addEventListener('load',()=>{syncSettingsToFrame(fr);if(FE.current===id)restoreAutosaveForStudio(id)})}
+  if(fr&&!fr.getAttribute('src'))fr.src=fr.dataset.src;
+  if(fr){syncSettingsToFrame(fr);try{if(fr.contentDocument?.readyState==='complete'&&FE.current===id)restoreAutosaveForStudio(id)}catch(error){}}
+  if(!e)return;
   if(!mounted.has(id)){mounted.add(id);e.mount?.({id,canvas:$('#canvas-'+id),viewport:vp});vp.classList.add('live')}
   e.resume?.();
+  if(id==='core')restoreAutosaveForStudio('core');
 }
 function show(id){
   const prev=FE.current; if(prev===id) return;
+  if(prev&&prev!=='home'&&GLOBAL_SETTINGS.autoSave)runGlobalAutosave({silent:true});
   if(prev) FE.engines[prev]?.pause?.();
   FE.current=id; closeDrawer();
   $$('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
@@ -2886,6 +2948,7 @@ function saveCurrentProjectAsRecent() {
   }
 
   localStorage.setItem('fe_recent_projects', JSON.stringify(recents));
+  if(sid==='core')FE.engines?.core?.commitHistory?.('save-project');
   if (document.getElementById('recent-projects-section')?.style.display !== 'none') {
     renderRecentProjectsList();
   }
@@ -2940,7 +3003,33 @@ function deleteRecentProject(id) {
 }
 window.deleteRecentProject = deleteRecentProject;
 
-/* Global Settings Modal */
+/* Global Settings & project recovery */
+function persistGlobalSettings(){try{localStorage.setItem(APP_SETTINGS_KEY,JSON.stringify(GLOBAL_SETTINGS))}catch(error){console.warn('[Settings] Could not persist preferences:',error)}}
+function broadcastGlobalSettings(){
+  FE.engines?.core?.setHistoryLimit?.(GLOBAL_SETTINGS.undoLimit);
+  document.dispatchEvent(new CustomEvent('fe:setting',{detail:{key:'historyLimit',value:GLOBAL_SETTINGS.undoLimit}}));
+  const message={type:'FE_GLOBAL_SETTINGS',settings:{...GLOBAL_SETTINGS}};
+  document.querySelectorAll('iframe').forEach(frame=>{try{frame.contentWindow?.postMessage(message,'*')}catch(error){console.warn('[Settings] Studio settings were not delivered:',error)}});
+  startGlobalAutosave();
+}
+function updateGlobalSetting(key,value){
+  if(key==='undoLimit')value=Math.min(1000,Math.max(1,Math.round(Number(value)||100)));
+  if(key==='autoSaveMinutes')value=[2,5,10,60].includes(Number(value))?Number(value):2;
+  GLOBAL_SETTINGS[key]=value;persistGlobalSettings();broadcastGlobalSettings();syncGlobalSettingsUI();
+}
+const AUTOSAVE_DB='final-effect-local-projects',AUTOSAVE_STORE='projects';let autosaveDbPromise=null,globalAutosaveTimer=null,autosaveInProgress=false;const pendingStudioAutosaves=new Map(),autosaveRestoreAttempted=new Set();
+function openAutosaveDb(){if(!('indexedDB'in window))return Promise.reject(new Error('This browser does not support local project recovery.'));if(!autosaveDbPromise)autosaveDbPromise=new Promise((resolve,reject)=>{const req=indexedDB.open(AUTOSAVE_DB,1);req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(AUTOSAVE_STORE))db.createObjectStore(AUTOSAVE_STORE)};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error||new Error('Could not open local autosave storage.'))});return autosaveDbPromise}
+function storeLocalAutosave(studio,payload){return openAutosaveDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(AUTOSAVE_STORE,'readwrite');tx.objectStore(AUTOSAVE_STORE).put({studio,savedAt:Date.now(),payload},studio);tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error||new Error('Could not write autosave.'));tx.onabort=()=>reject(tx.error||new Error('Autosave was interrupted.'))}))}
+function loadLocalAutosave(studio){return openAutosaveDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(AUTOSAVE_STORE,'readonly'),req=tx.objectStore(AUTOSAVE_STORE).get(studio);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error||new Error('Could not read autosave.'))}))}
+function updateAutosaveStatus(text,isError=false){const el=document.getElementById('autosave-status');if(el){el.textContent=text;el.style.color=isError?'#fca5a5':'#86efac'};if(!isError)try{localStorage.setItem('fe_last_autosave_status',text)}catch{}}
+function requestStudioAutosave(studio){const frame=document.getElementById('frame-'+studio);if(!frame?.contentWindow)return Promise.reject(new Error('The active studio is not ready to auto-save.'));const requestId=`as-${studio}-${Date.now()}-${Math.random().toString(36).slice(2)}`;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pendingStudioAutosaves.delete(requestId);reject(new Error('The studio did not return an autosave checkpoint.'))},20000);pendingStudioAutosaves.set(requestId,{studio,resolve,reject,timer});frame.contentWindow.postMessage({type:'FE_AUTOSAVE_REQUEST',requestId},'*')})}
+window.addEventListener('message',async e=>{const d=e.data;if(d?.type!=='FE_AUTOSAVE_DATA'||!d.requestId)return;const pending=pendingStudioAutosaves.get(d.requestId);if(!pending||pending.studio!==d.studio)return;clearTimeout(pending.timer);pendingStudioAutosaves.delete(d.requestId);if(d.error){pending.reject(new Error(d.error));return}try{await storeLocalAutosave(d.studio,d.payload);pending.resolve(true)}catch(error){pending.reject(error)}});
+async function runGlobalAutosave({silent=true,force=false}={}){if(autosaveInProgress||(!force&&!GLOBAL_SETTINGS.autoSave)||!FE.current||FE.current==='home')return false;autosaveInProgress=true;const studio=FE.current;try{if(studio==='core'){const engine=FE.engines?.core;if(!engine?.serializeAutosave)throw new Error('Workspace recovery is not available yet.');await storeLocalAutosave('core',engine.serializeAutosave())}else if(studio==='landscape'){await requestStudioAutosave('landscape')}else return false;const stamp=Date.now();try{localStorage.setItem('fe_last_autosave_'+studio,String(stamp))}catch{}updateAutosaveStatus(`Saved ${studio==='core'?'Workspace':'Landscaping Studio'} locally · ${new Date(stamp).toLocaleTimeString()}`);if(FE.current===studio)saveCurrentProjectAsRecent();if(!silent)FE.toast('Project auto-saved on this device');return true}catch(error){console.warn('[Auto-save]',error);updateAutosaveStatus(`Auto-save failed: ${error?.message||error}`,true);if(!silent)FE.toast('Auto-save failed: '+(error?.message||error));return false}finally{autosaveInProgress=false}}
+function startGlobalAutosave(){if(globalAutosaveTimer){clearInterval(globalAutosaveTimer);globalAutosaveTimer=null}if(GLOBAL_SETTINGS.autoSave)globalAutosaveTimer=setInterval(()=>runGlobalAutosave({silent:true}),GLOBAL_SETTINGS.autoSaveMinutes*60000)}
+async function saveProjectNow(){const ok=await runGlobalAutosave({silent:true,force:true});if(ok)FE.toast('Project saved locally on this device');else FE.toast('Open an active studio before saving');}
+window.saveProjectNow=saveProjectNow;
+async function restoreAutosaveForStudio(studio){if(autosaveRestoreAttempted.has(studio))return;autosaveRestoreAttempted.add(studio);try{const saved=await loadLocalAutosave(studio);if(!saved?.payload)return false;if(studio==='core'){const engine=FE.engines?.core;if(engine?.restoreAutosave){await engine.restoreAutosave(saved.payload);FE.toast('Recovered last Workspace auto-save')}}else if(studio==='landscape'){const frame=document.getElementById('frame-landscape');if(frame?.contentWindow)frame.contentWindow.postMessage({type:'FE_AUTOSAVE_RESTORE',payload:saved.payload,savedAt:saved.savedAt},'*')}return true}catch(error){console.warn('[Auto-save recovery]',error);return false}}
+function syncSettingsToFrame(frame){try{frame?.contentWindow?.postMessage({type:'FE_GLOBAL_SETTINGS',settings:{...GLOBAL_SETTINGS}},'*')}catch(error){console.warn('[Settings] Could not sync to studio frame:',error)}}
 function syncGlobalSettingsUI() {
   const chkGrid = document.getElementById('set-grid');
   if (chkGrid) chkGrid.checked = !!GLOBAL_SETTINGS.grid;
@@ -2951,7 +3040,8 @@ function syncGlobalSettingsUI() {
   const chkGizmo = document.getElementById('set-gizmo');
   const gizmoWrap = document.getElementById('nav-gizmo-wrapper');
   if (chkGizmo && gizmoWrap) {
-    chkGizmo.checked = (gizmoWrap.style.display !== 'none');
+    chkGizmo.checked = !!GLOBAL_SETTINGS.gizmo;
+    gizmoWrap.style.display=GLOBAL_SETTINGS.gizmo?'flex':'none';
     gizmoWrap.style.left = '2px';
     gizmoWrap.style.right = 'auto';
     gizmoWrap.style.top = '6px';
@@ -2960,7 +3050,7 @@ function syncGlobalSettingsUI() {
   const rangeExposure = document.getElementById('set-exposure');
   const valExposure = document.getElementById('val-exposure');
   if (rangeExposure && window.renderer) {
-    rangeExposure.value = window.renderer.toneMappingExposure || 1.25;
+    rangeExposure.value = window.renderer.toneMappingExposure || GLOBAL_SETTINGS.exposure || 1.25;
     if (valExposure) valExposure.textContent = (+rangeExposure.value).toFixed(2);
   }
 
@@ -2968,7 +3058,7 @@ function syncGlobalSettingsUI() {
   const valSensitivity = document.getElementById('val-sensitivity');
   const eng = FE.engines?.core;
   if (rangeSensitivity && eng?.oc) {
-    rangeSensitivity.value = eng.oc.rotateSpeed || 1.0;
+    rangeSensitivity.value = eng.oc.rotateSpeed || GLOBAL_SETTINGS.sensitivity || 1.0;
     if (valSensitivity) valSensitivity.textContent = (+rangeSensitivity.value).toFixed(1) + 'x';
   }
 
@@ -2976,6 +3066,14 @@ function syncGlobalSettingsUI() {
   if (chkDeleteWarn) {
     chkDeleteWarn.checked = localStorage.getItem('fe_suppress_delete_warning') !== 'true';
   }
+  const historyInput=document.getElementById('set-undo-limit'),historyVal=document.getElementById('val-undo-limit');
+  if(historyInput)historyInput.value=String(GLOBAL_SETTINGS.undoLimit);
+  if(historyVal)historyVal.textContent=String(GLOBAL_SETTINGS.undoLimit);
+  const autoSave=document.getElementById('set-autosave'),autoInterval=document.getElementById('set-autosave-interval');
+  if(autoSave)autoSave.checked=!!GLOBAL_SETTINGS.autoSave;
+  if(autoInterval){autoInterval.value=String(GLOBAL_SETTINGS.autoSaveMinutes);autoInterval.disabled=!GLOBAL_SETTINGS.autoSave}
+  const status=document.getElementById('autosave-status');
+  if(status)status.textContent=localStorage.getItem('fe_last_autosave_status')||(GLOBAL_SETTINGS.autoSave?`Auto-save is on · interval: ${GLOBAL_SETTINGS.autoSaveMinutes===60?'1 hour':GLOBAL_SETTINGS.autoSaveMinutes+' minutes'}`:'Auto-save is off');
 }
 window.syncGlobalSettingsUI = syncGlobalSettingsUI;
 
@@ -2988,6 +3086,7 @@ function initGlobalSettingsEvents() {
   if (chkGrid) {
     chkGrid.onchange = (e) => {
       GLOBAL_SETTINGS.grid = e.target.checked;
+      persistGlobalSettings();
       document.dispatchEvent(new CustomEvent('fe:setting', { detail: { key: 'grid', value: e.target.checked } }));
       FE.toast(e.target.checked ? 'Floor Grid Enabled' : 'Floor Grid Disabled');
     };
@@ -2997,6 +3096,7 @@ function initGlobalSettingsEvents() {
   if (chkShadows) {
     chkShadows.onchange = (e) => {
       GLOBAL_SETTINGS.shadows = e.target.checked;
+      persistGlobalSettings();
       const eng = FE.engines?.core;
       if (eng?.blenderLight) eng.blenderLight.castShadow = e.target.checked;
       if (window.renderer) {
@@ -3017,6 +3117,7 @@ function initGlobalSettingsEvents() {
         gizmoWrap.style.right = 'auto';
         gizmoWrap.style.top = '6px';
       }
+      GLOBAL_SETTINGS.gizmo=e.target.checked;persistGlobalSettings();
       FE.toast(e.target.checked ? '3D Navigation Gizmo Shown (Top Left)' : '3D Navigation Gizmo Hidden');
     };
   }
@@ -3027,6 +3128,7 @@ function initGlobalSettingsEvents() {
     rangeExposure.oninput = (e) => {
       const v = +e.target.value;
       if (valExposure) valExposure.textContent = v.toFixed(2);
+      GLOBAL_SETTINGS.exposure=v;persistGlobalSettings();
       if (window.renderer) window.renderer.toneMappingExposure = v;
     };
   }
@@ -3037,6 +3139,7 @@ function initGlobalSettingsEvents() {
     rangeSensitivity.oninput = (e) => {
       const v = +e.target.value;
       if (valSensitivity) valSensitivity.textContent = v.toFixed(1) + 'x';
+      GLOBAL_SETTINGS.sensitivity=v;persistGlobalSettings();
       const eng = FE.engines?.core;
       if (eng?.oc) eng.oc.rotateSpeed = v;
     };
@@ -3050,6 +3153,13 @@ function initGlobalSettingsEvents() {
       FE.toast(e.target.checked ? 'Delete Confirmations Enabled' : 'Delete Confirmations Silenced');
     };
   }
+
+  const historyInput=document.getElementById('set-undo-limit');
+  if(historyInput)historyInput.onchange=e=>updateGlobalSetting('undoLimit',e.target.value);
+  const autoSave=document.getElementById('set-autosave');
+  if(autoSave)autoSave.onchange=e=>updateGlobalSetting('autoSave',e.target.checked);
+  const autoInterval=document.getElementById('set-autosave-interval');
+  if(autoInterval)autoInterval.onchange=e=>updateGlobalSetting('autoSaveMinutes',e.target.value);
 
   const btnResetScene = document.getElementById('btn-reset-scene');
   if (btnResetScene) {
@@ -3230,7 +3340,8 @@ function serializeSceneToFinal3d() {
           roughness: obj.material.roughness,
           metalness: obj.material.metalness,
           wireframe: obj.material.wireframe
-        } : null
+        } : null,
+        modifiers: (obj.userData?.modStack || []).map(({ id, category, name, values, enabled }) => ({ id, category, name, values, enabled }))
       });
     }
   });
@@ -3489,7 +3600,61 @@ app.addEventListener('click',e=>{
   }
 });
 
-// Window message bridge for Landscaping Studio iframe
+document.addEventListener('fe:action',e=>{
+  const {studio,action}=e.detail||{};
+  if(action!=='undo'&&action!=='redo')return;
+  if(studio==='core'){
+    const engine=FE.engines?.core,done=engine?.[action]?.();
+    if(!done)FE.toast(action==='undo'?'Nothing to undo':'Nothing to redo');
+    return;
+  }
+  const frame=document.getElementById('frame-'+studio);
+  if(frame?.contentWindow)frame.contentWindow.postMessage({type:'FE_HISTORY_ACTION',action},'*');
+});
+function scheduleCoreHistory(event){const screen=event.target?.closest?.('.screen');if(FE.current!=='core'||screen?.dataset.screen!=='core'||event.target?.closest?.('#global-settings-modal'))return;const node=event.target?.closest?.('button,input,select,textarea')||event.target,key=`${event.type}:${node.id||node.dataset?.tool||node.dataset?.subtool||node.tagName||'action'}`;requestAnimationFrame(()=>FE.engines?.core?.commitHistory?.(key))}
+['click','input','change','pointerup'].forEach(type=>document.addEventListener(type,scheduleCoreHistory));
+
+function editImportedLandscape(){
+  const group=FE.engines?.core?.sc?.getObjectByName('ImportedLandscape');if(!group){FE.toast('Select an imported landscape first.');return}
+  const frame=document.getElementById('frame-landscape');FE.open('landscape');if(frame?.contentWindow)setTimeout(()=>{try{frame.contentWindow.postMessage({type:'final-effect:edit-imported-landscape'},'*')}catch(error){console.warn('[Landscape Editor] Could not notify Studio:',error)}},120);
+  FE.toast('Landscaping Studio opened — edit the saved scene, then press Import to update Workspace.');
+}
+window.editImportedLandscape=editImportedLandscape;
+
+// Landscaping Studio scene bridge: embedded postMessage plus same-origin tab channel.
+function importLandscapeIntoWorkspace(payload, reply) {
+  if (!payload || payload.app !== 'final-effect') { reply?.({ success:false, error:'Invalid landscaping scene payload.' }); return; }
+  FE.open('core');
+  let attempts = 0;
+  const commit = () => {
+    const eng = FE.engines?.core;
+    if (!eng?.sc) {
+      if (attempts++ < 180) { requestAnimationFrame(commit); return; }
+      reply?.({ success:false, error:'3D Workspace scene did not become ready.' });
+      return;
+    }
+    try {
+      const group = buildLandscapeFromPayload(payload, eng.sc, THREE);
+      if (!group) throw new Error('Landscape import produced no scene group.');
+      const summary = { terrain:!!group.getObjectByName('Terrain Mesh'), water:!!group.getObjectByName('Water Surface'), foliage:group.children.filter(o=>o.isInstancedMesh).length, objects:group.userData.importedObjectCount||0 };
+      FE.toast('Landscaping scene imported into Workspace');
+      reply?.({ success:true, summary });
+    } catch (error) {
+      console.error('[Landscape Import] Failed:',error);
+      FE.toast('Landscape import failed: '+(error?.message||error));
+      reply?.({ success:false, error:error?.message||String(error) });
+    }
+  };
+  requestAnimationFrame(commit);
+}
+function landscapeImportReply(source, origin, requestId, result) {
+  try { source?.postMessage?.({ type:'final-effect:import:ack', requestId, ...result }, origin && origin !== 'null' ? origin : '*'); } catch(error) { console.warn('[Landscape Import] Could not acknowledge import:',error); }
+}
+const landscapeImportChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('final-effect-landscape-import') : null;
+if (landscapeImportChannel) landscapeImportChannel.onmessage = (event) => {
+  const d=event.data;if(d?.type!=='final-effect:import')return;
+  importLandscapeIntoWorkspace(d.payload,result=>landscapeImportChannel.postMessage({type:'final-effect:import:ack',requestId:d.requestId,...result}));
+};
 window.addEventListener('message', (e) => {
   if (!e.data) return;
   const d = e.data;
@@ -3497,13 +3662,7 @@ window.addEventListener('message', (e) => {
     FE.open('core');
     FE.toast('Returned to Workspace');
   } else if (d.type === 'IMPORT_TERRAIN' || d.type === 'final-effect:import') {
-    FE.open('core');
-    FE.toast('Imported Landscaping Studio scene into Workspace');
-
-    const eng = FE.engines?.core;
-    if (eng && eng.sc && d.payload && !eng.sc.getObjectByName('ImportedLandscape')) {
-      buildLandscapeFromPayload(d.payload, eng.sc, THREE);
-    }
+    importLandscapeIntoWorkspace(d.payload,result=>landscapeImportReply(e.source,e.origin,d.requestId,result));
   }
 });
 
@@ -3621,14 +3780,65 @@ function createProceduralTerrainTexturesHost(T) {
   }
 }
 
+const LANDSCAPE_ARRAY_TYPES={Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array};
+function decodeLandscapeArray(data,Type=Float32Array){if(ArrayBuffer.isView(data))return new Type(data);if(Array.isArray(data))return new Type(data);if(typeof data!=='string')throw new Error('Landscape buffer is missing.');const binary=atob(data),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);if(bytes.byteLength%Type.BYTES_PER_ELEMENT)throw new Error('Landscape buffer has an invalid byte length.');return new Type(bytes.buffer)}
+function buildLandscapeGeometry(spec,T){const geometry=new T.BufferGeometry();if(!spec?.attributes)throw new Error('Imported mesh geometry is missing attributes.');for(const name of Object.keys(spec.attributes)){const a=spec.attributes[name],Type=LANDSCAPE_ARRAY_TYPES[a.type]||Float32Array,array=decodeLandscapeArray(a.data,Type);geometry.setAttribute(name,new T.BufferAttribute(array,a.itemSize,!!a.normalized))}for(const g of spec.groups||[])geometry.addGroup(g.start,g.count,g.materialIndex||0);if(!geometry.attributes.normal&&geometry.attributes.position)geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();return geometry}
+function buildLandscapeTexture(spec,T){if(!spec?.data||!spec.width||!spec.height)return null;const Type=LANDSCAPE_ARRAY_TYPES[spec.type]||Uint8Array,data=decodeLandscapeArray(spec.data,Type),glType=Type===Float32Array?T.FloatType:Type===Uint16Array?T.UnsignedShortType:T.UnsignedByteType,texture=new T.DataTexture(data,spec.width,spec.height,T.RGBAFormat,glType);texture.wrapS=spec.wrapS??T.RepeatWrapping;texture.wrapT=spec.wrapT??T.RepeatWrapping;texture.repeat.fromArray(spec.repeat||[1,1]);texture.flipY=spec.flipY!==false;texture.encoding=spec.encoding??T.LinearEncoding;texture.magFilter=T.LinearFilter;texture.minFilter=T.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;return texture}
+function buildLandscapeMaterial(spec,T){if(Array.isArray(spec))return spec.map(m=>buildLandscapeMaterial(m,T));const d=spec||{},Ctor=({MeshPhongMaterial:T.MeshPhongMaterial,MeshLambertMaterial:T.MeshLambertMaterial,MeshBasicMaterial:T.MeshBasicMaterial,MeshPhysicalMaterial:T.MeshPhysicalMaterial,MeshStandardMaterial:T.MeshStandardMaterial})[d.type]||T.MeshStandardMaterial,p={color:d.color?new T.Color('#'+String(d.color).replace(/^#/,'').trim()):0xffffff,side:d.side??T.DoubleSide,vertexColors:!!d.vertexColors,transparent:!!d.transparent,opacity:Number.isFinite(d.opacity)?d.opacity:1,alphaTest:d.alphaTest||0,wireframe:!!d.wireframe};if(Number.isFinite(d.roughness))p.roughness=d.roughness;if(Number.isFinite(d.metalness))p.metalness=d.metalness;if(Number.isFinite(d.shininess))p.shininess=d.shininess;if(d.specular)p.specular=new T.Color('#'+String(d.specular).replace(/^#/,'').trim());if(d.emissive)p.emissive=new T.Color('#'+String(d.emissive).replace(/^#/,'').trim());if(Number.isFinite(d.emissiveIntensity))p.emissiveIntensity=d.emissiveIntensity;if(Number.isFinite(d.bumpScale))p.bumpScale=d.bumpScale;if(d.normalScale)p.normalScale=new T.Vector2().fromArray(d.normalScale);for(const key of ['map','normalMap','bumpMap','roughnessMap','metalnessMap','alphaMap','emissiveMap']){const texture=buildLandscapeTexture(d.textures?.[key],T);if(texture)p[key]=texture}const material=new Ctor(p);if(Number.isFinite(d.envMapIntensity))material.envMapIntensity=d.envMapIntensity;return material}
+function buildLandscapeNode(spec,T){if(!spec)return null;const geometry=spec.geometry?buildLandscapeGeometry(spec.geometry,T):null,material=spec.material?buildLandscapeMaterial(spec.material,T):null;let object;if(geometry&&spec.instances){object=new T.InstancedMesh(geometry,material,spec.instances.count||0);const matrices=decodeLandscapeArray(spec.instances.matrices||'',Float32Array),matrix=new T.Matrix4();for(let i=0;i<(spec.instances.count||0);i++){matrix.fromArray(matrices,i*16);object.setMatrixAt(i,matrix)}if(spec.instances.colors){const colors=decodeLandscapeArray(spec.instances.colors,Float32Array);object.instanceColor=new T.InstancedBufferAttribute(colors,3);object.instanceColor.needsUpdate=true}object.instanceMatrix.needsUpdate=true}else if(geometry)object=new T.Mesh(geometry,material);else object=new T.Group();object.name=spec.name||'Imported Object';if(spec.position)object.position.fromArray(spec.position);if(spec.quaternion)object.quaternion.fromArray(spec.quaternion);if(spec.scale)object.scale.fromArray(spec.scale);object.visible=spec.visible!==false;object.userData.isLandscape=true;object.castShadow=object.receiveShadow=true;for(const child of spec.children||[]){const built=buildLandscapeNode(child,T);if(built)object.add(built)}return object}
+
+function landscapeMixRgb(a,b,t){return a.map((v,i)=>v+(b[i]-v)*t)}
+function buildLandscapeEnvironment(payload,T){
+  const sky=payload.sky||{},studio=sky.studio||{},weather=payload.weather||{},suns=studio.suns||[],sun=suns[0]||{},tod=((Number(sky.timeOfDay)||12)%24+24)%24,lat=(Number(studio.atmo?.lat)||35)*Math.PI/180,inc=Math.max(-60,Math.min(60,Number(sun.el)||0))*Math.PI/180,hour=(tod-6)/12*Math.PI,sunY=sun.mode==='orbit'?Math.sin(hour)*Math.cos(inc):Math.sin((Number(sun.el)||25)*Math.PI/180),az=((sun.mode==='orbit'?(Number(sky.sunAngle)||0)+(Number(sun.az)||0):(Number(sun.az)||Number(sky.sunAngle)||0))*Math.PI/180),sunDir=new T.Vector3(Math.cos(az)*Math.sqrt(Math.max(0,1-sunY*sunY)),sunY,Math.sin(az)*Math.sqrt(Math.max(0,1-sunY*sunY))).normalize(),day=Math.max(0,Math.min(1,(sunY+.08)/.62)),cloudValues=(studio.clouds||[]).map(c=>Number(c.cov)||0),cloud=Math.max(0,Math.min(1,Math.max(Number(weather.overcast)||0,Number(sky.clouds)||0,...cloudValues)*.8+(Number(weather.storm)||0)*.2));
+  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=256;const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Could not create the imported sky environment texture.');const image=ctx.createImageData(canvas.width,canvas.height),nightTop=[7,12,31],dayTop=[48,126,218],nightHor=[21,32,55],dayHor=[188,218,240],nightLow=[6,9,19],dayLow=[91,123,153],top=landscapeMixRgb(nightTop,dayTop,day),horizon=landscapeMixRgb(nightHor,dayHor,day),low=landscapeMixRgb(nightLow,dayLow,day),overcast=Math.max(0,Math.min(.82,cloud*.75)),cloudColor=landscapeMixRgb([177,187,199],[240,245,249],day);
+  for(let y=0;y<canvas.height;y++){const v=y/(canvas.height-1),base=v<.54?landscapeMixRgb(top,horizon,v/.54):landscapeMixRgb(horizon,low,(v-.54)/.46);for(let x=0;x<canvas.width;x++){const u=x/canvas.width,n=.5+.19*Math.sin(u*31+Math.sin(v*17)*2.1)+.13*Math.sin(u*73-v*29)+.1*Math.cos(u*17+v*47),c=Math.max(0,Math.min(.88,(n-(1-overcast))*3.2)),o=(y*canvas.width+x)*4;for(let k=0;k<3;k++)image.data[o+k]=Math.round(base[k]*(1-c)+cloudColor[k]*c);image.data[o+3]=255}}ctx.putImageData(image,0,0);
+  const sunPx=((az/(Math.PI*2)+.5)%1+1)%1*canvas.width,sunPy=(.5-Math.asin(Math.max(-1,Math.min(1,sunY)))/Math.PI)*canvas.height;if(sunY>-.05){const glow=ctx.createRadialGradient(sunPx,sunPy,1,sunPx,sunPy,62);glow.addColorStop(0,'rgba(255,251,226,.98)');glow.addColorStop(.08,'rgba(255,234,187,.88)');glow.addColorStop(.36,'rgba(255,198,127,.34)');glow.addColorStop(1,'rgba(255,188,126,0)');ctx.fillStyle=glow;ctx.fillRect(sunPx-62,sunPy-62,124,124)}
+  const env=new T.CanvasTexture(canvas);env.mapping=T.EquirectangularReflectionMapping;env.encoding=T.sRGBEncoding??T.LinearEncoding;env.generateMipmaps=true;env.minFilter=T.LinearMipmapLinearFilter;env.magFilter=T.LinearFilter;env.needsUpdate=true;
+  return{texture:env,sunDir,day,cloud,weather,az};
+}
+function addLandscapeWind(mesh,weather,water,T){
+  if(!mesh?.material||/rock|stone/i.test(mesh.name||''))return;const mats=Array.isArray(mesh.material)?mesh.material:[mesh.material],strength=Math.max(0,Math.min(.55,(Number(weather?.wind)||0)*(1+(Number(weather?.storm)||0)*.5)*.2));if(strength<.005)return;const angle=(Number(water?.windDirection)||35)*Math.PI/180,windDir=new T.Vector2(Math.cos(angle),Math.sin(angle));
+  for(const material of mats){if(!material||material.userData?.landscapeWindInstalled)continue;material.userData.landscapeWindInstalled=true;const prior=material.onBeforeCompile,priorKey=material.customProgramCacheKey?.bind(material);material.customProgramCacheKey=()=>`${priorKey?.()||''}|landscape-weather-wind-v1`;material.onBeforeCompile=shader=>{prior?.(shader);shader.uniforms.uLandscapeWindTime={value:0};shader.uniforms.uLandscapeWindStrength={value:strength};shader.uniforms.uLandscapeWindDirection={value:windDir};shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nuniform float uLandscapeWindTime,uLandscapeWindStrength;uniform vec2 uLandscapeWindDirection;').replace('#include <begin_vertex>','#include <begin_vertex>\nfloat landscapeWindHeight=clamp(max(position.y,0.)*.18,0.,1.);float landscapeWindSway=sin(uLandscapeWindTime*1.35+position.x*.13+position.z*.11+position.y*.21);transformed.xz+=uLandscapeWindDirection*landscapeWindSway*uLandscapeWindStrength*landscapeWindHeight;transformed.y+=abs(landscapeWindSway)*uLandscapeWindStrength*.035*landscapeWindHeight;');material.userData.landscapeWindShader=shader};material.needsUpdate=true;}
+  mesh.onBeforeRender=()=>{const t=(performance.now?.()||Date.now())*.001;for(const material of mats){const shader=material?.userData?.landscapeWindShader;if(shader)shader.uniforms.uLandscapeWindTime.value=t}};
+}
+function addLandscapeWeather(payload,group,T,center,size){
+  const weather=payload.weather||{},water=payload.water||{},rain=Math.max(0,Math.min(1,Number(weather.rain)||0)),snow=Math.max(0,Math.min(1,Number(weather.snowfall)||0));if(rain<.015&&snow<.015)return;const root=new T.Group();root.name='Imported Weather';root.userData.isLandscape=true;root.userData.weather={...weather};group.add(root);const span=Math.max(size.x,size.z,60)*.65,top=center.y+size.y*.5+28,height=Math.max(size.y+42,55),angle=(Number(water.windDirection)||35)*Math.PI/180,wind=(Number(weather.wind)||0)*(1+(Number(weather.storm)||0)*.5),wx=Math.cos(angle)*wind,wz=Math.sin(angle)*wind;
+  const create=(kind,amount)=>{if(amount<.015)return;const count=Math.max(60,Math.min(900,Math.round((kind==='rain'?760:360)*amount))),coords=new Float32Array(count*3),seeds=new Float32Array(count*3);for(let i=0;i<count;i++){const x=Math.sin((i+1)*12.9898)*43758.5453,y=Math.sin((i+1)*78.233)*15731.743,z=Math.sin((i+1)*39.425)*24634.634;seeds[i*3]=x-Math.floor(x);seeds[i*3+1]=y-Math.floor(y);seeds[i*3+2]=z-Math.floor(z);coords[i*3]=center.x+(seeds[i*3]-.5)*span;coords[i*3+1]=top-seeds[i*3+1]*height;coords[i*3+2]=center.z+(seeds[i*3+2]-.5)*span}const geom=new T.BufferGeometry();geom.setAttribute('position',new T.BufferAttribute(coords,3));const points=new T.Points(geom,new T.PointsMaterial({color:kind==='rain'?0xc9e6ff:0xf4f8ff,size:kind==='rain'?1.8:3.1,sizeAttenuation:true,transparent:true,opacity:kind==='rain'?.62:.88,depthWrite:false}));points.name=kind==='rain'?'Rainfall':'Snowfall';points.userData.isLandscape=true;points.frustumCulled=false;points.renderOrder=4;points.onBeforeRender=()=>{const t=(performance.now?.()||Date.now())*.001,fall=kind==='rain'?26:3.2,drift=kind==='rain'?2.1:1.1;for(let i=0;i<count;i++){const phase=(seeds[i*3+1]+t*fall/height)%1;coords[i*3]=center.x+(seeds[i*3]-.5)*span+wx*t*drift;coords[i*3+1]=top-phase*height;coords[i*3+2]=center.z+(seeds[i*3+2]-.5)*span+wz*t*drift; }geom.attributes.position.needsUpdate=true};root.add(points)};
+  create('rain',rain);create('snow',snow);
+}
+function applyLandscapeWorld(payload,targetScene,T,group,center,size){
+  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.42+.62*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.12+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.8);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
+}
+
+function buildLandscapeWater(settings,terrain,T,weather={}){
+  const p=settings||{},quality=Math.min(2,Math.max(0,Math.round(p.quality||0))),cfg=[{theta:320,inner:160,far:64,transmission:.28},{theta:448,inner:192,far:80,transmission:.62},{theta:640,inner:256,far:96,transmission:1}][quality],innerRadius=p.innerRadius||190,outerRadius=p.farRadius||1400,level=Number.isFinite(p.level)?p.level:0,weatherWind=(Number.isFinite(Number(weather.wind))?Math.max(0,Number(weather.wind)):1)*(1+(Number(weather.storm)||0)*.5);
+  const waterMaterial=new T.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:p.roughness??.12,clearcoat:.92,clearcoatRoughness:.06,transmission:Math.max(.001,(p.refraction??.45)*(p.transparency??1)*cfg.transmission),transparent:false,opacity:1,depthWrite:true,side:T.DoubleSide});
+  waterMaterial.envMapIntensity=p.reflectivity??.9;waterMaterial.userData.landscapeWater=true;
+  const common=`uniform float uLWTime,uLWHeight,uLWChop,uLWScale,uLWPeriod,uLWWindSpeed,uLWTurbidity,uLWClarity,uLWFoam,uLWThreshold,uLWShore;uniform vec2 uLWWind;uniform vec3 uLWDeep,uLWShallow;varying vec3 vLandscapeWaterWorld;varying float vLandscapeWaterDepth,vLandscapeWaterSlope;float landscapeHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}float landscapeNoise(vec2 p,out vec2 grad){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f),du=6.*f*(1.-f);float a=landscapeHash(i),b=landscapeHash(i+vec2(1.,0.)),c=landscapeHash(i+vec2(0.,1.)),d=landscapeHash(i+vec2(1.,1.));float x0=mix(a,b,u.x),x1=mix(c,d,u.x);grad=vec2(mix((b-a)*du.x,(d-c)*du.x,u.y),(x1-x0)*du.y);return mix(x0,x1,u.y);}float landscapeWave(vec2 p,out vec2 g,out vec2 horizontal){float footprint=max(1.5,length(p)*.085),s=0.;g=vec2(0.);horizontal=vec2(0.);float waveCount=9.;float windAngle=atan(uLWWind.y,uLWWind.x);for(int i=0;i<3;i++){float fi=float(i),wl=mix(260.,95.,fi/2.)/max(uLWScale,.08),k=6.2831853/wl,a=windAngle+(fi-1.)*.28+.13*sin(uLWTime*.035+fi*2.3);vec2 d=vec2(cos(a),sin(a));float ph=dot(d,p)*k-uLWTime*sqrt(9.81*k)*(6./max(uLWPeriod,.5))+landscapeHash(vec2(fi*17.13+2.7,fi*9.31+5.2))*6.2831853,lod=1.-smoothstep(wl*.45,wl*1.25,footprint),amp=mix(.44,.22,fi/2.)*mix(.35,1.,clamp(uLWWindSpeed/16.,0.,1.))*lod;s+=sin(ph)*amp;g+=d*cos(ph)*amp*k;float qG=min(.85,.82/max(k*max(amp,.01)*waveCount,.01));horizontal+=d*qG*amp*cos(ph);}for(int i=0;i<6;i++){float fi=float(i),wl=mix(52.,4.,fi/5.)/max(uLWScale,.08),k=6.2831853/wl,a=windAngle+(fi-2.5)*(.035+min(uLWWindSpeed,25.)*.002)+.11*sin(fi*5.31+uLWTime*.11);vec2 d=vec2(cos(a),sin(a));float ph=dot(d,p)*k-uLWTime*sqrt(9.81*k)*(6./max(uLWPeriod,.5))+landscapeHash(vec2(fi*13.71+5.1,fi*7.93+11.2))*6.2831853,lod=1.-smoothstep(wl*.45,wl*1.35,footprint),amp=.14*exp(-fi*.25)*mix(.22,1.,clamp(uLWWindSpeed/18.,0.,1.))*lod;s+=sin(ph)*amp;g+=d*cos(ph)*amp*k;float qG=min(.85,.82/max(k*max(amp,.01)*waveCount,.01));horizontal+=d*qG*amp*cos(ph);}vec2 n1g,n2g;float n1=landscapeNoise(p*.024*uLWScale+uLWWind*uLWTime*.02,n1g),n2=landscapeNoise(p*.075*uLWScale-uLWWind*uLWTime*.09+vec2(-uLWWind.y,uLWWind.x)*uLWTime*.03,n2g),l1=1.-smoothstep(15.,75.,footprint),l2=1.-smoothstep(5.,28.,footprint);s+=(n1-.5)*.1*l1+(n2-.5)*.02*l2;g+=n1g*(.0024*uLWScale*l1)+n2g*(.0015*uLWScale*l2);return s;}`;
+  const refs=['uLWTime','uLWHeight','uLWChop','uLWScale','uLWPeriod','uLWWindSpeed','uLWTurbidity','uLWClarity','uLWFoam','uLWThreshold','uLWShore','uLWWind','uLWDeep','uLWShallow'];
+  const deep=new T.Color(),shallow=new T.Color();if(Array.isArray(p.deep))deep.setRGB(...p.deep);else deep.set('#06384c');if(Array.isArray(p.shallow))shallow.setRGB(...p.shallow);else shallow.set('#42b9a0');
+  waterMaterial.onBeforeCompile=shader=>{shader.uniforms.uLWTime={value:0};shader.uniforms.uLWHeight={value:p.waveHeight??1};shader.uniforms.uLWChop={value:p.waveChop??.2};shader.uniforms.uLWScale={value:p.waveScale??1};shader.uniforms.uLWPeriod={value:p.wavePeriod??6};shader.uniforms.uLWWindSpeed={value:(p.windSpeed??12)*weatherWind};shader.uniforms.uLWWind={value:new T.Vector2(Math.cos((p.windDirection??35)*Math.PI/180),Math.sin((p.windDirection??35)*Math.PI/180))};shader.uniforms.uLWTurbidity={value:p.turbidity??.08};shader.uniforms.uLWClarity={value:p.clarity??1};shader.uniforms.uLWFoam={value:p.foam??.5};shader.uniforms.uLWThreshold={value:p.foamThreshold??.78};shader.uniforms.uLWShore={value:p.shoreFoam??1};shader.uniforms.uLWDeep={value:deep};shader.uniforms.uLWShallow={value:shallow};const shared='\n'+common+'\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute float aLandscapeDepth;'+shared).replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\nvec4 importWaterBase=modelMatrix*vec4(position,1.);vec2 importWaterGrad,importWaterHorizontal;float importWaterHeight=landscapeWave(importWaterBase.xz,importWaterGrad,importWaterHorizontal);float importWaterFade=smoothstep(.15,2.3,aLandscapeDepth);objectNormal=normalize(vec3(-importWaterGrad.x*uLWHeight*importWaterFade,1.,-importWaterGrad.y*uLWHeight*importWaterFade));').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.xz+=importWaterHorizontal*uLWHeight*uLWChop*importWaterFade;transformed.y+=importWaterHeight*uLWHeight*importWaterFade;vLandscapeWaterWorld=(modelMatrix*vec4(transformed,1.)).xyz;vLandscapeWaterDepth=aLandscapeDepth;vLandscapeWaterSlope=length(importWaterGrad*uLWHeight);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+shared).replace('#include <color_fragment>','#include <color_fragment>\nfloat importedAtten=1.-exp(-max(vLandscapeWaterDepth,0.)*(.12+uLWTurbidity*.9)/max(uLWClarity,.1));vec3 importedTint=mix(uLWShallow,uLWDeep,clamp(importedAtten,0.,1.));float importedCrest=smoothstep(uLWThreshold,uLWThreshold+.6,vLandscapeWaterSlope*(.35+uLWWindSpeed*.045));float importedShore=(1.-smoothstep(0.,max(uLWShore,.05),vLandscapeWaterDepth))*.42;float importedFoam=clamp((importedCrest+importedShore)*uLWFoam,0.,.88);diffuseColor.rgb=mix(importedTint,vec3(.88,.94,.96),importedFoam);diffuseColor.a=1.;');waterMaterial.userData.landscapeShader=shader};waterMaterial.customProgramCacheKey=()=>'imported-landscape-water-v1';
+  const importedHeights=terrain?.heights?decodeLandscapeArray(terrain.heights,Float32Array):null;
+  const sampleHeight=(x,z)=>{if(!importedHeights)return 0;const S=terrain.size||100,N=terrain.segments||128,W=N+1,u=Math.min(N-.001,Math.max(0,(x+S/2)/S*N)),v=Math.min(N-.001,Math.max(0,(z+S/2)/S*N)),i=Math.floor(u),j=Math.floor(v),a=u-i,b=v-j,k=j*W+i;return importedHeights[k]*(1-a)*(1-b)+importedHeights[k+1]*a*(1-b)+importedHeights[k+W]*(1-a)*b+importedHeights[k+W+1]*a*b};
+  const addDepth=(geometry)=>{const pos=geometry.attributes.position,values=new Float32Array(pos.count);for(let i=0;i<pos.count;i++)values[i]=Math.max(level-sampleHeight(pos.getX(i),pos.getZ(i)),0);geometry.setAttribute('aLandscapeDepth',new T.BufferAttribute(values,1));return geometry};
+  const waterRoot=new T.Group();waterRoot.name='Water Surface';waterRoot.userData.isLandscape=true;waterRoot.userData.profile=p.profile||'Ocean';waterRoot.position.y=level;waterRoot.visible=p.visible!==false;
+  const near=new T.Mesh(addDepth(new T.RingGeometry(.001,innerRadius,cfg.theta,cfg.inner).rotateX(-Math.PI/2)),waterMaterial);near.name='Water Near Field';near.userData.isLandscape=true;near.userData.landscapeWater=true;near.frustumCulled=false;near.renderOrder=2;waterRoot.add(near);
+  const far=new T.Mesh(addDepth(new T.RingGeometry(innerRadius,outerRadius,cfg.theta,cfg.far).rotateX(-Math.PI/2)),waterMaterial);far.name='Water Far Field';far.userData.isLandscape=true;far.userData.landscapeWater=true;far.frustumCulled=false;far.renderOrder=2;waterRoot.add(far);
+  const update=()=>{const shader=waterMaterial.userData.landscapeShader;if(shader)shader.uniforms.uLWTime.value=(performance.now?.()||Date.now())*.001*(p.waveSpeed??1.8)};near.onBeforeRender=update;far.onBeforeRender=update;return waterRoot;
+}
+
 function buildLandscapeFromPayload(payload, targetScene, T) {
   if (!payload || !targetScene) return;
   const oldGroup = targetScene.getObjectByName('ImportedLandscape');
-  if (oldGroup) targetScene.remove(oldGroup);
+  if (!payload.terrain?.heights) throw new Error('Landscaping payload is missing terrain height data.');
+  const worldRestore=oldGroup?._landscapeWorldRestore||{background:targetScene.background,environment:targetScene.environment,fog:targetScene.fog};
 
   const group = new T.Group();
+  Object.defineProperty(group,'_landscapeWorldRestore',{value:worldRestore,writable:true,configurable:true});
   group.name = 'ImportedLandscape';
   group.userData.isLandscape = true;
+  group.userData.objectId = 'ImportedLandscape';
+  const importedObjectEntries = [];
 
   // 1. BASE TERRAIN MESH (Ground geometry with its exact heightmap & material)
   if (payload.terrain && payload.terrain.heights) {
@@ -3650,37 +3860,15 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
 
       const terGeom = new T.PlaneGeometry(S, S, N, N).rotateX(-Math.PI / 2);
       const posAttr = terGeom.attributes.position;
-      const colors = new Float32Array(W * W * 3);
-
-      for (let j = 0; j < W; j++) {
-        for (let i = 0; i < W; i++) {
-          const idx = j * W + i;
-          const h = (heights && heights[idx] !== undefined) ? heights[idx] : 0;
-          posAttr.setY(idx, h);
-
-          const v = Math.min(1.0, Math.max(0.45, 0.78 + (h / 28)));
-          colors[idx * 3] = 0.26 * v;
-          colors[idx * 3 + 1] = 0.52 * v;
-          colors[idx * 3 + 2] = 0.24 * v;
-        }
-      }
-      terGeom.setAttribute('color', new T.BufferAttribute(colors, 3));
-      terGeom.computeVertexNormals();
-      const finalTerGeom = terGeom.toNonIndexed();
-
-      const terrainTex = createProceduralTerrainTexturesHost(T);
-      const terMat = new T.MeshStandardMaterial({
-        color: new T.Color(0xffffff),
-        map: terrainTex.map,
-        bumpMap: terrainTex.bump,
-        bumpScale: 0.08,
-        vertexColors: true,
-        roughness: 0.82,
-        metalness: 0.04,
-        side: T.DoubleSide
-      });
-
-      const terMesh = new T.Mesh(finalTerGeom, terMat);
+      let sourceColors=null;
+      if(payload.terrain.colors)try{sourceColors=decodeLandscapeArray(payload.terrain.colors,Float32Array)}catch(error){console.warn('Terrain color transfer unavailable; using terrain palette fallback.',error)}
+      const colors=sourceColors&&sourceColors.length>=W*W*3?sourceColors.slice(0,W*W*3):new Float32Array(W*W*3);
+      for(let j=0;j<W;j++)for(let i=0;i<W;i++){const idx=j*W+i,h=heights&&heights[idx]!==undefined?heights[idx]:0;posAttr.setY(idx,h);if(!sourceColors||sourceColors.length<W*W*3){const v=Math.min(1,Math.max(.45,.78+h/28)),palette=payload.terrain.palette?.[0]||[.26,.52,.24];colors.set([palette[0]*v,palette[1]*v,palette[2]*v],idx*3)}}
+      const snowCover=Math.max(0,Math.min(1,Number(payload.weather?.snowCover)||0)),snowLine=Number(payload.terrain.snowLine)||18;if(snowCover>.005)for(let idx=0;idx<W*W;idx++){const h=heights?.[idx]??0,x=Math.max(0,Math.min(1,(h-(snowLine-snowCover*24))/6)),t=x*x*(3-2*x)*snowCover;for(let c=0;c<3;c++){const target=[.78,.86,.96][c],at=idx*3+c;colors[at]=colors[at]*(1-t)+target*t}}
+      terGeom.setAttribute('color',new T.BufferAttribute(colors,3));terGeom.computeVertexNormals();const finalTerGeom=terGeom.toNonIndexed();
+      const normalMap=buildLandscapeTexture(payload.terrain.normalMap?{width:payload.terrain.normalMapSize?.[0]||128,height:payload.terrain.normalMapSize?.[1]||128,type:'Uint8Array',data:payload.terrain.normalMap,repeat:[40,40],wrapS:T.RepeatWrapping,wrapT:T.RepeatWrapping,flipY:true}:null,T);
+      const fallbackTex=normalMap?null:createProceduralTerrainTexturesHost(T);
+      const terMat=new T.MeshStandardMaterial({color:0xffffff,vertexColors:true,roughness:Number(payload.terrain.roughness)||.84,metalness:Math.min(.25,Number(payload.terrain.metalness)||0),normalMap:normalMap||fallbackTex?.bump,normalScale:new T.Vector2(payload.terrain.normalStrength||.34,payload.terrain.normalStrength||.34),side:T.DoubleSide});terMat.envMapIntensity=.7;terMat.color.setScalar(.9);      const terMesh = new T.Mesh(finalTerGeom, terMat);
       terMesh.name = 'Terrain Mesh';
       terMesh.userData.isLandscape = true;
       terMesh.castShadow = terMesh.receiveShadow = true;
@@ -3692,31 +3880,8 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
     }
   }
 
-  // 2. WATER PLANE MESH (Animated ocean mesh & physical water)
-  if (payload.water && payload.water.visible !== false) {
-    const waterGeom = new T.PlaneGeometry(260, 260, 64, 64).rotateX(-Math.PI / 2).toNonIndexed();
-    const waterRipple = createProceduralNoiseTextureHost(T, 'water');
-    const waterMat = new T.MeshPhysicalMaterial({
-      color: new T.Color(0x006677),
-      roughness: 0.10,
-      metalness: 0.10,
-      transmission: 0.85,
-      ior: 1.333,
-      bumpMap: waterRipple,
-      bumpScale: 0.10,
-      transparent: true,
-      opacity: 0.88,
-      side: T.DoubleSide
-    });
-    const waterMesh = new T.Mesh(waterGeom, waterMat);
-    waterMesh.name = 'Water Surface';
-    waterMesh.userData.isLandscape = true;
-    const waterLevel = typeof payload.water.level === 'number' ? payload.water.level : 0;
-    waterMesh.position.y = Math.max(0.12, waterLevel);
-    waterMesh.frustumCulled = false;
-    waterMesh.visible = true;
-    group.add(waterMesh);
-  }
+  // Imported water keeps the source level, optical controls and two-scale wave surface.
+  if (payload.water && payload.water.visible !== false) group.add(buildLandscapeWater(payload.water,payload.terrain,T,payload.weather||{}));
 
   // 3. ALL INSTANCED FOLIAGE (Trees, grass, plants, flowers, and rock meshes)
   if (payload.foliage) {
@@ -3794,7 +3959,19 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
         const kinds = payload.foliage.kinds;
         for (const k in kinds) {
           const item = kinds[k];
-          if (!item || !item.data || item.count <= 0) continue;
+          if (!item) continue;
+          if (Array.isArray(item.parts) && item.parts.length) {
+            for (const part of item.parts) {
+              if (!part.count || !part.geometry || !part.matrices) continue;
+              const geom=buildLandscapeGeometry(part.geometry,T),mat=buildLandscapeMaterial(part.material,T),instMesh=new T.InstancedMesh(geom,mat,part.count),matrices=decodeLandscapeArray(part.matrices,Float32Array),matrix=new T.Matrix4();
+              instMesh.name=`${k}_${part.name||part.part||'foliage'}`;instMesh.userData.isLandscape=true;instMesh.frustumCulled=false;instMesh.castShadow=true;instMesh.receiveShadow=true;
+              for(let i=0;i<part.count;i++){matrix.fromArray(matrices,i*16);instMesh.setMatrixAt(i,matrix)}
+              if(part.colors){const colors=decodeLandscapeArray(part.colors,Float32Array);instMesh.instanceColor=new T.InstancedBufferAttribute(colors,3);instMesh.instanceColor.needsUpdate=true}
+              addLandscapeWind(instMesh,payload.weather,payload.water,T);instMesh.instanceMatrix.needsUpdate=true;group.add(instMesh);
+            }
+            continue;
+          }
+          if (!item.data || item.count <= 0) continue;
           const bstr = atob(item.data);
           const buf = new ArrayBuffer(bstr.length);
           const view = new Uint8Array(buf);
@@ -3899,35 +4076,61 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
   // 4. Placed Objects
   if (payload.objects && Array.isArray(payload.objects)) {
     payload.objects.forEach(o => {
-      const g = new T.BoxGeometry(1.5, 1.5, 1.5);
-      const m = new T.MeshStandardMaterial({ color: 0x818cf8, side: T.DoubleSide });
-      const mesh = new T.Mesh(g, m);
-      mesh.name = o.name || 'Object';
-      if (o.position) mesh.position.fromArray(o.position);
-      if (o.quaternion) mesh.quaternion.fromArray(o.quaternion);
-      if (o.scale) mesh.scale.fromArray(o.scale);
-      mesh.userData.isLandscape = true;
-      group.add(mesh);
+      const mesh=(o.geometry||o.children?.length)?buildLandscapeNode(o,T):new T.Mesh(new T.BoxGeometry(1.5,1.5,1.5),new T.MeshStandardMaterial({color:0x818cf8,side:T.DoubleSide}));
+      mesh.name=o.name||'Object';
+      if(o.position)mesh.position.fromArray(o.position);
+      if(o.quaternion)mesh.quaternion.fromArray(o.quaternion);
+      if(o.scale)mesh.scale.fromArray(o.scale);
+      mesh.userData.isLandscape=true;mesh.userData.objectId=mesh.uuid;mesh.userData.modStack=[];mesh.castShadow=mesh.receiveShadow=true;
+      group.add(mesh);importedObjectEntries.push({id:mesh.userData.objectId,mesh});
     });
   }
+  if(payload.map?.node){const mapNode=buildLandscapeNode(payload.map.node,T);mapNode.name=payload.map.name||mapNode.name||'Imported Map';mapNode.userData.isLandscape=true;mapNode.userData.objectId=mapNode.uuid;mapNode.userData.modStack=[];group.add(mapNode);importedObjectEntries.push({id:mapNode.uuid,mesh:mapNode})}
 
+  if(!group.getObjectByName('Terrain Mesh'))throw new Error('The terrain mesh could not be reconstructed from the import data.');
+  const eng=FE.engines?.core;
+  if(oldGroup){
+    targetScene.background=worldRestore.background;targetScene.environment=worldRestore.environment;targetScene.fog=worldRestore.fog;oldGroup._landscapeEnvironmentTexture?.dispose?.();
+    const ids=oldGroup.userData.importedObjectIds||[];
+    ids.forEach(id=>{if(eng?.customObjects)delete eng.customObjects[id];document.getElementById('chip-'+id)?.remove()});
+    targetScene.remove(oldGroup);
+    oldGroup.traverse(object=>{object.geometry?.dispose?.();const materials=Array.isArray(object.material)?object.material:[object.material];materials.filter(Boolean).forEach(material=>{for(const key of ['map','normalMap','bumpMap','roughnessMap','metalnessMap','alphaMap','emissiveMap'])material[key]?.dispose?.();material.dispose?.()})});
+  }
+  group.userData.importedObjectIds=importedObjectEntries.map(entry=>entry.id);group.userData.importedObjectCount=importedObjectEntries.length;
   targetScene.add(group);
-  const eng = FE.engines?.core;
+  const terrainMesh=group.getObjectByName('Terrain Mesh'),bounds=new T.Box3().setFromObject(terrainMesh||group),center=bounds.getCenter(new T.Vector3()),size=bounds.getSize(new T.Vector3());
+  applyLandscapeWorld(payload,targetScene,T,group,center,size);
   if (eng) {
     if (!eng.customObjects) eng.customObjects = {};
     eng.customObjects['ImportedLandscape'] = group;
     eng.customObjects['landscape_scene'] = group;
+    const chipContainer = document.querySelector('#studio-core .object-chips')||document.querySelector('.object-chips');
+    let landscapeChip=document.getElementById('chip-ImportedLandscape');if(!landscapeChip&&chipContainer){landscapeChip=document.createElement('button');landscapeChip.type='button';landscapeChip.className='chip';landscapeChip.id='chip-ImportedLandscape';landscapeChip.textContent='Landscape';landscapeChip.title='Select imported landscape';landscapeChip.onclick=()=>selectObject('ImportedLandscape','landscape-chip');chipContainer.appendChild(landscapeChip)}
+    importedObjectEntries.forEach(({ id, mesh }) => {
+      eng.customObjects[id] = mesh;
+      if (!chipContainer || document.getElementById('chip-' + id)) return;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.id = 'chip-' + id;
+      chip.textContent = mesh.name;
+      chip.title = 'Select this imported object independently';
+      chip.onclick = () => selectObject(id, 'imported-object');
+      chipContainer.appendChild(chip);
+    });
 
     // Hide default cube & floor and center camera on landscape
     if (eng.cube) eng.cube.visible = false;
     if (eng.studioFloor) eng.studioFloor.visible = false;
-    if (eng.viewportCamera && eng.oc) {
-      eng.viewportCamera.position.set(55, 45, 65);
-      eng.oc.target.set(0, 4, 0);
-      eng.viewportCamera.lookAt(0, 4, 0);
-      eng.oc.update();
+    if (eng.oc) {
+      const camera=eng.oc.object||eng.viewportCamera,distance=Math.max(size.x,size.y,size.z,30)*1.35,far=Math.max(camera?.far||1000,size.x*12,size.z*12,(payload.water?.farRadius||1400)*3);
+      if(camera){camera.far=far;camera.near=Math.min(camera.near||.1,.1);camera.updateProjectionMatrix();camera.position.copy(center).add(new T.Vector3(distance*.78,distance*.58,distance*.92));camera.lookAt(center)}
+      eng.oc.target.copy(center);eng.oc.update();
     }
+    selectObject('ImportedLandscape','landscape-import');
   }
+  if(typeof window!=='undefined')window.__lastLandscapeImportPayload=payload;
+  return group;
 }
 
 /* =========================================================
@@ -3944,6 +4147,12 @@ function getActiveObjectMesh() {
 }
 window.getActiveObjectMesh = getActiveObjectMesh;
 
+function getActiveObjectDisplayName() {
+  const selected = getActiveObjectMesh();
+  return selected?.name || (activeObject && activeObject !== 'none' ? activeObject : 'Object');
+}
+window.getActiveObjectDisplayName = getActiveObjectDisplayName;
+
 function getAllSceneMeshes() {
   const eng = FE.engines?.core;
   if (!eng || !eng.sc) return [];
@@ -3959,32 +4168,21 @@ window.getAllSceneMeshes = getAllSceneMeshes;
 
 function enableLightingShadingMode() {
   const eng = FE.engines.core;
-  if (!eng || !eng.cube) return;
-  // STRICT RULE: In Solid or Wireframe modes, scene lights must NEVER illuminate meshes!
+  if (!eng) return;
+  const userLight = eng.blenderLight?.light || window.activeLight;
+  // Selecting the light is a selection/UI action, not a shading-mode change.
+  // Keep existing materials and current preview untouched; only enforce the current mode's light rule.
   if (currentShadingMode === 'solid' || currentShadingMode === 'wireframe') {
-    const userLight = eng.blenderLight?.light || window.activeLight;
     if (userLight) userLight.visible = false;
     if (eng.r) eng.r.shadowMap.enabled = false;
     return;
   }
-  // Switch unlit or wireframe materials to MeshStandardMaterial (lit) for all meshes
-  const allMeshes = getAllSceneMeshes();
-  allMeshes.forEach(mesh => {
-    if (mesh.material && (mesh.material.type !== "MeshStandardMaterial" || mesh.material.wireframe)) {
-      mesh.material = new THREE.MeshStandardMaterial({
-        color: 0x6366f1,
-        roughness: 0.35,
-        metalness: 0.2
-      });
-    }
-  });
-  if (eng.shadowFloor) eng.shadowFloor.receiveShadow = true;
-  if (eng.r) {
+  // Do not unhide a user-disabled light just because its settings were opened.
+  if (eng.r && (currentShadingMode === 'material' || currentShadingMode === 'rendered')) {
     eng.r.shadowMap.enabled = true;
     eng.r.shadowMap.type = THREE.PCFSoftShadowMap;
   }
-  const userLight = eng.blenderLight?.light || window.activeLight;
-  if (userLight) userLight.visible = true;
+  if (eng.shadowFloor) eng.shadowFloor.receiveShadow = true;
 }
 
 function clearMeshSelectionOutline() {
@@ -3993,7 +4191,6 @@ function clearMeshSelectionOutline() {
   const allObjects = [
     eng.cube,
     eng.blenderCam,
-    eng.blenderCam?.box,
     eng.blenderLight,
     ...(eng.customObjects ? Object.values(eng.customObjects) : [])
   ].filter(Boolean);
@@ -4065,15 +4262,6 @@ function applyMeshSelectionOutline(type) {
     if (eng.blenderCamLines && eng.blenderCamLines.material) {
       eng.blenderCamLines.material.color.setHex(0xf59e0b);
     }
-    if (eng.blenderCam.box) {
-      const boxEdges = new THREE.EdgesGeometry(eng.blenderCam.box.geometry);
-      const boxOutlineMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, linewidth: 2, depthTest: true });
-      const boxOutline = new THREE.LineSegments(boxEdges, boxOutlineMat);
-      boxOutline.name = 'SelectionOutlineHelper';
-      boxOutline.raycast = () => {};
-      boxOutline.renderOrder = 10;
-      eng.blenderCam.box.add(boxOutline);
-    }
   }
 
   // 3. Light visual selection outline
@@ -4127,10 +4315,23 @@ function selectObject(type, source = 'auto') {
   if (type === 'camera') {
     if (animSheet) animSheet.style.display = 'none';
     if (modSheet) modSheet.style.display = 'none';
+    const cameraEng = FE.engines?.core;
+    const activeCameraProjection = isCameraView && cameraEng?.sceneCamera
+      ? (cameraEng.sceneCamera.isOrthographicCamera ? 'orthographic' : 'perspective')
+      : null;
+    if (activeCameraProjection && cameraEng.oc?.object !== cameraEng.sceneCamera && cameraEng.activateOrbitCamera) {
+      const focus = cameraEng.sceneCameraTarget?.clone() || new THREE.Vector3(0, 0, 0);
+      cameraEng.activateOrbitCamera(cameraEng.sceneCamera, focus);
+    }
     if (!isEditMode) {
       if (camSheet) {
         camSheet.style.display = 'flex';
         syncCameraSlidersFromScene();
+        // Opening the toolbar's Camera chip is UI-only: retain the active camera projection.
+        if (activeCameraProjection) {
+          const lensType = document.getElementById('cam-lens-type');
+          if (lensType) lensType.value = activeCameraProjection;
+        }
       }
     } else {
       if (camSheet) camSheet.style.display = 'none';
@@ -4195,7 +4396,16 @@ function selectObject(type, source = 'auto') {
         if (activeFloatingPanel === 'move') updateAxisRestriction('move', getScreenElement('#move-axis-select')?.value || 'all');
         else if (activeFloatingPanel === 'rotate') updateAxisRestriction('rotate', getScreenElement('#rotate-axis-select')?.value || 'all');
         else if (activeFloatingPanel === 'scale') updateAxisRestriction('scale', getScreenElement('#scale-axis-select')?.value || 'all');
-        else if (activeFloatingPanel === 'transform') updateTransformAxisRestrictions();
+        else if (activeFloatingPanel === 'transform') {
+          let transformMode = getScreenElement('#trans-gizmo-mode')?.value || 'translate';
+          if (transformMode === 'scale' && (type === 'camera' || type === 'light')) {
+            transformMode = 'translate';
+            const modeSelect = getScreenElement('#trans-gizmo-mode');
+            if (modeSelect) modeSelect.value = transformMode;
+          }
+          eng.transformControls.setMode(transformMode);
+          updateTransformAxisRestrictions();
+        }
         eng.transformControls.updateMatrixWorld(true);
       } else {
         eng.transformControls.detach();
@@ -4217,13 +4427,24 @@ function getActiveSceneTarget() {
   return getActiveObjectMesh ? getActiveObjectMesh() : null;
 }
 
+function isLayerTargetVisible(target) {
+  const eng = FE.engines?.core;
+  if (!target) return true;
+  if (isCameraView && target === eng?.blenderCam && target.userData?.cameraViewRestoreVisible !== undefined) {
+    return !!target.userData.cameraViewRestoreVisible;
+  }
+  return target.visible !== false;
+}
+
 function updateLayerBarActionIcons() {
   const target = getActiveSceneTarget();
   const eyeBtn = document.getElementById('btn-toggle-visibility');
   const lockBtn = document.getElementById('btn-toggle-lock');
+  const editLandscapeBtn=document.getElementById('btn-edit-landscape'),landscapeGroup=FE.engines?.core?.sc?.getObjectByName('ImportedLandscape');
+  if(editLandscapeBtn){let node=target;while(node&&node!==landscapeGroup)node=node.parent;editLandscapeBtn.hidden=!(landscapeGroup&&node===landscapeGroup)}
 
   if (eyeBtn) {
-    const isVisible = target ? target.visible !== false : true;
+    const isVisible = isLayerTargetVisible(target);
     if (isVisible) {
       eyeBtn.classList.remove('active-off');
       eyeBtn.title = 'Object is Visible (Click to Hide)';
@@ -4273,14 +4494,20 @@ window.updateLayerBarActionIcons = updateLayerBarActionIcons;
 function toggleActiveObjectVisibility() {
   const target = getActiveSceneTarget();
   if (!target) return;
-  target.visible = !target.visible;
   const eng = FE.engines?.core;
-  if (target.visible === false && eng && eng.transformControls) {
-    eng.transformControls.detach();
+  const nextVisible = !isLayerTargetVisible(target);
+  if (isCameraView && target === eng?.blenderCam) {
+    target.userData ||= {};
+    target.userData.cameraViewRestoreVisible = nextVisible;
+    // Keep the helper out of the live camera image; restore the user's visibility choice on exit.
+    target.visible = false;
+  } else {
+    target.visible = nextVisible;
   }
+  if (!nextVisible && eng?.transformControls?.object === target) eng.transformControls.detach();
   updateLayerBarActionIcons();
-  const name = activeObject ? (activeObject.charAt(0).toUpperCase() + activeObject.slice(1)) : 'Object';
-  FE.toast(target.visible ? `${name} visible 👁️` : `${name} hidden 🚫👁️`);
+  const name = getActiveObjectDisplayName();
+  FE.toast(nextVisible ? `${name} visible 👁️` : `${name} hidden 🚫👁️`);
   if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
 }
 window.toggleActiveObjectVisibility = toggleActiveObjectVisibility;
@@ -4297,7 +4524,7 @@ function toggleActiveObjectLock() {
     selectObject(activeObject);
   }
   updateLayerBarActionIcons();
-  const name = activeObject ? (activeObject.charAt(0).toUpperCase() + activeObject.slice(1)) : 'Object';
+  const name = getActiveObjectDisplayName();
   FE.toast(target.userData.isLocked ? `${name} Locked 🔒 (Transformations disabled)` : `${name} Unlocked 🔓`);
   if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
 }
@@ -4322,7 +4549,7 @@ function requestDeleteActiveObject() {
     const chk = document.getElementById('chk-delete-dont-show');
     if (chk) chk.checked = false;
     if (msg) {
-      const name = activeObject.charAt(0).toUpperCase() + activeObject.slice(1);
+      const name = getActiveObjectDisplayName();
       msg.textContent = `Are you sure you want to delete "${name}"?`;
     }
     if (modal) modal.style.display = 'flex';
@@ -4387,12 +4614,23 @@ function deleteActiveObject() {
   } else if (eng.customObjects && eng.customObjects[type]) {
     const obj = eng.customObjects[type];
     deletedName = obj.name || type;
-    eng.sc.remove(obj);
-    if (obj.geometry) obj.geometry.dispose();
-    if (obj.material) obj.material.dispose();
-    delete eng.customObjects[type];
-    const chip = document.getElementById('chip-' + type);
-    if (chip) chip.remove();
+    if (obj.parent) obj.parent.remove(obj);
+    else eng.sc.remove(obj);
+    const geometries = new Set(), materials = new Set(), disposedNodes = new Set();
+    const disposeNode = node => {
+      disposedNodes.add(node);
+      if (node.geometry && !geometries.has(node.geometry)) { geometries.add(node.geometry); node.geometry.dispose(); }
+      const list = Array.isArray(node.material) ? node.material : (node.material ? [node.material] : []);
+      list.forEach(material => { if (!materials.has(material)) { materials.add(material); material.dispose(); } });
+    };
+    if (typeof obj.traverse === 'function') obj.traverse(disposeNode); else disposeNode(obj);
+    Object.keys(eng.customObjects).forEach(key => {
+      if (eng.customObjects[key] === obj || disposedNodes.has(eng.customObjects[key])) {
+        delete eng.customObjects[key];
+        const chip = document.getElementById('chip-' + key);
+        if (chip) chip.remove();
+      }
+    });
   }
 
   clearMeshSelectionOutline();
@@ -4409,10 +4647,9 @@ window.deleteActiveObject = deleteActiveObject;
 
 window.addEventListener('keydown', (e) => {
   const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
-  if (activeTag === 'input' || activeTag === 'select' || activeTag === 'textarea') return;
-  if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'x' || e.key === 'X') {
-    requestDeleteActiveObject();
-  }
+  if (activeTag === 'input' || activeTag === 'select' || activeTag === 'textarea' || document.activeElement?.isContentEditable) return;
+  if((e.ctrlKey||e.metaKey)&&(e.key.toLowerCase()==='z'||e.key.toLowerCase()==='y')){const action=e.key.toLowerCase()==='y'||e.shiftKey?'redo':'undo';e.preventDefault();e.stopPropagation();if(FE.current==='core'){const done=FE.engines?.core?.[action]?.();if(!done)FE.toast(action==='undo'?'Nothing to undo':'Nothing to redo')}else if(FE.current==='landscape'){document.getElementById('frame-landscape')?.contentWindow?.postMessage({type:'FE_HISTORY_ACTION',action},'*')}return}
+  if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'x' || e.key === 'X') requestDeleteActiveObject();
 });
 
 /* =========================================================
@@ -4521,6 +4758,8 @@ function addNewObjectAtCursor(type) {
   }
 
   if (mesh) {
+    const existingNames = new Set(Object.values(eng.customObjects || {}).map(obj => obj?.name).filter(Boolean));
+    while (existingNames.has(name)) name = `${type.charAt(0).toUpperCase() + type.slice(1)}_${customObjCounter++}`;
     mesh.name = name;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -4529,7 +4768,8 @@ function addNewObjectAtCursor(type) {
     mesh.userData.modStack = []; // Initialize empty stack for new object
     eng.sc.add(mesh);
     if (!eng.customObjects) eng.customObjects = {};
-    const id = name.toLowerCase();
+    const id = mesh.uuid || `${type}_${customObjCounter++}`;
+    mesh.userData.objectId = id;
     eng.customObjects[id] = mesh;
 
     const chipContainer = document.querySelector('.object-chips');
@@ -4648,7 +4888,6 @@ function openFloatingPanel(name) {
   if (eng && eng.transformControls) {
     if (name === 'move' && targetObj && targetObj.parent) {
       targetObj.frustumCulled = false;
-      targetObj.visible = true;
       targetObj.updateMatrix();
       targetObj.updateMatrixWorld(true);
       eng.transformControls.attach(targetObj);
@@ -4657,7 +4896,6 @@ function openFloatingPanel(name) {
       eng.transformControls.updateMatrixWorld(true);
     } else if (name === 'rotate' && targetObj && targetObj.parent) {
       targetObj.frustumCulled = false;
-      targetObj.visible = true;
       targetObj.updateMatrix();
       targetObj.updateMatrixWorld(true);
       eng.transformControls.attach(targetObj);
@@ -4669,7 +4907,6 @@ function openFloatingPanel(name) {
         eng.transformControls.detach();
       } else {
         targetObj.frustumCulled = false;
-        targetObj.visible = true;
         const minScale = 0.01;
         if (!isFinite(targetObj.scale.x) || targetObj.scale.x < minScale) targetObj.scale.x = 1.0;
         if (!isFinite(targetObj.scale.y) || targetObj.scale.y < minScale) targetObj.scale.y = 1.0;
@@ -4683,11 +4920,16 @@ function openFloatingPanel(name) {
       }
     } else if (name === 'transform' && targetObj && targetObj.parent) {
       targetObj.frustumCulled = false;
-      targetObj.visible = true;
       targetObj.updateMatrix();
       targetObj.updateMatrixWorld(true);
       eng.transformControls.attach(targetObj);
-      const mode = getScreenElement('#trans-gizmo-mode')?.value || 'translate';
+      let mode = getScreenElement('#trans-gizmo-mode')?.value || 'translate';
+      if (mode === 'scale' && (activeObject === 'camera' || activeObject === 'light')) {
+        mode = 'translate';
+        const modeSelect = getScreenElement('#trans-gizmo-mode');
+        if (modeSelect) modeSelect.value = mode;
+        FE.toast('Scale is disabled for Camera and Light rigs');
+      }
       eng.transformControls.setMode(mode);
       updateTransformAxisRestrictions();
       eng.transformControls.updateMatrixWorld(true);
@@ -4703,21 +4945,10 @@ window.openFloatingPanel = openFloatingPanel;
 function closeFloatingPanel(name) {
   const panel = getPanel(name);
   if (panel) panel.style.display = 'none';
-  const toolbar = getActiveToolbar();
-  if (toolbar) {
-    const subBtn = toolbar.querySelector('#subtool-' + name);
-    if (subBtn) subBtn.classList.remove('active');
-  }
-  if (activeFloatingPanel === name) activeFloatingPanel = null;
 
-  const eng = FE.engines?.core;
-  if (eng && eng.transformControls) {
-    eng.transformControls.detach();
-  }
-
-  if (name === 'annotation') {
-    disableAnnotationDraw();
-  }
+  // The X hides settings only. Keep the selected sub-tool, its toolbar highlight,
+  // and any attached transform gizmo active until another tool or Object Mode is chosen.
+  if (name === 'annotation') disableAnnotationDraw();
 }
 window.closeFloatingPanel = closeFloatingPanel;
 
@@ -4786,12 +5017,15 @@ function updateTransformGizmoMode(mode) {
   if (eng && eng.transformControls) {
     const targetObj = getActiveObjectMesh();
     if (mode === 'scale' && (activeObject === 'camera' || activeObject === 'light')) {
-      FE.toast('Scale mode is not applicable for Camera or Light');
+      const modeSelect = getScreenElement('#trans-gizmo-mode');
+      if (modeSelect) modeSelect.value = 'translate';
+      eng.transformControls.setMode('translate');
+      updateTransformAxisRestrictions();
+      FE.toast('Scale is disabled for Camera and Light rigs');
       return;
     }
     if (targetObj && targetObj.parent) {
       targetObj.frustumCulled = false;
-      targetObj.visible = true;
       targetObj.updateMatrix();
       targetObj.updateMatrixWorld(true);
       eng.transformControls.attach(targetObj);
@@ -4828,9 +5062,8 @@ function syncFloatingPanelValues(name) {
   let targetObj = getActiveObjectMesh();
   if (!targetObj) return;
 
-  // Never allow culling on interactive selected meshes
+  // Keep selected objects in the viewport without overriding their intentional visibility state.
   targetObj.frustumCulled = false;
-  targetObj.visible = true;
 
   if (name === 'move') {
     const mx = getScreenElement('#num-move-x');
@@ -4888,37 +5121,50 @@ function syncFloatingPanelValues(name) {
   }
 }
 
-function getActiveObjectMesh() {
-  const eng = FE.engines?.core;
-  if (!eng || !eng.sc) return null;
-  let obj = null;
-  if (activeObject === 'cube') obj = eng.cube;
-  else if (activeObject === 'camera') obj = eng.blenderCam;
-  else if (activeObject === 'light') obj = eng.blenderLight;
-  else if (eng.customObjects && eng.customObjects[activeObject]) obj = eng.customObjects[activeObject];
-  if (obj && obj.parent) {
-    obj.frustumCulled = false;
-    obj.visible = true;
-    const minScale = 0.01;
-    if (obj.scale) {
-      if (isNaN(obj.scale.x) || !isFinite(obj.scale.x) || obj.scale.x < minScale) obj.scale.x = 1.0;
-      if (isNaN(obj.scale.y) || !isFinite(obj.scale.y) || obj.scale.y < minScale) obj.scale.y = 1.0;
-      if (isNaN(obj.scale.z) || !isFinite(obj.scale.z) || obj.scale.z < minScale) obj.scale.z = 1.0;
-    }
-    return obj;
+function captureLightRigState(group) {
+  const light = group?.light;
+  if (!light) return null;
+  const state = { light, intensity: light.intensity, targetOffset: null };
+  if (light.target && (light.isSpotLight || light.isDirectionalLight)) {
+    group.updateMatrixWorld(true);
+    const source = group.getWorldPosition(new THREE.Vector3());
+    const target = light.target.getWorldPosition(new THREE.Vector3());
+    const inverseRotation = group.getWorldQuaternion(new THREE.Quaternion()).invert();
+    state.targetOffset = target.sub(source).applyQuaternion(inverseRotation);
   }
-  return null;
+  return state;
+}
+
+function preserveLightRigState(group, state) {
+  if (!group || !state || !state.light) return;
+  const light = state.light;
+  light.intensity = state.intensity;
+  if (state.targetOffset && light.target) {
+    group.updateMatrixWorld(true);
+    const source = group.getWorldPosition(new THREE.Vector3());
+    const rotation = group.getWorldQuaternion(new THREE.Quaternion());
+    const targetWorld = state.targetOffset.clone().applyQuaternion(rotation).add(source);
+    if (light.target.parent) {
+      light.target.parent.updateMatrixWorld(true);
+      light.target.position.copy(light.target.parent.worldToLocal(targetWorld.clone()));
+    } else {
+      light.target.position.copy(targetWorld);
+    }
+    light.target.updateMatrixWorld(true);
+    if (light.isSpotLight && typeof updateSpotHelper === 'function') updateSpotHelper();
+    else if (light.isDirectionalLight && typeof updateSunHelper === 'function') updateSunHelper();
+  }
 }
 
 function applyTransformChange(type, specificAxis) {
   const targetObj = getActiveObjectMesh();
   if (!targetObj) return;
+  const lightRigState = activeObject === 'light' ? captureLightRigState(targetObj) : null;
 
   const minScale = 0.01;
   const maxScale = 500.0;
 
   targetObj.frustumCulled = false;
-  targetObj.visible = true;
 
   if (type === 'move') {
     const axis = getScreenElement('#move-axis-select')?.value || 'all';
@@ -5029,6 +5275,7 @@ function applyTransformChange(type, specificAxis) {
     targetObj.updateMatrixWorld(true);
   }
 
+  if (lightRigState) preserveLightRigState(targetObj, lightRigState);
   targetObj.userData.baseScale = targetObj.scale.clone();
   targetObj.userData.baseRotation = targetObj.rotation.clone();
 
@@ -5070,7 +5317,6 @@ function applyUniformScale(val) {
 
   targetObj.scale.set(s, s, s);
   targetObj.frustumCulled = false;
-  targetObj.visible = true;
   targetObj.updateMatrix();
   targetObj.updateMatrixWorld(true);
 
@@ -5103,11 +5349,12 @@ window.applyUniformScale = applyUniformScale;
 function resetPositionToZero() {
   const targetObj = getActiveObjectMesh();
   if (!targetObj) return;
+  const lightRigState = activeObject === 'light' ? captureLightRigState(targetObj) : null;
   targetObj.position.set(0, 0, 0);
   targetObj.frustumCulled = false;
-  targetObj.visible = true;
   targetObj.updateMatrix();
   targetObj.updateMatrixWorld(true);
+  if (lightRigState) preserveLightRigState(targetObj, lightRigState);
   syncFloatingPanelValues('move');
   const eng = FE.engines?.core;
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
@@ -5120,11 +5367,12 @@ window.resetPositionToZero = resetPositionToZero;
 function resetRotationToZero() {
   const targetObj = getActiveObjectMesh();
   if (!targetObj) return;
-  targetObj.rotation.set(0, 0, 0);
+  const lightRigState = activeObject === 'light' ? captureLightRigState(targetObj) : null;
+  targetObj.rotation.set(0, 0, 0); 
   targetObj.frustumCulled = false;
-  targetObj.visible = true;
   targetObj.updateMatrix();
   targetObj.updateMatrixWorld(true);
+  if (lightRigState) preserveLightRigState(targetObj, lightRigState);
   syncFloatingPanelValues('rotate');
   const eng = FE.engines?.core;
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
@@ -5140,7 +5388,7 @@ function updateMeasurePanel() {
   if (!targetObj || !eng) return;
 
   const activeName = getScreenElement('#meas-active-name');
-  if (activeName) activeName.textContent = activeObject.charAt(0).toUpperCase() + activeObject.slice(1);
+  if (activeName) activeName.textContent = getActiveObjectDisplayName();
 
   const bbox = new THREE.Box3().setFromObject(targetObj);
   const size = new THREE.Vector3();
@@ -5291,6 +5539,79 @@ window.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('fe:screen', () => setTimeout(bindAnnoEvents, 50));
 });
 
+// Camera projection helpers: preserve framing when switching real perspective/orthographic cameras.
+function cameraDisplayFov(camera) {
+  if (camera?.isPerspectiveCamera && Number.isFinite(camera.fov)) return camera.fov;
+  const saved = Number(camera?.userData?.displayFov);
+  return Number.isFinite(saved) && saved > 0 ? saved : 39.6;
+}
+
+function applyCameraAspect(camera, aspect) {
+  if (!camera) return;
+  const ratio = Math.max(0.01, Number(aspect) || 1);
+  camera.aspect = ratio;
+  if (camera.isOrthographicCamera) {
+    camera.userData ||= {};
+    const height = Math.max(0.001, Number(camera.userData.orthoHeight) || Math.abs(camera.top - camera.bottom) || 10);
+    camera.userData.orthoHeight = height;
+    camera.left = -height * ratio / 2;
+    camera.right = height * ratio / 2;
+    camera.top = height / 2;
+    camera.bottom = -height / 2;
+  }
+  camera.updateProjectionMatrix();
+}
+
+function applyCameraFov(camera, value, target = null) {
+  if (!camera) return 39.6;
+  const fov = Math.max(10, Math.min(120, Number(value) || 39.6));
+  camera.userData ||= {};
+  camera.userData.displayFov = fov;
+  if (camera.isPerspectiveCamera) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  } else if (camera.isOrthographicCamera) {
+    const focus = target?.isVector3 ? target : (camera.userData.focusTarget || new THREE.Vector3());
+    const distance = Math.max(0.1, Number(camera.userData.orthoReferenceDistance) || camera.position.distanceTo(focus) || 5);
+    camera.userData.orthoReferenceDistance = distance;
+    camera.userData.orthoHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(fov / 2));
+    applyCameraAspect(camera, camera.aspect || 1);
+  }
+  return fov;
+}
+
+function createCameraProjection(source, lensType, aspect, focusTarget = null, fovOverride = null) {
+  if (!source) return source;
+  const orthographic = lensType === 'orthographic';
+  if (orthographic === !!source.isOrthographicCamera) return source;
+  source.updateMatrixWorld(true);
+  const fov = Math.max(10, Math.min(120, Number(fovOverride) || cameraDisplayFov(source)));
+  const target = focusTarget?.isVector3 ? focusTarget.clone() : source.position.clone().addScaledVector(source.getWorldDirection(new THREE.Vector3()), 5);
+  const distance = Math.max(0.1, source.position.distanceTo(target) || 5);
+  const ratio = Math.max(0.01, Number(aspect) || source.aspect || 1);
+  const zoom = Math.max(0.01, Number(source.zoom) || 1);
+  let next;
+  if (orthographic) {
+    const height = 2 * distance * Math.tan(THREE.MathUtils.degToRad(fov / 2));
+    next = new THREE.OrthographicCamera(-height * ratio / 2, height * ratio / 2, height / 2, -height / 2, source.near, source.far);
+    next.userData = { ...(source.userData || {}), lensType: 'orthographic', displayFov: fov, orthoHeight: height, orthoReferenceDistance: distance, focusTarget: target.clone() };
+  } else {
+    next = new THREE.PerspectiveCamera(fov, ratio, source.near, source.far);
+    next.userData = { ...(source.userData || {}), lensType: 'perspective', displayFov: fov, orthoReferenceDistance: distance, focusTarget: target.clone() };
+  }
+  next.zoom = zoom;
+  next.name = source.name || '';
+  next.position.copy(source.position);
+  next.up.copy(source.up);
+  next.rotation.order = source.rotation.order;
+  next.quaternion.copy(source.quaternion);
+  if (source.layers && next.layers) next.layers.mask = source.layers.mask;
+  if (next.isOrthographicCamera) applyCameraAspect(next, ratio);
+  else { next.aspect = ratio; next.updateProjectionMatrix(); }
+  next.updateMatrixWorld(true);
+  return next;
+}
+
 // Three.js Camera Alignment Logic (Makes sure camera face is always toward center of grid [x:0, y:0, z:0] or target object like Blender)
 function alignCameraToCube(cameraInstance, targetPos) {
   if (!cameraInstance) return;
@@ -5300,23 +5621,41 @@ function alignCameraToCube(cameraInstance, targetPos) {
     const actMesh = window.getActiveObjectMesh ? window.getActiveObjectMesh() : eng?.cube;
     target = (actMesh && actMesh.position) ? actMesh.position.clone() : new THREE.Vector3(0, 0, 0);
   }
-  cameraInstance.lookAt(target);
-  cameraInstance.updateMatrix();
-  cameraInstance.updateMatrixWorld();
 
-  if (eng) {
-    if (cameraInstance === eng.blenderCam && eng.sceneCamera) {
-      eng.sceneCamera.position.copy(eng.blenderCam.position);
-      eng.sceneCamera.quaternion.copy(eng.blenderCam.quaternion);
-      eng.sceneCamera.rotation.copy(eng.blenderCam.rotation);
-      if (typeof syncCameraSlidersFromScene === 'function') syncCameraSlidersFromScene();
-    } else if (cameraInstance === eng.sceneCamera && eng.blenderCam) {
-      eng.blenderCam.position.copy(eng.sceneCamera.position);
-      eng.blenderCam.quaternion.copy(eng.sceneCamera.quaternion);
-      eng.blenderCam.rotation.copy(eng.sceneCamera.rotation);
+  const isCameraHelper = !!eng && cameraInstance === eng.blenderCam;
+  if (isCameraHelper && eng.sceneCamera) {
+    // The helper is a Group whose visible lens/front points along local -Z.
+    // Group.lookAt() points local +Z at its target, which made its back face the origin.
+    // Aim the real Camera (whose view direction is local -Z), then copy that exact pose.
+    eng.sceneCamera.position.copy(cameraInstance.position);
+    eng.sceneCamera.lookAt(target);
+    eng.sceneCamera.updateMatrixWorld(true);
+    cameraInstance.quaternion.copy(eng.sceneCamera.quaternion);
+    cameraInstance.updateMatrixWorld(true);
+    eng.sceneCameraTarget?.copy(target);
+    if (typeof syncCameraSlidersFromScene === 'function') syncCameraSlidersFromScene();
+  } else if (isCameraHelper) {
+    // Fallback when the scene Camera is not mounted yet: point Group +Z away
+    // so the helper's visible local -Z front faces the requested target.
+    const awayTarget = cameraInstance.position.clone().multiplyScalar(2).sub(target);
+    cameraInstance.lookAt(awayTarget);
+    cameraInstance.updateMatrixWorld(true);
+  } else {
+    cameraInstance.lookAt(target);
+    cameraInstance.updateMatrixWorld(true);
+    if (eng && cameraInstance === eng.sceneCamera) {
+      eng.sceneCameraTarget?.copy(target);
+      if (eng.blenderCam) {
+        eng.blenderCam.position.copy(cameraInstance.position);
+        eng.blenderCam.quaternion.copy(cameraInstance.quaternion);
+        eng.blenderCam.updateMatrixWorld(true);
+      }
       if (typeof syncCameraSlidersFromScene === 'function') syncCameraSlidersFromScene();
     }
-    if (eng.oc && (isCameraView || cameraInstance === eng.sceneCamera)) {
+  }
+
+  if (eng) {
+    if (eng.oc?.object === eng.sceneCamera && (cameraInstance === eng.sceneCamera || isCameraHelper)) {
       eng.oc.target.copy(target);
       eng.oc.update();
     }
@@ -5380,15 +5719,6 @@ function createBlenderCameraObject() {
   group.add(lines);
   group.lines = lines;
 
-  // Camera box body behind apex (in +Z)
-  const boxGeo = new THREE.BoxGeometry(0.32, 0.22, 0.24);
-  const boxMat = new THREE.MeshBasicMaterial({ color: 0x1e293b, wireframe: true });
-  const box = new THREE.Mesh(boxGeo, boxMat);
-  box.name = 'Camera';
-  box.position.z = 0.14;
-  group.add(box);
-  group.box = box;
-
   // Subtle lens cylinder at front
   const lensGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.12, 16);
   lensGeo.rotateX(Math.PI / 2);
@@ -5398,14 +5728,15 @@ function createBlenderCameraObject() {
   lens.position.z = -0.06;
   group.add(lens);
 
-  // Transparent click hit-box covering entire camera pyramid and body for reliable viewport selection
-  const hitGeo = new THREE.BoxGeometry(1.0, 0.7, 1.4);
-  const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-  const hitMesh = new THREE.Mesh(hitGeo, hitMat);
-  hitMesh.name = 'Camera';
-  hitMesh.position.z = -0.38;
-  group.add(hitMesh);
-  group.hitMesh = hitMesh;
+  // A virtual raycast volume keeps selection easy on touch screens without rendering a fake cube.
+  group.raycast = function(raycaster, intersections) {
+    const center = this.getWorldPosition(new THREE.Vector3());
+    const hit = raycaster.ray.intersectSphere(new THREE.Sphere(center, 0.78), new THREE.Vector3());
+    if (!hit) return;
+    const distance = raycaster.ray.origin.distanceTo(hit);
+    if (distance < raycaster.near || distance > raycaster.far) return;
+    intersections.push({ distance, point: hit, object: this });
+  };
 
   // 3D Focus plane indicator along -Z
   const fpGeo = new THREE.PlaneGeometry(1.6, 0.9);
@@ -5651,24 +5982,21 @@ function updateSunHelper() {
 function createBlenderLightObject() {
   const group = new THREE.Group();
   group.name = 'Light';
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  bulb.name = 'Light';
-  group.add(bulb);
-  group.bulb = bulb;
-
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), new THREE.MeshBasicMaterial({ color: 0xffcc00, side: THREE.DoubleSide }));
   ring.name = 'Light';
   ring.rotation.x = Math.PI / 2;
   group.add(ring);
   group.ring = ring;
 
-  // Transparent click hit-sphere covering light comfortably for reliable viewport selection
-  const hitGeo = new THREE.SphereGeometry(0.55, 16, 16);
-  const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-  const hitMesh = new THREE.Mesh(hitGeo, hitMat);
-  hitMesh.name = 'Light';
-  group.add(hitMesh);
-  group.hitMesh = hitMesh;
+  // Virtual touch-friendly pick radius: no fake rendered sphere is added to the light.
+  group.raycast = function(raycaster, intersections) {
+    const center = this.getWorldPosition(new THREE.Vector3());
+    const hit = raycaster.ray.intersectSphere(new THREE.Sphere(center, 0.62), new THREE.Vector3());
+    if (!hit) return;
+    const distance = raycaster.ray.origin.distanceTo(hit);
+    if (distance < raycaster.near || distance > raycaster.far) return;
+    intersections.push({ distance, point: hit, object: this });
+  };
 
   // Dynamic Spot cone visual helper (dual cone for cone angle + penumbra soft edge)
   const spotHelper = createDynamicSpotHelper();
@@ -5994,13 +6322,11 @@ class InteractiveViewHelper {
         btnOrtho.title = isOrtho ? 'Switch to Perspective View' : 'Switch to Orthographic View';
         btnOrtho.style.borderColor = isOrtho ? '#6366f1' : '';
         btnOrtho.style.color = isOrtho ? '#818cf8' : '';
-        if (this.camera) {
-          // Adjust FOV for orthographic-like feel
-          this.camera.fov = isOrtho ? 18 : 60;
-          this.camera.updateProjectionMatrix();
-          if (typeof FE !== 'undefined' && FE.toast) {
-            FE.toast(isOrtho ? 'Projection: Orthographic (Telephoto)' : 'Projection: Perspective');
-          }
+        if (typeof this.onProjectionChange === 'function') {
+          this.onProjectionChange(isOrtho ? 'orthographic' : 'perspective');
+        }
+        if (typeof FE !== 'undefined' && FE.toast) {
+          FE.toast(isOrtho ? 'Projection: Orthographic' : 'Projection: Perspective');
         }
       };
     }
@@ -6179,28 +6505,33 @@ FE.register('core',{
     const sc=new THREE.Scene();sc.background=new THREE.Color(0x0a0b0e);
     
     // a) viewportCamera: Standard orbit camera for general 3D viewing
-    const viewportCamera=new THREE.PerspectiveCamera(60,w/h,.1,1000);
+    let viewportCamera=new THREE.PerspectiveCamera(60,w/h,.1,1000);
     viewportCamera.position.set(7, 6, 9);
 
     // b) sceneCamera: The actual 3D Scene Camera affected by panel settings
-    const sceneCamera=new THREE.PerspectiveCamera(39.6,w/h,.1,1000);
+    let sceneCamera=new THREE.PerspectiveCamera(39.6,w/h,.1,1000);
+    let sceneCameraTarget=new THREE.Vector3(0,0,0);
     sceneCamera.position.set(-4.5, 3.5, 4.5);
 
     const r=new THREE.WebGLRenderer({canvas,antialias:true});
+    canvas.style.touchAction = 'none';
+    canvas.style.userSelect = 'none';
     r.setPixelRatio(Math.min(devicePixelRatio,2));
     r.setSize(w,h,false);
-    r.shadowMap.enabled=true; 
+    r.shadowMap.enabled=GLOBAL_SETTINGS.shadows; 
     r.shadowMap.type=THREE.PCFSoftShadowMap;
     r.shadowMap.autoUpdate = true;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.25;
+    r.toneMappingExposure = GLOBAL_SETTINGS.exposure||1.25;
 
     // OrbitControls initialized on viewportCamera with smooth finger navigation
-    const oc=new THREE.OrbitControls(viewportCamera,canvas);
-    oc.maxPolarAngle = Math.PI / 2;
+    let oc=new THREE.OrbitControls(viewportCamera,canvas);
+    oc.minPolarAngle = 0.02;
+    oc.maxPolarAngle = Math.PI - 0.02;
+    oc.screenSpacePanning = true;
     oc.enableDamping = true;
     oc.dampingFactor = 0.08;
-    oc.rotateSpeed = 1.0;
+    oc.rotateSpeed = GLOBAL_SETTINGS.sensitivity||1.0;
     oc.enableTouch = true;
     oc.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
     
@@ -6271,12 +6602,15 @@ FE.register('core',{
     // Initial lookAt [0, 0, 0]
     alignCameraToCube(viewportCamera, cube.position);
     alignCameraToCube(sceneCamera, cube.position);
+    sceneCameraTarget.copy(cube.position);
     oc.target.set(0, 0, 0);
 
     // 3D Blender camera helper in the grid space
     const blenderCam=createBlenderCameraObject();
     blenderCam.position.copy(sceneCamera.position);
-    alignCameraToCube(blenderCam, cube.position);
+    // Camera helper front and the real Three.js Camera both look along local -Z.
+    blenderCam.quaternion.copy(sceneCamera.quaternion);
+    blenderCam.updateMatrixWorld(true);
     sc.add(blenderCam);
 
     const blenderLight=createBlenderLightObject(); sc.add(blenderLight);
@@ -6301,10 +6635,76 @@ FE.register('core',{
     transformControls.size = 1.15;
 
     const viewHelper = new InteractiveViewHelper(viewportCamera, r, oc);
+
+    // OrbitControls holds cached spherical deltas for its original camera. Recreate it on
+    // camera switches instead of mutating oc.object, which caused stale rotations on re-entry.
+    const configureOrbitControls = (control) => {
+      control.minPolarAngle = 0.02;
+      control.maxPolarAngle = Math.PI - 0.02;
+      control.screenSpacePanning = true;
+      control.enablePan = true;
+      control.enableZoom = true;
+      control.enableRotate = true;
+      control.enableDamping = true;
+      control.dampingFactor = 0.08;
+      control.rotateSpeed = 1.0;
+      control.enableTouch = true;
+      control.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+    };
+    const activateOrbitCamera = (camera, target) => {
+      const oldControl = oc;
+      const dampingFactor = oldControl?.dampingFactor ?? 0.08;
+      const rotateSpeed = oldControl?.rotateSpeed ?? 1.0;
+      if (oldControl) oldControl.dispose();
+      oc = new THREE.OrbitControls(camera, canvas);
+      configureOrbitControls(oc);
+      oc.dampingFactor = dampingFactor;
+      oc.rotateSpeed = rotateSpeed;
+      const focusTarget = camera === sceneCamera
+        ? (target?.isVector3 ? target.clone() : sceneCameraTarget.clone())
+        : target;
+      if (focusTarget?.isVector3) oc.target.copy(focusTarget);
+      if (camera === sceneCamera && focusTarget?.isVector3) sceneCameraTarget.copy(focusTarget);
+      const activeControl = oc;
+      activeControl.addEventListener('change', () => {
+        if (camera === sceneCamera) sceneCameraTarget.copy(activeControl.target);
+      });
+      oc.update();
+      this.oc = oc;
+      viewHelper.oc = oc;
+      return oc;
+    };
+    const replaceSceneCamera = (nextCamera) => {
+      const wasActive = oc?.object === sceneCamera;
+      const activeTarget = wasActive ? oc.target.clone() : sceneCameraTarget.clone();
+      sceneCamera = nextCamera;
+      this.sceneCamera = nextCamera;
+      sceneCameraTarget.copy(activeTarget);
+      if (wasActive) activateOrbitCamera(nextCamera, activeTarget);
+      return nextCamera;
+    };
+    const replaceViewportCamera = (nextCamera) => {
+      const activeTarget = oc?.object === viewportCamera ? oc.target.clone() : null;
+      viewportCamera = nextCamera;
+      this.viewportCamera = nextCamera;
+      window.camera = nextCamera;
+      viewHelper.camera = nextCamera;
+      transformControls.camera = nextCamera;
+      if (activeTarget) activateOrbitCamera(nextCamera, activeTarget);
+      return nextCamera;
+    };
+    viewHelper.onProjectionChange = (lensType) => {
+      const target = oc?.object === viewportCamera ? oc.target.clone() : new THREE.Vector3();
+      const nextCamera = createCameraProjection(viewportCamera, lensType, viewportCamera.aspect || 1, target, cameraDisplayFov(viewportCamera));
+      replaceViewportCamera(nextCamera);
+    };
+
     let isGizmoDragging = false;
     const dragStartPos = new THREE.Vector3();
     const dragStartRot = new THREE.Euler();
     const dragStartScale = new THREE.Vector3(1, 1, 1);
+    let dragStartLightRigState = null;
+    let historyCtl=null;
 
     canvas.addEventListener('pointerdown', (event) => {
       if (viewHelper.onPointerDown(event)) return;
@@ -6319,11 +6719,12 @@ FE.register('core',{
 
       const targetObj = getActiveObjectMesh();
       if (event.value && targetObj) {
+        historyCtl?.begin('transform');
         dragStartPos.copy(targetObj.position);
         dragStartRot.copy(targetObj.rotation);
         dragStartScale.copy(targetObj.scale);
         targetObj.frustumCulled = false;
-        targetObj.visible = true;
+        dragStartLightRigState = activeObject === 'light' ? captureLightRigState(targetObj) : null;
       }
 
       if (!event.value && targetObj) {
@@ -6332,17 +6733,18 @@ FE.register('core',{
         targetObj.scale.y = Math.max(minScale, isFinite(targetObj.scale.y) ? targetObj.scale.y : 1.0);
         targetObj.scale.z = Math.max(minScale, isFinite(targetObj.scale.z) ? targetObj.scale.z : 1.0);
         targetObj.frustumCulled = false;
-        targetObj.visible = true;
         targetObj.updateMatrix();
         targetObj.updateMatrixWorld(true);
         if (targetObj.geometry) {
           targetObj.geometry.computeBoundingBox();
           targetObj.geometry.computeBoundingSphere();
         }
+        if (activeObject === 'light') preserveLightRigState(targetObj, dragStartLightRigState);
         if (this.selectionBox && typeof this.selectionBox.update === 'function') this.selectionBox.update();
         if (activeFloatingPanel) syncFloatingPanelValues(activeFloatingPanel);
         updateMeasurePanel();
       }
+      if (!event.value) {dragStartLightRigState = null;historyCtl?.commitPending('transform')}
     });
 
     transformControls.addEventListener('change', () => {
@@ -6423,11 +6825,15 @@ FE.register('core',{
         }
       }
 
-      // 4. Force visibility, unculled status, and update world matrix immediately
+      // 4. Keep gizmo math current without overriding intentional object visibility.
       activeObjMesh.frustumCulled = false;
-      activeObjMesh.visible = true;
       activeObjMesh.updateMatrix();
       activeObjMesh.updateMatrixWorld(true);
+
+      if (activeObject === 'light' && activeObjMesh === this.blenderLight) {
+        // Preserve numeric power and the spotlight/directional aim while the rig moves or rotates.
+        preserveLightRigState(activeObjMesh, dragStartLightRigState);
+      }
 
       if (activeObjMesh.geometry) {
         activeObjMesh.geometry.computeBoundingBox();
@@ -6493,16 +6899,22 @@ FE.register('core',{
         }
       }
 
-      const customMeshList = this.customObjects ? Object.values(this.customObjects) : [];
+      const customMeshList = this.customObjects ? Array.from(new Set(Object.values(this.customObjects).filter(Boolean))) : [];
       const targets = isCameraView
-        ? [cube, ...customMeshList, blenderLight?.hitMesh, blenderLight?.bulb, blenderLight?.ring].filter(Boolean)
-        : [cube, ...customMeshList, blenderCam?.hitMesh, blenderCam?.box, blenderCam?.lens, blenderLight?.hitMesh, blenderLight?.bulb, blenderLight?.ring].filter(Boolean);
+        ? [cube, ...customMeshList, blenderLight, blenderLight?.ring].filter(Boolean)
+        : [cube, ...customMeshList, blenderCam, blenderCam?.lens, blenderLight, blenderLight?.ring].filter(Boolean);
       const intersects = raycaster.intersectObjects(targets, true);
       if (intersects.length > 0) {
-        let hit = intersects[0].object;
-        while (hit.parent && hit.parent !== sc && !hit.name) {
-          hit = hit.parent;
+        const rawHit = intersects[0].object;
+        let owner = rawHit;
+        while (owner && owner !== sc && !owner.userData?.objectId) owner = owner.parent;
+        const objectId = owner?.userData?.objectId;
+        if (objectId && this.customObjects?.[objectId] === owner) {
+          selectObject(objectId, 'viewport');
+          return;
         }
+        let hit = rawHit;
+        while (hit.parent && hit.parent !== sc && !hit.name) hit = hit.parent;
         const hitName = hit.name || hit.parent?.name || '';
         if (hitName === 'Cube') {
           selectObject('cube', 'viewport');
@@ -6517,8 +6929,29 @@ FE.register('core',{
     });
 
     Object.assign(this,{
-      sc,viewportCamera,sceneCamera,r,oc,transformControls,viewHelper,cube,blenderCam,blenderCamLines:blenderCam.lines,blenderLight,light:blenderLight.light,shadowFloor,spotTarget,dirTarget,grid,cursor3d,d,fillLight,amb,cubeMat
+      sc,viewportCamera,sceneCamera,sceneCameraTarget,r,oc,transformControls,viewHelper,getActiveCamera:()=>isCameraView?sceneCamera:viewportCamera,getShadingMode:()=>currentShadingMode,activateOrbitCamera,replaceSceneCamera,replaceViewportCamera,viewportOrbitTarget:oc.target.clone(),cube,blenderCam,blenderCamLines:blenderCam.lines,blenderLight,light:blenderLight.light,shadowFloor,spotTarget,dirTarget,grid,cursor3d,d,fillLight,amb,cubeMat
     });
+
+    const cloneHistoryData=value=>{try{return structuredClone(value)}catch(error){try{return JSON.parse(JSON.stringify(value))}catch(error2){return value&&typeof value==='object'?{...value}:value}}};
+    const captureMaterial=material=>Array.isArray(material)?material.map(captureMaterial):!material?null:(()=>{const state={color:material.color?.clone?.()||null,emissive:material.emissive?.clone?.()||null,specular:material.specular?.clone?.()||null,roughness:material.roughness,metalness:material.metalness,shininess:material.shininess,opacity:material.opacity,transparent:material.transparent,wireframe:material.wireframe,side:material.side,emissiveIntensity:material.emissiveIntensity,envMapIntensity:material.envMapIntensity,alphaTest:material.alphaTest,depthWrite:material.depthWrite,visible:material.visible};return{ref:material,state,key:JSON.stringify([material.uuid,state.color?.toArray?.(),state.emissive?.toArray?.(),state.specular?.toArray?.(),state.roughness,state.metalness,state.shininess,state.opacity,state.transparent,state.wireframe,state.side,state.emissiveIntensity,state.envMapIntensity,state.alphaTest,state.depthWrite,state.visible])}})();
+    const applyMaterial=record=>Array.isArray(record)?record.map(applyMaterial):!record?null:(()=>{const material=record.ref,s=record.state;if(s.color&&material.color?.copy)material.color.copy(s.color);if(s.emissive&&material.emissive?.copy)material.emissive.copy(s.emissive);if(s.specular&&material.specular?.copy)material.specular.copy(s.specular);for(const key of ['roughness','metalness','shininess','opacity','transparent','wireframe','side','emissiveIntensity','envMapIntensity','alphaTest','depthWrite','visible'])if(s[key]!==undefined)material[key]=s[key];material.needsUpdate=true;return material})();
+    const captureCamera=camera=>camera?{ref:camera,position:camera.position.clone(),quaternion:camera.quaternion.clone(),up:camera.up.clone(),rotationOrder:camera.rotation.order,near:camera.near,far:camera.far,aspect:camera.aspect,fov:camera.fov,zoom:camera.zoom}:null;
+    const captureCoreState=()=>{const roots=sc.children.slice(),nodes=[];const walk=o=>{const material=captureMaterial(o.material),data=cloneHistoryData(o.userData||{}),lightColor=o.color?.clone?.()||null,groundColor=o.groundColor?.clone?.()||null;nodes.push({object:o,children:o.children.slice(),position:o.position.clone(),quaternion:o.quaternion.clone(),scale:o.scale.clone(),visible:o.visible,name:o.name,geometry:o.geometry,material,materialKey:JSON.stringify(Array.isArray(material)?material.map(m=>m?.key):material?.key),userData:data,userDataKey:(()=>{try{return JSON.stringify(data)}catch{return''}})(),matrixAutoUpdate:o.matrixAutoUpdate,renderOrder:o.renderOrder,castShadow:o.castShadow,receiveShadow:o.receiveShadow,frustumCulled:o.frustumCulled,layers:o.layers?.mask,color:lightColor,groundColor,intensity:o.intensity,visibleLight:o.isLight?o.visible:undefined});o.children.forEach(walk)};roots.forEach(walk);return{roots,nodes,customObjects:{...(this.customObjects||{})},engineRefs:{cube:this.cube,blenderCam:this.blenderCam,blenderCamLines:this.blenderCamLines,blenderLight:this.blenderLight,light:this.light},activeObject,isCameraView,currentShadingMode,viewportCamera:captureCamera(viewportCamera),sceneCamera:captureCamera(sceneCamera),orbitTarget:oc.target.clone(),sceneCameraTarget:sceneCameraTarget.clone(),background:sc.background,fog:sc.fog}};
+    const sameCoreState=(a,b)=>{if(!a||!b||a.roots.length!==b.roots.length||a.nodes.length!==b.nodes.length)return false;for(let i=0;i<a.roots.length;i++)if(a.roots[i]!==b.roots[i])return false;for(let i=0;i<a.nodes.length;i++){const x=a.nodes[i],y=b.nodes[i];if(x.object!==y.object||x.children.length!==y.children.length||x.position.distanceToSquared(y.position)>1e-12||!x.quaternion.equals(y.quaternion)||!x.scale.equals(y.scale)||x.visible!==y.visible||x.name!==y.name||x.geometry!==y.geometry||x.materialKey!==y.materialKey||x.userDataKey!==y.userDataKey||x.renderOrder!==y.renderOrder||x.castShadow!==y.castShadow||x.receiveShadow!==y.receiveShadow||x.frustumCulled!==y.frustumCulled||x.color?.getHex?.()!==y.color?.getHex?.()||x.intensity!==y.intensity)return false;for(let j=0;j<x.children.length;j++)if(x.children[j]!==y.children[j])return false}return true};
+    const history={undo:[],redo:[],limit:GLOBAL_SETTINGS.undoLimit,current:null,pending:null,coalesceKey:null,coalesceAt:0,restoring:false};
+    const trimHistoryStack=stack=>{while(stack.length>history.limit)stack.shift()};
+    const restoreCoreState=state=>{sc.children.slice().forEach(root=>sc.remove(root));state.nodes.forEach(rec=>{while(rec.object.children.length)rec.object.remove(rec.object.children[0])});for(const rec of state.nodes){const o=rec.object;o.position.copy(rec.position);o.quaternion.copy(rec.quaternion);o.scale.copy(rec.scale);o.visible=rec.visible;o.name=rec.name;o.geometry=rec.geometry;o.material=applyMaterial(rec.material);o.userData=cloneHistoryData(rec.userData);o.matrixAutoUpdate=rec.matrixAutoUpdate;o.renderOrder=rec.renderOrder;o.castShadow=rec.castShadow;o.receiveShadow=rec.receiveShadow;o.frustumCulled=rec.frustumCulled;if(o.layers&&rec.layers!==undefined)o.layers.mask=rec.layers;if(rec.color&&o.color?.copy)o.color.copy(rec.color);if(rec.groundColor&&o.groundColor?.copy)o.groundColor.copy(rec.groundColor);if(rec.intensity!==undefined)o.intensity=rec.intensity;o.updateMatrix?.();o.updateMatrixWorld?.(true)}for(const rec of state.nodes)for(const child of rec.children)rec.object.add(child);state.roots.forEach(root=>sc.add(root));Object.assign(this,state.engineRefs||{});this.customObjects={...state.customObjects};if(viewportCamera!==state.viewportCamera?.ref)replaceViewportCamera(state.viewportCamera.ref);if(sceneCamera!==state.sceneCamera?.ref)replaceSceneCamera(state.sceneCamera.ref);const putCamera=(camera,s)=>{if(!camera||!s)return;camera.position.copy(s.position);camera.quaternion.copy(s.quaternion);camera.up.copy(s.up);camera.rotation.order=s.rotationOrder;camera.near=s.near;camera.far=s.far;if(camera.isPerspectiveCamera)camera.fov=s.fov;if('zoom'in camera)camera.zoom=s.zoom;if(s.aspect)camera.aspect=s.aspect;camera.updateProjectionMatrix();camera.updateMatrixWorld(true)};putCamera(viewportCamera,state.viewportCamera);putCamera(sceneCamera,state.sceneCamera);sceneCameraTarget.copy(state.sceneCameraTarget);oc.target.copy(state.orbitTarget);sc.background=state.background;sc.fog=state.fog;isCameraView=state.isCameraView;currentShadingMode=state.currentShadingMode;window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(state.activeObject||'cube','history');sc.updateMatrixWorld(true)};
+    const commitHistory=(key='change',before=null)=>{if(history.restoring)return false;const next=captureCoreState(),prev=before||history.current;if(!prev||sameCoreState(prev,next)){history.current=next;return false}const now=performance.now();if(!(key&&history.undo.length&&key===history.coalesceKey&&now-history.coalesceAt<600)){history.undo.push(prev);trimHistoryStack(history.undo)}history.redo.length=0;history.current=next;history.coalesceKey=key||null;history.coalesceAt=now;return true};
+    const undoHistory=()=>{if(!history.undo.length)return false;const previous=history.undo.pop();history.redo.push(captureCoreState());trimHistoryStack(history.redo);history.restoring=true;try{restoreCoreState(previous)}finally{history.restoring=false}history.current=captureCoreState();history.coalesceKey=null;return true};
+    const redoHistory=()=>{if(!history.redo.length)return false;const next=history.redo.pop();history.undo.push(captureCoreState());trimHistoryStack(history.undo);history.restoring=true;try{restoreCoreState(next)}finally{history.restoring=false}history.current=captureCoreState();history.coalesceKey=null;return true};
+    history.current=captureCoreState();
+    history.begin=key=>{history.pending={key,state:captureCoreState()}};
+    history.commitPending=key=>{const pending=history.pending;history.pending=null;return pending?commitHistory(key||pending.key,pending.state):false};
+    this.history=history;this.commitHistory=commitHistory;this.undo=undoHistory;this.redo=redoHistory;this.setHistoryLimit=v=>{const n=Number(v);if(Number.isFinite(n)){history.limit=Math.min(1000,Math.max(1,Math.round(n)));trimHistoryStack(history.undo);trimHistoryStack(history.redo)}};
+    const transformJSON=o=>({position:o.position.toArray(),quaternion:o.quaternion.toArray(),scale:o.scale.toArray(),visible:o.visible});
+    this.serializeAutosave=()=>{const seen=new Set(),custom=[];for(const[key,obj]of Object.entries(this.customObjects||{})){if(!obj||seen.has(obj)||obj.userData?.isLandscape)continue;seen.add(obj);try{custom.push({key,json:obj.toJSON()})}catch(error){console.warn('[Auto-save] Skipping unsupported object:',obj.name,error)}}return{version:1,studio:'core',savedAt:Date.now(),cube:this.cube?.parent===sc?this.cube.toJSON():null,custom,landscape:window.__lastLandscapeImportPayload||null,camera:{viewport:transformJSON(viewportCamera),scene:transformJSON(sceneCamera),sceneTarget:sceneCameraTarget.toArray(),orbitTarget:oc.target.toArray(),isCameraView,activeObject,shading:currentShadingMode,exposure:r.toneMappingExposure,light:this.blenderLight?{position:this.blenderLight.position.toArray(),quaternion:this.blenderLight.quaternion.toArray(),scale:this.blenderLight.scale.toArray(),visible:this.blenderLight.visible,intensity:this.blenderLight.light.intensity,color:this.blenderLight.light.color.getHex()}:null,cameraHelper:this.blenderCam?{position:this.blenderCam.position.toArray(),quaternion:this.blenderCam.quaternion.toArray(),scale:this.blenderCam.scale.toArray(),visible:this.blenderCam.visible}:null}}};
+    this.restoreAutosave=async data=>{if(!data||data.version!==1)return false;const loader=new THREE.ObjectLoader();try{if(data.cube){const restored=loader.parse(data.cube);cube.geometry=restored.geometry;cube.material=restored.material;cube.position.copy(restored.position);cube.quaternion.copy(restored.quaternion);cube.scale.copy(restored.scale);cube.visible=restored.visible;cube.userData=cloneHistoryData(restored.userData||{});if(cube.parent!==sc)sc.add(cube);this.cube=cube}else{sc.remove(cube);this.cube=null}for(const obj of new Set(Object.values(this.customObjects||{})))if(obj?.parent===sc&&(!obj.userData?.isLandscape||!data.landscape))sc.remove(obj);this.customObjects={};for(const item of data.custom||[]){if(!item?.json||!item.key)continue;const obj=loader.parse(item.json);sc.add(obj);this.customObjects[item.key]=obj}if(data.landscape)buildLandscapeFromPayload(data.landscape,sc,THREE);const camData=data.camera||{},applyPose=(camera,state)=>{if(!camera||!state)return;if(state.position)camera.position.fromArray(state.position);if(state.quaternion)camera.quaternion.fromArray(state.quaternion);if(state.scale)camera.scale.fromArray(state.scale);if(state.visible!==undefined)camera.visible=state.visible;camera.updateProjectionMatrix?.();camera.updateMatrixWorld(true)};applyPose(viewportCamera,camData.viewport);applyPose(sceneCamera,camData.scene);if(camData.sceneTarget)sceneCameraTarget.fromArray(camData.sceneTarget);if(camData.orbitTarget)oc.target.fromArray(camData.orbitTarget);if(camData.light){if(blenderLight.parent!==sc)sc.add(blenderLight);this.blenderLight=blenderLight;this.light=blenderLight.light;blenderLight.position.fromArray(camData.light.position||[0,0,0]);blenderLight.quaternion.fromArray(camData.light.quaternion||[0,0,0,1]);blenderLight.scale.fromArray(camData.light.scale||[1,1,1]);blenderLight.visible=camData.light.visible!==false;blenderLight.light.intensity=Number(camData.light.intensity)||0;blenderLight.light.color.setHex(camData.light.color||0xffffff)}else{sc.remove(blenderLight);this.blenderLight=null;this.light=null}if(camData.cameraHelper){if(blenderCam.parent!==sc)sc.add(blenderCam);this.blenderCam=blenderCam;blenderCam.position.fromArray(camData.cameraHelper.position||[0,0,0]);blenderCam.quaternion.fromArray(camData.cameraHelper.quaternion||[0,0,0,1]);blenderCam.scale.fromArray(camData.cameraHelper.scale||[1,1,1]);blenderCam.visible=camData.cameraHelper.visible!==false}else{sc.remove(blenderCam);this.blenderCam=null}isCameraView=!!camData.isCameraView;currentShadingMode=camData.shading||'solid';if(Number.isFinite(camData.exposure))r.toneMappingExposure=camData.exposure;activeObject=camData.activeObject||'cube';if(activeObject==='cube'&&!this.cube)activeObject='none';window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(activeObject,'autosave-recovery');oc.update();history.undo.length=history.redo.length=0;history.current=captureCoreState();FE.toast('Recovered last Workspace auto-save');return true}catch(error){console.error('[Auto-save recovery] Workspace restore failed:',error);FE.toast('Could not recover the last Workspace auto-save');return false}};
+    historyCtl=history;
 
     window.sceneCube = cube;
     window.activeLight = blenderLight.light;
@@ -6532,14 +6965,12 @@ FE.register('core',{
 
   resize(w,h){
     if(!this.viewportCamera || !this.r) return;
-    this.viewportCamera.aspect=w/h;
-    this.viewportCamera.updateProjectionMatrix();
+    applyCameraAspect(this.viewportCamera,w/h);
     if(this.sceneCamera){
       const aspectSel = document.getElementById('camera-aspect');
       const aspectMap = { '16:9': 16/9, '9:16': 9/16, '21:9': 21/9, '4:5': 4/5, '1:1': 1 };
       const curAspect = aspectSel && aspectMap[aspectSel.value] ? aspectMap[aspectSel.value] : (w/h);
-      this.sceneCamera.aspect = curAspect;
-      this.sceneCamera.updateProjectionMatrix();
+      applyCameraAspect(this.sceneCamera,curAspect);
     }
     this.r.setSize(w,h,false);
     if (typeof updateCameraFrame === 'function') updateCameraFrame();
@@ -6571,13 +7002,17 @@ FE.register('core',{
         }
       }
 
-      // Focus tracking target lock (only if enabled)
-      if (this.focusTracking === 'cube' && this.cube && this.sceneCamera) {
-        this.sceneCamera.lookAt(this.cube.position);
-      } else if (this.focusTracking === 'active' && this.cube && this.sceneCamera) {
-        this.sceneCamera.lookAt(this.cube.position);
-      } else if (this.focusTracking === 'center' && this.sceneCamera) {
-        this.sceneCamera.lookAt(0, 0, 0);
+      // Keep OrbitControls' target aligned with any tracking aim so it cannot pull the camera back.
+      if (this.sceneCamera) {
+        let focusTarget = null;
+        if ((this.focusTracking === 'cube' || this.focusTracking === 'active') && this.cube) focusTarget = this.cube.position;
+        else if (this.focusTracking === 'center') focusTarget = new THREE.Vector3(0, 0, 0);
+        if (focusTarget) {
+          this.sceneCamera.lookAt(focusTarget);
+          this.sceneCamera.updateMatrixWorld(true);
+          this.sceneCameraTarget?.copy(focusTarget);
+          if (this.oc?.object === this.sceneCamera) this.oc.target.copy(focusTarget);
+        }
       }
 
       // Only update OrbitControls if user is not actively dragging transform sliders or 3D gizmos
@@ -6648,7 +7083,7 @@ FE.register('core',{
    6. CAMERA VIEW ENGINE & REAL-TIME CONTROLS
    ========================================================= */
 
-function syncTransformToControls(c) {
+function syncTransformToControls(c, preserveAim = false) {
   const eng = FE.engines.core;
   if (!eng) return;
   c.updateMatrixWorld();
@@ -6657,11 +7092,18 @@ function syncTransformToControls(c) {
     eng.blenderCam.rotation.copy(c.rotation);
     eng.blenderCam.updateMatrixWorld();
   }
-  if (isCameraView && eng.oc && eng.oc.object === c) {
-    const dir = new THREE.Vector3();
-    c.getWorldDirection(dir);
-    const dist = eng.oc.target.distanceTo(c.position) || 5;
-    eng.oc.target.copy(c.position).addScaledVector(dir, dist);
+  if (c === eng.sceneCamera && eng.sceneCameraTarget) {
+    if (!preserveAim) {
+      const dir = new THREE.Vector3();
+      c.getWorldDirection(dir);
+      const focusInput = document.getElementById('cam-focus-distance');
+      const dist = Math.max(0.1, Number(eng.focusDistance) || Number(focusInput?.value) || 6);
+      eng.sceneCameraTarget.copy(c.position).addScaledVector(dir, dist);
+    }
+    if (eng.oc?.object === c) {
+      eng.oc.target.copy(eng.sceneCameraTarget);
+      eng.oc.update();
+    }
   }
   const af = document.getElementById('cam-autofocus');
   if (af && af.checked) {
@@ -6676,6 +7118,14 @@ function syncCameraSlidersFromScene() {
   const eng = FE.engines.core;
   if (!eng || !eng.sceneCamera) return;
   const c = eng.sceneCamera;
+  const lensSelect = document.getElementById('cam-lens-type');
+  if (lensSelect && document.activeElement !== lensSelect) lensSelect.value = c.isOrthographicCamera ? 'orthographic' : 'perspective';
+  const displayedFov = cameraDisplayFov(c);
+  const fovInput = document.getElementById('cam-fov');
+  if (fovInput && document.activeElement !== fovInput) { fovInput.value = displayedFov.toFixed(1); const o=out('out-fov'); if(o) o.textContent=displayedFov.toFixed(1)+'°'; }
+  const focalInput = document.getElementById('cam-focal');
+  const displayedFocal = 18 / Math.tan(THREE.MathUtils.degToRad(displayedFov / 2));
+  if (focalInput && document.activeElement !== focalInput) { focalInput.value = displayedFocal.toFixed(1); const o=out('out-focal'); if(o) o.textContent=displayedFocal.toFixed(1)+' mm'; }
 
   const posX = document.getElementById('cam-pos-x');
   const posY = document.getElementById('cam-pos-y');
@@ -6698,6 +7148,41 @@ function syncCameraSlidersFromScene() {
   const tilt = document.getElementById('cam-tilt');
   if (pan && document.activeElement !== pan) { pan.value = degY; const o=out('out-pan'); if(o) o.textContent=degY+'°'; }
   if (tilt && document.activeElement !== tilt) { tilt.value = degX; const o=out('out-tilt'); if(o) o.textContent=degX+'°'; }
+}
+
+function getConfiguredCameraFocusTarget(eng, camera) {
+  const mode = document.getElementById('cam-focus-point')?.value || 'center';
+  if (mode === 'center') return new THREE.Vector3(0, 0, 0);
+  if (mode === 'cube' && eng.cube?.position) return eng.cube.position.clone();
+  if (mode === 'active') {
+    const active = window.getActiveObjectMesh ? window.getActiveObjectMesh() : eng.cube;
+    if (active?.position) return active.position.clone();
+    if (eng.cube?.position) return eng.cube.position.clone();
+  }
+  if (mode === 'camera' && camera) {
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const focusDistance = Math.max(0.1, Number(eng.focusDistance) || Number(document.getElementById('cam-focus-distance')?.value) || 6);
+    return camera.position.clone().addScaledVector(forward, focusDistance);
+  }
+  return eng.sceneCameraTarget?.clone() || new THREE.Vector3(0, 0, 0);
+}
+
+function aimSceneCameraAtConfiguredFocus(camera, eng) {
+  if (!camera || !eng) return null;
+  const target = getConfiguredCameraFocusTarget(eng, camera);
+  camera.lookAt(target);
+  camera.updateMatrixWorld(true);
+  if (eng.sceneCameraTarget) eng.sceneCameraTarget.copy(target);
+  if (eng.blenderCam) {
+    eng.blenderCam.position.copy(camera.position);
+    eng.blenderCam.quaternion.copy(camera.quaternion);
+    eng.blenderCam.updateMatrixWorld(true);
+  }
+  if (eng.oc?.object === camera) {
+    eng.oc.target.copy(target);
+    eng.oc.update();
+  }
+  return target;
 }
 
 // Track slider interaction so OrbitControls doesn't fight slider inputs
@@ -6757,21 +7242,21 @@ function updateCameraFrame() {
   const boxLeft = (W - boxW) / 2 + shiftPxX;
   const boxTop = (H - boxH) / 2 + shiftPxY;
 
+  applyCameraAspect(c, aspect);
   if (isCameraView) {
-    // Precise Blender Passepartout View Offset:
-    // Guarantees zero perspective distortion / stretching on any viewport size
+    // Apply the same crop to either projection without changing the camera pose.
     c.setViewOffset(boxW, boxH, -boxLeft, -boxTop, W, H);
   } else {
     c.clearViewOffset();
-    c.aspect = aspect;
-    c.updateProjectionMatrix();
+    applyCameraAspect(c, aspect);
   }
 
-  // Update dynamic frustum on the 3D helper
-  updateBlenderCameraFrustum(c.fov, aspect);
+  // Update dynamic frustum on the 3D helper using the matching perspective-equivalent FOV.
+  const displayFov = cameraDisplayFov(c);
+  updateBlenderCameraFrustum(displayFov, aspect);
 
   if (tagInfo) {
-    const fov = c.fov.toFixed(1);
+    const fov = displayFov.toFixed(1);
     const focal = (document.getElementById('cam-focal')?.value || '50');
     tagInfo.textContent = `${fov}° | ${focal}mm | ${aspectStr}`;
   }
@@ -6992,7 +7477,7 @@ if (btnSnapFocus) {
 // TOGGLE BUTTON: "View as Camera"
 document.getElementById('btn-toggle-camera-view').onclick = function() {
   const eng = FE.engines.core;
-  if (!eng || !eng.sceneCamera || !eng.viewportCamera) return;
+  if (!eng || !eng.sceneCamera || !eng.viewportCamera || !eng.activateOrbitCamera) return;
 
   isCameraView = !isCameraView;
   const container = document.getElementById('camera-view-container');
@@ -7001,13 +7486,20 @@ document.getElementById('btn-toggle-camera-view').onclick = function() {
     this.textContent = '🌐 Exit Camera View';
     this.style.color = '#34d399';
     this.style.borderColor = '#10b981';
-    
-    eng.blenderCam.visible = false;
-    const dir = new THREE.Vector3();
-    eng.sceneCamera.getWorldDirection(dir);
-    eng.oc.target.copy(eng.sceneCamera.position).addScaledVector(dir, 5.0);
-    eng.oc.object = eng.sceneCamera;
-    eng.oc.update();
+
+    if (eng.oc?.object === eng.viewportCamera) eng.viewportOrbitTarget = eng.oc.target.clone();
+    if (eng.blenderCam) {
+      eng.blenderCam.userData ||= {};
+      eng.blenderCam.userData.cameraViewRestoreVisible = eng.blenderCam.visible !== false;
+      eng.blenderCam.visible = false;
+      updateLayerBarActionIcons();
+    }
+    const cameraTarget = eng.sceneCameraTarget?.clone() || eng.cube?.position?.clone() || new THREE.Vector3(0, 0, 0);
+    eng.sceneCamera.lookAt(cameraTarget);
+    eng.sceneCamera.updateMatrixWorld(true);
+    eng.sceneCameraTarget?.copy(cameraTarget);
+    eng.activateOrbitCamera(eng.sceneCamera, cameraTarget);
+    syncCameraSlidersFromScene();
 
     if (container) {
       container.style.display = 'flex';
@@ -7019,16 +7511,21 @@ document.getElementById('btn-toggle-camera-view').onclick = function() {
     this.style.color = '#818cf8';
     this.style.borderColor = '#343a65';
 
-    eng.blenderCam.visible = true;
-    eng.blenderCam.position.copy(eng.sceneCamera.position);
-    eng.blenderCam.quaternion.copy(eng.sceneCamera.quaternion);
-
-    eng.oc.target.set(0, 0, 0);
-    eng.oc.object = eng.viewportCamera;
-    eng.oc.update();
-
+    if (eng.oc?.object === eng.sceneCamera && eng.sceneCameraTarget) eng.sceneCameraTarget.copy(eng.oc.target);
+    if (eng.blenderCam) {
+      const restoreVisible = eng.blenderCam.userData?.cameraViewRestoreVisible;
+      eng.blenderCam.visible = restoreVisible === undefined ? true : !!restoreVisible;
+      if (eng.blenderCam.userData) delete eng.blenderCam.userData.cameraViewRestoreVisible;
+      eng.blenderCam.position.copy(eng.sceneCamera.position);
+      eng.blenderCam.quaternion.copy(eng.sceneCamera.quaternion);
+      eng.blenderCam.updateMatrixWorld(true);
+      updateLayerBarActionIcons();
+    }
     if (eng.sceneCamera) eng.sceneCamera.clearViewOffset();
+    const viewportTarget = eng.viewportOrbitTarget?.isVector3 ? eng.viewportOrbitTarget.clone() : new THREE.Vector3(0, 0, 0);
+    eng.activateOrbitCamera(eng.viewportCamera, viewportTarget);
     if (container) container.style.display = 'none';
+    updateCameraFrame();
     FE.toast('Switched to Viewport Orbit Mode');
   }
 };
@@ -7069,16 +7566,14 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(el => {
 
     // 1. Lens
     if (el.id === 'cam-fov') {
-      c.fov = val;
-      c.updateProjectionMatrix();
+      applyCameraFov(c, val, eng.sceneCameraTarget || eng.cube?.position);
       const focalVal = 18 / Math.tan((val * Math.PI / 180) / 2);
       const fIn = document.getElementById('cam-focal');
       if (fIn) { fIn.value = focalVal.toFixed(1); const fo = out('out-focal'); if (fo) fo.textContent = focalVal.toFixed(1) + ' mm'; }
       updateCameraFrame();
     } else if (el.id === 'cam-focal') {
       const fovVal = 2 * Math.atan(18 / val) * (180 / Math.PI);
-      c.fov = fovVal;
-      c.updateProjectionMatrix();
+      applyCameraFov(c, fovVal, eng.sceneCameraTarget || eng.cube?.position);
       const fovIn = document.getElementById('cam-fov');
       if (fovIn) { fovIn.value = fovVal.toFixed(1); const fovo = out('out-fov'); if (fovo) fovo.textContent = fovVal.toFixed(1) + '°'; }
       updateCameraFrame();
@@ -7093,18 +7588,18 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(el => {
     // 2. Transform
     else if (el.id === 'cam-pos-x') { 
       c.position.x = val; 
-      if (eng.blenderCam) eng.blenderCam.position.x = val; 
-      syncTransformToControls(c); 
+      aimSceneCameraAtConfiguredFocus(c, eng);
+      syncTransformToControls(c, true); 
     }
     else if (el.id === 'cam-pos-y') { 
       c.position.y = val; 
-      if (eng.blenderCam) eng.blenderCam.position.y = val; 
-      syncTransformToControls(c); 
+      aimSceneCameraAtConfiguredFocus(c, eng);
+      syncTransformToControls(c, true); 
     }
     else if (el.id === 'cam-pos-z') { 
       c.position.z = val; 
-      if (eng.blenderCam) eng.blenderCam.position.z = val; 
-      syncTransformToControls(c); 
+      aimSceneCameraAtConfiguredFocus(c, eng);
+      syncTransformToControls(c, true); 
     }
     else if (el.id === 'cam-rot-x') { 
       c.rotation.x = THREE.MathUtils.degToRad(val); 
@@ -7186,30 +7681,30 @@ document.querySelectorAll('#camera-sheet select').forEach(el => {
     if (el.id === 'camera-aspect') {
       const aspectMap = { '16:9': 16/9, '9:16': 9/16, '21:9': 21/9, '4:5': 4/5, '1:1': 1 };
       if (aspectMap[el.value]) {
-        c.aspect = aspectMap[el.value];
-        c.updateProjectionMatrix();
+        applyCameraAspect(c, aspectMap[el.value]);
         updateCameraFrame();
         FE.toast('Aspect Ratio: ' + el.value);
       }
     } else if (el.id === 'cam-lens-type') {
-      if (el.value === 'orthographic') {
-        c.fov = 12;
-        c.zoom = 2.8;
-        c.updateProjectionMatrix();
-        FE.toast('Orthographic Projection (Telephoto Simulation)');
-      } else {
-        const curFov = parseFloat(document.getElementById('cam-fov')?.value || 39.6);
-        c.fov = curFov;
-        c.zoom = 1;
-        c.updateProjectionMatrix();
-        FE.toast('Perspective Projection');
+      const aspectMap = { '16:9': 16/9, '9:16': 9/16, '21:9': 21/9, '4:5': 4/5, '1:1': 1 };
+      const aspect = aspectMap[document.getElementById('camera-aspect')?.value] || c.aspect || (16/9);
+      const target = eng.sceneCameraTarget?.clone() || new THREE.Vector3(0, 0, 0);
+      const nextCamera = createCameraProjection(c, el.value, aspect, target, cameraDisplayFov(c));
+      if (nextCamera !== c) {
+        if (typeof eng.replaceSceneCamera !== 'function') { FE.toast('Camera projection switch is unavailable'); return; }
+        eng.replaceSceneCamera(nextCamera);
+        if (eng.blenderCam) {
+          eng.blenderCam.position.copy(nextCamera.position);
+          eng.blenderCam.quaternion.copy(nextCamera.quaternion);
+          eng.blenderCam.updateMatrixWorld(true);
+        }
       }
       updateCameraFrame();
+      syncCameraSlidersFromScene();
+      FE.toast(el.value === 'orthographic' ? 'Orthographic Projection' : 'Perspective Projection');
     } else if (el.id === 'cam-focus-point') {
-      if (el.value === 'cube' && eng.cube) c.lookAt(eng.cube.position);
-      else if (el.value === 'center') c.lookAt(0, 0, 0);
-      else if (el.value === 'active' && eng.cube) c.lookAt(eng.cube.position);
-      syncTransformToControls(c);
+      aimSceneCameraAtConfiguredFocus(c, eng);
+      syncTransformToControls(c, true);
       syncCameraSlidersFromScene();
     } else if (el.id === 'cam-focus-tracking') {
       eng.focusTracking = el.value;
@@ -7450,9 +7945,12 @@ function changeLightType(newType) {
   const oldLight = group.light;
 
   const color = new THREE.Color(document.getElementById('light-color')?.value || '#ffffff');
-  const intensity = parseFloat(document.getElementById('light-intensity')?.value || 1.5);
-  const distance = parseFloat(document.getElementById('light-distance')?.value || 20);
-  const decay = parseFloat(document.getElementById('light-decay')?.value || 2);
+  const intensityInput = parseFloat(document.getElementById('light-intensity')?.value);
+  const distanceInput = parseFloat(document.getElementById('light-distance')?.value);
+  const decayInput = parseFloat(document.getElementById('light-decay')?.value);
+  const intensity = Number.isFinite(intensityInput) ? intensityInput : (oldLight?.intensity ?? 1.5);
+  const distance = Number.isFinite(distanceInput) ? distanceInput : (oldLight?.distance ?? 20);
+  const decay = Number.isFinite(decayInput) ? decayInput : (oldLight?.decay ?? 2);
   const castShadow = document.getElementById('light-cast-shadow')?.checked ?? true;
   const bias = parseFloat(document.getElementById('light-shadow-bias')?.value || -0.0001);
   const radius = parseFloat(document.getElementById('light-shadow-radius')?.value || 2);
@@ -7607,15 +8105,16 @@ window.addEventListener('lightSettingsChange', function (e) {
 
   if (id === 'light-color') {
     if (light) light.color.set(value);
-    if (group.bulb) group.bulb.material.color.set(value);
     if (group.ring) group.ring.material.color.set(value);
   } else if (id === 'light-intensity') {
     if (light) light.intensity = parseFloat(value);
   } else if (id === 'light-pos-x' || id === 'light-pos-y' || id === 'light-pos-z') {
+    const lightRigState = captureLightRigState(group);
     if (id === 'light-pos-x') group.position.x = parseFloat(value);
     if (id === 'light-pos-y') group.position.y = parseFloat(value);
     if (id === 'light-pos-z') group.position.z = parseFloat(value);
     group.updateMatrixWorld();
+    preserveLightRigState(group, lightRigState);
     if (light?.isSpotLight) updateSpotHelper();
     if (light?.isDirectionalLight) updateSunHelper();
   } else if (id === 'light-distance') {
@@ -7690,6 +8189,11 @@ if (btnSwitchRendered) {
 /* =========================================================
    8. COMPREHENSIVE VIEWPORT SHADING ENGINE (BLENDER CONGRUENT)
    ========================================================= */
+function applyLandscapeAwareShadingWorld(eng,fallbackColor){
+  const scene=eng?.sc,imported=scene?.getObjectByName('ImportedLandscape')?._landscapeEnvironmentTexture;
+  if(imported&&(!scene.environment||scene.environment===imported)){scene.environment=imported;scene.background=imported;return}
+  scene.environment=null;scene.background=new THREE.Color(fallbackColor);
+}
 function applyShadingMode(shading) {
   const eng = FE.engines.core;
   if (!eng || !eng.cube) return;
@@ -7726,8 +8230,7 @@ function applyShadingMode(shading) {
     if (eng.d) eng.d.visible = false;
     if (eng.fillLight) eng.fillLight.visible = false;
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xffffff); eng.amb.intensity = 1.0; }
-    eng.sc.environment = null;
-    eng.sc.background = new THREE.Color(0x0a0b0e);
+    applyLandscapeAwareShadingWorld(eng,0x0a0b0e);
   } else if (shading === 'solid') {
     // 2. SOLID (Blender Workbench): Clean diffuse / matcap preview for ALL models in scene
     allMeshes.forEach(mesh => {
@@ -7735,7 +8238,9 @@ function applyShadingMode(shading) {
         mesh.material.wireframe = false;
         mesh.material.side = THREE.DoubleSide;
         // Keep original color if landscape/foliage/water/rock or has vertexColors
-        if (mesh.userData?.isLandscape || mesh.parent?.name === 'ImportedLandscape' || mesh.geometry?.attributes?.color || mesh.isInstancedMesh) {
+        if (mesh.userData?.landscapeWater) {
+          mesh.material.wireframe=false;
+        } else if (mesh.userData?.isLandscape || mesh.parent?.name === 'ImportedLandscape' || mesh.geometry?.attributes?.color || mesh.isInstancedMesh) {
           if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.85;
           if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.0;
         } else {
@@ -7755,8 +8260,7 @@ function applyShadingMode(shading) {
     if (eng.d) { eng.d.visible = true; eng.d.position.set(4, 7, 5); eng.d.color.set(0xf8fafc); eng.d.intensity = 0.7; eng.d.castShadow = false; }
     if (eng.fillLight) { eng.fillLight.visible = true; eng.fillLight.intensity = 0.45; }
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xd5dbe5); eng.amb.intensity = 0.45; }
-    eng.sc.environment = null;
-    eng.sc.background = new THREE.Color(0x0a0b0e);
+    applyLandscapeAwareShadingWorld(eng,0x0a0b0e);
   } else if (shading === 'material') {
     // 3. MATERIAL PREVIEW: Uses HDRI environment map / Studio lighting reflections for ALL models with cast shadows
     allMeshes.forEach(mesh => {
@@ -7843,8 +8347,7 @@ function applyShadingMode(shading) {
     if (eng.d) eng.d.visible = false;
     if (eng.fillLight) eng.fillLight.visible = false;
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xffffff); eng.amb.intensity = 0.08; }
-    eng.sc.environment = null;
-    eng.sc.background = new THREE.Color(0x07080b);
+    applyLandscapeAwareShadingWorld(eng,0x07080b);
   }
 
   if (activeLight?.isSpotLight) updateSpotHelper();
@@ -8263,9 +8766,9 @@ window.addEventListener('keydown', (e) => {
    ========================================================= */
 const modifiersData = {
   Generate: [
-    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1]]},
+    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1]]},
     {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
-    {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersect"]],["Solver","select",["Exact","Fast"]]]},
+    {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01]]},
@@ -8277,28 +8780,35 @@ const modifiersData = {
   Deform: [
     {name:"Armature", fields:[["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true]]},
     {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1]]},
-    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01]]},
+    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1]]},
     {name:"Lattice", fields:[["Strength","range",0,2,1,.01]]},
-    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]] ]},
+    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1]]},
     {name:"Surface Deform", fields:[["Strength","range",0,1,1,.01]]},
     {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1]]},
-    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1]]}
+    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1]]}
   ],
   Normals: [
     {name:"Weighted Normal", fields:[["Weight","range",0,100,50,1],["Keep Sharp","check",true]]}
   ],
   Physics: [
+    {name:"Collision", fields:[
+      ["Collision Quality","range",1,12,5,1],["Particle Collision","check",true],["Cloth/Soft Body Collision","check",true],
+      ["Outer Thickness","range",0,1,.02,.005],["Inner Thickness","range",0,1,.02,.005],
+      ["Particle Damping","range",0,1,.1,.01],["Particle Friction","range",0,1,.2,.01],["Cloth Friction","range",0,1,.5,.01],
+      ["Restitution","range",0,1,.08,.01],["Permeability","range",0,1,0,.01],["Kill Particles","check",false],["Single Sided","check",false]
+    ]},
     {name:"Cloth", fields:[
       ["Quality","range",1,20,5,1],["Mass","range",0.01,10,0.3,0.01],
       ["Structural Stiffness","range",0,100,15,1],["Shear Stiffness","range",0,100,5,1],["Bend Stiffness","range",0,100,2,1],
       ["Gravity","range",0,20,9.8,0.1],["Air Drag","range",0,1,0.05,0.01],["Damping","range",0,1,0.1,0.01],
-      ["Stretch Resistance","range",0,1,0.9,0.01],["Compression Resistance","range",0,1,0.9,0.01],["Bending Resistance","range",0,1,0.5,0.01]
+      ["Stretch Resistance","range",0,1,0.9,0.01],["Compression Resistance","range",0,1,0.9,0.01],["Bending Resistance","range",0,1,0.5,0.01],
+      ["Pinning Mode","select",["Auto Top Edge","Two Corners","Free"]],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.3,0.01]
     ]},
     {name:"Soft Body", fields:[
       ["Mass","range",0.1,10,0.5,0.1],["Stiffness","range",0,1,0.5,0.01],["Damping","range",0,1,0.1,0.01],
-      ["Goal Strength","range",0,1,0.5,0.01],["Goal Damping","range",0,1,0.1,0.01],["Plasticity","range",0,1,0,0.01],
-      ["Gravity","range",0,20,9.8,0.1],["Collision Margin","range",0,0.5,0.02,0.001]
+      ["Goal Strength","range",0,1,0.5,0.01],["Goal Damping","range",0,1,0.1,0.01],["Volume Preservation","range",0,1,0.85,0.01],["Plasticity","range",0,1,0,0.01],
+      ["Gravity","range",0,20,9.8,0.1],["Collision Margin","range",0,0.5,0.02,0.001],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.25,0.01]
     ]},
     {name:"Fluid", fields:[
       ["Type","select",["Domain","Flow","Effector"]],
@@ -8330,8 +8840,8 @@ const modifiersData = {
       ["Expansion Rate","range",0.1,2.5,1.2,0.1],
 
       // Common Dynamics & Vorticity
-      ["Turbulence","range",0,1,0.35,0.02],
-      ["Resolution","range",32,256,64,16],
+      ["Vorticity Confinement","range",0,1,0.12,0.02],
+      ["Resolution","range",32,64,64,8],["Surface Resolution","range",16,64,48,4],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -8431,8 +8941,8 @@ function applySubdivisionModifier(geometry, levels) {
   for (let lvl = 0; lvl < levels; lvl++) {
     const posAttr = currentGeo.attributes.position;
     if (!posAttr) break;
-    const count = posAttr.count;
-    const newPos = [];
+    const count = posAttr.count, uvAttr = currentGeo.attributes.uv;
+    const newPos = [], newUv = [];
     
     for (let i = 0; i < count; i += 3) {
       const v0 = new THREE.Vector3().fromBufferAttribute(posAttr, i);
@@ -8444,6 +8954,14 @@ function applySubdivisionModifier(geometry, levels) {
       const m20 = new THREE.Vector3().addVectors(v2, v0).multiplyScalar(0.5);
       
       const centroid = new THREE.Vector3().addVectors(v0, v1).add(v2).divideScalar(3);
+      let uv0, uv1, uv2, uvM01, uvM12, uvM20;
+      if (uvAttr) {
+        uv0 = new THREE.Vector2().fromBufferAttribute(uvAttr, i); uv1 = new THREE.Vector2().fromBufferAttribute(uvAttr, i + 1); uv2 = new THREE.Vector2().fromBufferAttribute(uvAttr, i + 2);
+        const uvCenter = new THREE.Vector2().addVectors(uv0, uv1).add(uv2).multiplyScalar(1 / 3);
+        uvM01 = new THREE.Vector2().addVectors(uv0, uv1).multiplyScalar(0.5).lerp(uvCenter, 0.12);
+        uvM12 = new THREE.Vector2().addVectors(uv1, uv2).multiplyScalar(0.5).lerp(uvCenter, 0.12);
+        uvM20 = new THREE.Vector2().addVectors(uv2, uv0).multiplyScalar(0.5).lerp(uvCenter, 0.12);
+      }
       const smoothFactor = 0.12;
       
       m01.lerp(centroid, smoothFactor);
@@ -8454,11 +8972,17 @@ function applySubdivisionModifier(geometry, levels) {
       newPos.push(m01.x, m01.y, m01.z, v1.x, v1.y, v1.z, m12.x, m12.y, m12.z);
       newPos.push(m20.x, m20.y, m20.z, m12.x, m12.y, m12.z, v2.x, v2.y, v2.z);
       newPos.push(m01.x, m01.y, m01.z, m12.x, m12.y, m12.z, m20.x, m20.y, m20.z);
+      if (uvAttr) {
+        newUv.push(uv0.x,uv0.y,uvM01.x,uvM01.y,uvM20.x,uvM20.y, uvM01.x,uvM01.y,uv1.x,uv1.y,uvM12.x,uvM12.y);
+        newUv.push(uvM20.x,uvM20.y,uvM12.x,uvM12.y,uv2.x,uv2.y, uvM01.x,uvM01.y,uvM12.x,uvM12.y,uvM20.x,uvM20.y);
+      }
     }
     
     const nextGeo = new THREE.BufferGeometry();
     nextGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPos, 3));
+    if (uvAttr) nextGeo.setAttribute('uv', new THREE.Float32BufferAttribute(newUv, 2));
     nextGeo.computeVertexNormals();
+    currentGeo.dispose();
     currentGeo = nextGeo;
   }
   
@@ -8865,9 +9389,62 @@ function applyShrinkwrapModifier(geometry, offset) {
   return result;
 }
 
-function updateModifiersOnScene() {
+// Modifier geometry v2 delegates supported topology operations to the tested module.
+function modifierGeometryApi() {
+  if (!window.FEGeometryModifiers) throw new Error('Modifier geometry bundle has not loaded');
+  return window.FEGeometryModifiers;
+}
+function applyModifierGeometryStage(input, operation) {
+  const output = operation();
+  if (output && output !== input) input.dispose();
+  return output || input;
+}
+function modifierRelativeMatrix(sourceObj, targetObj) {
+  sourceObj.updateWorldMatrix?.(true, false); targetObj.updateWorldMatrix?.(true, false);
+  return new THREE.Matrix4().copy(sourceObj.matrixWorld).invert().multiply(targetObj.matrixWorld);
+}
+function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
+function applySubdivisionModifier(geometry, levels) { return modifierGeometryApi().subdivideLoop(geometry, levels); }
+function applySolidifyModifier(geometry, thickness, offset) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset); }
+function applyBooleanModifier(targetObj, geometry, params) {
+  const operand = getAllSceneMeshes().find(mesh => mesh.uuid === params['Operand Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+  if (!operand) throw new Error('Boolean needs a different closed mesh selected as Operand Object.');
+  if (operand.userData?.solverParticleVisual || operand.name === 'ModifierHelper') throw new Error('Boolean operand is a simulation/helper mesh, not an editable solid.');
+  const relative = modifierRelativeMatrix(targetObj, operand);
+  return modifierGeometryApi().booleanGeometry(geometry, operand.geometry, relative.elements, params.Operation || 'Difference');
+}
+function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz] }); }
+function applyMirrorModifier(geometry, x, y, z, clipping=false) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping }); }
+function applyDecimateModifier(geometry, ratio) { return modifierGeometryApi().decimateGeometry(geometry, ratio); }
+function applyTriangulateModifier(geometry) { return modifierGeometryApi().triangulateGeometry(geometry); }
+function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
+function applyDisplaceModifier(geometry, strength, midlevel, frequency=1) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency }); }
+function applyWaveModifier(geometry, speed, height, width, time=0) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time }); }
+function applyCastModifier(geometry, shape, factor, radius) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius }); }
+function applySmoothModifier(geometry, factor, iterations) { return modifierGeometryApi().smoothGeometry(geometry, { factor, iterations }); }
+function applyWarpModifier(geometry, strength) { return modifierGeometryApi().twistGeometry(geometry, strength); }
+function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode) {
+  if (!targetObj?.geometry) throw new Error('Shrinkwrap needs a different mesh selected as Target Object.');
+  const relative = modifierRelativeMatrix(sourceObj, targetObj);
+  return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode);
+}
+
+function modifierEvaluationHash(targetObj, mods) {
+  targetObj.updateWorldMatrix?.(true, false);
+  const deps = mods.map(mod => {
+    const ref = mod.name === 'Boolean' ? mod.values?.['Operand Object'] : mod.name === 'Shrinkwrap' ? mod.values?.['Target Object'] : null;
+    const object = ref ? getAllSceneMeshes().find(mesh => mesh.uuid === ref) : null;
+    object?.updateWorldMatrix?.(true, false);
+    const pos = object?.geometry?.attributes?.position;
+    return { name:mod.name, values:mod.values, target:object ? {uuid:object.uuid,geometry:object.geometry?.uuid,positionVersion:pos?.version,matrix:object.matrixWorld?.elements} : ref || null };
+  });
+  const base=targetObj.userData.baseGeometry,basePos=base?.attributes?.position;
+  return JSON.stringify({base:base?.uuid,baseVersion:basePos?.version,transform:targetObj.matrixWorld?.elements,mods:deps});
+}
+
+function updateModifiersOnScene(targetOverride) {
+  let targetObj = targetOverride || (getActiveObjectMesh ? getActiveObjectMesh() : null);
   try {
-  let targetObj = getActiveObjectMesh ? getActiveObjectMesh() : null;
   const eng = FE.engines?.core;
   if (!targetObj || !targetObj.isMesh || !targetObj.geometry || !eng || !eng.sc) return;
 
@@ -8897,9 +9474,11 @@ function updateModifiersOnScene() {
 
   const targetStack = targetObj.userData.modStack || [];
   const enabledMods = targetStack.filter(m => m.enabled);
+  const collisionMod=enabledMods.find(m=>m.name==='Collision');if(collisionMod)targetObj.userData.collisionSettings={...collisionMod.values,enabled:true};else delete targetObj.userData.collisionSettings;
 
   // If no modifiers are enabled or stack is empty: 100% RESTORE DEFAULT MESH
   if (enabledMods.length === 0) {
+    delete targetObj.userData.collisionSettings;
     if (window.SimEngine) {
       window.SimEngine.removeSimulation("Cloth", targetObj);
       window.SimEngine.removeSimulation("SoftBody", targetObj);
@@ -8929,76 +9508,75 @@ function updateModifiersOnScene() {
     }
 
     targetObj.userData.lastModHash = "empty";
+    targetObj.userData.modifierError = null;
     targetObj.userData.forceModUpdate = false;
 
     if (eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
     if (eng.transformControls) eng.transformControls.updateMatrixWorld(true);
     if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
+    refreshModifierDependents(targetObj);
     return;
   }
   
   // Calculate a hash of the current modifier stack to avoid redundant updates
-  const modHash = JSON.stringify(enabledMods.map(m => ({name: m.name, values: m.values})));
+  const modHash = modifierEvaluationHash(targetObj, enabledMods);
   if (targetObj.userData.lastModHash === modHash && !targetObj.userData.forceModUpdate) {
-     // Update simulation parameters if present
      enabledMods.forEach(mod => {
-        if (["Cloth", "Soft Body", "Fluid"].includes(mod.name)) {
-           if (mod.name === "Fluid") initFluidSim(targetObj, mod.values || {});
-           else if (mod.name === "Cloth") initClothSim(targetObj, mod.values || {});
-           else if (mod.name === "Soft Body") initSoftBodySim(targetObj, mod.values || {});
+        const type = mod.name === "Soft Body" ? "SoftBody" : mod.name;
+        if (!["Cloth", "SoftBody", "Fluid"].includes(type)) return;
+        const key = window.SimEngine.getSimKey(type), record = targetObj.userData[key];
+        if (record && record.geometry === targetObj.geometry && record.status !== "error") {
+           record.params = { ...(mod.values || {}) };
+           return;
         }
+        window.SimEngine.removeSimulation(type, targetObj);
+        if (type === "Fluid") initFluidSim(targetObj, mod.values || {});
+        else if (type === "Cloth") initClothSim(targetObj, mod.values || {});
+        else initSoftBodySim(targetObj, mod.values || {});
      });
-     return; 
+     return;
   }
   targetObj.userData.lastModHash = modHash;
   targetObj.userData.forceModUpdate = false;
 
   let currentGeo = targetObj.userData.baseGeometry.clone();
   const activeSimTypes = new Set();
+  const simulationDefs = [];
 
   enabledMods.forEach(mod => {
     const p = mod.values || {};
 
     if (mod.name === "Bevel") {
-      const amt = parseFloat(p["Amount"] || 0.15);
-      const segs = parseInt(p["Segments"] || 4, 10);
-      currentGeo = applyBevelModifier(currentGeo, amt, segs);
+      const amt = parseFloat(p["Amount"] ?? 0.15);
+      if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false));
     } else if (mod.name === "Subdivision Surface") {
-      const lvl = parseInt(p["Viewport Levels"] || 2, 10);
-      currentGeo = applySubdivisionModifier(currentGeo, lvl);
+      const lvl = parseInt(p["Viewport Levels"] ?? 2, 10);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySubdivisionModifier(currentGeo, lvl));
     } else if (mod.name === "Solidify") {
-      const th = parseFloat(p["Thickness"] || 0.1);
-      const off = parseFloat(p["Offset"] || -1);
-      currentGeo = applySolidifyModifier(currentGeo, th, off);
+      const th = parseFloat(p["Thickness"] ?? 0.1);
+      const off = parseFloat(p["Offset"] ?? -1);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySolidifyModifier(currentGeo, th, off));
     } else if (mod.name === "Boolean") {
-      currentGeo = applyBooleanModifier(targetObj, currentGeo, p);
-      const cutterGeo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
-      const cutterMat = new THREE.MeshBasicMaterial({ color: p["Operation"] === "Union" ? 0x10b981 : 0xef4444, wireframe: true, transparent: true, opacity: 0.5 });
-      const cutterMesh = new THREE.Mesh(cutterGeo, cutterMat);
-      cutterMesh.name = 'ModifierHelper';
-      cutterMesh.userData.targetId = targetObj.uuid;
-      cutterMesh.position.copy(targetObj.position).add(new THREE.Vector3(0.35, 0.35, 0.35));
-      cutterMesh.rotation.copy(targetObj.rotation);
-      eng.sc.add(cutterMesh);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyBooleanModifier(targetObj, currentGeo, p));
     } else if (mod.name === "Array") {
       const count = parseInt(p["Count"] || 2, 10);
       const ox = parseFloat(p["Offset X"] ?? 1.8);
       const oy = parseFloat(p["Offset Y"] ?? 0);
       const oz = parseFloat(p["Offset Z"] ?? 0);
-      currentGeo = applyArrayModifier(currentGeo, count, ox, oy, oz);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0)));
     } else if (mod.name === "Mirror") {
       const xA = p["X Axis"] ?? true;
       const yA = p["Y Axis"] ?? false;
       const zA = p["Z Axis"] ?? false;
-      currentGeo = applyMirrorModifier(currentGeo, xA, yA, zA);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyMirrorModifier(currentGeo, xA, yA, zA, p["Clipping"] === true));
     } else if (mod.name === "Decimate") {
       const ratio = parseFloat(p["Ratio"] || 0.5);
-      currentGeo = applyDecimateModifier(currentGeo, ratio);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio));
     } else if (mod.name === "Triangulate") {
-      currentGeo = applyTriangulateModifier(currentGeo);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo));
     } else if (mod.name === "Weld") {
       const dist = parseFloat(p["Distance"] || 0.02);
-      currentGeo = applyWeldModifier(currentGeo, dist);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWeldModifier(currentGeo, dist));
     } else if (mod.name === "Wireframe") {
       const th = parseFloat(p["Thickness"] || 0.03);
       if (p["Replace Original"]) {
@@ -9014,56 +9592,60 @@ function updateModifiersOnScene() {
         eng.sc.add(wireOverlay);
       }
     } else if (mod.name === "Displace") {
-      const str = parseFloat(p["Strength"] || 0.35);
-      const mid = parseFloat(p["Midlevel"] || 0.5);
-      currentGeo = applyDisplaceModifier(currentGeo, str, mid);
+      const str = parseFloat(p["Strength"] ?? 0.35);
+      const mid = parseFloat(p["Midlevel"] ?? 0.5);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1)));
     } else if (mod.name === "Wave") {
-      const speed = parseFloat(p["Speed"] || 1.5);
-      const height = parseFloat(p["Height"] || 0.6);
-      const width = parseFloat(p["Width"] || 2.5);
-      currentGeo = applyWaveModifier(currentGeo, speed, height, width);
+      const speed = parseFloat(p["Speed"] ?? 1.5);
+      const height = parseFloat(p["Height"] ?? 0.6);
+      const width = parseFloat(p["Width"] ?? 2.5);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWaveModifier(currentGeo, speed, height, width, parseFloat(p["Time"] ?? 0)));
     } else if (mod.name === "Cast") {
       const shape = p["Shape"] || "Sphere";
       const factor = parseFloat(p["Factor"] || 1);
       const rad = parseFloat(p["Radius"] || 1);
-      currentGeo = applyCastModifier(currentGeo, shape, factor, rad);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyCastModifier(currentGeo, shape, factor, rad));
     } else if (mod.name === "Smooth") {
       const factor = parseFloat(p["Factor"] || 0.6);
       const iter = parseInt(p["Iterations"] || 3, 10);
-      currentGeo = applySmoothModifier(currentGeo, factor, iter);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySmoothModifier(currentGeo, factor, iter));
     } else if (mod.name === "Warp") {
       const str = parseFloat(p["Strength"] || 1.2);
-      currentGeo = applyWarpModifier(currentGeo, str);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWarpModifier(currentGeo, str));
     } else if (mod.name === "Lattice") {
-      const str = parseFloat(p["Strength"] || 1.0);
-      currentGeo = applyLatticeModifier(currentGeo, str);
+      throw new Error('Lattice needs an editable control-cage object; the current project has no lattice data model, so no taper substitute is applied.');
     } else if (mod.name === "Shrinkwrap") {
-      const off = parseFloat(p["Offset"] || 0);
-      currentGeo = applyShrinkwrapModifier(currentGeo, off);
+      const target = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface'));
     } else if (mod.name === "Armature" || mod.name === "Surface Deform") {
-      const inf = parseFloat(p["Bone Influence"] || p["Strength"] || 1.0);
-      currentGeo = applyLatticeModifier(currentGeo, inf * 0.8);
+      throw new Error(`${mod.name} needs a rig/bone-weight or bind-target workflow that this project does not yet provide; no lattice deformation is substituted.`);
     } else if (mod.name === "Weighted Normal") {
-      currentGeo.computeVertexNormals();
+      currentGeo = applyModifierGeometryStage(currentGeo, () => modifierGeometryApi().weightedNormalGeometry(currentGeo, { weight:parseFloat(p.Weight ?? 50), keepSharp:p['Keep Sharp'] !== false }));
     } else if (mod.name === "Cloth") {
       activeSimTypes.add("Cloth");
-      if (targetObj.userData.clothSim && targetObj.userData.clothSim.vertexCount === currentGeo.attributes.position.array.length) {
-         // Keep current
-      } else {
-         initClothSim(targetObj, p);
-      }
+      simulationDefs.push({ type: "Cloth", params: { ...p } });
     } else if (mod.name === "Soft Body") {
       activeSimTypes.add("SoftBody");
-      if (targetObj.userData.softBodySim && targetObj.userData.softBodySim.vertexCount === currentGeo.attributes.position.array.length) {
-         // Keep current
-      } else {
-         initSoftBodySim(targetObj, p);
-      }
+      simulationDefs.push({ type: "SoftBody", params: { ...p } });
     } else if (mod.name === "Fluid") {
       activeSimTypes.add("Fluid");
-      initFluidSim(targetObj, p);
+      simulationDefs.push({ type: "Fluid", params: { ...p } });
     }
   });
+
+  if (simulationDefs.some(sim => sim.type === "Cloth" || sim.type === "SoftBody")) {
+    const positionCount = currentGeo.attributes.position?.count || 0;
+    const faceCount = currentGeo.index ? currentGeo.index.count / 3 : positionCount / 3;
+    const maxFaces = simulationDefs.some(sim => sim.type === "Cloth") ? 3072 : 1536;
+    let levels = 0, projectedFaces = faceCount;
+    while (levels < 4 && projectedFaces * 4 <= maxFaces) { levels++; projectedFaces *= 4; }
+    if (levels > 0) {
+      const beforeSubdivision = currentGeo;
+      currentGeo = applySubdivisionModifier(beforeSubdivision, levels);
+      if (currentGeo !== beforeSubdivision) beforeSubdivision.dispose();
+      currentGeo.computeVertexNormals();
+    }
+  }
 
   // Cleanup simulations no longer in stack
   if (window.SimEngine) {
@@ -9081,6 +9663,13 @@ function updateModifiersOnScene() {
     if (targetObj.material) targetObj.material.needsUpdate = true;
   }
 
+  simulationDefs.forEach(sim => {
+    window.SimEngine.removeSimulation(sim.type, targetObj);
+    if (sim.type === "Fluid") initFluidSim(targetObj, sim.params);
+    else if (sim.type === "Cloth") initClothSim(targetObj, sim.params);
+    else if (sim.type === "SoftBody") initSoftBodySim(targetObj, sim.params);
+  });
+
   // Force wireframe for Fluid Domains even in Solid mode
   let forceWire = false;
   targetStack.filter(m => m.enabled).forEach(m => {
@@ -9089,12 +9678,36 @@ function updateModifiersOnScene() {
   if (targetObj.material) {
     targetObj.material.wireframe = forceWire || (currentShadingMode === 'wireframe');
   }
+  targetObj.userData.modifierError = null;
 
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
 
   if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
-  } catch(e) { console.error("Modifier update error:", e); }
+  refreshModifierDependents(targetObj);
+  } catch(e) {
+    if (targetObj?.userData) { targetObj.userData.modifierError = e?.message || String(e); targetObj.userData.lastModHash = null; targetObj.userData.forceModUpdate = false; }
+    console.error("Modifier update error:", e);
+    if (targetObj === (getActiveObjectMesh ? getActiveObjectMesh() : null)) { FE.toast(`Modifier error: ${e?.message || e}`); if (typeof renderModifierStack === 'function') renderModifierStack(); }
+  }
+}
+let refreshingModifierDependents = false;
+function refreshModifierDependents(changedObj) {
+  if (refreshingModifierDependents || !changedObj) return;
+  refreshingModifierDependents = true;
+  try {
+    const queue=[changedObj],seen=new Set([changedObj.uuid]),all=getAllSceneMeshes();
+    while(queue.length){
+      const source=queue.shift();
+      for(const candidate of all){
+        if(candidate===source||seen.has(candidate.uuid))continue;
+        const stack=candidate.userData?.modStack||[];
+        const depends=stack.some(mod=>mod.enabled&&((mod.name==='Boolean'&&mod.values?.['Operand Object']===source.uuid)||(mod.name==='Shrinkwrap'&&mod.values?.['Target Object']===source.uuid)));
+        if(!depends)continue;
+        candidate.userData.forceModUpdate=true;updateModifiersOnScene(candidate);seen.add(candidate.uuid);queue.push(candidate);
+      }
+    }
+  } finally { refreshingModifierDependents = false; }
 }
 window.updateModifiersOnScene = updateModifiersOnScene;
 
@@ -9159,6 +9772,8 @@ function addModifierToStack(category, definition) {
     values["Fire & Smoke Preset"] = "Campfire & Smoke";
     applyFluidPreset({ values }, "Water");
   }
+  if (definition.name === 'Boolean') values['Operand Object'] = '';
+  if (definition.name === 'Shrinkwrap') values['Target Object'] = ''; 
 
   const mod = {
     id: Date.now() + Math.random(),
@@ -9179,6 +9794,14 @@ function addModifierToStack(category, definition) {
     setTimeout(() => FE.toast("Press PLAY or SPACE to start simulation"), 1000);
   }
   if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
+}
+
+function duplicateModifierInStack(source) {
+  const targetObj=getActiveObjectMesh();if(!targetObj)return;
+  const stack=targetObj.userData.modStack||[],index=stack.findIndex(item=>item.id===source.id);
+  const copy={...source,id:Date.now()+Math.random(),values:{...(source.values||{})},enabled:source.enabled};
+  stack.splice(index<0?stack.length:index+1,0,copy);targetObj.userData.modStack=stack;modStack=stack;targetObj.userData.forceModUpdate=true;
+  renderModifierStack();updateModifiersOnScene(targetObj);if(typeof saveCurrentProjectAsRecent==='function')saveCurrentProjectAsRecent();
 }
 
 function removeModifierFromStack(id) {
@@ -9223,6 +9846,12 @@ function toggleModifierInStack(id) {
   updateModifiersOnScene();
 }
 
+function modifierTargetOptions(targetObj) {
+  return (typeof getAllSceneMeshes === 'function' ? getAllSceneMeshes() : [])
+    .filter(mesh => mesh && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh && mesh.geometry && mesh.name !== 'ModifierHelper' && !mesh.userData?.solverParticleVisual)
+    .map(mesh => ({ value: mesh.uuid, label: `${mesh.name || 'Mesh'} · ${mesh.uuid.slice(0, 5)}` }));
+}
+
 function createModifierField(mod, index, field) {
   const [label, type, ...values] = field;
   const wrapper = document.createElement("div");
@@ -9263,11 +9892,15 @@ function createModifierField(mod, index, field) {
   } else if (type === "select") {
     labelEl.textContent = label;
     const select = document.createElement("select");
-    values[0].forEach(option => {
+    const isObjectTarget = (mod.name === 'Boolean' && label === 'Operand Object') || (mod.name === 'Shrinkwrap' && label === 'Target Object');
+    const targetObj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+    const options = isObjectTarget ? [{ value:'', label:'(Select a mesh)' }, ...modifierTargetOptions(targetObj)] : values[0].map(value => ({ value, label: value }));
+    if (isObjectTarget && options.length === 1) options[0].label='(Add another mesh first)';
+    options.forEach(option => {
       const opt = document.createElement("option");
-      opt.textContent = option;
-      opt.value = option;
-      if ((mod.values[label] || values[0][0]) === option) opt.selected = true;
+      opt.textContent = option.label;
+      opt.value = option.value;
+      if ((mod.values[label] ?? values[0]?.[0] ?? '') === option.value) opt.selected = true;
       select.appendChild(opt);
     });
     select.onchange = () => {
@@ -9279,6 +9912,35 @@ function createModifierField(mod, index, field) {
     wrapper.append(labelEl, select);
   }
   return wrapper;
+}
+
+function evaluateModifierPrefix(targetObj, modifiers) {
+  let geometry = targetObj.userData.baseGeometry.clone();
+  try {
+    for (const mod of modifiers) {
+      if (!mod.enabled) continue;
+      const p=mod.values||{};
+      const stage=(fn)=>{geometry=applyModifierGeometryStage(geometry,()=>fn(geometry))};
+      if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false)); }
+      else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2)));
+      else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1)));
+      else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));
+      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0)));
+      else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true));
+      else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5)));
+      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g));
+      else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
+      else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1)));
+      else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0)));
+      else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1)));
+      else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3)));
+      else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2)));
+      else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface'))}
+      else if(mod.name==='Weighted Normal')stage(g=>modifierGeometryApi().weightedNormalGeometry(g,{weight:Number(p.Weight??50),keepSharp:p['Keep Sharp']!==false}));
+      else throw new Error(`${mod.name} cannot be applied as a static mesh modifier in this runtime.`);
+    }
+    return geometry;
+  } catch(error) { geometry.dispose(); throw error; }
 }
 
 function renderModifierStack() {
@@ -9295,6 +9957,8 @@ function renderModifierStack() {
     const card = document.createElement("div");
     card.className = "mod-card";
     if (!mod.enabled) card.classList.add("disabled");
+    const modifierError=getActiveObjectMesh()?.userData?.modifierError;
+    if(modifierError){card.style.borderColor='#ef4444';card.title=modifierError;}
 
     const head = document.createElement("div");
     head.className = "mod-head";
@@ -9476,6 +10140,7 @@ function renderModifierStack() {
       
       body.appendChild(fieldEl);
     });
+    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the Rust/WASM solver loads. Flow emits from the selected mesh surface. Current browser solver budget: up to 512 SPH particles and 64 surface cells; a true 256³ grid/full CFD solver is not yet available.';body.appendChild(hint); }
 
     const buttons = document.createElement("div");
     buttons.className = "buttons";
@@ -9483,26 +10148,31 @@ function renderModifierStack() {
     const duplicate = document.createElement("button");
     duplicate.className = "small-btn";
     duplicate.textContent = "Duplicate";
-    duplicate.onclick = () => addModifierToStack(mod.category, mod.definition);
+    duplicate.onclick = () => duplicateModifierInStack(mod);
 
     const apply = document.createElement("button");
     apply.className = "small-btn";
     apply.textContent = "Apply";
     apply.onclick = () => {
       const targetObj = getActiveObjectMesh();
-      if (targetObj) {
-        if (targetObj.geometry) {
-          targetObj.userData.baseGeometry = targetObj.geometry.clone();
-        }
-        targetObj.userData.modStack = (targetObj.userData.modStack || []).filter(m => m.id !== mod.id);
-        modStack = targetObj.userData.modStack;
-        targetObj.userData.forceModUpdate = true;
-        renderModifierStack();
-        updateModifiersOnScene();
-        FE.toast(`Applied ${mod.name} modifier permanently to mesh!`);
-        if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
-      }
-    };
+      if (!targetObj) return;
+      const stack=targetObj.userData.modStack||[],index=stack.findIndex(item=>item.id===mod.id);
+      if(index<0||!mod.enabled){FE.toast('Enable the selected modifier before applying it.');return}
+      let baked;
+      try { baked=evaluateModifierPrefix(targetObj,stack.slice(0,index+1)); }
+      catch(error){targetObj.userData.modifierError=error.message;FE.toast(`Cannot apply ${mod.name}: ${error.message}`);renderModifierStack();return}
+      const oldBase=targetObj.userData.baseGeometry;
+      targetObj.userData.baseGeometry=baked;
+      if(oldBase&&oldBase!==targetObj.geometry)oldBase.dispose();
+      targetObj.userData.modStack=stack.slice(index+1);
+      modStack=targetObj.userData.modStack;
+      targetObj.userData.forceModUpdate=true;
+      targetObj.userData.modifierError=null;
+      renderModifierStack();
+      updateModifiersOnScene(targetObj);
+      FE.toast(`Baked enabled stack through ${mod.name}; later modifiers remain live.`);
+      if(typeof saveCurrentProjectAsRecent==='function')saveCurrentProjectAsRecent();
+    }; 
 
     buttons.append(duplicate, apply);
     body.appendChild(buttons);
@@ -9592,6 +10262,9 @@ if (window.location.hash !== '#/home') {
   window.location.hash = '#/home';
 }
 route();
+startGlobalAutosave();
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')runGlobalAutosave({silent:true})});
+window.addEventListener('pagehide',()=>runGlobalAutosave({silent:true}));
 emit('ready',{studios:Object.keys(STUDIOS)});
 </script>
 </body>

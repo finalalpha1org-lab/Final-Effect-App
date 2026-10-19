@@ -6,7 +6,10 @@
     "dev": "vite --port 3000 --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --port 3000 --host 0.0.0.0",
-    "lint": "node -e \"process.exit(0)\""
+    "lint": "node -e \"process.exit(0)\"",
+    "prebuild": "npm run build:runtime-bundles",
+    "build:runtime-bundles": "node ./scripts/build-runtime-bundles.mjs",
+    "test:final-effect": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",
@@ -28,6 +31,8 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.7.2",
     "typescript": "^5.4.5",
-    "vite": "^8.3.1"
+    "vite": "^8.3.1",
+    "esbuild": "^0.28.2",
+    "three-csg-ts": "3.0.1"
   }
 }
