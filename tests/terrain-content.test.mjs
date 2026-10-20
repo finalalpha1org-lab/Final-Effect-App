@@ -246,8 +246,8 @@ test('terrain brush resnap moves plants, trees and rocks to the edited ground he
   ctx.resnap();for(const k of Object.keys(kinds))assert.equal(kinds[k].list[0].y,2,`${k} follows a raised terrain surface`);
   height=-1;ctx.resnap();for(const k of Object.keys(kinds))assert.equal(kinds[k].list[0].y,-1,`${k} follows a lowered terrain surface`);
   assert.equal(synced.length,Object.keys(kinds).length*2,'each raise/lower resnap refreshes every instanced category');
-  assert.match(html,/const endedTerrain=painting&&paintingTerrain;ptrs\.delete\(e\.pointerId\);painting=false;paintingTerrain=false;paintingOpenWorld=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)/,'pointer-cancel paths still resnap terrain instances');
-  assert.match(html,/if\(painting\)\{const endedTerrain=paintingTerrain;painting=false;paintingTerrain=false;paintingOpenWorld=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)\}/,'every completed terrain-brush gesture resnaps instances even if the selected tab changes mid-drag');
+  assert.match(html,/const endedTerrain=painting&&paintingTerrain;ptrs\.delete\(e\.pointerId\);painting=false;paintingTerrain=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)/,'pointer-cancel paths still resnap terrain instances');
+  assert.match(html,/if\(painting\)\{const endedTerrain=paintingTerrain;painting=false;paintingTerrain=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)\}/,'every completed terrain-brush gesture resnaps instances even if the selected tab changes mid-drag');
   assert.match(html,/rootSink=Math\.min\(Math\.max\(0,o\.y-lowY-\.08\),Math\.min\(\.28\*s,\.16\*span\)\)/,'rooted plants should sink modestly into raised or sloped soil while trunks remain above ground');
 });
 
