@@ -7,6 +7,13 @@ import { appPath } from './app-paths.mjs';
 
 const html=readFileSync(appPath('Terrain_system_.html'),'utf8');
 
+test('normal Terrain settings panel builder and tabs remain wired',()=>{
+  assert.ok(html.includes("function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())"),'normal settings require their shared panel builder');
+  assert.ok(html.includes("$('#cls').onclick=()=>$('#bw').click();"),'the normal panel close control must remain wired');
+  assert.match(html,/const TABS=\[\['terrain','⛰','Terrain'\]/,'normal Terrain remains the first tab');
+  for(const label of ['Planet','Foliage','City','Quality','Lighting','Sky','Water','Weather','Objects','Import'])assert.ok(html.includes(`'${label}'`),`${label} settings remain available`);
+});
+
 test('tall grass and distinct flower species are procedural, brushable, and included in biome scatter',()=>{
   assert.match(html,/const tallGrassG=\(\(\)=>/);
   assert.match(html,/mk\('tallgrass',\d+,\[\[tallGrassG/);
@@ -30,26 +37,65 @@ test('flowers use curved species-specific petals and vegetation uses textured We
   assert.ok(html.includes("rootsFrom(W,rad[0],'oak',[2.6,.68]);tubePath(W,pts,rad,10,[3.2,.9])"),'large oak bark UVs should tile at a non-stretched world scale');
 });
 
-test('vegetation stays full detail within 250 m and transitions gradually without thinning instances',()=>{
+test('vegetation keeps leaves in high detail nearer to the camera and fades to low LOD before distant culling',()=>{
   const start=html.indexOf('const LOD_GROUND='),end=html.indexOf('function sync(',start);
   assert.ok(start>=0&&end>start,'distance LOD policy should be declared before instance synchronization');
   const mk=hash=>{const ctx={cl:(v,a,b)=>Math.min(b,Math.max(a,v)),hh:()=>hash};vm.runInNewContext(html.slice(start,end)+';this.plantLodTier=plantLodTier;this.LOD_BOTANICAL=LOD_BOTANICAL;',ctx);return ctx};
   const lowHash=mk(.1),highHash=mk(.9);
-  assert.equal(lowHash.plantLodTier('grass',249,12,7,250),0,'all ground cover is high-detail before 250 m');
-  assert.equal(highHash.plantLodTier('oak',250,12,7,250),0,'trees are also high-detail at the 250 m boundary');
-  assert.equal(lowHash.plantLodTier('grass',500,12,7,250),1);
-  assert.equal(highHash.plantLodTier('grass',500,12,7,250),0,'stable per-instance thresholds spread the transition across distance');
-  assert.equal(lowHash.plantLodTier('oak',900,12,7,250),1,'the far-detail tier is reached gradually, not at one global ring');
-  assert.equal(lowHash.plantLodTier('grass',1600,12,7,250),-1);
-  assert.equal(lowHash.plantLodTier('oak',2400,12,7,250),-1);
+  assert.equal(lowHash.plantLodTier('grass',249,12,7,750),0,'all ground cover is high-detail within the old 250 m guarantee');
+  assert.equal(highHash.plantLodTier('oak',750,12,7,750),0,'tree leaves remain high-detail through the extended 750 m radius');
+  assert.equal(lowHash.plantLodTier('grass',2000,12,7,750),1);
+  assert.equal(highHash.plantLodTier('grass',2000,12,7,750),0,'stable per-instance thresholds spread the transition across distance');
+  const boundaryHash=mk(.46);
+  assert.equal(boundaryHash.plantLodTier('grass',2000,12,7,750,false),0,'high-detail instances keep their mesh while zoom oscillates inside the LOD hysteresis band');
+  assert.equal(boundaryHash.plantLodTier('grass',2000,12,7,750,true),1,'low-detail instances keep their mesh while zoom oscillates inside the LOD hysteresis band');
+  assert.equal(lowHash.plantLodTier('oak',3000,12,7,750),1,'far detail is reached gradually, not at one global ring');
+  assert.equal(lowHash.plantLodTier('grass',8000,12,7,750),-1);
+  assert.equal(lowHash.plantLodTier('oak',14000,12,7,750),-1);
   assert.ok(lowHash.LOD_BOTANICAL.has('daisy')&&lowHash.LOD_BOTANICAL.has('oak'));
   assert.ok(html.includes('m.count=ci')&&html.includes('low.count=li'),'instances must be routed to high or low meshes, never probabilistically deleted');
   assert.ok(html.includes('function buildLowDetail(fn)')&&html.includes('Object.assign(DQ,{leaf:Math.max(.42,saved.leaf*.42)'),'far LOD should regenerate simpler trees');
   assert.ok(html.includes('grassLowGeometry')&&html.includes('lodGeom:grassLowG')&&html.includes('lodGeom:tallGrassLowG'),'far grass should use reduced-polygon tuft meshes');
   assert.ok(html.includes('lowMat.normalMap=null')&&html.includes('lowMat.roughnessMap=null'),'far LOD should reduce material maps as well as geometry');
-  assert.ok(html.includes('LOD_FULL_KEY=')&&html.includes('Full foliage detail radius (m)')&&html.includes('setLodFullDistance'),'the full-detail radius must be adjustable and persisted locally');
+  assert.ok(html.includes("LOD_FULL_KEY='final3d.lodFullDistance.v2'")&&html.includes('Full foliage detail radius (m)')&&html.includes('setLodFullDistance'),'the extended full-detail radius must be adjustable and persisted locally');
+  assert.ok(html.includes('full=750')&&html.includes('250,2500'),'near foliage should remain high-detail by default, with a longer adjustable radius');
   assert.ok(html.includes("['quality','✨','Quality']")&&html.includes('quality:()=>qualityCtl()'),'quality/LOD controls need their own tab');
   assert.ok(html.includes('KIND[k].list.forEach'),'LOD refresh should route stored placements without erasing their source list');
+  assert.match(html,/now-lodMotionAt<240/,'do not switch foliage geometry while the camera is still moving');
+  assert.match(html,/now-previewCameraMovedAt<900/,'do not change GPU render scale during a zoom gesture');
+});
+
+test('camera zoom defers foliage LOD and adaptive resolution until motion settles',()=>{
+  const vec=(x=0,y=0,z=0)=>({x,y,z,clone(){return vec(this.x,this.y,this.z)},copy(o){this.x=o.x;this.y=o.y;this.z=o.z;return this},distanceToSquared(o){return (this.x-o.x)**2+(this.y-o.y)**2+(this.z-o.z)**2}});
+  const lodStart=html.indexOf('const LOD_KINDS='),lodEnd=html.indexOf('let season=',lodStart),lodCalls=[];
+  const lodCtx={LOD_BOTANICAL:new Set(['grass']),LOD_GROUND:new Set(['grass']),LOD_TREES:new Set(),KIND:{grass:{list:[{}]}},cam:{position:vec()},lodFullDistance:750,cl:(v,a,b)=>Math.min(b,Math.max(a,v)),hh:()=>.5,sync:k=>lodCalls.push(k),localStorage:{setItem(){}}};
+  vm.runInNewContext(html.slice(lodStart,lodEnd)+';this.step=updateFoliageLOD',lodCtx);
+  lodCtx.cam.position.x=.1;lodCtx.step(100);assert.equal(lodCalls.length,0,'no mesh-tier changes occur during zoom');
+  lodCtx.step(300);assert.equal(lodCalls.length,0,'LOD remains queued inside the settle delay');
+  lodCtx.step(341);assert.equal(lodCalls.length,1,'LOD refresh begins after the camera settles');
+  const previewStart=html.indexOf('function updateSmoothPreview('),previewEnd=html.indexOf(String.fromCharCode(10),previewStart),scaleCalls=[];
+  const previewCtx={adaptiveFPS:60,smoothPreviewAuto:true,adaptiveLast:0,adaptiveSlow:0,adaptiveFast:0,adaptiveScale:1,previewCameraMovedAt:0,previewCameraAnchor:vec(),cam:{position:vec()},applyPreviewPixelRatio(){scaleCalls.push(1)}};
+  vm.runInNewContext(html.slice(previewStart,previewEnd)+';this.step=updateSmoothPreview',previewCtx);
+  previewCtx.cam.position.x=1;previewCtx.step(20,1000);previewCtx.step(20,1700);
+  assert.equal(previewCtx.adaptiveScale,1);assert.equal(scaleCalls.length,0,'adaptive pixel ratio stays fixed while moving and settling');
+  previewCtx.step(20,2000);previewCtx.step(20,3200);
+  assert.ok(previewCtx.adaptiveScale<1&&scaleCalls.length===1,'resolution may adjust after stable low-FPS samples, not during the zoom');
+});
+
+test('grass keeps its original green PBR look and blade proportions',()=>{
+  assert.ok(!html.includes('const GRASS_BLADE=grassBladeAtlas()'),'no dark atlas should mute the original vertex colors');
+  assert.ok(html.includes('height=.38+R()*.76,width=.018+R()*.032'));
+  assert.ok(html.includes('height=1.05+R()*1.35,width=.014+R()*.024'));
+  assert.ok(html.includes("mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25"));
+  assert.ok(html.includes("mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22"));
+  assert.ok(html.includes('h=tall?1.15+(i%3)*.18:.48+(i%3)*.09'));
+});
+
+test('flower petals are smaller, cupped and matte instead of oversized flat plastic shapes',()=>{
+  assert.ok(html.includes('plen=.108*(.88+R()*.24)')&&html.includes('pwid=.03*(.88+R()*.24)'),'daisy petals should have slight per-floret variation');
+  assert.ok(html.includes('plen=.155*(.9+R()*.18)')&&html.includes('pwid=.058*(.9+R()*.18)'),'tulips should use compact overlapping cup petals');
+  assert.ok(html.includes('width*.52*v*v*lift')&&html.includes('width*.9*v*v*lift'),'petal surfaces should cup rather than remain flat');
+  assert.ok(html.includes("roughness:kind==='tulip'?.76:.74,clearcoat:.07"),'flower surfaces should be satin-matte, not plastic-glossy');
 });
 
 test('procedural petal patches have curved, indexed and finite geometry',()=>{
@@ -69,16 +115,33 @@ test('sky has four procedural cloud layers and round, randomly colored star disc
   assert.match(html,/mix\(vec3\(\.52,\.68,1\.\),vec3\(1\.,\.67,\.43\),temp\)/);
 });
 
-test('first-person avatar is 1.7–1.8 m tall with a matching eye height',()=>{
-  const start=html.indexOf('function makeExploreBody()'),end=html.indexOf('function exploreSurface',start);
-  assert.ok(start>=0&&end>start,'avatar builder must be present');
-  const context={THREE,bodyModel:null,bodyParts:null};
-  vm.runInNewContext(html.slice(start,end)+';this.makeExploreBody=makeExploreBody;',context);
-  const body=context.makeExploreBody();body.visible=true;
-  const bounds=new THREE.Box3().setFromObject(body);
-  assert.ok(bounds.max.y>=1.7&&bounds.max.y<=1.8,`avatar top should be human height, got ${bounds.max.y}`);
-  assert.ok(bounds.min.y>=0&&bounds.min.y<.04,`avatar feet should meet the ground, got ${bounds.min.y}`);
-  assert.ok(html.includes('cam.position.set(0,1.68,0);'),'first-person eyes should be about 1.68 m high');
+test('spring resets forced blizzards, stops new snowfall, melts cover, and starts growth/bloom gradually',()=>{
+  const start=html.indexOf('function seasonalSnowState('),end=html.indexOf('function setSeason(',start);assert.ok(start>=0&&end>start);
+  const ctx={sm:(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t)}};
+  vm.runInNewContext(html.slice(start,end)+';this.seasonalSnowState=seasonalSnowState;',ctx);
+  assert.deepEqual({...ctx.seasonalSnowState(.08)},{cover:0,fall:0},'selected spring must neither accumulate snow nor keep a permanent snow blanket');
+  assert.equal(ctx.seasonalSnowState(.9).fall,.9,'winter should still snow');
+  assert.ok(html.includes("WX.snowAuto=true;const snow=seasonalSnowState(WX.seasonT)"));
+  assert.ok(html.includes("if(s==='spring'){WX.melt=Math.max(WX.melt,2.2)"));
+  assert.ok(html.includes('bloom=sm(.04,.16,t)*(1-sm(.2,.28,t))'));
+  assert.ok(html.includes('t<.25?sm(0,.12,t):t<.75?1:0'),'spring foliage should grow in gradually rather than appear fully grown at once');
+});
+
+test('manual grass brush lays evenly spaced, dense additive stamps along fast strokes',()=>{
+  const start=html.indexOf('function plantAt('),end=html.indexOf('function scatter(',start);assert.ok(start>=0&&end>start);
+  const calls=[],context={br:{kind:'grass',r:2,den:10,minGap:.25},bt:'plants',RATE:{grass:1.6},BLD:{},KIND:{},FP:{},S:100,cityAng:0,R:()=>.5,cl:(v,a,b)=>Math.min(b,Math.max(a,v)),occRebuild(){},occBlocked(){return false},occAdd(){},sync(){},add:(...args)=>{calls.push(args);return 1}};
+  vm.runInNewContext(html.slice(start,end)+';this.plantAt=plantAt;',context);
+  context.plantAt({x:0,z:0});assert.equal(calls.length,96,'the manual grass stamp should fill the brush instead of producing sparse random clumps');
+  assert.ok(calls.every(x=>x[0]==='grass'&&x[5]===true),'manual strokes must remain additive forced placements');
+  const radii=calls.map(x=>Math.hypot(x[1],x[2]));assert.ok(Math.min(...radii)<.3&&Math.max(...radii)>1.8,'points should cover the full brush disk');
+  const first=calls.length;context.plantAt({x:4,z:0},{x:0,z:0});assert.ok(calls.length-first>1000,'interpolated strokes should fill the gap between pointer samples');
+});
+
+test('first person is camera-only with a grounded 1.8 m eye height',()=>{
+  assert.ok(!html.includes('function makeExploreBody()'),'the procedural character should be removed from Explore');
+  assert.ok(html.includes('const WALK_EYE_HEIGHT=1.8'));
+  assert.ok(html.includes('walkRig.add(cam);cam.position.set(0,WALK_EYE_HEIGHT,0);'),'the camera stays at eye height above the terrain-following walk rig');
+  assert.ok(!html.includes('bodyParts')&&!html.includes('bodyModel'));
   assert.ok(html.includes('enter visible water to swim with buoyancy'),'Explore UI should explain the swimming behavior');
 });
 
@@ -105,25 +168,28 @@ test('first-person can cross into water and swim buoyantly while land gravity re
   assert.equal(y,0,'gravity should continue to land the character on dry terrain');
 });
 
-test('auto-scatter increases normal and tall grass together while preserving separate capacities',()=>{
-  assert.match(html,/mk\('grass',65000/);
-  assert.match(html,/mk\('tallgrass',55000/);
-  assert.match(html,/mk\('flower',16000/);
-  assert.match(html,/mk\('daisy',8000/);
-  assert.match(html,/grassMixBonus=Math\.round\(18000\*density\)/);
-  assert.match(html,/tallGrassMixBonus=Math\.round\(26000\*density\)/);
-  assert.match(html,/wildflowerMixBonus=Math\.round\(3500\*density\)/);
-  assert.ok(html.includes("n==='grass'||n==='tallgrass'?1.6:flowers.has(n)?2.3:1"));
+test('auto-scatter greatly boosts green ground cover and flowers while reducing all auto-scattered rocks',()=>{
+  assert.match(html,/mk\('grass',105000/);
+  assert.match(html,/mk\('tallgrass',80000/);
+  assert.match(html,/mk\('flower',24000/);
+  assert.match(html,/mk\('daisy',14000/);
+  assert.match(html,/mk\('tulip',12000/);
+  assert.match(html,/mk\('lavender',12000/);
+  assert.match(html,/grassMixBonus=Math\.round\(36000\*density\)/);
+  assert.match(html,/tallGrassMixBonus=Math\.round\(42000\*density\)/);
+  assert.match(html,/wildflowerMixBonus=Math\.round\(7000\*density\)/);
+  assert.ok(html.includes("coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1"));
   assert.ok(html.includes("n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0"));
+  for(const weight of ["['rock',.008]","['rock',.035]","['sandrock',.04]","['rock',.02]","['basalt',.12]","['rock',.025]"])assert.ok(html.includes(weight),`auto-scatter rock weight ${weight} remains intentionally reduced`);
 });
 
-test('coastal brush permits shallow seabed grass but preserves the sandy shoreline',()=>{
+test('manual foliage can fill dry sand and steep land while limiting only deep-water planting',()=>{
   assert.match(html,/shallowBrushDepth=1\.5/);
   assert.match(html,/savedCoastDepth!==null&&Number\.isFinite\(Number\(savedCoastDepth\)\)/);
   assert.match(html,/shallowWaterGrass=force&&grassKind&&waterDepth>=\.45&&waterDepth<=shallowBrushDepth/);
-  assert.match(html,/protectedBeachSand=force&&grassKind&&m===3&&y>=wl-\.45&&!shallowWaterGrass/);
+  assert.ok(!html.includes('protectedBeachSand'),'the manual brush should not leave a forbidden beach-sand strip');
+  assert.ok(html.includes('including beach sand and steep slopes'));
   assert.match(html,/Shallow-water grass depth \(m\)/);
-  assert.match(html,/clear surf\/beach-sand strip is preserved/);
   assert.match(html,/y<wl\+minAbove&&!shallowWaterGrass/);
 });
 
@@ -152,19 +218,37 @@ test('environment lighting adds a separate fill light and OFF changes no materia
 test('manual foliage uses mesh-quality LOD, stays present at distance, and preserves brush history',()=>{
   assert.ok(html.includes('if(!allInstances&&LOD_BOTANICAL.has(k))'),'manual and automatic vegetation should choose a geometry LOD by camera distance');
   assert.ok(html.includes('Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz)'),'LOD distance must include camera altitude');
-  assert.ok(html.includes('function plantLodTier(k,d,x=0,z=0,full=250)'),'LOD should use a user-adjustable full-detail distance and stable per-instance fade');
-  assert.ok(html.includes('const far=LOD_GROUND.has(k)?1600:2400'),'plants/trees should only be culled well beyond normal terrain viewing distances');
+  assert.ok(html.includes('function plantLodTier(k,d,x=0,z=0,full=750,wasLow)'),'LOD should use a user-adjustable full-detail distance and stable per-instance fade with hysteresis');
+  assert.ok(html.includes('const far=LOD_GROUND.has(k)?8000:14000'),'plants/trees should remain visible much farther before final culling');
   assert.ok(html.includes('target=useLow?low:m'),'each placed instance must render in either high- or low-detail mesh');
   assert.ok(html.includes('K.lowMeshes'),'instanced vegetation should own low-detail geometry batches');
   assert.ok(html.includes('function updateFoliageLOD(now)'),'camera movement must trigger incremental quality-LOD refreshes');
   assert.ok(!html.includes('&&gr&&!o.manual')&&!html.includes('hh(o.x*1.71+17+(k.length*7)'),'manual plants must not be randomly thinned by distance');
-  assert.ok(html.includes('const limit=131072;'),'manual brush capacity should grow before refusing new plants');
+  assert.ok(html.includes('const cap=Math.max(required,Math.ceil(Math.max(K.max,1)*1.5),K.max+1024)'),'manual brush capacity must grow without the old fixed 131072 cap');
+  assert.ok(!html.includes('131072'),'there must be no arbitrary manual foliage instance limit');
   assert.ok(html.includes('if(K.list.length>=K.max)return 0}'),'full-capacity brush attempts must preserve existing instances');
   assert.ok(!html.includes('K.list.splice(victim,1)'),'painting must never evict previously planted foliage');
   assert.ok(html.includes('KM:Object.fromEntries')&&html.includes('Uint8Array.from(KIND[k].list,o=>o.manual?1:0)'),'undo/redo snapshots must encode and preserve each manual-plant flag');
   assert.ok(html.includes('s.KM?.[k]'),'undo/redo must restore manual-plant flags');
-  assert.ok(html.includes('manualPaint?3:2'),'manual brush stamps should stay dense across species');
+  assert.ok(html.includes('manualPaint?(cover?6:flowers?4:3):2'),'manual ground-cover brushes should be denser than the previous sparse stamps');
+  assert.ok(html.includes('Math.min(512,Math.ceil(dist/step))')&&html.includes('i*2.3999632297+j*1.6180339887'),'fast manual strokes should interpolate and distribute points evenly');
+  assert.ok(html.includes('Manual placement has no fixed instance-count cap; device memory is the practical limit.'));
   assert.ok(html.includes('Painting only adds; use Erase to remove earlier plants.'));
+});
+
+test('terrain brush resnap moves plants, trees and rocks to the edited ground height',()=>{
+  const start=html.indexOf('function resnap(){'),end=html.indexOf('\n',start);
+  assert.ok(start>=0&&end>start,'terrain resnap helper should be present');
+  const kinds={};for(const k of ['grass','tallgrass','flower','pine','oak','rock','sandrock','basalt'])kinds[k]={list:[{x:4,z:-3,y:0}]};
+  let height=2;const synced=[];
+  const ctx={KIND:kinds,BLD:{house:4},hgt:()=>height,bY:()=>height+1,sync:k=>synced.push(k)};
+  vm.runInNewContext(html.slice(start,end)+';this.resnap=resnap',ctx);
+  ctx.resnap();for(const k of Object.keys(kinds))assert.equal(kinds[k].list[0].y,2,`${k} follows a raised terrain surface`);
+  height=-1;ctx.resnap();for(const k of Object.keys(kinds))assert.equal(kinds[k].list[0].y,-1,`${k} follows a lowered terrain surface`);
+  assert.equal(synced.length,Object.keys(kinds).length*2,'each raise/lower resnap refreshes every instanced category');
+  assert.match(html,/const endedTerrain=painting&&paintingTerrain;ptrs\.delete\(e\.pointerId\);painting=false;paintingTerrain=false;paintingOpenWorld=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)/,'pointer-cancel paths still resnap terrain instances');
+  assert.match(html,/if\(painting\)\{const endedTerrain=paintingTerrain;painting=false;paintingTerrain=false;paintingOpenWorld=false;lastBrushPoint=null;if\(endedTerrain\)resnap\(\)\}/,'every completed terrain-brush gesture resnaps instances even if the selected tab changes mid-drag');
+  assert.match(html,/rootSink=Math\.min\(Math\.max\(0,o\.y-lowY-\.08\),Math\.min\(\.28\*s,\.16\*span\)\)/,'rooted plants should sink modestly into raised or sloped soil while trunks remain above ground');
 });
 
 test('simultaneous joystick and look pointers remain independently owned through release',()=>{
@@ -176,7 +260,7 @@ test('simultaneous joystick and look pointers remain independently owned through
   const elementHandlers={};
   const exJoystick={addEventListener:(name,fn)=>{(elementHandlers[name]??=[]).push(fn)},getBoundingClientRect:()=>({left:10,top:10,width:100,height:100}),setPointerCapture:()=>{}};
   const exJoyKnob={style:{transform:''}},cv={setPointerCapture:()=>{}};
-  const context={window,document:{activeElement:{}},exJoystick,exJoyKnob,cv,exploreMode:'first',joyPointerId:null,joyX:0,joyY:0,lookPointerId:null,lastLookX:0,lastLookY:0,exploreYaw:0,explorePitch:0,exploreKeys:new Set(),exClamp:(v,a,b)=>Math.max(a,Math.min(b,v)),showWalkJoystick:true,closeExploreSheet:()=>{}};
+  const context={window,document:{activeElement:{}},exJoystick,exJoyKnob,cv,oc:{enabled:true},exploreMode:'first',joyPointerId:null,joyX:0,joyY:0,lookPointerId:null,lastLookX:0,lastLookY:0,exploreYaw:0,explorePitch:0,exploreKeys:new Set(),exClamp:(v,a,b)=>Math.max(a,Math.min(b,v)),showWalkJoystick:true,closeExploreSheet:()=>{}};
   vm.runInNewContext(html.slice(start,end),context);
   const pointer=(pointerId,target,clientX,clientY,pointerType='touch')=>({pointerId,target,clientX,clientY,pointerType,preventDefault(){},stopPropagation(){},stopImmediatePropagation(){this.stopped=true}});
   const fire=(name,e)=>{for(const fn of windowHandlers[name]||[]){fn(e);if(e.stopped)break}};

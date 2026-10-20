@@ -2554,6 +2554,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
             <button class="panel-close" onclick="closeFloatingPanel('annotation')">✕</button>
           </div>
           <div class="panel-body">
+            <div class="panel-field" style="color:#94a3b8;font-size:11px;line-height:1.4;">Draw on visible 3D surfaces or the ground plane. Strokes are world-space lines inside the viewport, not screen-space marks.</div>
             <div class="panel-field-row"><label>Mode:</label><button class="btn btn-sm" id="btn-anno-toggle" onclick="toggleAnnotationDraw()">Enable Draw</button></div>
             <div class="panel-field-row"><label>Color:</label><input type="color" id="anno-color" value="#f59e0b" style="height:28px;width:100%;border:none;background:none;cursor:pointer;" /></div>
             <div class="panel-field-row"><label>Size:</label><input type="range" id="anno-size" min="1" max="10" value="3" /></div>
@@ -4158,7 +4159,7 @@ function getAllSceneMeshes() {
   if (!eng || !eng.sc) return [];
   const meshes = [];
   eng.sc.traverse(child => {
-    if ((child.isMesh || child.isInstancedMesh) && child !== eng.shadowFloor && child !== eng.studioFloor && child !== eng.grid && child.name !== 'StudioFloor' && child.name !== 'ShadowFloor') {
+    if ((child.isMesh || child.isInstancedMesh) && !child.userData?.isEditorHelper && child !== eng.shadowFloor && child !== eng.studioFloor && child !== eng.grid && child.name !== 'StudioFloor' && child.name !== 'ShadowFloor') {
       meshes.push(child);
     }
   });
@@ -4209,9 +4210,6 @@ function clearMeshSelectionOutline() {
   }
   if (eng.blenderCamLines?.material) {
     eng.blenderCamLines.material.color.setHex(0x10b981);
-  }
-  if (eng.blenderLight?.ring?.material) {
-    eng.blenderLight.ring.material.color.setHex(0xffcc00);
   }
   if (eng.cube?.material?.emissive) {
     eng.cube.material.emissive.setHex(0x000000);
@@ -4264,21 +4262,7 @@ function applyMeshSelectionOutline(type) {
     }
   }
 
-  // 3. Light visual selection outline
-  if (type === 'light' && eng.blenderLight) {
-    if (eng.blenderLight.ring && eng.blenderLight.ring.material) {
-      eng.blenderLight.ring.material.color.setHex(0xf59e0b);
-    }
-    const ringGeo = new THREE.RingGeometry(0.26, 0.38, 32);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide, depthTest: true });
-    const outlineRing = new THREE.Mesh(ringGeo, ringMat);
-    outlineRing.name = 'SelectionOutlineHelper';
-    outlineRing.rotation.x = Math.PI / 2;
-    outlineRing.raycast = () => {};
-    outlineRing.renderOrder = 10;
-    eng.blenderLight.add(outlineRing);
-  }
-
+  // Light selection is shown in the settings panel only; no rendered ring/halo helper is added.
   // 4. Cube emissive highlight in rendered shading mode
   if (eng.cube && eng.cube.material) {
     if (type === 'cube' && (currentShadingMode === 'rendered' || currentShadingMode === 'material')) {
@@ -4814,6 +4798,7 @@ function getActiveToolbar() {
 }
 
 function renderSubToolbar() {
+  closeAllFloatingPanels();
   const toolbar = getActiveToolbar();
   if (!toolbar) return;
   toolbar.innerHTML = `
@@ -4834,8 +4819,8 @@ function renderSubToolbar() {
     modeSel.value = 'edit';
   }
 
-  openFloatingPanel('move');
-  FE.toast('Edit Sub-Toolbar Active');
+  // Edit mode opens with no transform tool selected; the user opens one by tapping its tool button.
+  FE.toast('Edit tools ready — choose a tool');
 }
 window.renderSubToolbar = renderSubToolbar;
 
@@ -5451,92 +5436,128 @@ window.snap3DCursorToActiveObject = snap3DCursorToActiveObject;
 
 let isAnnoDrawing = false;
 let isAnnoActive = false;
-let annoLastX = 0, annoLastY = 0;
+let annoCurrentLine = null;
+let annoPointCount = 0;
+let annoCapacity = 512;
+let annoPositionArray = null;
+let annotationGroup = null;
+const ANNOTATION_GROUP_NAME = 'Final3DAnnotations';
+
+function getAnnotationGroup(eng) {
+  if (!eng?.sc) return null;
+  if (annotationGroup?.parent === eng.sc) return annotationGroup;
+  annotationGroup = eng.sc.getObjectByName(ANNOTATION_GROUP_NAME) || new THREE.Group();
+  annotationGroup.name = ANNOTATION_GROUP_NAME;
+  annotationGroup.userData.isAnnotation = true;
+  if (annotationGroup.parent !== eng.sc) eng.sc.add(annotationGroup);
+  return annotationGroup;
+}
+
+function pick3DAnnotationPoint(event) {
+  const eng = FE.engines?.core, rendererCanvas = eng?.renderer?.domElement;
+  if (!eng?.sc || !rendererCanvas) return null;
+  const rect = rendererCanvas.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return null;
+  const camera = eng.oc?.object || eng.viewportCamera || eng.sceneCamera;
+  if (!camera) return null;
+  const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(pointer, camera);
+  const excluded = new Set([getAnnotationGroup(eng), eng.blenderCam, eng.blenderLight, eng.transformControls, eng.selectionBox, eng.cursor3d].filter(Boolean));
+  const hit = raycaster.intersectObjects(eng.sc.children, true).find(item => {
+    if (!item.object?.isMesh || !item.face) return false;
+    for (let node = item.object; node && node !== eng.sc; node = node.parent) {
+      if (excluded.has(node) || node.userData?.isHelper || node.userData?.isAnnotation) return false;
+      if (/^(Camera|Light|3DCursor|Grid|.*Helper)/i.test(node.name || '')) return false;
+    }
+    return true;
+  });
+  if (hit) {
+    const normal = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+    return hit.point.clone().addScaledVector(normal, .012);
+  }
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), point = new THREE.Vector3();
+  return raycaster.ray.intersectPlane(ground, point) ? point : null;
+}
+
+function ensureAnnotationLine(point) {
+  const eng = FE.engines?.core, group = getAnnotationGroup(eng);
+  if (!group) return false;
+  annoCapacity = 512; annoPointCount = 0; annoPositionArray = new Float32Array(annoCapacity * 3);
+  const geometry = new THREE.BufferGeometry(), attribute = new THREE.BufferAttribute(annoPositionArray, 3);
+  attribute.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute('position', attribute); geometry.setDrawRange(0, 0);
+  const color = getScreenElement('#anno-color')?.value || '#f59e0b';
+  const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: .98, depthTest: true });
+  annoCurrentLine = new THREE.Line(geometry, material); annoCurrentLine.name = '3D Annotation Stroke';
+  annoCurrentLine.frustumCulled = false; annoCurrentLine.castShadow = false; annoCurrentLine.receiveShadow = false; annoCurrentLine.userData.isAnnotation = true;
+  group.add(annoCurrentLine); appendAnnotationPoint(point); return true;
+}
+
+function appendAnnotationPoint(point) {
+  if (!annoCurrentLine || !annoPositionArray || !point) return;
+  const offset = annoPointCount * 3;
+  if (annoPointCount && Math.hypot(point.x-annoPositionArray[offset-3],point.y-annoPositionArray[offset-2],point.z-annoPositionArray[offset-1]) < .008) return;
+  if (annoPointCount >= annoCapacity) {
+    const next = new Float32Array(annoCapacity * 2 * 3); next.set(annoPositionArray);
+    const geometry = new THREE.BufferGeometry(), attribute = new THREE.BufferAttribute(next, 3);
+    attribute.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute('position', attribute); geometry.setDrawRange(0, annoPointCount);
+    const old = annoCurrentLine.geometry; annoCurrentLine.geometry = geometry; old.dispose(); annoCapacity *= 2; annoPositionArray = next;
+  }
+  const i = annoPointCount * 3; annoPositionArray[i]=point.x;annoPositionArray[i+1]=point.y;annoPositionArray[i+2]=point.z;annoPointCount++;
+  const geometry=annoCurrentLine.geometry;geometry.attributes.position.needsUpdate=true;geometry.setDrawRange(0,annoPointCount);
+}
+
+function finishAnnotationStroke() {
+  const line=annoCurrentLine;
+  if(line&&annoPointCount>=2){
+    const attr=line.geometry.attributes.position,points=[];
+    for(let i=0;i<annoPointCount;i++)points.push(new THREE.Vector3(attr.getX(i),attr.getY(i),attr.getZ(i)));
+    const curve=new THREE.CatmullRomCurve3(points),size=Number(getScreenElement('#anno-size')?.value)||3;
+    const radius=Math.min(.02,Math.max(.0015,size*.002)),segments=Math.min(512,Math.max(8,(points.length-1)*3));
+    const mesh=new THREE.Mesh(new THREE.TubeGeometry(curve,segments,radius,5,false),new THREE.MeshBasicMaterial({color:line.material.color,transparent:true,opacity:.98,depthTest:true,depthWrite:true}));
+    mesh.name='3D Annotation Stroke';mesh.castShadow=false;mesh.receiveShadow=false;mesh.userData.isAnnotation=true;line.parent?.add(mesh);
+  }
+  if(line?.parent)line.parent.remove(line);line?.geometry?.dispose?.();line?.material?.dispose?.();
+  annoCurrentLine=null;annoPositionArray=null;annoPointCount=0;
+}
 
 function toggleAnnotationDraw() {
   isAnnoActive = !isAnnoActive;
   const btn = getScreenElement('#btn-anno-toggle');
   const cvs = getScreenElement('#annotation-canvas');
-  if (btn) {
-    btn.textContent = isAnnoActive ? 'Disable Draw' : 'Enable Draw';
-    btn.style.background = isAnnoActive ? '#10b981' : '#1f222e';
-  }
-  if (cvs) {
-    cvs.style.pointerEvents = isAnnoActive ? 'auto' : 'none';
-  }
-  FE.toast(isAnnoActive ? 'Annotation Draw Mode Enabled' : 'Annotation Draw Mode Disabled');
+  if (btn) { btn.textContent = isAnnoActive ? 'Disable Draw' : 'Enable Draw'; btn.style.background = isAnnoActive ? '#10b981' : '#1f222e'; }
+  if (cvs) cvs.style.pointerEvents = isAnnoActive ? 'auto' : 'none';
+  FE.toast(isAnnoActive ? '3D viewport drawing enabled' : '3D viewport drawing disabled');
 }
 window.toggleAnnotationDraw = toggleAnnotationDraw;
 
 function disableAnnotationDraw() {
-  isAnnoActive = false;
-  const btn = getScreenElement('#btn-anno-toggle');
-  const cvs = getScreenElement('#annotation-canvas');
+  isAnnoActive = false; isAnnoDrawing = false; finishAnnotationStroke();
+  const btn = getScreenElement('#btn-anno-toggle'), cvs = getScreenElement('#annotation-canvas');
   if (btn) { btn.textContent = 'Enable Draw'; btn.style.background = '#1f222e'; }
   if (cvs) cvs.style.pointerEvents = 'none';
 }
 window.disableAnnotationDraw = disableAnnotationDraw;
 
 function clearAnnotations() {
-  const cvs = getScreenElement('#annotation-canvas');
-  if (cvs) {
-    const ctx = cvs.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, cvs.width, cvs.height);
-  }
-  FE.toast('Annotations erased');
+  const eng=FE.engines?.core,group=getAnnotationGroup(eng);
+  if(group){for(const child of [...group.children]){group.remove(child);child.geometry?.dispose?.();if(Array.isArray(child.material))child.material.forEach(m=>m.dispose?.());else child.material?.dispose?.()}if(!group.children.length){eng.sc.remove(group);annotationGroup=null}}
+  annoCurrentLine=null;annoPositionArray=null;annoPointCount=0;isAnnoDrawing=false;
+  FE.toast('3D annotations cleared');
 }
 window.clearAnnotations = clearAnnotations;
 
-// Setup Annotation Canvas Drawing on active viewport
+// Annotation input is confined to the active 3D viewport and creates world-space lines in the scene.
 window.addEventListener('DOMContentLoaded', () => {
   function bindAnnoEvents() {
-    const cvs = getScreenElement('#annotation-canvas');
-    if (!cvs || cvs._bound) return;
-    cvs._bound = true;
-    const ctx = cvs.getContext('2d');
-
-    function resizeAnno() {
-      cvs.width = cvs.clientWidth || window.innerWidth;
-      cvs.height = cvs.clientHeight || window.innerHeight;
-    }
-    window.addEventListener('resize', resizeAnno);
-    resizeAnno();
-
-    cvs.addEventListener('pointerdown', (e) => {
-      if (!isAnnoActive) return;
-      isAnnoDrawing = true;
-      const rect = cvs.getBoundingClientRect();
-      annoLastX = e.clientX - rect.left;
-      annoLastY = e.clientY - rect.top;
-    });
-
-    cvs.addEventListener('pointermove', (e) => {
-      if (!isAnnoDrawing || !isAnnoActive || !ctx) return;
-      const rect = cvs.getBoundingClientRect();
-      const curX = e.clientX - rect.left;
-      const curY = e.clientY - rect.top;
-
-      const color = getScreenElement('#anno-color')?.value || '#f59e0b';
-      const size = getScreenElement('#anno-size')?.value || '3';
-
-      ctx.beginPath();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = parseInt(size, 10);
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.moveTo(annoLastX, annoLastY);
-      ctx.lineTo(curX, curY);
-      ctx.stroke();
-
-      annoLastX = curX;
-      annoLastY = curY;
-    });
-
-    cvs.addEventListener('pointerup', () => { isAnnoDrawing = false; });
-    cvs.addEventListener('pointerleave', () => { isAnnoDrawing = false; });
+    const cvs=getScreenElement('#annotation-canvas');if(!cvs||cvs._bound)return;cvs._bound=true;
+    cvs.style.touchAction='none';cvs.style.pointerEvents=isAnnoActive?'auto':'none';
+    cvs.addEventListener('pointerdown',e=>{if(!isAnnoActive||e.button===2)return;const point=pick3DAnnotationPoint(e);if(!point)return;e.preventDefault();e.stopPropagation();isAnnoDrawing=ensureAnnotationLine(point);try{if(isAnnoDrawing)cvs.setPointerCapture(e.pointerId)}catch(_){}});
+    cvs.addEventListener('pointermove',e=>{if(!isAnnoDrawing||!isAnnoActive)return;e.preventDefault();e.stopPropagation();const point=pick3DAnnotationPoint(e);if(point)appendAnnotationPoint(point)});
+    const finish=e=>{if(!isAnnoDrawing)return;e?.preventDefault?.();e?.stopPropagation?.();isAnnoDrawing=false;finishAnnotationStroke()};
+    cvs.addEventListener('pointerup',finish);cvs.addEventListener('pointercancel',finish);cvs.addEventListener('lostpointercapture',finish);
   }
-  bindAnnoEvents();
-  document.addEventListener('fe:screen', () => setTimeout(bindAnnoEvents, 50));
+  bindAnnoEvents();document.addEventListener('fe:screen',()=>setTimeout(bindAnnoEvents,50));
 });
 
 // Camera projection helpers: preserve framing when switching real perspective/orthographic cameras.
@@ -5694,6 +5715,8 @@ window.alignActiveCameraToOrigin = alignActiveCameraToOrigin;
 function createBlenderCameraObject() {
   const group = new THREE.Group();
   group.name = 'Camera';
+  group.castShadow = false;
+  group.receiveShadow = false;
   
   const fw = 0.85, fh = 0.48, fd = 1.0;
   const vertices = new Float32Array([
@@ -5715,6 +5738,7 @@ function createBlenderCameraObject() {
   lineGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
   const lineMat = new THREE.LineBasicMaterial({ color: 0x10b981 });
   const lines = new THREE.LineSegments(lineGeo, lineMat);
+  lines.castShadow = false; lines.receiveShadow = false;
   lines.raycast = () => {}; // Never block clicking 3D meshes in viewport!
   group.add(lines);
   group.lines = lines;
@@ -5725,6 +5749,7 @@ function createBlenderCameraObject() {
   const lensMat = new THREE.MeshBasicMaterial({ color: 0x334155, wireframe: true });
   const lens = new THREE.Mesh(lensGeo, lensMat);
   lens.name = 'Camera';
+  lens.castShadow = false; lens.receiveShadow = false;
   lens.position.z = -0.06;
   group.add(lens);
 
@@ -5743,11 +5768,13 @@ function createBlenderCameraObject() {
   const fpEdges = new THREE.EdgesGeometry(fpGeo);
   const fpMat = new THREE.LineBasicMaterial({ color: 0x818cf8, transparent: true, opacity: 0.45 });
   const focusPlane = new THREE.LineSegments(fpEdges, fpMat);
+  focusPlane.castShadow = false; focusPlane.receiveShadow = false;
   focusPlane.raycast = () => {}; // Never block raycasting on mesh
   focusPlane.position.z = -6.0;
   focusPlane.visible = false;
   group.add(focusPlane);
   group.focusPlane = focusPlane;
+  group.traverse(node => { node.castShadow = false; node.receiveShadow = false; });
 
   return group;
 }
@@ -5786,209 +5813,122 @@ function updateBlenderCameraFrustum(fov, aspect) {
   eng.blenderCam.lines.geometry.attributes.position.needsUpdate = true;
 }
 
-function createDynamicSpotHelper() {
+function createDynamicSpotHelper(){
   const spotHelperGroup = new THREE.Group();
   spotHelperGroup.name = 'SpotHelperGroup';
   spotHelperGroup.visible = false;
-
-  // Outer cone line segments (amber - shows cone angle)
-  // 24 segments for base ring (48 verts) + 4 corner rays (8 verts) + 1 axis (2 verts) = 58 verts = 174 floats
   const outerGeo = new THREE.BufferGeometry();
-  outerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(58 * 3), 3));
-  const outerMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.85 });
-  const outerLines = new THREE.LineSegments(outerGeo, outerMat);
+  outerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(10 * 3), 3));
+  const outerLines = new THREE.LineSegments(outerGeo, new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.85 }));
+  outerLines.name = 'Spot Cone Edge Rays';
   outerLines.raycast = () => {};
+  outerLines.frustumCulled = false;
   spotHelperGroup.add(outerLines);
-
-  // Inner core cone line segments (gold - shows penumbra soft edge boundary)
-  // 24 segments for inner ring (48 verts) + 4 corner rays (8 verts) = 56 verts = 168 floats
   const innerGeo = new THREE.BufferGeometry();
-  innerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(56 * 3), 3));
-  const innerMat = new THREE.LineBasicMaterial({ color: 0xfde047, transparent: true, opacity: 0.65 });
-  const innerLines = new THREE.LineSegments(innerGeo, innerMat);
+  innerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(8 * 3), 3));
+  const innerLines = new THREE.LineSegments(innerGeo, new THREE.LineBasicMaterial({ color: 0xfde047, transparent: true, opacity: 0.65 }));
+  innerLines.name = 'Spot Penumbra Rays';
   innerLines.raycast = () => {};
+  innerLines.frustumCulled = false;
   spotHelperGroup.add(innerLines);
-
+  const makeHalo = (name, color, opacity) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(48 * 3), 3));
+    const halo = new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+    halo.name = name;
+    halo.raycast = () => {};
+    halo.frustumCulled = false;
+    spotHelperGroup.add(halo);
+    return halo;
+  };
+  // These are Spot-cone end halos, distinct from a ring around the light source.
+  spotHelperGroup.outerHalo = makeHalo('Spot Cone Halo', 0xf59e0b, 0.9);
+  spotHelperGroup.innerHalo = makeHalo('Spot Penumbra Halo', 0xfde047, 0.68);
   spotHelperGroup.outerLines = outerLines;
   spotHelperGroup.innerLines = innerLines;
   return spotHelperGroup;
 }
-
-function updateSpotHelper() {
+function updateSpotHelper(){
   const eng = FE.engines?.core;
-  if (!eng || !eng.blenderLight) return;
-  const group = eng.blenderLight;
-  const helper = group.spotHelper;
-  if (!helper) return;
-
-  const light = group.light;
-  if (!light || !light.isSpotLight) return;
-
+  if (!eng?.blenderLight) return;
+  const group = eng.blenderLight, helper = group.spotHelper, light = group.light;
+  if (!helper || !light?.isSpotLight) return;
   const targetWorld = eng.spotTarget ? eng.spotTarget.position : new THREE.Vector3(0, 0, 0);
   const targetLocal = targetWorld.clone().sub(group.position);
   let dist = targetLocal.length();
-  if (dist < 0.1) dist = 4.0;
-  let dir = targetLocal.clone().normalize();
+  if (dist < 0.1) dist = 4;
+  const dir = targetLocal.clone().normalize();
   if (dir.lengthSq() < 0.001) dir.set(0, -1, 0);
-
   let h = dist;
-  if (light.distance > 0 && light.distance < h) {
-    h = light.distance;
-  }
+  if (light.distance > 0 && light.distance < h) h = light.distance;
   h = Math.max(h, 1.2);
-
-  const angle = (light.angle !== undefined) ? light.angle : THREE.MathUtils.degToRad(45);
-  const penumbra = (light.penumbra !== undefined) ? light.penumbra : 0.3;
+  const angle = light.angle ?? THREE.MathUtils.degToRad(45);
+  const penumbra = light.penumbra ?? 0.3;
   const rOuter = Math.max(Math.tan(angle) * h, 0.05);
   const innerAngle = angle * (1 - Math.min(Math.max(penumbra, 0), 0.999));
   const rInner = Math.max(Math.tan(innerAngle) * h, 0.01);
-
-  // Orthonormal frame (u, v, w) pointing along cone axis
-  const u = dir;
-  let temp = Math.abs(u.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-  const v = new THREE.Vector3().crossVectors(u, temp).normalize();
-  const w = new THREE.Vector3().crossVectors(u, v).normalize();
-  const baseCenter = u.clone().multiplyScalar(h);
-
-  // 1. Outer geometry vertices (cone angle boundary)
-  const outerPos = helper.outerLines.geometry.attributes.position.array;
-  let idx = 0;
-  const SEGS = 24;
-  const outerRingPts = [];
-  for (let i = 0; i < SEGS; i++) {
-    const th = (i / SEGS) * Math.PI * 2;
-    const pt = baseCenter.clone()
-      .addScaledVector(v, Math.cos(th) * rOuter)
-      .addScaledVector(w, Math.sin(th) * rOuter);
-    outerRingPts.push(pt);
-  }
-  for (let i = 0; i < SEGS; i++) {
-    const p1 = outerRingPts[i];
-    const p2 = outerRingPts[(i + 1) % SEGS];
-    outerPos[idx++] = p1.x; outerPos[idx++] = p1.y; outerPos[idx++] = p1.z;
-    outerPos[idx++] = p2.x; outerPos[idx++] = p2.y; outerPos[idx++] = p2.z;
-  }
-  // 4 corner rays from apex (0,0,0) to outer ring
-  const rayIndices = [0, Math.floor(SEGS / 4), Math.floor(SEGS / 2), Math.floor((3 * SEGS) / 4)];
-  for (let k = 0; k < rayIndices.length; k++) {
-    const pt = outerRingPts[rayIndices[k]];
-    outerPos[idx++] = 0; outerPos[idx++] = 0; outerPos[idx++] = 0;
-    outerPos[idx++] = pt.x; outerPos[idx++] = pt.y; outerPos[idx++] = pt.z;
-  }
-  // Center axis line
-  outerPos[idx++] = 0; outerPos[idx++] = 0; outerPos[idx++] = 0;
-  outerPos[idx++] = baseCenter.x; outerPos[idx++] = baseCenter.y; outerPos[idx++] = baseCenter.z;
-
-  helper.outerLines.geometry.attributes.position.needsUpdate = true;
-
-  // 2. Inner core geometry vertices (penumbra falloff boundary)
-  const innerPos = helper.innerLines.geometry.attributes.position.array;
-  let inIdx = 0;
-  const innerRingPts = [];
-  for (let i = 0; i < SEGS; i++) {
-    const th = (i / SEGS) * Math.PI * 2;
-    const pt = baseCenter.clone()
-      .addScaledVector(v, Math.cos(th) * rInner)
-      .addScaledVector(w, Math.sin(th) * rInner);
-    innerRingPts.push(pt);
-  }
-  for (let i = 0; i < SEGS; i++) {
-    const p1 = innerRingPts[i];
-    const p2 = innerRingPts[(i + 1) % SEGS];
-    innerPos[inIdx++] = p1.x; innerPos[inIdx++] = p1.y; innerPos[inIdx++] = p1.z;
-    innerPos[inIdx++] = p2.x; innerPos[inIdx++] = p2.y; innerPos[inIdx++] = p2.z;
-  }
-  for (let k = 0; k < rayIndices.length; k++) {
-    const pt = innerRingPts[rayIndices[k]];
-    innerPos[inIdx++] = 0; innerPos[inIdx++] = 0; innerPos[inIdx++] = 0;
-    innerPos[inIdx++] = pt.x; innerPos[inIdx++] = pt.y; innerPos[inIdx++] = pt.z;
-  }
-
-  helper.innerLines.geometry.attributes.position.needsUpdate = true;
-  helper.innerLines.visible = (penumbra > 0.02);
+  const temp = Math.abs(dir.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  const v = new THREE.Vector3().crossVectors(dir, temp).normalize();
+  const w = new THREE.Vector3().crossVectors(dir, v).normalize();
+  const baseCenter = dir.clone().multiplyScalar(h), indices = [0, 6, 12, 18];
+  const writeRays = (lines, radius, axis = false) => {
+    const p = lines.geometry.attributes.position.array;
+    let n = 0;
+    for (const k of indices) {
+      const th = k / 24 * Math.PI * 2;
+      const pt = baseCenter.clone().addScaledVector(v, Math.cos(th) * radius).addScaledVector(w, Math.sin(th) * radius);
+      p[n++] = 0; p[n++] = 0; p[n++] = 0;
+      p[n++] = pt.x; p[n++] = pt.y; p[n++] = pt.z;
+    }
+    if (axis) {
+      p[n++] = 0; p[n++] = 0; p[n++] = 0;
+      p[n++] = baseCenter.x; p[n++] = baseCenter.y; p[n++] = baseCenter.z;
+    }
+    lines.geometry.attributes.position.needsUpdate = true;
+  };
+  const writeHalo = (halo, radius) => {
+    if (!halo?.geometry?.attributes?.position) return;
+    const attr = halo.geometry.attributes.position, p = attr.array;
+    for (let i = 0; i < attr.count; i++) {
+      const a = i / attr.count * Math.PI * 2;
+      const pt = baseCenter.clone().addScaledVector(v, Math.cos(a) * radius).addScaledVector(w, Math.sin(a) * radius);
+      p[i * 3] = pt.x; p[i * 3 + 1] = pt.y; p[i * 3 + 2] = pt.z;
+    }
+    attr.needsUpdate = true;
+  };
+  writeRays(helper.outerLines, rOuter, true);
+  writeRays(helper.innerLines, rInner, false);
+  helper.innerLines.visible = penumbra > 0.02;
+  writeHalo(helper.outerHalo, rOuter);
+  writeHalo(helper.innerHalo, rInner);
+  helper.outerHalo.visible = true;
+  helper.innerHalo.visible = penumbra > 0.02;
 }
-
-function createDynamicSunHelper() {
-  const sunHelperGroup = new THREE.Group();
-  sunHelperGroup.name = 'SunHelperGroup';
-  sunHelperGroup.visible = false;
-
-  // 24 segments for sun disk (48 verts) + 5 rays (10 verts) = 58 verts = 174 floats
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(58 * 3), 3));
-  const mat = new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.75 });
-  const lines = new THREE.LineSegments(geo, mat);
-  lines.raycast = () => {};
-  sunHelperGroup.add(lines);
-  sunHelperGroup.lines = lines;
-  return sunHelperGroup;
+function createDynamicSunHelper(){
+  const sunHelperGroup=new THREE.Group();sunHelperGroup.name='SunHelperGroup';sunHelperGroup.visible=false;
+  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(5*2*3),3));
+  const lines=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({color:0xf59e0b,transparent:true,opacity:.75}));lines.raycast=()=>{};sunHelperGroup.add(lines);sunHelperGroup.lines=lines;return sunHelperGroup;
 }
-
-function updateSunHelper() {
-  const eng = FE.engines?.core;
-  if (!eng || !eng.blenderLight) return;
-  const group = eng.blenderLight;
-  const helper = group.sunHelper;
-  if (!helper) return;
-
-  const targetWorld = eng.dirTarget ? eng.dirTarget.position : new THREE.Vector3(0, 0, 0);
-  const targetLocal = targetWorld.clone().sub(group.position);
-  let dir = targetLocal.clone().normalize();
-  if (dir.lengthSq() < 0.001) dir.set(0, -1, 0);
-
-  const u = dir;
-  let temp = Math.abs(u.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-  const v = new THREE.Vector3().crossVectors(u, temp).normalize();
-  const w = new THREE.Vector3().crossVectors(u, v).normalize();
-
-  const rayLen = 2.4;
-  const diskR = 0.55;
-  const pos = helper.lines.geometry.attributes.position.array;
-  let idx = 0;
-  const SEGS = 24;
-
-  const ringPts = [];
-  for (let i = 0; i < SEGS; i++) {
-    const th = (i / SEGS) * Math.PI * 2;
-    const pt = new THREE.Vector3()
-      .addScaledVector(v, Math.cos(th) * diskR)
-      .addScaledVector(w, Math.sin(th) * diskR);
-    ringPts.push(pt);
-  }
-  for (let i = 0; i < SEGS; i++) {
-    const p1 = ringPts[i];
-    const p2 = ringPts[(i + 1) % SEGS];
-    pos[idx++] = p1.x; pos[idx++] = p1.y; pos[idx++] = p1.z;
-    pos[idx++] = p2.x; pos[idx++] = p2.y; pos[idx++] = p2.z;
-  }
-
-  const rayOrigins = [
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Vector3().addScaledVector(v, diskR * 0.7),
-    new THREE.Vector3().addScaledVector(v, -diskR * 0.7),
-    new THREE.Vector3().addScaledVector(w, diskR * 0.7),
-    new THREE.Vector3().addScaledVector(w, -diskR * 0.7),
-  ];
-  for (let k = 0; k < rayOrigins.length; k++) {
-    const o = rayOrigins[k];
-    const end = o.clone().addScaledVector(u, rayLen);
-    pos[idx++] = o.x; pos[idx++] = o.y; pos[idx++] = o.z;
-    pos[idx++] = end.x; pos[idx++] = end.y; pos[idx++] = end.z;
-  }
-
-  helper.lines.geometry.attributes.position.needsUpdate = true;
+function updateSunHelper(){
+  const eng=FE.engines?.core;if(!eng?.blenderLight)return;const group=eng.blenderLight,helper=group.sunHelper;if(!helper)return;
+  const targetWorld=eng.dirTarget?eng.dirTarget.position:new THREE.Vector3(0,0,0),targetLocal=targetWorld.clone().sub(group.position);let dir=targetLocal.clone().normalize();if(dir.lengthSq()<.001)dir.set(0,-1,0);
+  const temp=Math.abs(dir.y)<.95?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0),v=new THREE.Vector3().crossVectors(dir,temp).normalize(),w=new THREE.Vector3().crossVectors(dir,v).normalize(),offsets=[new THREE.Vector3(),v.clone().multiplyScalar(.16),v.clone().multiplyScalar(-.16),w.clone().multiplyScalar(.16),w.clone().multiplyScalar(-.16)],rayLen=2.4,p=helper.lines.geometry.attributes.position.array;let i=0;
+  for(const origin of offsets){const end=origin.clone().addScaledVector(dir,rayLen);p[i++]=origin.x;p[i++]=origin.y;p[i++]=origin.z;p[i++]=end.x;p[i++]=end.y;p[i++]=end.z}helper.lines.geometry.attributes.position.needsUpdate=true;
 }
-
 function createBlenderLightObject() {
   const group = new THREE.Group();
   group.name = 'Light';
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), new THREE.MeshBasicMaterial({ color: 0xffcc00, side: THREE.DoubleSide }));
-  ring.name = 'Light';
-  ring.rotation.x = Math.PI / 2;
-  group.add(ring);
-  group.ring = ring;
+  // Compact solid source glyph keeps every light type discoverable without a ring/halo.
+  const marker = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffd76a, toneMapped: false, depthWrite: false }));
+  marker.name = 'Light Source Marker';
+  marker.userData.isEditorHelper = true;
+  marker.castShadow = false;
+  marker.receiveShadow = false;
+  marker.raycast = () => {};
+  group.add(marker);
+  group.lightMarker = marker;
 
-  // Virtual touch-friendly pick radius: no fake rendered sphere is added to the light.
+  // Virtual touch-friendly pick radius, independent of the tiny visual marker.
   group.raycast = function(raycaster, intersections) {
     const center = this.getWorldPosition(new THREE.Vector3());
     const hit = raycaster.ray.intersectSphere(new THREE.Sphere(center, 0.62), new THREE.Vector3());
@@ -6016,6 +5956,13 @@ function createBlenderLightObject() {
   light.shadow.mapSize.height = 1024;
   group.add(light);
   group.light = light;
+  // Display/picking helpers are editor-only: never enter shadow or receiver passes.
+  group.traverse(object => {
+    if (!object.isLight) {
+      object.castShadow = false;
+      object.receiveShadow = false;
+    }
+  });
 
   group.position.set(3, 4, 3);
   return group;
@@ -6590,7 +6537,7 @@ FE.register('core',{
     shadowFloor.visible=false;
     sc.add(shadowFloor);
 
-    // Default Cube at [0, 0, 0] with Blender Workbench clay appearance
+    // Default Cube at [0, 0, 0] with Blender Workbench clay appearance.
     const cubeMat=new THREE.MeshStandardMaterial({color:0x82899d, roughness:.65, metalness:0.0, emissive:0x000000});
     const cube=new THREE.Mesh(new THREE.BoxGeometry(1.4,1.4,1.4),cubeMat);
     cube.name = 'Cube';
@@ -6950,7 +6897,7 @@ FE.register('core',{
     this.history=history;this.commitHistory=commitHistory;this.undo=undoHistory;this.redo=redoHistory;this.setHistoryLimit=v=>{const n=Number(v);if(Number.isFinite(n)){history.limit=Math.min(1000,Math.max(1,Math.round(n)));trimHistoryStack(history.undo);trimHistoryStack(history.redo)}};
     const transformJSON=o=>({position:o.position.toArray(),quaternion:o.quaternion.toArray(),scale:o.scale.toArray(),visible:o.visible});
     this.serializeAutosave=()=>{const seen=new Set(),custom=[];for(const[key,obj]of Object.entries(this.customObjects||{})){if(!obj||seen.has(obj)||obj.userData?.isLandscape)continue;seen.add(obj);try{custom.push({key,json:obj.toJSON()})}catch(error){console.warn('[Auto-save] Skipping unsupported object:',obj.name,error)}}return{version:1,studio:'core',savedAt:Date.now(),cube:this.cube?.parent===sc?this.cube.toJSON():null,custom,landscape:window.__lastLandscapeImportPayload||null,camera:{viewport:transformJSON(viewportCamera),scene:transformJSON(sceneCamera),sceneTarget:sceneCameraTarget.toArray(),orbitTarget:oc.target.toArray(),isCameraView,activeObject,shading:currentShadingMode,exposure:r.toneMappingExposure,light:this.blenderLight?{position:this.blenderLight.position.toArray(),quaternion:this.blenderLight.quaternion.toArray(),scale:this.blenderLight.scale.toArray(),visible:this.blenderLight.visible,intensity:this.blenderLight.light.intensity,color:this.blenderLight.light.color.getHex()}:null,cameraHelper:this.blenderCam?{position:this.blenderCam.position.toArray(),quaternion:this.blenderCam.quaternion.toArray(),scale:this.blenderCam.scale.toArray(),visible:this.blenderCam.visible}:null}}};
-    this.restoreAutosave=async data=>{if(!data||data.version!==1)return false;const loader=new THREE.ObjectLoader();try{if(data.cube){const restored=loader.parse(data.cube);cube.geometry=restored.geometry;cube.material=restored.material;cube.position.copy(restored.position);cube.quaternion.copy(restored.quaternion);cube.scale.copy(restored.scale);cube.visible=restored.visible;cube.userData=cloneHistoryData(restored.userData||{});if(cube.parent!==sc)sc.add(cube);this.cube=cube}else{sc.remove(cube);this.cube=null}for(const obj of new Set(Object.values(this.customObjects||{})))if(obj?.parent===sc&&(!obj.userData?.isLandscape||!data.landscape))sc.remove(obj);this.customObjects={};for(const item of data.custom||[]){if(!item?.json||!item.key)continue;const obj=loader.parse(item.json);sc.add(obj);this.customObjects[item.key]=obj}if(data.landscape)buildLandscapeFromPayload(data.landscape,sc,THREE);const camData=data.camera||{},applyPose=(camera,state)=>{if(!camera||!state)return;if(state.position)camera.position.fromArray(state.position);if(state.quaternion)camera.quaternion.fromArray(state.quaternion);if(state.scale)camera.scale.fromArray(state.scale);if(state.visible!==undefined)camera.visible=state.visible;camera.updateProjectionMatrix?.();camera.updateMatrixWorld(true)};applyPose(viewportCamera,camData.viewport);applyPose(sceneCamera,camData.scene);if(camData.sceneTarget)sceneCameraTarget.fromArray(camData.sceneTarget);if(camData.orbitTarget)oc.target.fromArray(camData.orbitTarget);if(camData.light){if(blenderLight.parent!==sc)sc.add(blenderLight);this.blenderLight=blenderLight;this.light=blenderLight.light;blenderLight.position.fromArray(camData.light.position||[0,0,0]);blenderLight.quaternion.fromArray(camData.light.quaternion||[0,0,0,1]);blenderLight.scale.fromArray(camData.light.scale||[1,1,1]);blenderLight.visible=camData.light.visible!==false;blenderLight.light.intensity=Number(camData.light.intensity)||0;blenderLight.light.color.setHex(camData.light.color||0xffffff)}else{sc.remove(blenderLight);this.blenderLight=null;this.light=null}if(camData.cameraHelper){if(blenderCam.parent!==sc)sc.add(blenderCam);this.blenderCam=blenderCam;blenderCam.position.fromArray(camData.cameraHelper.position||[0,0,0]);blenderCam.quaternion.fromArray(camData.cameraHelper.quaternion||[0,0,0,1]);blenderCam.scale.fromArray(camData.cameraHelper.scale||[1,1,1]);blenderCam.visible=camData.cameraHelper.visible!==false}else{sc.remove(blenderCam);this.blenderCam=null}isCameraView=!!camData.isCameraView;currentShadingMode=camData.shading||'solid';if(Number.isFinite(camData.exposure))r.toneMappingExposure=camData.exposure;activeObject=camData.activeObject||'cube';if(activeObject==='cube'&&!this.cube)activeObject='none';window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(activeObject,'autosave-recovery');oc.update();history.undo.length=history.redo.length=0;history.current=captureCoreState();FE.toast('Recovered last Workspace auto-save');return true}catch(error){console.error('[Auto-save recovery] Workspace restore failed:',error);FE.toast('Could not recover the last Workspace auto-save');return false}};
+    this.restoreAutosave=async data=>{if(!data||data.version!==1)return false;const loader=new THREE.ObjectLoader();try{if(data.cube){const restored=loader.parse(data.cube);if(restored.geometry&&restored.geometry!==cube.geometry)restored.geometry.dispose();cube.material=restored.material;cube.position.copy(restored.position);cube.quaternion.copy(restored.quaternion);cube.scale.copy(restored.scale);cube.visible=restored.visible;cube.userData=cloneHistoryData(restored.userData||{});if(cube.parent!==sc)sc.add(cube);this.cube=cube}else{sc.remove(cube);this.cube=null}for(const obj of new Set(Object.values(this.customObjects||{})))if(obj?.parent===sc&&(!obj.userData?.isLandscape||!data.landscape))sc.remove(obj);this.customObjects={};for(const item of data.custom||[]){if(!item?.json||!item.key)continue;const obj=loader.parse(item.json);sc.add(obj);this.customObjects[item.key]=obj}if(data.landscape)buildLandscapeFromPayload(data.landscape,sc,THREE);const camData=data.camera||{},applyPose=(camera,state)=>{if(!camera||!state)return;if(state.position)camera.position.fromArray(state.position);if(state.quaternion)camera.quaternion.fromArray(state.quaternion);if(state.scale)camera.scale.fromArray(state.scale);if(state.visible!==undefined)camera.visible=state.visible;camera.updateProjectionMatrix?.();camera.updateMatrixWorld(true)};applyPose(viewportCamera,camData.viewport);applyPose(sceneCamera,camData.scene);if(camData.sceneTarget)sceneCameraTarget.fromArray(camData.sceneTarget);if(camData.orbitTarget)oc.target.fromArray(camData.orbitTarget);if(camData.light){if(blenderLight.parent!==sc)sc.add(blenderLight);this.blenderLight=blenderLight;this.light=blenderLight.light;blenderLight.position.fromArray(camData.light.position||[0,0,0]);blenderLight.quaternion.fromArray(camData.light.quaternion||[0,0,0,1]);blenderLight.scale.fromArray(camData.light.scale||[1,1,1]);blenderLight.visible=camData.light.visible!==false;blenderLight.light.intensity=Number(camData.light.intensity)||0;blenderLight.light.color.setHex(camData.light.color||0xffffff)}else{sc.remove(blenderLight);this.blenderLight=null;this.light=null}if(camData.cameraHelper){if(blenderCam.parent!==sc)sc.add(blenderCam);this.blenderCam=blenderCam;blenderCam.position.fromArray(camData.cameraHelper.position||[0,0,0]);blenderCam.quaternion.fromArray(camData.cameraHelper.quaternion||[0,0,0,1]);blenderCam.scale.fromArray(camData.cameraHelper.scale||[1,1,1]);blenderCam.visible=camData.cameraHelper.visible!==false}else{sc.remove(blenderCam);this.blenderCam=null}isCameraView=!!camData.isCameraView;currentShadingMode=camData.shading||'solid';if(Number.isFinite(camData.exposure))r.toneMappingExposure=camData.exposure;const recoveredDefaultMesh=this.cube?.parent===sc?'cube':Object.keys(this.customObjects||{}).find(id=>{const obj=this.customObjects[id];return !!obj&&obj.parent===sc&&(obj.isMesh||typeof obj.getObjectByProperty==='function')})||Object.keys(this.customObjects||{})[0]||'none';activeObject=recoveredDefaultMesh;window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(activeObject,'autosave-recovery');oc.update();history.undo.length=history.redo.length=0;history.current=captureCoreState();FE.toast('Recovered last Workspace auto-save');return true}catch(error){console.error('[Auto-save recovery] Workspace restore failed:',error);FE.toast('Could not recover the last Workspace auto-save');return false}};
     historyCtl=history;
 
     window.sceneCube = cube;
@@ -8017,6 +7964,10 @@ function changeLightType(newType) {
   if (oldLight) group.remove(oldLight);
   group.add(newLight);
   group.light = newLight;
+  if (group.lightMarker) {
+    group.lightMarker.visible = true;
+    group.lightMarker.material.color.copy(color);
+  }
   eng.light = newLight;
   window.activeLight = newLight;
 
@@ -8036,8 +7987,6 @@ function changeLightType(newType) {
     group.sunHelper.visible = (newType === 'directional');
     if (newType === 'directional') updateSunHelper();
   }
-  if (group.ring) group.ring.visible = (newType !== 'ambient');
-
   updateLightUIForType(newType);
 
   const typeLabels = { point: 'Point Light 1', directional: 'Directional Light 1', spot: 'Spot Light 1', ambient: 'Ambient Light 1' };
@@ -8105,7 +8054,7 @@ window.addEventListener('lightSettingsChange', function (e) {
 
   if (id === 'light-color') {
     if (light) light.color.set(value);
-    if (group.ring) group.ring.material.color.set(value);
+    if (group.lightMarker) group.lightMarker.material.color.set(value);
   } else if (id === 'light-intensity') {
     if (light) light.intensity = parseFloat(value);
   } else if (id === 'light-pos-x' || id === 'light-pos-y' || id === 'light-pos-z') {
@@ -8841,7 +8790,7 @@ const modifiersData = {
 
       // Common Dynamics & Vorticity
       ["Vorticity Confinement","range",0,1,0.12,0.02],
-      ["Resolution","range",32,64,64,8],["Surface Resolution","range",16,64,48,4],
+      ["Resolution","range",32,96,80,8],["Surface Resolution","range",16,96,64,4],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -10140,7 +10089,7 @@ function renderModifierStack() {
       
       body.appendChild(fieldEl);
     });
-    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the Rust/WASM solver loads. Flow emits from the selected mesh surface. Current browser solver budget: up to 512 SPH particles and 64 surface cells; a true 256³ grid/full CFD solver is not yet available.';body.appendChild(hint); }
+    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the Rust/WASM solver loads. Flow emits from the selected mesh surface. Current browser solver budget: up to 768 SPH particles and 96 surface cells; higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
 
     const buttons = document.createElement("div");
     buttons.className = "buttons";

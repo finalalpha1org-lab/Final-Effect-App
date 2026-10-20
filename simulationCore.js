@@ -1,6 +1,6 @@
 /* Rust/WASM numerical solver bridge for cloth, soft-body, liquid and buoyant tracers. */
 (function installSimulationEngine(global) {
-  const MAX_PARTICLES = 512;
+  const MAX_PARTICLES = 768;
   const DEFORMABLE_FIXED_STEP = 1 / 120;
   const MAX_DEFORMABLE_SUBSTEPS = 8;
   const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
@@ -188,7 +188,7 @@
   function lattice(bounds, params, liquid) {
     const sx = bounds[3] - bounds[0], sy = bounds[4] - bounds[1], sz = bounds[5] - bounds[2];
     const maxDim = Math.max(sx, sy, sz, 0.25);
-    const resolution = clamp(Math.round(number(params, 'Resolution', 64) / 8), 4, 8);
+    const resolution = clamp(Math.round(number(params, 'Resolution', 80) / 8), 4, 12);
     let nx = Math.max(3, Math.round(resolution * sx / maxDim));
     let ny = Math.max(3, Math.round(resolution * sy / maxDim));
     let nz = Math.max(3, Math.round(resolution * sz / maxDim));
@@ -1069,7 +1069,7 @@
         lowX = b[0] - pad; lowY = b[1] - pad; lowZ = b[2] - pad; highX = b[3] + pad; highY = b[4] + pad; highZ = b[5] + pad;
       }
       const sx = Math.max(highX - lowX, 0.25), sy = Math.max(highY - lowY, 0.25), sz = Math.max(highZ - lowZ, 0.25), maxDim = Math.max(sx, sy, sz);
-      const cells = clamp(Math.round(number(record.params, 'Surface Resolution', 48)), 16, 64);
+      const cells = clamp(Math.round(number(record.params, 'Surface Resolution', 64)), 16, 96);
       const nx = Math.max(6, Math.round(cells * sx / maxDim)), ny = Math.max(6, Math.round(cells * sy / maxDim)), nz = Math.max(6, Math.round(cells * sz / maxDim));
       const dx = sx / nx, dy = sy / ny, dz = sz / nz, wx = nx + 1, wy = ny + 1, totalNodes = wx * wy * (nz + 1);
       const field = new Float32Array(totalNodes), nodePos = new Float32Array(totalNodes * 3), idAt = (x, y, z) => x + wx * (y + wy * z);

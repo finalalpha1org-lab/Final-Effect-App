@@ -53,12 +53,14 @@ test('Flow emits from the assigned mesh surface and tracer renderers use camera-
   assert.ok(appHtml.includes('getActiveCamera:()=>isCameraView?sceneCamera:viewportCamera,getShadingMode:()=>currentShadingMode'),'simulation sprites must use the active viewport/shading state');
   assert.ok(appHtml.includes('stepPhysicsSimulations(1/60)'),'simulation domains should keep stepping in realtime while the viewport is open');
   assert.ok(appHtml.includes('Flow emits from the selected mesh surface'));
-  assert.ok(appHtml.includes('up to 512 SPH particles and 64 surface cells'),'the actual browser solver budget should not be mislabeled as a 256³ solver');
+  assert.ok(appHtml.includes('up to 768 SPH particles and 96 surface cells'),'the actual browser solver budget should not be mislabeled as a 256³ solver');
 });
 
 test('liquid preview retains the physical water material and explicitly bounded surface resolution',()=>{
   assert.ok(source.includes("preset === 'Water' ? 0x2d91b4")||source.includes('MeshPhysicalMaterial({ color, metalness: 0'));
-  assert.ok(source.includes("'Surface Resolution', 48)), 16, 64"),'isosurface quality should be raised while retaining a mobile-safe 64-cell cap');
+  assert.ok(source.includes('const MAX_PARTICLES = 768'));
+  assert.ok(source.includes("'Surface Resolution', 64)), 16, 96"),'isosurface reconstruction should use the higher 96-cell setting without claiming a 256³ solver');
+  assert.ok(source.includes("'Resolution', 80) / 8), 4, 12"),'the flow grid preset should expose the expanded particle budget');
 });
 
 test('Collision modifier projects deformable nodes onto real mesh triangles and applies friction/restitution',()=>{
