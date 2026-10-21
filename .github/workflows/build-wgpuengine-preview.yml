@@ -1,0 +1,83 @@
+name: Build wgpuEngine C++ WebGPU prototype
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-wgpuengine-preview.yml'
+      - 'wgpu-engine-preview/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-webgpu-sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Final Effect source
+        uses: actions/checkout@v6
+
+      - name: Prefer the high-performance adapter for the Three.js fallback
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('index.html')
+          source = path.read_text()
+          old = "const r=new THREE.WebGLRenderer({canvas,antialias:true});"
+          new = "const r=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});"
+          if old in source:
+              if source.count(old) != 1:
+                  raise SystemExit('Expected exactly one workspace renderer constructor')
+              path.write_text(source.replace(old, new, 1))
+          elif new not in source:
+              raise SystemExit('Workspace renderer constructor changed; refusing an unsafe patch')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          if ! git diff --cached --quiet; then
+            git commit -m 'Prefer high-performance GPU for workspace preview'
+            git push origin HEAD:main
+          fi
+
+      - name: Checkout upstream wgpuEngine browser sample
+        uses: actions/checkout@v6
+        with:
+          repository: upf-gti/wgpuEngineSample
+          ref: main
+          submodules: recursive
+          path: wgpuEngineSample
+
+      - name: Install Emscripten SDK
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 5.0.1
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure WebAssembly build
+        run: emcmake cmake -S wgpuEngineSample -B build-wgpu -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile C++ WebGPU sample
+        run: cmake --build build-wgpu --parallel 2
+
+      - name: Validate browser build outputs
+        run: |
+          test -s build-wgpu/sample_project.html
+          test -s build-wgpu/sample_project.js
+          test -s build-wgpu/sample_project.wasm
+          python3 - <<'PY'
+          from pathlib import Path
+          wasm = Path('build-wgpu/sample_project.wasm').read_bytes()
+          assert wasm[:4] == b'\x00asm', 'invalid WebAssembly module'
+          print(f'WebAssembly module: {len(wasm)} bytes')
+          PY
+
+      - name: Save compiled C++/WASM prototype artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wgpuengine-web-preview
+          path: build-wgpu/
+          if-no-files-found: error
+          retention-days: 14
