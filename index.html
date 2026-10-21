@@ -6460,7 +6460,7 @@ FE.register('core',{
     let sceneCameraTarget=new THREE.Vector3(0,0,0);
     sceneCamera.position.set(-4.5, 3.5, 4.5);
 
-    const r=new THREE.WebGLRenderer({canvas,antialias:true});
+    const r=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
     canvas.style.touchAction = 'none';
     canvas.style.userSelect = 'none';
     r.setPixelRatio(Math.min(devicePixelRatio,2));
