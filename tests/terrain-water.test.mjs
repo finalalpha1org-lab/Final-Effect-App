@@ -25,6 +25,36 @@ test('ocean, lagoon and murky profiles have independent color, wave and optical 
   assert.ok(profiles[2].roughness>profiles[0].roughness&&profiles[2].transparency<profiles[0].transparency&&profiles[2].turbidity>profiles[0].turbidity);
 });
 
+test('water is one continuous mesh with a shared adaptive inner/far ring boundary',()=>{
+  assert.match(html,/function makeWaterGeometry\(q\)/,'the high-detail inner and low-detail far radii must share one buffer geometry');
+  assert.doesNotMatch(html,/const wOut=new THREE\.Mesh/,'do not render a separate far-field water mesh that can leave a visible join');
+  assert.doesNotMatch(html,/water\.add\(wOut\)/);
+  assert.match(html,/water\.geometry=makeWaterGeometry\(q\)/);
+});
+
+test('adaptive water buffer has exactly one shared vertex row at the near/far join',()=>{
+  const start=html.indexOf('const WATER_QUALITY=['),end=html.indexOf('const WH=',start),code=html.slice(start,end);
+  class Attribute{constructor(array,itemSize){this.array=array;this.itemSize=itemSize}}
+  class Geometry{constructor(){this.attributes={}}setAttribute(name,value){this.attributes[name]=value}setIndex(value){this.index=value}computeBoundingBox(){}computeBoundingSphere(){}}
+  const api=new Function('THREE',`${code};return{WATER_QUALITY,makeWaterGeometry}`)({BufferAttribute:Attribute,BufferGeometry:Geometry});
+  for(let q=0;q<api.WATER_QUALITY.length;q++){
+    const cfg=api.WATER_QUALITY[q],g=api.makeWaterGeometry(q),theta=cfg.inner[0],near=cfg.inner[1],far=cfg.far[1],row=theta+1;
+    assert.equal(g.attributes.position.array.length/3,(near+far+1)*row,'there is one, not two, vertex rows at the radius-190 boundary');
+    for(let i=0;i<row;i++){const p=(near*row+i)*3,x=g.attributes.position.array[p],z=g.attributes.position.array[p+2];assert.ok(Math.abs(Math.hypot(x,z)-190)<1e-3,'all join vertices lie on the exact shared circle')}
+    assert.equal(g.index.array.length,(near+far)*theta*6);
+    const pos=g.attributes.position.array,radii=Array.from({length:near+far+1},(_,j)=>Math.hypot(pos[j*row*3],pos[j*row*3+2])),stepIn=radii[near]-radii[near-1],stepOut=radii[near+1]-radii[near];
+    assert.ok(Math.abs(stepIn-stepOut)<stepIn*.01,'radial spacing must pass through the old join without a sudden mesh-density jump');
+    for(let j=near+2;j<radii.length;j++)assert.ok(radii[j]-radii[j-1]>=radii[j-1]-radii[j-2]-1e-3,'far-field radial spacing should grow gradually, not jump at one ring');
+  }
+});
+
+test('inner and far water rings share angular samples so the seam cannot open at high quality',()=>{
+  const start=html.indexOf('const WATER_QUALITY=['),end=html.indexOf('const WH=',start),block=html.slice(start,end);
+  const rings=[...block.matchAll(/\{inner:\[(\d+),(\d+)\],far:\[(\d+),(\d+)\]/g)];
+  assert.equal(rings.length,4,'all four water quality presets should define matching ring pairs');
+  for(const [,innerTheta,,farTheta] of rings)assert.equal(innerTheta,farTheta,'inner and far rings need identical angular vertices at their shared radius');
+});
+
 test('terrain water is shader-displaced on a MeshPhysicalMaterial with depth tint and dynamic reflections',()=>{
   assert.match(html,/new THREE\.MeshPhysicalMaterial/);
   assert.match(html,/waterMat\.onBeforeCompile=/);
@@ -32,14 +62,16 @@ test('terrain water is shader-displaced on a MeshPhysicalMaterial with depth tin
   assert.match(html,/transmission:Math\.max/);
   assert.match(html,/transformed\.y\+=waterWave\*amp\*waterFade/);
   assert.match(html,/float waterDepth=max\(wy\+tsH\(w\.xz\)-th\(w\.xz\),0\.\)/);
-  assert.match(html,/new THREE\.CubeCamera/);
+  assert.match(html,/new THREE\.CubeCamera/,'water reflections use the standard physical environment-map path');
   assert.match(html,/water\.visible=false/);
   assert.match(html,/waterReflectionCam\.update\(ren,scene\)/);
   assert.match(html,/waterMat\.envMap=waterReflectionRT\.texture/);
-  assert.match(html,/\{inner:\[320,160\],far:\[320,64\],reflection:128,interval:90/,'mobile uses a bounded, low-frequency reflection capture instead of disabling water reflections');
+  assert.doesNotMatch(html,/uPlanarReflection|waterPlanarReflector|new THREE\.Reflector/,'do not overlay the broken projective reflection color on the water material');
+  assert.match(html,/\{inner:\[320,160\],far:\[320,64\],reflection:128,interval:90/,'mobile uses a bounded cube reflection target');
   const probe=html.slice(html.indexOf('function updateWaterReflection()'),html.indexOf('const WATER_PROFILES=['));
   assert.doesNotMatch(probe,/waterQuality===0/,'mobile water still receives the low-resolution environment reflection');
-  assert.match(html,/waterReflectionFailed=true;waterReflectionRetryAt=performance\.now\(\)\+3000;if\(waterMat\.envMap!==null\)\{waterMat\.envMap=null;waterMat\.needsUpdate=true\}/,'a probe failure briefly falls back to Fresnel and retries later without spamming a red banner');
+  assert.match(html,/waterReflectionFailed=true;waterReflectionRetryAt=performance\.now\(\)\+3000/,'a reflection-capture failure retries without discarding the last valid environment texture');
+  assert.doesNotMatch(html,/waterMat\.envMap=null/);
   assert.doesNotMatch(html,/showErr\('Water reflection probe failed/);
   assert.ok(html.includes('varying vec3 waterWorldNormal'));
   assert.ok(html.includes('waveNoise(w.xz*waterTriScale'));
@@ -60,42 +92,45 @@ test('ocean vertex displacement is driven by three Tessendorf inverse-FFT cascad
   assert.ok(!html.includes('waveCount=N>6?11.:3.'),'legacy Gerstner sine-stack must not remain the primary ocean solver');
 });
 
-test('water reflection probe renders into the exact cubemap sampled by the material and remains stable through zoom',()=>{
-  assert.match(html,/const restoreReflectionScene=beginWaterReflectionCapture\(\),rx=exploreMode\?cam\.position\.x:oc\.target\.x,rz=exploreMode\?cam\.position\.z:oc\.target\.z;waterReflectionCam\.position\.set\(rx,water\.position\.y\+\.15,rz\)/,'OrbitControls zoom must not drag the cubemap probe around with the camera dolly, and the probe must capture only the procedural world');
+test('water reflections use a standard MeshPhysicalMaterial environment map rather than a hand-projected color overlay',()=>{
   assert.match(html,/let waterReflectionRT=makeWaterReflectionTarget\(\)/);
-  assert.match(html,/new THREE\.CubeCamera\(\.1,1600,waterReflectionRT\)/,'the capture must write to the texture sampled by the water material');
+  assert.match(html,/new THREE\.CubeCamera\(\.1,1600,waterReflectionRT\)/);
   assert.match(html,/waterReflectionCam\.renderTarget=waterReflectionRT/);
-  assert.doesNotMatch(html,/waterReflectionWorkRT/,'do not capture into a buffer that the water never samples');
+  assert.match(html,/waterReflectionCam\.update\(ren,scene\)/);
+  assert.match(html,/waterMat\.envMap=waterReflectionRT\.texture/);
+  assert.match(html,/waterMat\.envMapIntensity=exClamp\(U\.uReflect\.value,0,1\.5\)/);
+  assert.doesNotMatch(html,/Reflector|uPlanarReflection|planarSrgbToLinear/,'avoid projective reflection overlays that create hard color bands');
   assert.match(html,/waterReflectionViewAnchor/);
+  assert.match(html,/waterReflectionOrientationAnchor/,'camera rotation as well as camera position invalidates the captured view');
   assert.match(html,/now-waterReflectionViewMovedAt<350/,'reflection capture waits until the camera has stopped moving');
-  assert.match(html,/waterReflectionFailed&&performance\.now\(\)<waterReflectionRetryAt/,'a transient capture error should use fallback briefly, not permanently disable reflections');
+  assert.match(html,/waterReflectionFailed&&performance\.now\(\)<waterReflectionRetryAt/,'a transient capture error retries rather than permanently disabling reflections');
   assert.match(html,/waterReflectionRetryAt=performance\.now\(\)\+3000/);
   assert.match(html,/waterReflectionReady=true;waterReflectionFailed=false;waterReflectionRetryAt=0/);
-  assert.match(html,/waterMat\.envMap=waterReflectionRT\.texture/);
 });
 
 test('reflection capture keeps procedural terrain, sky, lights and flora but restores/hides unrelated scene objects',()=>{
   const start=html.indexOf('function beginWaterReflectionCapture()'),end=html.indexOf('function updateWaterReflection()',start);
   assert.ok(start>=0&&end>start,'reflection capture needs an explicit world-only visibility mask');
   const source=html.slice(start,end);
-  const terrain={visible:true},sky={visible:true},sun={visible:true,target:{visible:true}},hemi={visible:true},envFill={visible:true},water={visible:true},waterReflectionCam={visible:true};
+  const terrain={visible:true},sky={visible:true},sun={visible:true,intensity:1,target:{visible:true}},hemi={visible:true},envFill={visible:true},water={visible:true},waterReflectionCam={visible:true};
   const cloud={visible:true},grass={visible:true},rock={visible:true},helper={visible:true},userObject={visible:true},alreadyHidden={visible:false},mapRoot={visible:true};
   const manualTree={visible:true,userData:{n:'Pine'}},manualRock={visible:true,userData:{n:'Rock'}},house={visible:true,userData:{n:'House'}};
-  const ctx={ter:terrain,sky,sun,hemi,envFill,water,waterReflectionCam,clouds:[cloud],mapRoot,objs:[manualTree,manualRock,house],U:{uNS:{value:1},uNM:{value:2},uNP:{value:3}},KIND:{grass:{meshes:[grass],lowMeshes:[],shadowMeshes:[]},rock:{meshes:[rock],lowMeshes:[],shadowMeshes:[]}},scene:{children:[terrain,sky,sun,sun.target,hemi,envFill,water,waterReflectionCam,cloud,grass,rock,helper,userObject,alreadyHidden,mapRoot,manualTree,manualRock,house]}};
+  const ctx={ter:terrain,sky,sun,hemi,envFill,water,waterReflectionCam,clouds:[cloud],mapRoot,objs:[manualTree,manualRock,house],U:{uNS:{value:1},uNM:{value:2},uNP:{value:3}},KIND:{grass:{meshes:[grass],lowMeshes:[],shadowMeshes:[]},rock:{meshes:[rock],lowMeshes:[],shadowMeshes:[]}},scene:{children:[terrain,sky,sun,sun.target,hemi,envFill,water,cloud,grass,rock,helper,userObject,alreadyHidden,mapRoot,manualTree,manualRock,house]}};
   vm.runInNewContext(source+';this.begin=beginWaterReflectionCapture;',ctx);
-  const restore=ctx.begin();assert.equal(water.visible,false);for(const o of [terrain,sky,sun,hemi,envFill,cloud,grass,rock,mapRoot,manualTree,manualRock])assert.equal(o.visible,true);for(const o of [helper,userObject,house])assert.equal(o.visible,false);assert.equal(alreadyHidden.visible,false);assert.deepEqual([ctx.U.uNS.value,ctx.U.uNM.value,ctx.U.uNP.value],[0,0,0]);
-  restore();assert.equal(water.visible,true);for(const o of [helper,userObject,house])assert.equal(o.visible,true);assert.equal(alreadyHidden.visible,false);assert.deepEqual([ctx.U.uNS.value,ctx.U.uNM.value,ctx.U.uNP.value],[1,2,3]);
+  const restore=ctx.begin();assert.equal(water.visible,false);assert.equal(sun.visible,false,'suppress direct sunlight in the reflection capture to avoid a bright light-only water glint');for(const o of [terrain,sky,hemi,envFill,cloud,grass,rock,mapRoot,manualTree,manualRock])assert.equal(o.visible,true);for(const o of [helper,userObject,house])assert.equal(o.visible,false);assert.equal(alreadyHidden.visible,false);assert.deepEqual([ctx.U.uNS.value,ctx.U.uNM.value,ctx.U.uNP.value],[0,0,0]);
+  restore();assert.equal(water.visible,true);assert.equal(sun.visible,true);for(const o of [helper,userObject,house])assert.equal(o.visible,true);assert.equal(alreadyHidden.visible,false);assert.deepEqual([ctx.U.uNS.value,ctx.U.uNM.value,ctx.U.uNP.value],[1,2,3]);
 });
 
-test('water keeps Fresnel/depth/foam and a dedicated reflection probe without a global material-darkening PMREM',()=>{
+test('water keeps its PBR tint, Fresnel/depth/foam, and standard cubemap environment reflection',()=>{
   assert.ok(html.includes('waterFresnel=.02+.98*pow(1.-clamp(waterNdotV,0.,1.),5.)'));
   assert.ok(!html.includes('skyReflectionTint=mix(hor,top'),'do not overlay a synthetic sky tint over the captured world');
-  assert.ok(html.includes('reflectedLight.directSpecular*=.22'),'reduce the inaccurate direct-light hotspot while retaining the environment map');
+  assert.ok(html.includes('reflectedLight.directSpecular*=.22'),'retain the prior balanced direct specular response');
   assert.ok(html.includes('waterDepth=max(wy+tsH(w.xz)-th(w.xz),0.)'));
   assert.ok(html.includes('waterMat.transmission=Math.max'));
   assert.ok(html.includes('function createShoreSpray()')&&html.includes('function updateShoreSpray(dt)'));
   assert.ok(html.includes('Ocean shoreline spray'));
-  assert.ok(html.includes('new THREE.CubeCamera')&&html.includes('waterReflectionCam.update(ren,scene)'),'water retains its own live sky/scene reflections');
+  assert.ok(html.includes('new THREE.CubeCamera')&&html.includes('waterReflectionCam.update(ren,scene)'),'water uses the established MeshPhysical environment reflection path');
+  assert.ok(html.includes('waterMat.envMap=waterReflectionRT.texture'));
   assert.ok(html.includes('scene.environment=null')&&!html.includes('scene.environment=rt.texture'),'the lighting toggle must not install a dark global environment into every PBR material');
 });
 
@@ -112,8 +147,8 @@ test('FFT cascades fade by footprint and water quality exposes a higher-resoluti
   assert.match(html,/waterMat=new THREE\.MeshPhysicalMaterial\([^\n]*transparent:false[^\n]*depthWrite:true/);
   assert.ok(html.includes('ter.receiveShadow=true;ter.castShadow=false'),'terrain should receive object shadows without self-shadowing acne');
   assert.ok(html.includes('sun.shadow.bias=-.0002;sun.shadow.normalBias=.018'),'shadow acne near rock/root contact should be mitigated with depth/normal bias');
-  assert.ok(html.includes('reflection:128,interval:90,transmission:.28'),'mobile reflections remain enabled at a low frequency and safe resolution');
-  assert.ok(html.includes('{inner:[768,320],far:[640,128],reflection:192,interval:24,transmission:1}'));
+  assert.ok(html.includes('reflection:128,interval:90,transmission:.28'),'mobile reflections remain enabled at the bounded prior resolution');
+  assert.ok(html.includes('{inner:[768,320],far:[768,128],reflection:192,interval:24,transmission:1}'));
   assert.ok(html.includes("[3,'Water: Ultra FFT']"));
   assert.ok(html.includes('FFT_RESOLUTION=[64,64,128,256]'));
 });

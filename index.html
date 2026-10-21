@@ -8138,6 +8138,12 @@ if (btnSwitchRendered) {
 /* =========================================================
    8. COMPREHENSIVE VIEWPORT SHADING ENGINE (BLENDER CONGRUENT)
    ========================================================= */
+const shadingMaterialOverrides=new Map(),shadingMeshOverrides=new Map();let shadingSuppressedLight=null,shadingSuppressedLightVisible=null,shadingShadowSnapshot=null;
+function applyShadingMaterialOverride(material,patch){if(!material)return;if(!shadingMaterialOverrides.has(material))shadingMaterialOverrides.set(material,{color:material.color?.clone?.()||null,emissive:material.emissive?.clone?.()||null,wireframe:material.wireframe,side:material.side,roughness:material.roughness,metalness:material.metalness,emissiveIntensity:material.emissiveIntensity});if(patch.color!==undefined&&material.color?.set)material.color.set(patch.color);if(patch.emissive!==undefined&&material.emissive?.setHex)material.emissive.setHex(patch.emissive);for(const key of ['wireframe','side','roughness','metalness','emissiveIntensity'])if(Object.prototype.hasOwnProperty.call(patch,key)&&material[key]!==undefined)material[key]=patch[key];material.needsUpdate=true}
+function applyShadingMeshOverride(mesh,patch){if(!mesh)return;if(!shadingMeshOverrides.has(mesh))shadingMeshOverrides.set(mesh,{castShadow:mesh.castShadow,receiveShadow:mesh.receiveShadow});for(const key of ['castShadow','receiveShadow'])if(Object.prototype.hasOwnProperty.call(patch,key))mesh[key]=patch[key]}
+function applyShadingMaterialToMesh(mesh,patch){const materials=Array.isArray(mesh?.material)?mesh.material:[mesh?.material];materials.filter(Boolean).forEach(material=>applyShadingMaterialOverride(material,patch))}
+function restoreShadingModeOverrides(){for(const [material,state] of shadingMaterialOverrides){if(state.color&&material.color?.copy)material.color.copy(state.color);if(state.emissive&&material.emissive?.copy)material.emissive.copy(state.emissive);for(const key of ['wireframe','side','roughness','metalness','emissiveIntensity'])if(state[key]!==undefined)material[key]=state[key];material.needsUpdate=true}shadingMaterialOverrides.clear();for(const [mesh,state] of shadingMeshOverrides){mesh.castShadow=state.castShadow;mesh.receiveShadow=state.receiveShadow}shadingMeshOverrides.clear()}
+function applyShadingRuntimeMode(shading,eng,light){const suppress=shading==='solid'||shading==='wireframe';if(suppress){if(light&&shadingSuppressedLight!==light){if(shadingSuppressedLight)shadingSuppressedLight.visible=shadingSuppressedLightVisible;shadingSuppressedLight=light;shadingSuppressedLightVisible=light.visible}if(light)light.visible=false;if(eng.r?.shadowMap){if(!shadingShadowSnapshot)shadingShadowSnapshot={renderer:eng.r,enabled:eng.r.shadowMap.enabled,type:eng.r.shadowMap.type};eng.r.shadowMap.enabled=false}return}if(shadingSuppressedLight){shadingSuppressedLight.visible=shadingSuppressedLightVisible;shadingSuppressedLight=null;shadingSuppressedLightVisible=null}if(shadingShadowSnapshot){shadingShadowSnapshot.renderer.shadowMap.enabled=shadingShadowSnapshot.enabled;shadingShadowSnapshot.renderer.shadowMap.type=shadingShadowSnapshot.type;shadingShadowSnapshot=null}}
 function applyLandscapeAwareShadingWorld(eng,fallbackColor){
   const scene=eng?.sc,imported=scene?.getObjectByName('ImportedLandscape')?._landscapeEnvironmentTexture;
   if(imported&&(!scene.environment||scene.environment===imported)){scene.environment=imported;scene.background=imported;return}
@@ -8145,8 +8151,9 @@ function applyLandscapeAwareShadingWorld(eng,fallbackColor){
 }
 function applyShadingMode(shading) {
   const eng = FE.engines.core;
-  if (!eng || !eng.cube) return;
+  if (!eng || !eng.sc || !eng.r) return;
 
+  restoreShadingModeOverrides();
   currentShadingMode = shading;
 
   // Keep all shading selectors synchronized
@@ -8155,6 +8162,7 @@ function applyShadingMode(shading) {
   });
 
   const activeLight = eng.blenderLight?.light || window.activeLight;
+  applyShadingRuntimeMode(shading,eng,activeLight);
 
   // Update light panel notice banner if visible
   const warnBanner = document.getElementById('light-mode-warning');
@@ -8166,12 +8174,7 @@ function applyShadingMode(shading) {
 
   if (shading === 'wireframe') {
     // 1. WIREFRAME: Pure mesh wireframe for ALL models in scene (Cube, Sphere, Cylinder, Cone, Torus, Plane, etc.)
-    allMeshes.forEach(mesh => {
-      if (mesh && mesh.material) {
-        mesh.material.wireframe = true;
-        if (mesh.material.color) mesh.material.color.set(0x94a3b8);
-      }
-    });
+    allMeshes.forEach(mesh => applyShadingMaterialToMesh(mesh,{wireframe:true,color:0x94a3b8}));
     if (activeLight) activeLight.visible = false;
     if (eng.shadowFloor) eng.shadowFloor.visible = false;
     if (eng.studioFloor) eng.studioFloor.visible = false;
@@ -8183,22 +8186,11 @@ function applyShadingMode(shading) {
   } else if (shading === 'solid') {
     // 2. SOLID (Blender Workbench): Clean diffuse / matcap preview for ALL models in scene
     allMeshes.forEach(mesh => {
-      if (mesh && mesh.material) {
-        mesh.material.wireframe = false;
-        mesh.material.side = THREE.DoubleSide;
-        // Keep original color if landscape/foliage/water/rock or has vertexColors
-        if (mesh.userData?.landscapeWater) {
-          mesh.material.wireframe=false;
-        } else if (mesh.userData?.isLandscape || mesh.parent?.name === 'ImportedLandscape' || mesh.geometry?.attributes?.color || mesh.isInstancedMesh) {
-          if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.85;
-          if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.0;
-        } else {
-          if (mesh.material.color) mesh.material.color.set(0x82899d);
-          if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.65;
-          if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.0;
-        }
-        mesh.material.emissive?.setHex(0x000000);
-      }
+      if(!mesh?.material)return;
+      const preservesSurfaceColor=!!(mesh.userData?.landscapeWater||mesh.userData?.isLandscape||mesh.parent?.name==='ImportedLandscape'||mesh.geometry?.attributes?.color||mesh.isInstancedMesh);
+      const patch={wireframe:false,side:THREE.DoubleSide,emissive:0x000000,roughness:preservesSurfaceColor ? .85 : .65,metalness:0};
+      if(!preservesSurfaceColor)patch.color=0x82899d;
+      applyShadingMaterialToMesh(mesh,patch);
     });
     // STRICT RULE: Disable user dynamic scene lights & shadows completely in Solid mode
     if (activeLight) activeLight.visible = false;
@@ -8213,34 +8205,12 @@ function applyShadingMode(shading) {
   } else if (shading === 'material') {
     // 3. MATERIAL PREVIEW: Uses HDRI environment map / Studio lighting reflections for ALL models with cast shadows
     allMeshes.forEach(mesh => {
-      if (mesh && mesh.material) {
-        mesh.material.wireframe = false;
-        mesh.material.side = THREE.DoubleSide;
-        if (!mesh.userData?.isLandscape && mesh.parent?.name !== 'ImportedLandscape' && !mesh.isInstancedMesh) {
-          if (mesh.material.color) mesh.material.color.set(0x6366f1);
-          if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.35;
-          if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.25;
-        }
-        mesh.material.emissive?.setHex(0x000000);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-      }
+      applyShadingMaterialToMesh(mesh,{wireframe:false,side:THREE.DoubleSide});
+      applyShadingMeshOverride(mesh,{castShadow:true,receiveShadow:true});
     });
-    // Active scene light; the transparent grid-aligned receiver shows shadows only.
-    if (activeLight) {
-      activeLight.visible = true;
-      activeLight.castShadow = true;
-      if (activeLight.shadow) {
-        activeLight.shadow.mapSize.width = 2048;
-        activeLight.shadow.mapSize.height = 2048;
-        activeLight.shadow.bias = -0.0005;
-        activeLight.shadow.radius = 2;
-      }
-    }
+    // Keep the user's authored light visibility, material and shadow settings.
     if (eng.studioFloor) eng.studioFloor.visible = false;
     if (eng.shadowFloor) { eng.shadowFloor.visible = true; eng.shadowFloor.receiveShadow = true; }
-    if (eng.r) { eng.r.shadowMap.enabled = true; eng.r.shadowMap.type = THREE.PCFSoftShadowMap; }
-    
     // Balanced studio key light casting clean soft shadows onto the grid-aligned receiver.
     if (eng.d) {
       eng.d.visible = true;
@@ -8265,33 +8235,12 @@ function applyShadingMode(shading) {
   } else if (shading === 'rendered') {
     // 4. RENDERED: Relies strictly on actual scene lights and real-time shadows for ALL models!
     allMeshes.forEach(mesh => {
-      if (mesh && mesh.material) {
-        mesh.material.wireframe = false;
-        mesh.material.side = THREE.DoubleSide;
-        if (!mesh.userData?.isLandscape && mesh.parent?.name !== 'ImportedLandscape' && !mesh.isInstancedMesh) {
-          if (mesh.material.color) mesh.material.color.set(0x6366f1);
-          if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.35;
-          if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.2;
-        }
-        mesh.material.emissive?.setHex(0x000000);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-      }
+      applyShadingMaterialToMesh(mesh,{wireframe:false,side:THREE.DoubleSide});
+      applyShadingMeshOverride(mesh,{castShadow:true,receiveShadow:true});
     });
-    // Activate dynamic scene lights with full shadows on the grid receiver and meshes
-    if (activeLight) {
-      activeLight.visible = true;
-      activeLight.castShadow = true;
-      if (activeLight.shadow) {
-        activeLight.shadow.mapSize.width = 2048;
-        activeLight.shadow.mapSize.height = 2048;
-        activeLight.shadow.bias = -0.0005;
-        activeLight.shadow.radius = 2;
-      }
-    }
+    // Honor the user's current scene light and per-light shadow settings.
     if (eng.studioFloor) eng.studioFloor.visible = false;
     if (eng.shadowFloor) { eng.shadowFloor.visible = true; eng.shadowFloor.receiveShadow = true; }
-    if (eng.r) { eng.r.shadowMap.enabled = true; eng.r.shadowMap.type = THREE.PCFSoftShadowMap; }
     // Turn off default studio directional light so the scene light realistically defines lighting
     if (eng.d) eng.d.visible = false;
     if (eng.fillLight) eng.fillLight.visible = false;

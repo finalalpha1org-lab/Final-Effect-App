@@ -79,6 +79,33 @@ test('Light selection rings are absent, light picking remains virtual, and helpe
   assert.ok(/group\.traverse\(node => \{ node\.castShadow = false; node\.receiveShadow = false; \}\)/.test(app));
 });
 
+test('workspace shading modes are reversible, preserve original materials, and work without the default Cube',()=>{
+  const start=app.indexOf('function applyShadingMode('),end=app.indexOf('/* Shading mode handler */',start),mode=app.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.doesNotMatch(mode,/if\s*\(!eng\s*\|\|\s*!eng\.cube\)\s*return/,'shading should still work when the Cube is deleted');
+  assert.ok(mode.includes('restoreShadingModeOverrides()'),'leaving a shading mode must restore its temporary display overrides');
+  const materialStart=mode.indexOf("} else if (shading === 'material') {"),renderStart=mode.indexOf("} else if (shading === 'rendered') {",materialStart);
+  assert.ok(materialStart>=0&&renderStart>materialStart);
+  assert.doesNotMatch(mode.slice(materialStart,renderStart),/color\.set\(0x6366f1\)|roughness\s*=\s*0\.35|metalness\s*=\s*0\.25|emissive\?\.setHex\(0x000000\)/,'Material Preview must use authored colors and PBR values');
+  assert.doesNotMatch(mode.slice(renderStart),/color\.set\(0x6366f1\)|roughness\s*=\s*0\.35|metalness\s*=\s*0\.2|emissive\?\.setHex\(0x000000\)/,'Rendered mode must not repaint user materials');
+  assert.ok(mode.includes('applyShadingRuntimeMode(shading,eng,activeLight)'),'light and shadow visibility must be restored when exiting Solid/Wireframe');
+});
+
+test('shading-mode material and shadow overrides restore authored state exactly',()=>{
+  const start=app.indexOf('const shadingMaterialOverrides=new Map()'),end=app.indexOf('function applyLandscapeAwareShadingWorld',start);
+  assert.ok(start>=0&&end>start);
+  class Color{constructor(value){this.value=value}clone(){return new Color(this.value)}copy(other){this.value=other.value;return this}set(value){this.value=value;return this}setHex(value){this.value=value;return this}}
+  const context={};
+  vm.runInNewContext(app.slice(start,end)+';this.apply=applyShadingMaterialOverride;this.applyMesh=applyShadingMeshOverride;this.restore=restoreShadingModeOverrides;',context);
+  const material={color:new Color(0xff8844),emissive:new Color(0x123456),wireframe:false,side:0,roughness:.42,metalness:.17,emissiveIntensity:.3,needsUpdate:false};
+  const mesh={castShadow:false,receiveShadow:false};
+  context.apply(material,{color:0x82899d,wireframe:true,side:2,roughness:.65,metalness:0,emissive:0});
+  context.applyMesh(mesh,{castShadow:true,receiveShadow:true});
+  assert.equal(material.color.value,0x82899d);assert.equal(material.wireframe,true);assert.equal(mesh.castShadow,true);
+  context.restore();
+  assert.equal(material.color.value,0xff8844);assert.equal(material.emissive.value,0x123456);assert.equal(material.wireframe,false);assert.equal(material.side,0);assert.equal(material.roughness,.42);assert.equal(material.metalness,.17);assert.equal(material.emissiveIntensity,.3);assert.equal(mesh.castShadow,false);assert.equal(mesh.receiveShadow,false);
+});
+
 test('default workspace remains a Cube and Material/Rendered modes retain its real shadow behavior', () => {
   const start=app.indexOf('// Default Cube at [0, 0, 0]'),end=app.indexOf('// Initial lookAt [0, 0, 0]',start);
   assert.ok(start>=0&&end>start);
@@ -88,9 +115,9 @@ test('default workspace remains a Cube and Material/Rendered modes retain its re
   assert.match(app,/id="chip-cube"[^>]*>Cube<\/button>/);
   const materialStart=app.indexOf("} else if (shading === 'material') {"),renderStart=app.indexOf("} else if (shading === 'rendered') {",materialStart),renderEnd=app.indexOf("if (activeLight?.isSpotLight) updateSpotHelper();",renderStart);
   assert.ok(materialStart>=0&&renderStart>materialStart&&renderEnd>renderStart);
-  assert.match(app.slice(materialStart,renderStart),/mesh\.castShadow\s*=\s*true;\s*mesh\.receiveShadow\s*=\s*true/);
+  assert.match(app.slice(materialStart,renderStart),/applyShadingMeshOverride\(mesh,\{castShadow:true,receiveShadow:true\}\)/);
   assert.match(app.slice(materialStart,renderStart),/shadowFloor\.visible\s*=\s*true/);
-  assert.match(app.slice(renderStart,renderEnd),/mesh\.castShadow\s*=\s*true;\s*mesh\.receiveShadow\s*=\s*true/);
+  assert.match(app.slice(renderStart,renderEnd),/applyShadingMeshOverride\(mesh,\{castShadow:true,receiveShadow:true\}\)/);
   assert.match(app.slice(renderStart,renderEnd),/shadowFloor\.visible\s*=\s*true/);
   const restoreStart=app.indexOf('this.restoreAutosave=async data=>'),restoreEnd=app.indexOf('historyCtl=history;',restoreStart);
   assert.ok(restoreStart>=0&&restoreEnd>restoreStart);

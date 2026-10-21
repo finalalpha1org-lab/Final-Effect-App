@@ -1,38 +1,17 @@
 {
-  "name": "final-effect-app",
-  "version": "1.0.0",
+  "name": "final-effect-3d",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3000 --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --port 3000 --host 0.0.0.0",
-    "lint": "node -e \"process.exit(0)\"",
-    "prebuild": "npm run build:runtime-bundles",
-    "build:runtime-bundles": "node ./scripts/build-runtime-bundles.mjs",
-    "test:final-effect": "node --test tests/*.test.mjs"
-  },
-  "dependencies": {
-    "canvas-confetti": "^1.9.4",
-    "express": "^4.19.2",
-    "lucide-react": "^1.49.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "three": "^0.186.1"
+    "dev": "wrangler dev",
+    "build": "node ./scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/canvas-confetti": "^1.9.0",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.12.7",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@types/three": "^0.186.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "tailwindcss": "^4.3.3",
-    "tsx": "^4.7.2",
-    "typescript": "^5.4.5",
-    "vite": "^8.3.1",
     "esbuild": "^0.28.2",
-    "three-csg-ts": "3.0.1"
+    "three": "0.128.0",
+    "three-csg-ts": "3.0.1",
+    "wrangler": "^4.97.0"
   }
 }
