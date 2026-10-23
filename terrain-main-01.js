@@ -17,6 +17,10 @@
    'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
    'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
    'fe_flora_species_count','fe_flora_rock_kind_count',
+   /* Skeletal wind attributes + the fern grammar (fe_flora.cpp) */
+   'fe_flora_sway_ptr','fe_flora_phase_ptr','fe_flora_leaf_stride',
+   'fe_flora_lsystem','fe_flora_lsystem_len','fe_flora_lsystem_word','fe_flora_lsystem_rules',
+   'fe_flora_lsystem_load','fe_flora_lsystem_run','fe_flora_lsystem_plant',
    /* Climate & weather (fe_climate.cpp): seeded temperature / moisture / fronts */
    'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
    'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
@@ -299,8 +303,9 @@
  function floraCopy(Ex){
   const nv=Ex.fe_flora_vert_count(),ni=Ex.fe_flora_index_count(),nl=Ex.fe_flora_leaf_count();
   const mem=Ex.memory.buffer;
-  return {
-   verts:nv,indices:ni,leaves:nl,
+  const stride=typeof Ex.fe_flora_leaf_stride==='function'?Ex.fe_flora_leaf_stride()|0:8;
+  const out={
+   verts:nv,indices:ni,leaves:nl,leafStride:stride,
    pos:new Float32Array(new Float32Array(mem,Ex.fe_flora_pos_ptr(),nv*3)),
    nrm:new Float32Array(new Float32Array(mem,Ex.fe_flora_nrm_ptr(),nv*3)),
    uv:new Float32Array(new Float32Array(mem,Ex.fe_flora_uv_ptr(),nv*2)),
@@ -308,8 +313,13 @@
    rnd:new Float32Array(new Float32Array(mem,Ex.fe_flora_rnd_ptr(),nv)),
    cen:new Float32Array(new Float32Array(mem,Ex.fe_flora_cen_ptr(),nv*3)),
    idx:new Uint32Array(new Uint32Array(mem,Ex.fe_flora_idx_ptr(),ni)),
-   leaf:new Float32Array(new Float32Array(mem,Ex.fe_flora_leaf_ptr(),nl*8))
+   leaf:new Float32Array(new Float32Array(mem,Ex.fe_flora_leaf_ptr(),nl*stride))
   };
+  /* Skeletal wind: per-vertex compliance and branch phase. Older artifacts do
+     not have them, in which case the material keeps its height-only bend. */
+  if(typeof Ex.fe_flora_sway_ptr==='function')out.sway=new Float32Array(new Float32Array(mem,Ex.fe_flora_sway_ptr(),nv));
+  if(typeof Ex.fe_flora_phase_ptr==='function')out.phase=new Float32Array(new Float32Array(mem,Ex.fe_flora_phase_ptr(),nv));
+  return out;
  }
  core.floraTree=function(kind,seed,detail){
   if(!core.has('fe_flora_tree'))return null;
@@ -326,6 +336,74 @@
  core.floraRock=function(kind,seed,detail){
   if(!core.has('fe_flora_rock'))return null;
   if(ex.fe_flora_rock(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
+ };
+ /* Grammar symbols are ASCII, so the bridge never depends on TextEncoder /
+   TextDecoder being present in the host. */
+function lsBytes(str){const a=new Uint8Array(str.length);for(let i=0;i<str.length;i++)a[i]=str.charCodeAt(i)&255;return a}
+function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return s}
+
+/* The grammar itself: expand the production rules in the kernel and hand the
+   resulting word back. Used by diagnostics and by the flora test suite. */
+ core.lsystem=function(iterations,seed){
+  if(!core.has('fe_flora_lsystem'))return null;
+  const n=ex.fe_flora_lsystem(iterations|0,(seed>>>0)||1);
+  let word='';
+  if(core.has('fe_flora_lsystem_word')&&core.has('fe_flora_lsystem_len')){
+   const len=ex.fe_flora_lsystem_len(),ptr=ex.fe_flora_lsystem_word();
+   if(ptr&&len>0)word=lsString(new Uint8Array(ex.memory.buffer,ptr,len));
+  }
+  return {symbols:n,rules:core.has('fe_flora_lsystem_rules')?ex.fe_flora_lsystem_rules():0,word};
+ };
+ /* Editable grammar: pack {axiom, rules:[{pre,alts}]} into the kernel's byte
+   layout, upload it, and expand it there. Nothing is rewritten in JS. */
+ core.lsystemLoad=function(spec){
+  if(!core.has('fe_flora_lsystem_load')||!spec)return -1;
+  const axiom=String(spec.axiom==null?'X':spec.axiom).slice(0,95);
+  const rules=(spec.rules||[]).slice(0,8);
+  let size=2+axiom.length;
+  const alts=[];
+  for(const r of rules){
+   const list=(r.alts||[]).slice(0,2).filter(a=>typeof a==='string');
+   alts.push(list);
+   size+=2;
+   for(const a of list)size+=1+Math.min(95,a.length);
+  }
+  if(!size)return -1;
+  const buf=new Uint8Array(size);let at=0;
+  buf[at++]=rules.length;buf[at++]=axiom.length;
+  buf.set(lsBytes(axiom),at);at+=axiom.length;
+  rules.forEach((r,i)=>{
+   buf[at++]=String(r.pre||'X').charCodeAt(0)&255;buf[at++]=alts[i].length;
+   for(const a of alts[i]){const t=a.slice(0,95);buf[at++]=t.length;buf.set(lsBytes(t),at);at+=t.length}
+  });
+  const ptr=ex.fe_malloc(size);
+  if(!ptr)return -1;
+  new Uint8Array(ex.memory.buffer,ptr,size).set(buf);
+  return ex.fe_flora_lsystem_load(ptr,size);
+ };
+ core.lsystemRun=function(iterations,seed){
+  if(!core.has('fe_flora_lsystem_run'))return null;
+  const n=ex.fe_flora_lsystem_run(iterations|0,(seed>>>0)||1);
+  if(n<0)return null;
+  const len=ex.fe_flora_lsystem_len(),ptr=ex.fe_flora_lsystem_word();
+  return {symbols:n,word:lsString(new Uint8Array(ex.memory.buffer,ptr,len))};
+ };
+ /* Grow a rosette from the uploaded rules (or the built-in frond grammar). */
+ core.lsystemPlant=function(o){
+  if(!core.has('fe_flora_lsystem_plant'))return null;
+  o=o||{};
+  const verts=ex.fe_flora_lsystem_plant(
+   (o.fronds===undefined?9:o.fronds)|0,
+   +(o.step===undefined?0.05:o.step),
+   +(o.tilt===undefined?0.6:o.tilt),
+   +(o.droop===undefined?0.03:o.droop),
+   +(o.leafSize===undefined?0.05:o.leafSize),
+   (o.iterations===undefined?3:o.iterations)|0,
+   (o.seed===undefined?1:o.seed)>>>0,
+   (o.detail===undefined?2:o.detail)|0);
+  if(verts<1)return null;
   const out=floraCopy(ex);
   return out.verts?out:null;
  };
@@ -636,18 +714,25 @@ const SHADOW_PROXY_STRIDE=8;
 function makeBotanicalShadowProxy(geometry,material,capacity,name){const proxy=new THREE.InstancedMesh(geometry,material,Math.max(1,capacity));proxy.instanceMatrix.setUsage(THREE.DynamicDrawUsage);proxy.instanceColor=new THREE.BufferAttribute(new Float32Array(Math.max(1,capacity)*3).fill(1),3);proxy.instanceColor.setUsage(THREE.DynamicDrawUsage);proxy.count=0;proxy.frustumCulled=false;proxy.castShadow=true;proxy.receiveShadow=false;proxy.layers.set(1);proxy.name=name;const depth=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,side:THREE.DoubleSide});depth.customProgramCacheKey=()=> 'foliage-shadow-wind-v1';depth.onBeforeCompile=s=>{s.uniforms.uT=WU;s.uniforms.uW=WW;s.vertexShader=s.vertexShader.replace('#include <common>','#include <common>\nuniform float uT,uW;').replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nfloat sw=sin(uT*.9+instanceMatrix[3].x*.12+instanceMatrix[3].z*.08);transformed.xz+=vec2(.8,.6)*position.y*position.y*sw*.012*uW;\n#endif')};proxy.customDepthMaterial=depth;return proxy}
 const LEAFV='float th_=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vTree=th_;float sdl=(vR*.8+.2*(1.-clamp(aCen.y/12.,0.,1.))+th_*.4)/1.4;float pf=0.;if(sdl<uShedS0)pf=1.;else if(sdl<uShedE)pf=clamp((uClk-(uShedT0+(sdl-uShedS0)/max(uShedR,1e-5)))/(8.0+vR*7.0),0.,1.);pf *= step(0.15, vR);vFall=pf;float gr=clamp(uGrow*1.5-vR*.5-th_*.3,0.,1.);vec3 off=transformed-aCen;if(pf>0.){float settle=smoothstep(.82,.995,pf);float ang=pf*(5.+vR*9.)+vR*30.+sin(uClk*1.2+vR*17.)*(1.-settle)*.12;float cA=cos(ang),sA=sin(ang);vec3 o2=vec3(off.x*cA-off.z*sA,off.y,off.x*sA+off.z*cA);float tl=sin(uClk*1.5+vR*20.+th_*6.)*.42*(1.-settle),cT=cos(tl),sT=sin(tl);o2=vec3(o2.x,o2.y*cT-o2.z*sT,o2.y*sT+o2.z*cT);vec3 C=aCen;float fallp=pf*pf*(3.-2.*pf);C.y=mix(C.y,.03,fallp)+sin(uClk*2.+vR*41.)*.08*pf*(1.-settle);float ws=clamp(uW,0.,3.);vec2 flutter=vec2(sin(uClk*1.8+vR*40.+th_),cos(uClk*1.4+vR*33.+th_))*(.05+.035*ws)*pf*(1.-settle);vec2 move=wd*ws*pf*.65+flutter;C.xz+=clamp(move,vec2(-3.),vec2(3.));o2*=mix(1.,.38,settle);o2.y*=mix(1.,.12,settle);transformed=C+o2;}else{transformed=aCen+off*gr;}\n';
 const NOLEAF='vTree=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vFall=0.;\n';
-function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w5'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;const fa=(a>=.0015&&a<.01)?a*18:0;
+/* Skeletal wind. `aSway` is baked by the flora kernel: 0 at the trunk collar,
+   1 at a terminal twig, and `aPhase` is accumulated down each branch path. The
+   bend therefore runs through the hierarchy — the trunk barely moves, a limb
+   swings as a unit, and two limbs of the same length swing out of step — which
+   a single height-squared law can never do. Geometry without the attributes
+   reads 0 and keeps the old behaviour exactly. */
+const SKEL='float skH=clamp(max(position.y,0.)*.34,.12,1.);float skA=aSway*aSway*skH;float skB=(sin(uT*.85+aPhase)+.42*sin(uT*1.9+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
+function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w6'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;const fa=(a>=.0015&&a<.01)?a*18:0;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.||vR<vTs*.9)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF||vR<vTs)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
 if(fx.includes('a'))fr+='float at=clamp(uAut*1.35-vTree*.55+(vR-.5)*.25,0.,1.);float fam=fract(vTree*7.7);vec3 endc=fam<.35?vec3(1.6,.4,.2):(fam<.7?vec3(1.75,.9,.22):vec3(1.1,.62,.28));vec3 ac=mix(vec3(1.),vec3(1.45,1.3,.4),smoothstep(0.,.35,at));ac=mix(ac,endc,smoothstep(.35,.8,at));ac*=1.-.25*smoothstep(.85,1.,at)*fract(vR*3.3);diffuseColor.rgb*=ac;\n';if(fx.includes('g'))fr+='diffuseColor.rgb*=mix(vec3(1.),vec3(1.45,1.15,.55),uAut);\n';
 if(fx.includes('l'))fr+='diffuseColor.rgb+=diffuseColor.rgb*vec3(1.08,1.18,.72)*vBk*.52;\n';
 if(fx.includes('d'))fr+='diffuseColor.rgb*=1.-(1.-smoothstep(0.,1.4,vY))*.3;\n';
 if(fx.includes('w'))fr+='float vGr=1.-smoothstep(0.,1.6,vY);diffuseColor.rgb*=1.-vGr*.38;diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(.72,1.,.55),vGr*.45*step(.45,fract(vR*3.7)));\n';
 fr+='diffuseColor.rgb*=1.-uWet*.2;\ndiffuseColor.rgb=mix(diffuseColor.rgb,vec3(.93,.95,1.),clamp(vSn*uSnowK*1.4,0.,1.));\n';
-s.vertexShader='attribute float aRnd;attribute vec3 aCen;varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uT,uW,uTorS,uTorV,uSunI,uShed,uGrow,uShedS0,uShedT0,uShedR,uShedE,uClk;uniform vec3 uTor,uSunD;uniform vec2 uTorD;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vY=position.y;vSn=clamp(normal.y*1.25-.1,0.,1.);float py=max(position.y,0.);vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);float wv=position.y*position.y*uW;float sway=sin(uT*.9+dot(wp,wd)*.12)*.5+.5;transformed.xz+=wd*wv*'+(a*.8).toFixed(4)+'*gust*(.35+.65*sway);\n'+(fa?'float rd=length(position.xz);float fl=smoothstep(.4,2.8,rd)*smoothstep(1.,6.,position.y);float ph2=position.x*1.9+position.z*2.3+position.y*.7+wp.x*.31+wp.y*.17;transformed+=vec3(sin(uT*3.3+ph2),sin(uT*2.1+ph2*1.3)*.4,cos(uT*2.9+ph2*.9))*fl*'+fa.toFixed(4)+'*uW*(.4+gust);\n':'')+(a>0||wf>0||fx.includes('l')||fx.includes('g')||fx.includes('w')?'vec2 td=wp-uTor.xy;float tr=length(td)+.001;vec2 tn=td/tr;float vt=uTorV*uTorS*(tr<uTor.z?tr/uTor.z:pow(uTor.z/tr,.65));vec2 wv2=vec2(-tn.y,tn.x)*vt-tn*vt*.38+uTorD*uTorS*.6;float vs=length(wv2);float Dm=7.5*(1.-exp(-vs*vs/1444.));float pyn=py/9.;transformed.xz+=wv2/(vs+.001)*min(Dm*pyn*pyn*'+tk.toFixed(1)+',py*.8);transformed.xz+=vec2(sin(uT*11.+py*3.+wp.x),cos(uT*9.+py*2.7+wp.y))*.1*pow(clamp(vs/40.,0.,1.),1.5)*min(py,3.);vTs=clamp((vs-26.)/38.,0.,1.);\n':'vTs=0.;\n')+(fx.includes('s')?LEAFV:NOLEAF)+(fx.includes('l')?'vec3 leafN=normal;\n#ifdef USE_INSTANCING\nleafN=mat3(instanceMatrix)*leafN;\n#endif\nvec3 sunView=normalize(mat3(viewMatrix)*uSunD);vBk=pow(max(dot(-sunView,normalize(normalMatrix*leafN)),0.),1.6)*clamp(uSunI,0.,2.);\n':'vBk=0.;\n'));
+s.vertexShader='attribute float aRnd;attribute vec3 aCen;attribute float aSway;attribute float aPhase;varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uT,uW,uTorS,uTorV,uSunI,uShed,uGrow,uShedS0,uShedT0,uShedR,uShedE,uClk;uniform vec3 uTor,uSunD;uniform vec2 uTorD;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vY=position.y;vSn=clamp(normal.y*1.25-.1,0.,1.);float py=max(position.y,0.);vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);float wv=position.y*position.y*uW;float sway=sin(uT*.9+dot(wp,wd)*.12)*.5+.5;transformed.xz+=wd*wv*'+(a*.8).toFixed(4)+'*gust*(.35+.65*sway);\n'+(SKEL)+'\n'+(fa?'float rd=length(position.xz);float fl=smoothstep(.4,2.8,rd)*smoothstep(1.,6.,position.y);float ph2=position.x*1.9+position.z*2.3+position.y*.7+wp.x*.31+wp.y*.17;transformed+=vec3(sin(uT*3.3+ph2),sin(uT*2.1+ph2*1.3)*.4,cos(uT*2.9+ph2*.9))*fl*'+fa.toFixed(4)+'*uW*(.4+gust);\n':'')+(a>0||wf>0||fx.includes('l')||fx.includes('g')||fx.includes('w')?'vec2 td=wp-uTor.xy;float tr=length(td)+.001;vec2 tn=td/tr;float vt=uTorV*uTorS*(tr<uTor.z?tr/uTor.z:pow(uTor.z/tr,.65));vec2 wv2=vec2(-tn.y,tn.x)*vt-tn*vt*.38+uTorD*uTorS*.6;float vs=length(wv2);float Dm=7.5*(1.-exp(-vs*vs/1444.));float pyn=py/9.;transformed.xz+=wv2/(vs+.001)*min(Dm*pyn*pyn*'+tk.toFixed(1)+',py*.8);transformed.xz+=vec2(sin(uT*11.+py*3.+wp.x),cos(uT*9.+py*2.7+wp.y))*.1*pow(clamp(vs/40.,0.,1.),1.5)*min(py,3.);vTs=clamp((vs-26.)/38.,0.,1.);\n':'vTs=0.;\n')+(fx.includes('s')?LEAFV:NOLEAF)+(fx.includes('l')?'vec3 leafN=normal;\n#ifdef USE_INSTANCING\nleafN=mat3(instanceMatrix)*leafN;\n#endif\nvec3 sunView=normalize(mat3(viewMatrix)*uSunD);vBk=pow(max(dot(-sunView,normalize(normalMatrix*leafN)),0.),1.6)*clamp(uSunI,0.,2.);\n':'vBk=0.;\n'));
 s.fragmentShader='varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uShed,uShedF,uAut,uSnowK,uBloom,uWet;\n'+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n'+fr)}}
-function depthFx(m,fx){if(!/[sSb]/.test(fx))return;m.customProgramCacheKey=()=>'dfx2'+fx;m.onBeforeCompile=s=>{s.uniforms.uShed=FXU.shed;s.uniforms.uShedF=FXU.shedF;s.uniforms.uBloom=FXU.bloom;s.uniforms.uGrow=FXU.grow;s.uniforms.uW=WW;s.uniforms.uShedS0=FXU.s0;s.uniforms.uShedT0=FXU.t0;s.uniforms.uShedR=FXU.sr;s.uniforms.uShedE=FXU.se;s.uniforms.uClk=FXU.clk;
+function depthFx(m,fx){if(!/[sSb]/.test(fx))return;m.customProgramCacheKey=()=>'dfx3'+fx;m.onBeforeCompile=s=>{s.uniforms.uShed=FXU.shed;s.uniforms.uShedF=FXU.shedF;s.uniforms.uBloom=FXU.bloom;s.uniforms.uGrow=FXU.grow;s.uniforms.uW=WW;s.uniforms.uT=WU;s.uniforms.uShedS0=FXU.s0;s.uniforms.uShedT0=FXU.t0;s.uniforms.uShedR=FXU.sr;s.uniforms.uShedE=FXU.se;s.uniforms.uClk=FXU.clk;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
-s.vertexShader='attribute float aRnd;attribute vec3 aCen;varying float vR,vFall,vTree;uniform float uShed,uGrow,uW,uShedS0,uShedT0,uShedR,uShedE,uClk;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vec2 wd=vec2(.8,.6);\n'+(fx.includes('s')?LEAFV:'vFall=0.;vTree=0.;')+'\n');
+s.vertexShader='attribute float aRnd;attribute vec3 aCen;attribute float aSway;attribute float aPhase;varying float vR,vFall,vTree;uniform float uShed,uGrow,uW,uT,uShedS0,uShedT0,uShedR,uShedE,uClk;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);\n'+(SKEL)+'\n'+(fx.includes('s')?LEAFV:'vFall=0.;vTree=0.;')+'\n');
 s.fragmentShader='varying float vR,vFall,vTree;uniform float uShedF,uBloom;\n'+s.fragmentShader.replace('#include <alphatest_fragment>',fr+'#include <alphatest_fragment>')}}
 const TREE_SIZE_SCALE={pine:1.7,oak:1.75,birch:1.7,palm:1.65,spruce:1.7,krumm:1.4,juniper:1.4,acacia:1.7,joshua:1.65,deadtree:1.65},TREE_SIZE_MIN={palm:1.8,oak:1.2,birch:1.1},TREE_SIZE_MAX={palm:2.8};
 const SHADOW_LOW_DETAIL=new Set(['rock','sandrock','basalt','pine','oak','birch','palm','spruce','house','block','mid','tower']);

@@ -130,5 +130,5 @@ wind and the snow line the wetness term follows.
 ```bash
 node --test tests/landscape-realism.test.mjs   # 14 tests
 node --test tests/landscape-flora.test.mjs     # 8 tests
-npm test                                       # 320 tests
+npm test                                       # 330 tests
 ```

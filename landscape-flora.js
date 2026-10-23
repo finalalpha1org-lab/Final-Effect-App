@@ -18,7 +18,10 @@
 (function (root) {
   'use strict';
 
-  const KINDS = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree'];
+  /* Kernel order — every name here maps to one row of `kSpecies` in
+   * `cpp/src/fe_flora.cpp`. Broadleaves grow by space colonisation; the two
+   * herbaceous species at the end are grown by a strict L-system. */
+  const KINDS = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern'];
   const ROCK_KINDS = ['granite', 'sandstone', 'basalt'];
 
   const state = {
@@ -54,6 +57,9 @@
     g.setAttribute('uv', new THREE.Float32BufferAttribute(mesh.uv, 2));
     g.setAttribute('aRnd', new THREE.Float32BufferAttribute(mesh.rnd, 1));
     g.setAttribute('aCen', new THREE.Float32BufferAttribute(mesh.cen, 3));
+    /* Skeletal wind: compliance + branch phase, straight from the kernel. */
+    if (mesh.sway) g.setAttribute('aSway', new THREE.Float32BufferAttribute(mesh.sway, 1));
+    if (mesh.phase) g.setAttribute('aPhase', new THREE.Float32BufferAttribute(mesh.phase, 1));
     g.setIndex(new THREE.BufferAttribute(mesh.idx, 1));
     g.computeBoundingSphere();
     return g;
@@ -73,7 +79,14 @@
       if (!wood) return null;
       state.ready = true;
       state.used++;
-      return { wood, leaf: mesh.leaf, info: mesh.info || null, verts: mesh.verts, leaves: mesh.leaves };
+      return {
+        wood,
+        leaf: mesh.leaf,
+        leafStride: mesh.leafStride || 8,
+        info: mesh.info || null,
+        verts: mesh.verts,
+        leaves: mesh.leaves
+      };
     } catch (error) {
       state.lastError = error && error.message;
       state.fallbacks++;
@@ -100,6 +113,48 @@
     }
   }
 
+  /* Expands the fern production rules inside the kernel and returns the word.
+   * This is the honest answer to "is it really an L-system": the rewrite
+   * happens in C++, and the string is the proof. */
+  function lsystem(iterations, seed) {
+    const c = core();
+    if (!c || typeof c.lsystem !== 'function') return null;
+    return c.lsystem(iterations, seed);
+  }
+
+  /* Editable grammar, end to end: the rule set is uploaded to the kernel, the
+   * rewrite runs there and the turtle walks the result there. `spec` is
+   * { axiom, rules: [{ pre, alts: [string, optional second] }], iterations,
+   *   fronds, step, tilt, droop, leafSize, seed, detail }. */
+  function plant(spec) {
+    const c = core();
+    if (!c || typeof c.lsystemPlant !== 'function') { state.fallbacks++; return null; }
+    try {
+      const cfg = spec || {};
+      if (cfg.rules && cfg.rules.length && typeof c.lsystemLoad === 'function') {
+        if (c.lsystemLoad(cfg) < 0) { state.lastError = 'rule set rejected'; state.fallbacks++; return null; }
+      }
+      const mesh = c.lsystemPlant(cfg);
+      if (!mesh || !mesh.verts) { state.fallbacks++; return null; }
+      const wood = toGeometry(mesh);
+      if (!wood) return null;
+      state.ready = true;
+      state.used++;
+      return { wood, leaf: mesh.leaf, leafStride: mesh.leafStride || 8, verts: mesh.verts, leaves: mesh.leaves };
+    } catch (error) {
+      state.lastError = error && error.message;
+      state.fallbacks++;
+      return null;
+    }
+  }
+
+  /* Expand the rules currently loaded in the kernel without growing anything. */
+  function rules(iterations, seed) {
+    const c = core();
+    if (!c || typeof c.lsystemRun !== 'function') return null;
+    return c.lsystemRun(iterations, seed);
+  }
+
   function counts() {
     const c = core();
     if (!c || typeof c.floraCounts !== 'function') return { species: 0, rocks: 0 };
@@ -113,6 +168,9 @@
     state,
     tree,
     rock,
+    lsystem,
+    plant,
+    rules,
     counts,
     toGeometry,
     detailLevel

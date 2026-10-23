@@ -300,6 +300,6 @@ test('the page, the panel and the build all carry the climate layer', () => {
   assert.match(buildScript, /"landscape-weather\.js"/, 'the build ships the module');
   assert.match(cppBuild, /'cpp\/src\/fe_climate\.cpp'/, 'the wasm build compiles the climate kernel');
   assert.match(cppBuild, /'fe_climate_at',\s*'fe_climate_weather'/, 'the wasm build requires the climate exports');
-  assert.ok(sw.includes("'final-effect-cpp-v22'"), 'the service worker cache is bumped for the new module');
+  assert.ok(sw.includes("'final-effect-cpp-v23'"), 'the service worker cache is bumped for the new module');
   assert.ok(sw.includes("'./landscape-weather.js'"), 'and precaches it');
 });

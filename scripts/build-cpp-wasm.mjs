@@ -108,6 +108,10 @@ const REQUIRED_EXPORTS = [
   'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
   'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
   'fe_flora_species_count','fe_flora_rock_kind_count',
+  /* Skeletal wind channels + the fern L-system (fe_flora.cpp) */
+  'fe_flora_sway_ptr','fe_flora_phase_ptr','fe_flora_leaf_stride',
+  'fe_flora_lsystem','fe_flora_lsystem_len','fe_flora_lsystem_word','fe_flora_lsystem_rules',
+  'fe_flora_lsystem_load','fe_flora_lsystem_run','fe_flora_lsystem_plant',
   /* Climate & weather: seeded temperature / moisture / fronts / hazards */
   'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
   'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',

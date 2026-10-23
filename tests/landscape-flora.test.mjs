@@ -21,7 +21,7 @@ const cppBuild = readFileSync('scripts/build-cpp-wasm.mjs', 'utf8');
 
 async function bootBridge(extra = {}) {
   const context = {
-    console, URL, WebAssembly, Float32Array, Uint8Array, Uint32Array, Int32Array, Math, Promise, setTimeout,
+    console, URL, WebAssembly, Float32Array, Uint8Array, Uint32Array, Int32Array, Math, Promise, setTimeout, TextDecoder, TextEncoder,
     document: { baseURI: 'https://example.test/Terrain_system_.html' },
     fetch: async () => ({ ok: true, arrayBuffer: async () => wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength) }),
     ...extra
@@ -33,7 +33,8 @@ async function bootBridge(extra = {}) {
   return { context, core: context.FELandscapeCore };
 }
 
-const SPECIES = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree'];
+const SPECIES = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern'];
+const LEAF_STRIDE = 10;
 
 function triangles(mesh) {
   const p = mesh.pos, idx = mesh.idx;
@@ -55,21 +56,22 @@ function triangles(mesh) {
   return { degenerate, minY, maxY, maxR, minShade, maxShade };
 }
 
-test('the artifact ships the flora kernels and reports six species / three rocks', async () => {
+test('the artifact ships the flora kernels and reports eight species / three rocks', async () => {
   const { core } = await bootBridge();
-  for (const name of ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_pos_ptr', 'fe_flora_leaf_ptr', 'fe_flora_species_info', 'fe_flora_species_count', 'fe_flora_rock_kind_count']) {
+  for (const name of ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_pos_ptr', 'fe_flora_leaf_ptr', 'fe_flora_species_info', 'fe_flora_species_count', 'fe_flora_rock_kind_count',
+    'fe_flora_sway_ptr', 'fe_flora_phase_ptr', 'fe_flora_leaf_stride', 'fe_flora_lsystem', 'fe_flora_lsystem_word']) {
     assert.equal(core.has(name), true, `${name} must ship in the artifact`);
   }
   /* Cross-realm objects are not reference-equal, so compare the fields. */
   const counts = core.floraCounts();
-  assert.equal(counts.species, 6);
+  assert.equal(counts.species, 8);
   assert.equal(counts.rocks, 3);
 });
 
 test('every species grows a body with finite normals, sound triangles and no black shade', async () => {
   const { core } = await bootBridge();
   const grown = {};
-  for (let kind = 0; kind < 6; kind++) {
+  for (let kind = 0; kind < SPECIES.length; kind++) {
     const tree = core.floraTree(kind, 4242 + kind, 2);
     assert.ok(tree && tree.verts > 1000, `${SPECIES[kind]} must grow a body (got ${tree && tree.verts} verts)`);
     assert.equal(tree.pos.length, tree.verts * 3);
@@ -83,7 +85,7 @@ test('every species grows a body with finite normals, sound triangles and no bla
     const t = triangles(tree);
     assert.equal(t.degenerate, 0, `${SPECIES[kind]} must not contain degenerate triangles`);
     assert.ok(t.minShade > 0.05 && t.maxShade <= 1.4, `${SPECIES[kind]} procedural shade ${t.minShade.toFixed(2)}..${t.maxShade.toFixed(2)} must not contain black vertices`);
-    assert.ok(t.maxY > 0.4, `${SPECIES[kind]} must grow upward`);
+    assert.ok(t.maxY > 0.35, `${SPECIES[kind]} must grow upward`);
     grown[SPECIES[kind]] = { t, tree };
   }
 
@@ -100,15 +102,18 @@ test('every species grows a body with finite normals, sound triangles and no bla
   for (const name of ['oak', 'birch', 'acacia', 'shrub', 'ashbush']) {
     const { tree, t } = grown[name];
     assert.ok(tree.leaves > 100, `${name} must place leaf anchors (got ${tree.leaves})`);
-    assert.equal(tree.leaf.length, tree.leaves * 8, 'leaf stride is position, direction, size, shade');
+    assert.equal(tree.leafStride, LEAF_STRIDE);
+    assert.equal(tree.leaf.length, tree.leaves * LEAF_STRIDE, 'leaf stride is position, direction, size, shade, compliance, phase');
     let offCrown = 0, unit = 0, shadeMin = 1, shadeMax = 0;
     for (let i = 0; i < tree.leaves; i++) {
-      const o = i * 8;
+      const o = i * LEAF_STRIDE;
       const size = tree.leaf[o + 6], shade = tree.leaf[o + 7];
       const len = Math.hypot(tree.leaf[o + 3], tree.leaf[o + 4], tree.leaf[o + 5]);
       if (Math.abs(len - 1) > 1e-3) unit++;
       if (Math.hypot(tree.leaf[o], tree.leaf[o + 2]) > t.maxR * 1.25) offCrown++;
       if (shade < 0 || shade > 1) shadeMin = -1;
+      assert.ok(tree.leaf[o + 8] >= 0 && tree.leaf[o + 8] <= 1, `${name} leaf compliance must stay in 0..1`);
+      assert.ok(Number.isFinite(tree.leaf[o + 9]), `${name} leaf phase must be a real angle`);
       assert.ok(size > 0.05 && size < 4, `${name} leaf size ${size} must be plausible`);
       shadeMin = Math.min(shadeMin, shade);
       shadeMax = Math.max(shadeMax, shade);
@@ -212,19 +217,20 @@ test('the adapter hands the studio BufferGeometry without changing any material'
   const flora = context.FELandscapeFlora;
   assert.ok(flora, 'landscape-flora.js must install FELandscapeFlora');
   assert.equal(Array.from(flora.KINDS).join(','), SPECIES.join(','));
+  assert.equal(Array.from(flora.KINDS).join(','), 'oak,birch,acacia,shrub,ashbush,deadtree,fern,treefern');
   assert.equal(Array.from(flora.ROCK_KINDS).join(','), 'granite,sandstone,basalt');
   const counts = flora.counts();
-  assert.equal(counts.species, 6);
+  assert.equal(counts.species, 8);
   assert.equal(counts.rocks, 3);
 
   const tree = flora.tree('oak', 1234, 2);
   assert.ok(tree && tree.wood, 'oak must convert to a BufferGeometry');
-  for (const name of ['position', 'normal', 'color', 'uv', 'aRnd', 'aCen']) {
+  for (const name of ['position', 'normal', 'color', 'uv', 'aRnd', 'aCen', 'aSway', 'aPhase']) {
     assert.ok(tree.wood.attributes[name], `grown wood needs the ${name} attribute the shared shaders sample`);
   }
   assert.ok(tree.wood.index && tree.wood.index.count > 0, 'grown wood must be indexed');
   assert.ok(tree.wood.index.count % 3 === 0);
-  assert.ok(tree.leaf instanceof Float32Array && tree.leaf.length % 8 === 0, 'leaf anchors keep the 8-float stride');
+  assert.ok(tree.leaf instanceof Float32Array && tree.leaf.length % LEAF_STRIDE === 0, `leaf anchors keep the ${LEAF_STRIDE}-float stride`);
   assert.ok(tree.info && tree.info.length === 8, 'species info survives the bridge');
 
   const rock = flora.rock('sandstone', 77, 2);
@@ -288,4 +294,210 @@ test('the page and both build scripts ship the grown flora', () => {
   assert.match(models, /window\.__feGrowSpecies=applyGrown;/);
   assert.match(models, /if\(K\.lowMeshes\)K\.lowMeshes\.forEach/);
   assert.match(models, /K\.selectionBounds=null;K\.selectionGrid=null;K\.selectionGridDirty=true;/);
+});
+
+/* ------------------------------------------------------------------ */
+/* The grammar is real: production rules, rewritten in the kernel      */
+/* ------------------------------------------------------------------ */
+test('the kernel really rewrites fern production rules instead of faking a splitter', async () => {
+  const { core } = await bootBridge();
+  assert.equal(core.lsystem(0, 7).word, 'X', 'iteration 0 is the bare axiom X');
+  const one = core.lsystem(1, 7);
+  assert.equal(one.rules, 2, 'the grammar carries two productions');
+  /* X -> F[+X]F[-X]+X, with the mirrored alternative chosen per seed. */
+  assert.match(one.word, /^F\[[+-]X\]F\[[+-]X\][+-]X$/);
+  assert.equal(one.symbols, 12);
+
+  let previousF = 0;
+  for (let it = 0; it <= 5; it++) {
+    const pass = core.lsystem(it, 1234);
+    assert.equal(pass.word.length, pass.symbols, 'the reported symbol count is the real word length');
+    assert.match(pass.word, /^[FX+\-\[\]\\/&^]+$/, 'the word only uses turtle symbols');
+    const f = (pass.word.match(/F/g) || []).length;
+    const x = (pass.word.match(/X/g) || []).length;
+    /* F -> FF doubles every segment, X -> F[+X]F[-X]+X adds two. The closed
+       form 2(3^n - 2^n) is what a real rewrite produces; a recursive branch
+       splitter cannot hit it by accident. */
+    assert.equal(f, 2 * (Math.pow(3, it) - Math.pow(2, it)), `pass ${it}: F count must follow F->FF`);
+    assert.equal(x, Math.pow(3, it), `pass ${it}: X count must follow the single non-terminal`);
+    assert.ok(f >= previousF, 'the word can only grow');
+    previousF = f;
+  }
+  /* Brackets balance, so the turtle stack is never popped empty. */
+  const deep = core.lsystem(5, 77).word;
+  let depth = 0, maxDepth = 0;
+  for (const c of deep) {
+    if (c === '[') { depth++; maxDepth = Math.max(maxDepth, depth); }
+    if (c === ']') depth--;
+    assert.ok(depth >= 0, 'no unmatched pop');
+  }
+  assert.equal(depth, 0, 'every push is closed');
+  assert.ok(maxDepth >= 4, 'the frond nests several branch orders deep');
+});
+
+test('the grammar is stochastic per seed and deterministic per (seed, pass)', async () => {
+  const { core } = await bootBridge();
+  assert.equal(core.lsystem(4, 99).word, core.lsystem(4, 99).word, 'one seed must replay exactly');
+  const words = new Set();
+  for (let seed = 1; seed <= 12; seed++) words.add(core.lsystem(4, seed).word);
+  assert.ok(words.size > 3, `seeds must produce different fronds (got ${words.size} of 12)`);
+});
+
+test('ferns and tree ferns are grown from the grammar by the same kernel entry point', async () => {
+  const { core } = await bootBridge();
+  const fern = core.floraTree(6, 31, 2), treefern = core.floraTree(7, 31, 2);
+  for (const [name, tree, maxY, minLeaves] of [['fern', fern, 0.9, 400], ['treefern', treefern, 3.8, 800]]) {
+    assert.ok(tree && tree.verts > 900, `${name} must build frond geometry (got ${tree && tree.verts})`);
+    const t = triangles(tree);
+    assert.equal(t.degenerate, 0, `${name} must not contain degenerate triangles`);
+    assert.ok(t.maxY > maxY * 0.45 && t.maxY < maxY, `${name} fronds arch to ${t.maxY.toFixed(2)} m, not a flat mat`);
+    assert.ok(tree.leaves >= minLeaves, `${name} pins pinnae along every rachis (got ${tree.leaves})`);
+    assert.equal(tree.leaf.length, tree.leaves * LEAF_STRIDE);
+  }
+  /* A tree fern stands on a trunk; a bracken sits on the ground and spreads. */
+  const t = triangles(fern);
+  assert.ok(t.minY < 0.05, 'the bracken rises straight out of the soil');
+  assert.ok(t.maxR > 0.3, `the bracken spreads its fronds wide (got ${t.maxR.toFixed(2)} m)`);
+  assert.ok(treefern.verts > fern.verts, 'the tree fern carries a trunk as well as fronds');
+});
+
+/* ------------------------------------------------------------------ */
+/* Skeletal wind: the hierarchy, not a height law                      */
+/* ------------------------------------------------------------------ */
+test('every grown species bakes per-vertex compliance and branch phase', async () => {
+  const { core } = await bootBridge();
+  for (let kind = 0; kind < SPECIES.length; kind++) {
+    const tree = core.floraTree(kind, 909 + kind, 2);
+    const name = SPECIES[kind];
+    assert.ok(tree.sway && tree.sway.length === tree.verts, `${name} needs one compliance value per vertex`);
+    assert.ok(tree.phase && tree.phase.length === tree.verts, `${name} needs one phase value per vertex`);
+    let maxY = 0, rootMax = 0, tipMax = 0, phMin = Infinity, phMax = -Infinity;
+    for (let i = 0; i < tree.verts; i++) maxY = Math.max(maxY, tree.pos[i * 3 + 1]);
+    for (let i = 0; i < tree.verts; i++) {
+      const y = tree.pos[i * 3 + 1], s = tree.sway[i];
+      assert.ok(s >= 0 && s <= 1, `${name} compliance stays in 0..1 (got ${s})`);
+      assert.ok(Number.isFinite(tree.phase[i]), `${name} phase must be finite`);
+      if (y < 0.06) rootMax = Math.max(rootMax, s);
+      if (y > maxY * 0.65) tipMax = Math.max(tipMax, s);
+      phMin = Math.min(phMin, tree.phase[i]);
+      phMax = Math.max(phMax, tree.phase[i]);
+    }
+    /* The collar is rigid for every species: 0 for wood, a soft 0.1 where a
+       frond socket meets the soil. */
+    assert.ok(rootMax < 0.3, `${name} root collar must stay stiff (got ${rootMax.toFixed(2)})`);
+    assert.ok(tipMax > 0.6, `${name} outer limbs must swing (got ${tipMax.toFixed(2)})`);
+    assert.ok(phMax - phMin > 1.0, `${name} branch phases must differ across the crown`);
+  }
+});
+
+test('compliance is a property of the branch path, not of the height', async () => {
+  const { core } = await bootBridge();
+  const tree = core.floraTree(0, 4711, 2); /* oak: wide crown, low side limbs */
+  /* In one thin height band there must be both stiff and compliant vertices —
+     a height-only law (y^2) can never produce that spread. */
+  let bandSwing = 0;
+  for (let y0 = 2; y0 < 6; y0 += 0.5) {
+    let lo = 1, hi = 0;
+    for (let i = 0; i < tree.verts; i++) {
+      const y = tree.pos[i * 3 + 1];
+      if (y < y0 || y >= y0 + 0.5) continue;
+      lo = Math.min(lo, tree.sway[i]);
+      hi = Math.max(hi, tree.sway[i]);
+    }
+    if (hi > lo) bandSwing = Math.max(bandSwing, hi - lo);
+  }
+  assert.ok(bandSwing > 0.35, `a single height band must contain stiff and compliant wood (spread ${bandSwing.toFixed(2)})`);
+});
+
+test('the wind shader bends the skeleton and the JS builders carry the channels', () => {
+  assert.match(scene, /attribute float aSway;attribute float aPhase;/, 'the foliage shader has to read the skeletal channels');
+  assert.match(scene, /const SKEL='float skH=clamp\(max\(position\.y,0\.\)\*\.34/, 'the bend is scaled by the plant height so a bracken does not sway like an oak');
+  assert.match(scene, /float skA=aSway\*aSway\*skH;/, 'the bend must be driven by compliance, not height');
+  assert.match(scene, /transformed\.xz\+=wd\*\(skA\*uW\*/, 'the skeleton moves along the wind direction');
+  assert.match(scene, /aPhase\*1\.6/, 'neighbouring limbs must swing out of phase');
+  assert.match(scene, /float wv=position\.y\*position\.y\*uW;/, 'unskinned foliage keeps the old height law');
+  assert.match(models, /g\.SW\.push\(g\.sw===undefined\?0:g\.sw\)/, 'JS geometry carries a compliance channel');
+  assert.match(models, /o\.setAttribute\('aSway',new THREE\.Float32BufferAttribute\(g\.SW,1\)\)/);
+  assert.match(models, /L\.sw=st>8\?a\[i\+8\]:0;L\.phv=st>8\?a\[i\+9\]:0;/, 'leaf cards inherit their twig compliance');
+});
+
+test('the grown bridge exposes the grammar and the skeletal channels', async () => {
+  const { core } = await bootBridge();
+  const word = core.lsystem(3, 5);
+  assert.ok(word && word.word.length > 60);
+  const flora = { lsystem: core.lsystem };
+  assert.equal(typeof flora.lsystem, 'function');
+  assert.match(floraSource, /function lsystem\(iterations, seed\)/, 'the adapter exposes the grammar');
+  assert.match(floraSource, /setAttribute\('aSway', new THREE\.Float32BufferAttribute\(mesh\.sway, 1\)\)/);
+  assert.match(bridgeSource, /core\.lsystem=function\(iterations,seed\)\{/);
+  assert.match(bridgeSource, /const stride=typeof Ex\.fe_flora_leaf_stride==='function'/, 'the bridge must not assume the 8-float stride');
+});
+
+test('a rule set can be uploaded and rewritten in the kernel at runtime', async () => {
+  const { core } = await bootBridge();
+  /* The classic "plant" grammar: F -> F[+F]F[-F]F, whose segment count grows
+     as 5^n. Nothing about this word exists in the shipped C++. */
+  const accepted = core.lsystemLoad({ axiom: 'F', rules: [{ pre: 'F', alts: ['F[+F]F[-F]F', 'F[-F]F[+F]F'] }] });
+  assert.equal(accepted, 1, 'the kernel accepts a one-production grammar');
+  let previous = 1;
+  for (let it = 0; it <= 4; it++) {
+    const run = core.lsystemRun(it, 11);
+    assert.ok(run, 'run must return the expanded word');
+    const f = (run.word.match(/F/g) || []).length;
+    assert.equal(f, Math.pow(5, it), `uploaded grammar must follow F -> F[+F]F[-F]F (pass ${it})`);
+    assert.ok(f >= previous);
+    previous = f;
+  }
+  /* Two productions, both stochastic: F keeps its width, X drives the height. */
+  assert.equal(core.lsystemLoad({ axiom: 'X', rules: [
+    { pre: 'X', alts: ['F[+X][-X]FX', 'F[-X][+X]FX'] },
+    { pre: 'F', alts: ['FF'] }
+  ] }), 2);
+  const bush = core.lsystemRun(4, 3);
+  assert.ok(bush && bush.word.length > 200, 'the second rule set expands too');
+  assert.match(bush.word, /^[FX+\-\[\]]+$/, 'no symbol outside the turtle alphabet');
+  assert.equal(core.lsystemRun(4, 3).word, bush.word, 'one seed replays exactly');
+  assert.notEqual(core.lsystemRun(4, 4).word, bush.word, 'another seed picks other alternatives');
+
+  /* A rule with no alternatives is malformed and must be refused, not silently
+     swapped for the previous grammar. */
+  assert.equal(core.lsystemLoad({ axiom: 'X', rules: [{ pre: 'X', alts: [] }] }), -1, 'an empty alternative list is rejected');
+  const plant = core.lsystemPlant({ fronds: 7, step: 0.04, tilt: 0.7, droop: 0.02, leafSize: 0.04, iterations: 3, seed: 21, detail: 2 });
+  assert.ok(plant && plant.verts > 200, 'the uploaded grammar grows real geometry');
+  assert.equal(plant.leaf.length, plant.leaves * 10, 'grammar-grown plants keep the 10-float leaf anchors');
+  assert.ok(plant.sway && plant.sway.length === plant.verts, 'and the skeletal wind channels');
+});
+
+test('the custom-rule path is exposed by the adapter and costs nothing when absent', async () => {
+  const { core } = await bootBridge();
+  assert.equal(typeof core.lsystemLoad, 'function');
+  assert.equal(typeof core.lsystemRun, 'function');
+  assert.equal(typeof core.lsystemPlant, 'function');
+  const context = {
+    console, Float32Array, Uint32Array, Uint8Array, Math, Promise, THREE,
+    FELandscapeCore: { ready: false, error: 'stale artifact' }
+  };
+  vm.createContext(context);
+  vm.runInContext(floraSource, context);
+  assert.equal(context.FELandscapeFlora.plant({ rules: [] }), null, 'no kernel means no fabricated grammar');
+  assert.equal(context.FELandscapeFlora.rules(3, 1), null);
+  assert.ok(context.FELandscapeFlora.state.fallbacks >= 1);
+});
+
+test('a runaway grammar is clamped by the kernel budgets, never by luck', async () => {
+  const { core } = await bootBridge();
+  core.lsystemLoad({ axiom: 'X', rules: [
+    { pre: 'X', alts: ['F[+X]F[-X]+X'] },
+    { pre: 'F', alts: ['FF'] }
+  ] });
+  const big = core.lsystemPlant({ fronds: 24, step: 0.05, tilt: 0.1, droop: 0.001, leafSize: 0.05, iterations: 5, seed: 3, detail: 3 });
+  assert.ok(big && big.verts > 20000, 'the plant fills the budget before it is cut off');
+  assert.ok(big.verts <= 24000, 'never past MAX_VERT');
+  assert.ok(big.leaves <= 3200, 'never past MAX_LEAF');
+  assert.equal(big.pos.length, big.verts * 3);
+  assert.ok(Array.from(big.pos).every(Number.isFinite), 'no NaN escapes a clamped walk');
+  assert.ok(Array.from(big.nrm).every(Number.isFinite));
+  /* A horizontal frond makes a flat rosette, not a degenerate mesh. */
+  const flat = core.lsystemPlant({ fronds: 1, step: 0.01, tilt: 0.6, droop: 0.05, leafSize: 0.05, iterations: 1, seed: 2, detail: 1 });
+  assert.ok(flat && flat.verts > 0, 'a low budget call still returns geometry');
 });

@@ -126,7 +126,7 @@ Every one of those is a switch on the weather sheet, and switching
 
 ```bash
 node --test tests/landscape-climate.test.mjs   # 11 tests
-npm test                                       # 320 tests
+npm test                                       # 330 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn

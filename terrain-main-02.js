@@ -47,11 +47,14 @@ const aptC=(x,y,ox,oy,w,h,on)=>{wallFill(x,ox,oy,w,h,'#b9a99a');x.fillStyle='rgb
 const offC=(x,y,ox,oy,w,h,on)=>{wallFill(x,ox,oy,w,h,'#9a9a98');x.fillStyle='#55585c';x.fillRect(ox,oy+h*.7,w,h*.3);glass(x,ox+4,oy+h*.08,w-8,h*.6,'#5f7f99','#1f2c38');x.fillStyle='#777';x.fillRect(ox,oy,3,h);x.fillStyle='#c9cdd0';x.fillRect(ox+w/2-1,oy+h*.08,2,h*.6);if(on)litW(y,ox+4,oy+h*.08,w-8,h*.6)};
 const glsC=(x,y,ox,oy,w,h,on)=>{const t=[['#4d6d8a','#1b2a3a'],['#5b7a96','#223344'],['#456580','#18283a']][(R()*3)|0];glass(x,ox,oy,w,h*.82,t[0],t[1]);x.fillStyle='#2b3138';x.fillRect(ox,oy+h*.82,w,h*.18);x.fillStyle='#b8c0c8';x.fillRect(ox,oy,2,h);x.fillRect(ox+w/2,oy,1.5,h*.82);if(on)litW(y,ox+3,oy+3,w-6,h*.78)};
 /* geometry helpers */
-const GA=()=>({P:[],N:[],C:[],T:[],I:[],RND:[],CEN:[]});
-function gaV(g,p,n,c,t){g.P.push(p[0],p[1],p[2]);g.N.push(n[0],n[1],n[2]);g.C.push(c[0],c[1],c[2]);g.T.push(t[0],t[1]);g.RND.push(g.cr===undefined?Math.random():g.cr);g.CEN.push(...(g.cc||p));return g.P.length/3-1}
+/* SW/PH are the skeletal wind channels: per-vertex compliance and branch phase.
+   Only the grown species fill them; everything else leaves them at zero, which
+   the material reads as "no skeletal bend". */
+const GA=()=>({P:[],N:[],C:[],T:[],I:[],RND:[],CEN:[],SW:[],PH:[]});
+function gaV(g,p,n,c,t){g.P.push(p[0],p[1],p[2]);g.N.push(n[0],n[1],n[2]);g.C.push(c[0],c[1],c[2]);g.T.push(t[0],t[1]);g.RND.push(g.cr===undefined?Math.random():g.cr);g.CEN.push(...(g.cc||p));g.SW.push(g.sw===undefined?0:g.sw);g.PH.push(g.phv===undefined?0:g.phv);return g.P.length/3-1}
 function gaQ(g,p,n,c,uv){const h0=g.cr!==undefined,hc=g.cc!==undefined;if(!h0)g.cr=Math.random();if(!hc)g.cc=[(p[0][0]+p[1][0]+p[2][0]+p[3][0])/4,(p[0][1]+p[1][1]+p[2][1]+p[3][1])/4,(p[0][2]+p[1][2]+p[2][2]+p[3][2])/4];const a=p.map((q,i)=>gaV(g,q,n,c,uv?uv[i]:[[0,0],[1,0],[1,1],[0,1]][i]));g.I.push(a[0],a[1],a[2],a[0],a[2],a[3]);if(!h0)g.cr=undefined;if(!hc)g.cc=undefined}
 function gaT(g,p,n,c,uv){const h0=g.cr!==undefined,hc=g.cc!==undefined;if(!h0)g.cr=Math.random();if(!hc)g.cc=[(p[0][0]+p[1][0]+p[2][0])/3,(p[0][1]+p[1][1]+p[2][1])/3,(p[0][2]+p[1][2]+p[2][2])/3];const a=p.map((q,i)=>gaV(g,q,n,c,uv[i]));g.I.push(a[0],a[1],a[2]);if(!h0)g.cr=undefined;if(!hc)g.cc=undefined}
-function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',new THREE.Float32BufferAttribute(g.P,3));o.setAttribute('normal',new THREE.Float32BufferAttribute(g.N,3));o.setAttribute('color',new THREE.Float32BufferAttribute(g.C,3));o.setAttribute('uv',new THREE.Float32BufferAttribute(g.T,2));o.setAttribute('aRnd',new THREE.Float32BufferAttribute(g.RND,1));o.setAttribute('aCen',new THREE.Float32BufferAttribute(g.CEN,3));o.setIndex(g.I);return o}
+function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',new THREE.Float32BufferAttribute(g.P,3));o.setAttribute('normal',new THREE.Float32BufferAttribute(g.N,3));o.setAttribute('color',new THREE.Float32BufferAttribute(g.C,3));o.setAttribute('uv',new THREE.Float32BufferAttribute(g.T,2));o.setAttribute('aRnd',new THREE.Float32BufferAttribute(g.RND,1));o.setAttribute('aCen',new THREE.Float32BufferAttribute(g.CEN,3));o.setAttribute('aSway',new THREE.Float32BufferAttribute(g.SW,1));o.setAttribute('aPhase',new THREE.Float32BufferAttribute(g.PH,1));o.setIndex(g.I);return o}
 function foliage(vols,cnt,sz,c0,c1){const g=GA();vols.forEach(([cx,cy_,cz,rx,ry,rz])=>{for(let i=0;i<cnt;i++){let x,y,z;do{x=R()*2-1;y=R()*2-1;z=R()*2-1}while(x*x+y*y+z*z>1);const d=Math.hypot(x,y,z)||1,ox=x/d,oy=y/d,oz=z/d;
 const a=R()*6.283,e=(R()-.4)*1.5,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*Math.sin(e),uz=Math.cos(a)*Math.sin(e),uy=Math.cos(e),s=sz*(.7+R()*.6),px=cx+x*rx,py=cy_+y*ry,pz=cz+z*rz;
 const nx=ox*.85+ux*.15,ny=oy*.85+uy*.15+.12,nz=oz*.85+uz*.15,nl=Math.hypot(nx,ny,nz),n=[nx/nl,ny/nl,nz/nl],t=cl(.45+oy*.35+(d-.5)*.45,0,1)*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],h=s/2;
@@ -257,19 +260,26 @@ const GROWN_CFG={
  birch:{c0:[.6,.7,.5],c1:[1.3,1.25,.9],ctr:[0,6.5,0,2.4],bcol:[.96,.97,.82],petal:1},
  shrub:{c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr:[0,.7,0,1.1],bcol:[1,.9,.6],petal:1},
  acacia:{c0:[.7,.75,.5],c1:[1.2,1.2,.85],ctr:[0,5,0,6],bcol:null,petal:0},
- ashbush:{c0:[.4,.44,.36],c1:[.75,.78,.62],ctr:[0,.6,0,1],bcol:null,petal:0}
+ ashbush:{c0:[.4,.44,.36],c1:[.75,.78,.62],ctr:[0,.6,0,1],bcol:null,petal:0},
+ fern:{c0:[.44,.64,.3],c1:[.92,1.02,.55],ctr:[0,.28,0,.62],bcol:null,petal:0},
+ treefern:{c0:[.38,.6,.26],c1:[.86,1.0,.5],ctr:[0,1.6,0,1.15],bcol:null,petal:0}
 };
 const GROWN_JOBS=[];
 function grownTree(kind){
  const f=window.FELandscapeFlora;if(!f||typeof f.tree!=='function')return null;
  const cfg=GROWN_CFG[kind];if(!cfg)return null;
  const t=f.tree(kind);if(!t||!t.wood||!t.leaf||!t.leaf.length)return null;
- const L=GA(),a=t.leaf;let B=null;
- for(let i=0;i<a.length;i+=8){
+ const L=GA(),a=t.leaf,st=t.leafStride||8;let B=null;
+ for(let i=0;i+st<=a.length;i+=st){
   const b=[a[i]+(R()-.5)*.06,a[i+1]+(R()-.5)*.06,a[i+2]+(R()-.5)*.06];
+  /* Cards inherit the compliance and phase of the twig they sit on, so a leaf
+     cannot stay behind while its branch swings. Kernels older than the skeletal
+     wind export eight floats per leaf and those two channels stay at zero. */
+  L.sw=st>8?a[i+8]:0;L.phv=st>8?a[i+9]:0;
   lcard(L,b,[a[i+3],a[i+4],a[i+5]],a[i+6],cfg.c0,cfg.c1,cfg.ctr,a[i+7]);
-  if(cfg.petal&&((i/8)|0)%2===0){if(!B){B=GA();B.bcol=cfg.bcol}petalCard(B,[b[0]+(R()-.5)*.25,b[1]+(R()-.5)*.25,b[2]+(R()-.5)*.25],a[i+6]*.3)}
+  if(cfg.petal&&((i/st)|0)%2===0){if(!B){B=GA();B.bcol=cfg.bcol}petalCard(B,[b[0]+(R()-.5)*.25,b[1]+(R()-.5)*.25,b[2]+(R()-.5)*.25],a[i+6]*.3)}
  }
+ L.sw=0;L.phv=0;
  return cfg.petal?[t.wood,gaGeo(L),B?gaGeo(B):gaGeo(L)]:[t.wood,gaGeo(L)];
 }
 function treeBuilder(kind,legacy,per){
@@ -359,8 +369,11 @@ LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),{nt:1,std:1,det:1,vi:v
 LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),{nt:1,std:1,det:1,vi:v,vn:3}]));
 LZ('deadtree',1200,()=>SX(deadTree,{map:BT.char,nt:1,std:1,nm:BN.char,ns:.65,rm:BR.char,w:.0016}));
 LZ('ashbush',3000,()=>TV(treeBuilder('ashbush',ashBushTreeJs,2),bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
-LZ('treefern',1500,()=>TV(treeFernTree,bk('palm',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.03}));
-LZ('fern',3000,()=>TV(fernTree,bk('palm',.02),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.02,wf:0}));
+/* Ferns are the grammar species: `fernTree`/`treeFernTree` stay as the fallback
+   for an artifact without the kernel, but the fronds themselves are rewritten
+   from production rules in C++. */
+LZ('treefern',1500,()=>TV(treeBuilder('treefern',treeFernTree,2),bk('palm',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.03}));
+LZ('fern',3000,()=>TV(treeBuilder('fern',fernTree,2),bk('palm',.01),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.01,wf:.02}));
 /* The build routines run inside this try-block, so their const textures
    are block scoped. Publish them so the realism module can re-synthesise
    bark / leaf micro-structure into the very same canvases the meshes use. */
