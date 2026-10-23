@@ -9268,6 +9268,16 @@ const modifiersData = {
       ["Vorticity Confinement","range",0,1,0.12,0.02],
       ["Resolution","range",32,96,80,8],["Surface Resolution","range",16,96,64,4],
       ["Volume Solver","check",true],
+      ["Volume Quality","select",["Balanced","Mobile","Cinematic"],{advanced:true}],
+      ["Volume Steps","range",16,64,48,4,{advanced:true}],
+      ["Detail","range",0,2,1,.05],
+      ["Detail Scale","range",.5,8,2.5,.1,{advanced:true}],
+      ["Detail Speed","range",0,3,.6,.05,{advanced:true}],
+      ["Self Shadow","range",0,1,1,.05,{advanced:true}],
+      ["Scatter Samples","range",1,4,2,1,{advanced:true}],
+      ["Ambient","range",0,1,.15,.01,{advanced:true}],
+      ["Extinction","range",.2,3,1,.05,{advanced:true}],
+      ["Emission","range",0,3,1.3,.05,{advanced:true}],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -10334,6 +10344,19 @@ function applyFluidPreset(mod, presetName) {
   });
 }
 
+/* Volume render quality presets: a starting point for the knobs below, not a
+   lock. Every value stays editable afterwards. */
+const VOLUME_QUALITY_PRESETS = {
+  Mobile:    { "Volume Steps": 32, "Detail": .8,  "Detail Scale": 2.2, "Detail Speed": .5,  "Self Shadow": .7, "Scatter Samples": 1, "Ambient": .18, "Extinction": 1,   "Emission": 1.2 },
+  Balanced:  { "Volume Steps": 48, "Detail": 1,   "Detail Scale": 2.5, "Detail Speed": .6,  "Self Shadow": 1,  "Scatter Samples": 2, "Ambient": .15, "Extinction": 1,   "Emission": 1.3 },
+  Cinematic: { "Volume Steps": 64, "Detail": 1.35,"Detail Scale": 3.1, "Detail Speed": .7,  "Self Shadow": 1,  "Scatter Samples": 3, "Ambient": .2,  "Extinction": 1.15,"Emission": 1.5 }
+};
+function applyVolumeQualityPreset(mod, preset) {
+  const cfg = VOLUME_QUALITY_PRESETS[preset] || VOLUME_QUALITY_PRESETS.Balanced;
+  Object.keys(cfg).forEach(key => { mod.values[key] = cfg[key]; });
+  mod.values["Volume Quality"] = preset;
+}
+
 function addModifierToStack(category, definition) {
   let targetObj = getActiveObjectMesh();
   if (!targetObj || !targetObj.isMesh) {
@@ -10632,13 +10655,13 @@ function renderModifierStack() {
             const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Vorticity Confinement", "Resolution", "Surface Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!liquidOnly.includes(label)) return;
           } else if (domainType === "Fire") {
-            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireOnly.includes(label)) return;
           } else if (domainType === "Smoke") {
-            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!smokeOnly.includes(label)) return;
           } else if (domainType === "Fire + Smoke") {
-            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Flow") {
@@ -10669,7 +10692,7 @@ function renderModifierStack() {
       // Dynamic Preset Auto-Population & Immediate Re-render (Blender Style)
       if (mod.name === "Fluid") {
          const select = fieldEl.querySelector('select');
-         const presetFields = ["Type", "Domain Type", "Flow Type", "Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset"];
+         const presetFields = ["Type", "Domain Type", "Flow Type", "Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset", "Volume Quality"];
          if (select && presetFields.includes(label)) {
             const originalOnChange = select.onchange;
             select.onchange = (e) => {
@@ -10725,6 +10748,9 @@ function renderModifierStack() {
                   if (typeof FE !== 'undefined' && FE.toast) {
                      FE.toast(`Set Fluid Type to ${val}`);
                   }
+               } else if (label === "Volume Quality") {
+                  applyVolumeQualityPreset(mod, val);
+                  if (typeof FE !== 'undefined' && FE.toast) FE.toast(`Volume quality: ${val}`);
                } else if (["Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset"].includes(label)) {
                   applyFluidPreset(mod, val);
                   if (window.SimEngine && targetObj) {

@@ -381,6 +381,48 @@ void accumulateStats(float divBefore, float divAfter) {
   stats[4] = sqrtf(maxS);
   stats[5] += 1.f;
 }
+
+/* ---- Detail-noise tile -------------------------------------------------
+ * A seamless RGBA tile the volume shader modulates density with. Three
+ * independent fBm channels (billows, wisps, slow mask) are generated here so
+ * the fragment shader only samples textures and never builds noise itself. */
+constexpr uint32_t NOISE_MAX = 128;
+static uint8_t vnoise[NOISE_MAX * NOISE_MAX * 4];
+static uint32_t vnoiseSize = 0;
+
+inline float hashValue(int32_t x, int32_t y, uint32_t salt) {
+  uint32_t h = static_cast<uint32_t>(x) * 374761393u ^ static_cast<uint32_t>(y) * 668265263u ^ salt * 2246822519u;
+  h ^= h >> 13;
+  h *= 1274126177u;
+  h ^= h >> 16;
+  return static_cast<float>(h & 0xFFFFFFu) * (1.0f / 16777215.0f);
+}
+
+float tileNoise(float u, float v, uint32_t freq, uint32_t salt) {
+  const float x = u * static_cast<float>(freq), y = v * static_cast<float>(freq);
+  const int32_t ix = static_cast<int32_t>(floorf(x)), iy = static_cast<int32_t>(floorf(y));
+  const float fx = x - static_cast<float>(ix), fy = y - static_cast<float>(iy);
+  const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
+  const int32_t n = static_cast<int32_t>(freq);
+  const int32_t x0 = ((ix % n) + n) % n, x1 = ((ix + 1) % n + n) % n;
+  const int32_t y0 = ((iy % n) + n) % n, y1 = ((iy + 1) % n + n) % n;
+  const float v00 = hashValue(x0, y0, salt), v10 = hashValue(x1, y0, salt);
+  const float v01 = hashValue(x0, y1, salt), v11 = hashValue(x1, y1, salt);
+  return lerpf(lerpf(v00, v10, sx), lerpf(v01, v11, sx), sy);
+}
+
+float tileFbm(float u, float v, uint32_t baseFreq, uint32_t octaves, uint32_t salt) {
+  float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+  uint32_t freq = baseFreq;
+  for (uint32_t o = 0; o < octaves; ++o) {
+    sum += tileNoise(u, v, freq, salt + o * 131u) * amp;
+    norm += amp;
+    freq *= 2u;
+    amp *= 0.5f;
+  }
+  return norm > 0.0f ? sum / norm : 0.0f;
+}
+
 }  // namespace
 
 extern "C" {
@@ -631,5 +673,30 @@ FE_EXPORT float* fe_vol_surface_positions_ptr() { return meshPos; }
 FE_EXPORT float* fe_vol_surface_normals_ptr() { return meshNrm; }
 FE_EXPORT uint32_t* fe_vol_surface_indices_ptr() { return meshIdx; }
 FE_EXPORT uint32_t fe_vol_surface_index_count() { return meshIdxCount; }
+
+
+FE_EXPORT int32_t fe_vol_noise_generate(uint32_t size, uint32_t seed, uint32_t octaves) {
+  if (size < 16u || size > NOISE_MAX) return -3;
+  const uint32_t oct = octaves < 1u ? 1u : (octaves > 6u ? 6u : octaves);
+  for (uint32_t y = 0; y < size; ++y) {
+    const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(size);
+    for (uint32_t x = 0; x < size; ++x) {
+      const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+      const float billow = tileFbm(u, v, 4u, oct, seed);
+      const float wisp = tileFbm(u, v, 8u, oct + 1u, seed + 977u);
+      const float mask = tileFbm(u, v, 2u, 2u, seed + 1931u);
+      const uint32_t o = (y * size + x) * 4u;
+      vnoise[o + 0] = static_cast<uint8_t>(clampf(billow, 0.0f, 1.0f) * 255.0f);
+      vnoise[o + 1] = static_cast<uint8_t>(clampf(wisp, 0.0f, 1.0f) * 255.0f);
+      vnoise[o + 2] = static_cast<uint8_t>(clampf(mask, 0.0f, 1.0f) * 255.0f);
+      vnoise[o + 3] = 255u;
+    }
+  }
+  vnoiseSize = size;
+  return 0;
+}
+
+FE_EXPORT uint32_t fe_vol_noise_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(vnoise)); }
+FE_EXPORT uint32_t fe_vol_noise_size(void) { return vnoiseSize; }
 
 }  // extern "C"

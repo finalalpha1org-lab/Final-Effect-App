@@ -83,6 +83,7 @@ const REQUIRED_EXPORTS = [
   'fe_vol_density_ptr','fe_vol_temperature_ptr','fe_vol_velocity_x_ptr','fe_vol_velocity_y_ptr',
   'fe_vol_velocity_z_ptr','fe_vol_stats_ptr','fe_vol_surface','fe_vol_surface_positions_ptr',
   'fe_vol_surface_normals_ptr','fe_vol_surface_indices_ptr','fe_vol_surface_index_count',
+  'fe_vol_noise_generate','fe_vol_noise_ptr','fe_vol_noise_size',
   'fe_mod_begin','fe_mod_counts_ptr','fe_mod_in_pos_ptr','fe_mod_in_uv_ptr','fe_mod_in_idx_ptr',
   'fe_mod_normals_ptr','fe_mod_set_counts','fe_mod_weld','fe_mod_smooth','fe_mod_mirror',
   'fe_mod_solidify','fe_mod_displace','fe_mod_wave','fe_mod_cast','fe_mod_twist','fe_mod_array',

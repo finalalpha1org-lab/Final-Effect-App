@@ -24,7 +24,7 @@ const THREE={
   DataTexture:class{constructor(data,w,h,fmt){this.image={data};this.width=w;this.height=h;this.needsUpdate=false;}dispose(){this.disposed=true;}},
   ShaderMaterial:class{constructor(o){Object.assign(this,o);}dispose(){}},
   Matrix4:class{makeScale(){return this;}},
-  LinearFilter:1,ClampToEdgeWrapping:2,RGBAFormat:3,NormalBlending:4,BackSide:5,
+  LinearFilter:1,ClampToEdgeWrapping:2,RGBAFormat:3,NormalBlending:4,BackSide:5,RepeatWrapping:9,
   AdditiveBlending:6,DynamicDrawUsage:7,DoubleSide:8
 };
 
@@ -153,4 +153,85 @@ test('coarse-pointer devices keep the smaller volume grid',()=>{
   const lowRec=record();
   assert.equal(low.engine.createVolumeSimulation(null,params,lowRec),true);
   assert.equal(lowRec.volume.grid,24,'four-core machines stay on the smaller grid too');
+});
+
+test('the core bakes a seamless, deterministic detail-noise tile',()=>{
+  assert.equal(cpp.fe_vol_noise_generate(64,20261023,4),0,'the core accepts a 64² tile');
+  const size=cpp.fe_vol_noise_size();
+  assert.equal(size,64);
+  const tile=new Uint8Array(cpp.memory.buffer,cpp.fe_vol_noise_ptr(),size*size*4).slice();
+  assert.equal(tile[3],255,'the tile is fully opaque');
+  let min=255,max=0;
+  for(let i=0;i<tile.length;i+=4){min=Math.min(min,tile[i]);max=Math.max(max,tile[i]);}
+  assert.ok(max-min>60,'the billow channel carries real contrast');
+  assert.equal(cpp.fe_vol_noise_generate(64,20261023,4),0);
+  const again=new Uint8Array(cpp.memory.buffer,cpp.fe_vol_noise_ptr(),size*size*4).slice();
+  assert.ok(tile.every((v,i)=>v===again[i]),'the same seed rebuilds the same tile');
+  assert.equal(cpp.fe_vol_noise_generate(8,1,3),-3,'tiles below 16² are rejected');
+  /* Seam check: the wrap column must look like any interior column, otherwise
+     the scrolled detail would tear. */
+  let seam=0,inner=0;
+  for(let y=0;y<size;y++){
+    seam+=Math.abs(tile[(y*size)*4]-tile[(y*size+size-1)*4]);
+    inner+=Math.abs(tile[(y*size+10)*4]-tile[(y*size+11)*4]);
+  }
+  assert.ok(seam/size < inner/size,'the tile is seamless across the wrap edge');
+  assert.equal(cpp.fe_vol_noise_generate(64,77,4),0);
+  const other=new Uint8Array(cpp.memory.buffer,cpp.fe_vol_noise_ptr(),size*size*4).slice();
+  assert.ok(tile.some((v,i)=>v!==other[i]),'a new seed changes the pattern');
+});
+
+test('every volume look control reaches the shader as a live uniform',()=>{
+  const {engine}=boot(cpp);
+  const look={...params,'Volume Quality':'Cinematic','Volume Steps':40,Detail:1.5,'Detail Scale':4,'Detail Speed':1.2,'Self Shadow':.5,'Scatter Samples':3,Ambient:.3,Extinction:1.6,Emission:2};
+  const rec={bounds:[0,0,0,2,3,2],domainType:'Fire + Smoke',role:'Domain',params:look,status:'running'};
+  assert.equal(engine.createVolumeSimulation(null,look,rec),true);
+  assert.equal(rec.volume.grid,32,'Cinematic lifts the desktop ceiling to 32³');
+  const u=rec.visual.material.uniforms;
+  assert.equal(u.uSteps.value,40,'the step budget is user controlled');
+  assert.equal(u.uDetail.value,1.5);
+  assert.equal(u.uDetailScale.value,4);
+  assert.equal(u.uDetailSpeed.value,1.2);
+  assert.equal(u.uSelfShadow.value,.5);
+  assert.equal(u.uScatter.value,3);
+  assert.equal(u.uAmbient.value,.3);
+  assert.equal(u.uExtinction.value,1.6);
+  assert.equal(u.uEmission.value,2);
+  assert.equal(u.uNoise.value.width,64,'the baked tile is bound as a 64² texture');
+  assert.equal(u.uNoise.value.image.data.length,64*64*4);
+  const shader=rec.visual.material.fragmentShader;
+  for(const key of ['uNoise','detailField','uDetailScale','uDetailSpeed','uSelfShadow','uScatter','uAmbient','uExtinction','uEmission']){
+    assert.ok(shader.includes(key),`the shader consumes ${key}`);
+  }
+  assert.ok(shader.includes('smoothstep(0.02, 0.28, dens)'),'detail is masked off at the silhouette, so shape is never lost');
+  assert.ok(shader.includes('if (s >= uScatter) break;'),'the scatter taps are capped by the setting');
+});
+
+test('Volume Quality moves the budget, not the look, and Mobile stays at 20³',()=>{
+  const mobile=boot(cpp,{coarse:true});
+  const look={...params,'Volume Quality':'Mobile'};
+  const rec={bounds:[0,0,0,2,3,2],domainType:'Fire + Smoke',role:'Domain',params:look,status:'running'};
+  assert.equal(mobile.engine.createVolumeSimulation(null,look,rec),true);
+  assert.equal(rec.volume.grid,20,'Mobile caps the volume grid at 20³');
+  assert.equal(rec.volume.detail,1,'the detail amount keeps its own default');
+  const balanced=boot(cpp);
+  const recBalanced={bounds:[0,0,0,2,3,2],domainType:'Fire + Smoke',role:'Domain',params,status:'running'};
+  assert.equal(balanced.engine.createVolumeSimulation(null,params,recBalanced),true);
+  assert.equal(recBalanced.volume.grid,28,'Balanced keeps the standard desktop tier');
+});
+
+test('stepping advances the animation clock and re-syncs the live knobs',()=>{
+  const {engine}=boot(cpp);
+  const rec=record();
+  assert.equal(engine.createVolumeSimulation(null,params,rec),true);
+  const u=rec.visual.material.uniforms;
+  assert.equal(u.uTime.value,0);
+  engine.stepVolumeSimulation(rec,0.2);
+  assert.ok(rec.volume.time>0,'the detail pattern drifts with the simulation clock');
+  assert.equal(u.uTime.value,rec.volume.time,'the shader clock follows the solver');
+  rec.volume.detail=0.25;
+  rec.volume.emission=0.5;
+  engine.syncVolumeUniforms(rec);
+  assert.equal(u.uDetail.value,0.25,'editing a knob updates the material without a rebuild');
+  assert.equal(u.uEmission.value,0.5);
 });

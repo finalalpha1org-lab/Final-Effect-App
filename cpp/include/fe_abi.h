@@ -581,6 +581,12 @@ FE_EXPORT float*    fe_vol_surface_normals_ptr(void);
 FE_EXPORT uint32_t* fe_vol_surface_indices_ptr(void);
 FE_EXPORT uint32_t  fe_vol_surface_index_count(void);
 
+/* Seamless detail-noise tile for the volume shader (RGBA8, size x size).
+   size 16..128, octaves 1..6; returns 0 ok / -3 invalid size. */
+FE_EXPORT int32_t   fe_vol_noise_generate(uint32_t size, uint32_t seed, uint32_t octaves);
+FE_EXPORT uint32_t  fe_vol_noise_ptr(void);
+FE_EXPORT uint32_t  fe_vol_noise_size(void);
+
 /* Terrain-aware natural scatter candidates (water/slope filtered, clumped) */
 FE_EXPORT int32_t  fe_terrain_scatter_natural(
   uint32_t count,
