@@ -72,6 +72,9 @@ const HTV=[stuccoC,brickC,sidingC].map(f=>facade(128,128,3,3,f)),HT=HTV[0],AT=fa
 const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col)}}return gaGeo(g)})();
 const tallGrassG=(()=>{const g=GA(),count=detail>=3?20:detail>=2?16:12;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=1.05+R()*1.35,width=.014+R()*.024,lean=.12+R()*.43,curve=(R()-.5)*.22,base=[.10+R()*.08,.22+R()*.14,.035+R()*.035],tip=[.18+R()*.15,.36+R()*.2,.055+R()*.055],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.025+.975*Math.pow(1-t,.74)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<4;j++){const t0=j/4,t1=(j+1)/4,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.025,sa],col)}}return gaGeo(g)})();
 
+function indexSubsetGeometry(g,fraction){const h=g.clone();const index=g.index;if(index){const keep=Math.max(6,Math.floor(index.count*fraction/3)*3);h.setIndex(new THREE.BufferAttribute(index.array.slice(0,keep),1))}return h}
+const grassLowG=buildLowDetail(()=>indexSubsetGeometry(grassG,.42)),tallGrassLowG=buildLowDetail(()=>indexSubsetGeometry(tallGrassG,.5)),grassLowGeometry=grassLowG;
+
 
 /* procedural flower varieties */
 function curvedPetalPatch(g,c,a,len,width,kind,color,phase=0,quality=1){const rows=quality<.8?4:8,cols=quality<.8?2:4,ca=Math.cos(a),sa=Math.sin(a),tx=-sa,tz=ca,start=g.P.length/3;for(let i=0;i<=rows;i++){const u=i/rows,shape=Math.pow(Math.max(0,Math.sin(Math.PI*u)),.62),lift=Math.sin(u*Math.PI);for(let j=0;j<=cols;j++){const v=j/cols*2-1,side=v*width*.5*shape,radial=kind==='tulip'?.012+len*(.2*u+.48*Math.sin(u*Math.PI*.58)):kind==='lavender'?.006+len*.35*u:.01+len*u;let y;if(kind==='tulip')y=c[1]-.025+len*(.58*u+.31*lift)+width*.9*v*v*lift;else if(kind==='lavender')y=c[1]+len*.52*u+width*.22*lift;else y=c[1]+len*(.015*u+.06*lift)+width*.52*v*v*lift-.008*lift;const p=[c[0]+ca*radial+tx*side,y,c[2]+sa*radial+tz*side],nx=-ca*(kind==='tulip'?.24:.12)*lift-tx*.18*v*lift,ny=1,nz=-sa*(kind==='tulip'?.24:.12)*lift-tz*.18*v*lift,nl=Math.hypot(nx,ny,nz),shade=.91+.09*lift-.04*Math.abs(v)+.025*Math.sin(phase+u*8);gaV(g,p,[nx/nl,ny/nl,nz/nl],color.map(q=>q*shade),[.22+(v+1)*.28,u])}}for(let i=0;i<rows;i++)for(let j=0;j<cols;j++){const a0=start+i*(cols+1)+j,b=a0+1,c0=a0+cols+1,d=c0+1;g.I.push(a0,b,c0,b,d,c0)}}
@@ -241,9 +244,9 @@ const towerW=mergeG([[bxT(6,48,6,9,9).translate(0,24,0),shd,UB],[bxT(4,6,4,9,9).
 
 const TV=(fn,wo,lo)=>[0,1,2].flatMap(v=>{const[a,b]=fn();return[[a,{...wo,vi:v,vn:3}],[b,{...lo,vi:v,vn:3}]]});
 const TV3=(fn,wo,lo,bo)=>[0,1,2].flatMap(v=>{const[a,b,c]=fn();return[[a,{...wo,vi:v,vn:3}],[b,{...lo,vi:v,vn:3}],[c,{...bo,vi:v,vn:3}]]});
-function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25}]],false);
+function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,lodGeom:grassLowG}]],false);
 mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
-mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22}]],false);
+mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,lodGeom:tallGrassLowG}]],false);
 mk('daisy',14000,flowerParts('daisy'),false);
 mk('tulip',12000,flowerParts('tulip'),false);
 mk('lavender',12000,flowerParts('lavender'),false);

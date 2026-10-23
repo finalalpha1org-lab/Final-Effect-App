@@ -77,7 +77,7 @@ test('terrain water is shader-displaced on a MeshPhysicalMaterial with depth tin
   assert.ok(html.includes('waveNoise(w.xz*waterTriScale'));
   assert.ok(html.includes('waterTriW=pow(abs(normalize(waterWorldNormal)),vec3(4.))'));
   assert.ok(html.includes('waterMicroNormal'));
-  assert.ok(html.includes("terrain-water-pbr-v4-triplanar-fft"));
+  assert.match(html,/waterMat\.customProgramCacheKey=\(\)=>'terrain-water-pbr-v\d+-[^']*triplanar[^']*'/, 'water shader defines a versioned cache key so injected shader edits invalidate programs');
 });
 
 test('ocean vertex displacement is driven by three Tessendorf inverse-FFT cascades',()=>{

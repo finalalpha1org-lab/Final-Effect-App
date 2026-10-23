@@ -9,3 +9,6 @@ package-lock.json
 Final-Effect-3D-Standalone.html
 cpp-engine-verified-preview.png
 .DS_Store
+
+# Local secrets are never committed
+.env

@@ -1,4 +1,5 @@
 
+const SCATTER_BATCH=4096;
 const ROOT_SPAN={pine:1.5,spruce:1.35,krumm:.8,juniper:.7,oak:4.4,birch:.6,palm:.8,acacia:1.8,joshua:1,deadtree:1.6,treefern:.5,shrub:.5,sage:.45,ashbush:.5,saguaro:.7,barrel:.45,prickly:.6,agave:.5};
 const GROUND_UP=new THREE.Vector3(0,1,0),GROUND_N=new THREE.Vector3(),GROUND_Q=new THREE.Quaternion(),GROUND_E=new THREE.Euler();
 function groundNormal(x,z,alignment=1){if(OW?.active)return OW.normalAt(x,z,alignment);const u=cl((x+S/2)/D,0,N-.001),v=cl((z+S/2)/D,0,N-.001),i=u|0,j=v|0,a=u-i,b=v-j,k=j*W+i,gx=((H[k+1]-H[k])*(1-b)+(H[k+W+1]-H[k+W])*b)/D,gz=((H[k+W]-H[k])*(1-a)+(H[k+W+1]-H[k+1])*a)/D;return GROUND_N.set(-gx*alignment,1,-gz*alignment).normalize()}
@@ -6,15 +7,14 @@ function groundNormal(x,z,alignment=1){if(OW?.active)return OW.normalAt(x,z,alig
 
 
 
-function sync(k,allInstances=false){const K=KIND[k],gr=['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k),tl=gr ? .4 : RK[k] ? .5 : (BLD[k]||NT[k]) ? 0 : .07,T=K.tint;K.meshes.forEach((m,mi)=>{const pal=m.userData.pal;let ci=0;const sourceListIndices=[];K.list.forEach((o,sourceIndex)=>{const nv=m.userData.vn;if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;const i=ci++,h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);sourceListIndices[i]=sourceIndex;let rootSink=0,span=(ROOT_SPAN[k]||0)*s;if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}dm.position.set(o.x,o.y-(RK[k] ? .12*s : 0)-rootSink,o.z);if(!BLD[k]){const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1;dm.quaternion.setFromUnitVectors(GROUND_UP,groundNormal(o.x,o.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,o.r);dm.quaternion.multiply(GROUND_Q);const bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dm.quaternion.multiply(GROUND_Q)}else dm.rotation.set((h2-.5)*tl,o.r,(h3-.5)*tl,'YXZ');if(o.fl){dm.position.set(o.fl.x,o.fl.y,o.fl.z);if(o.fl.q)dm.quaternion.set(o.fl.q[0],o.fl.q[1],o.fl.q[2],o.fl.q[3]);else dm.rotation.set(o.fl.rx,o.fl.ry,o.fl.rz,'YXZ')}const bw=BLD[k]?K.size*o.a:s*o.a;dm.scale.set(bw,s,bw);if(BLD[k]&&m.userData.part==='roof'&&o.roofGone)dm.scale.set(0,0,0);dm.updateMatrix();m.setMatrixAt(i,dm.matrix);let c=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2];if(gr&&!pal){const d=vn(o.x*.03+50,o.z*.03+20);c=[c[0]*(.85+d*.5),c[1]*(1-d*.15),c[2]*(1-d*.4)]}const v=o.v,t=pal||m.userData.nt?[1,1,1]:T,dmgTint=BLD[k]?1-(o.damage||0)*.14:1;m.setColorAt(i,tcol.setRGB(c[0]*v*t[0]*dmgTint,c[1]*v*t[1]*dmgTint,c[2]*v*t[2]*dmgTint))});m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;const shadow=K.shadowMeshes?.[mi];if(shadow){const stride=Math.max(SHADOW_PROXY_STRIDE,Math.ceil(ci/Math.max(1,shadow.instanceMatrix.count)));let si=0;for(let j=0;j<ci;j+=stride){shadow.instanceMatrix.array.set(m.instanceMatrix.array.subarray(j*16,j*16+16),si*16);shadow.instanceColor.array.set(m.instanceColor.array.subarray(j*3,j*3+3),si*3);si++}shadow.count=si;shadow.visible=si>0;shadow.instanceMatrix.needsUpdate=true;shadow.instanceColor.needsUpdate=true}});K.selectionGridDirty=true;treeMapDirty=true}
 
-function growManualCapacity(k,required){const K=KIND[k];if(!K||required<=K.max)return true;const cap=Math.max(required,Math.ceil(Math.max(K.max,1)*1.5),K.max+1024),resize=old=>{const m=new THREE.InstancedMesh(old.geometry,old.material,cap);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0,Math.min(old.instanceMatrix.array.length,m.instanceMatrix.array.length)));m.instanceColor=new THREE.BufferAttribute(new Float32Array(cap*3),3);m.instanceColor.array.set(old.instanceColor.array.subarray(0,Math.min(old.instanceColor.array.length,m.instanceColor.array.length)));m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=Math.min(old.count,cap);m.frustumCulled=old.frustumCulled;m.castShadow=old.castShadow;m.receiveShadow=old.receiveShadow;m.userData={...old.userData};m.customDepthMaterial=old.customDepthMaterial;m.renderOrder=old.renderOrder;m.name=old.name;m.position.copy(old.position);m.quaternion.copy(old.quaternion);m.scale.copy(old.scale);m.layers.mask=old.layers.mask;m.updateMatrix();return m},next=[];try{for(const old of K.meshes)next.push(resize(old))}catch(e){if(!K.capacityWarned){K.capacityWarned=true;console.warn('Device memory is full; existing foliage was kept.');}return false}for(let i=0;i<K.meshes.length;i++){scene.remove(K.meshes[i]);scene.add(next[i])}K.meshes=next;K.max=cap;K.capacityWarned=false;return true}
+function growManualCapacity(k,required){const K=KIND[k];if(!K||required<=K.max)return true;const cap=Math.max(required,Math.ceil(Math.max(K.max,1)*1.5),K.max+1024),resize=old=>{const m=new THREE.InstancedMesh(old.geometry,old.material,cap);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0,Math.min(old.instanceMatrix.array.length,m.instanceMatrix.array.length)));m.instanceColor=new THREE.BufferAttribute(new Float32Array(cap*3),3);m.instanceColor.array.set(old.instanceColor.array.subarray(0,Math.min(old.instanceColor.array.length,m.instanceColor.array.length)));m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=Math.min(old.count,cap);m.frustumCulled=old.frustumCulled;m.castShadow=old.castShadow;m.receiveShadow=old.receiveShadow;m.userData={...old.userData};m.customDepthMaterial=old.customDepthMaterial;m.renderOrder=old.renderOrder;m.name=old.name;m.position.copy(old.position);m.quaternion.copy(old.quaternion);m.scale.copy(old.scale);m.layers.mask=old.layers.mask;m.updateMatrix();return m},next=[];try{for(const old of K.meshes)next.push(resize(old))}catch(e){if(!K.capacityWarned){K.capacityWarned=true;console.warn('Device memory is full; existing foliage was kept.');}return false}for(let i=0;i<K.meshes.length;i++){scene.remove(K.meshes[i]);scene.add(next[i])}K.meshes=next;if(K.lowMeshes){for(const low of K.lowMeshes){scene.remove(low);low.dispose?.();low.material?.dispose?.()}K.lowMeshes=null}K.max=cap;K.capacityWarned=false;return true}
 const mAt=(x,z)=>OW?.active?OW.mIdx(x,z):mIdx(cl(Math.round((x+S/2)/D),0,N),cl(Math.round((z+S/2)/D),0,N));
 const slope=(x,z)=>Math.hypot(hgt(x+1,z)-hgt(x-1,z),hgt(x,z+1)-hgt(x,z-1))/2;
 const RULE={grass:[.8,0],tallgrass:[.82,0],flower:[.6,0],daisy:[.6,0],tulip:[.6,0],lavender:[.65,0],shrub:[.9,1.4],pine:[.75,3],oak:[.6,4.2],birch:[.6,2.8],palm:[.5,3.5],rock:[9,0],house:[.32,0],block:[.28,0],mid:[.27,0],tower:[.26,0]},BLD={house:4,block:5.6,mid:6.2,tower:4.4},bY=(x,z,b)=>Math.min(hgt(x,z),...[[1,1],[1,-1],[-1,1],[-1,-1]].map(([a,c])=>hgt(x+a*b*.6,z+c*b*.6))),SM={house:1,block:1,mid:1,tower:1,grass:1.35,tallgrass:1.05,flower:1.05,daisy:1,tulip:1,lavender:1, pine:1.05,oak:1.05,birch:1.05,palm:1.05,shrub:1.05,rock:.8};
-function add(k,x,z,f=1,yaw=0,force=false){
+function add(k,x,z,f=1,yaw=0,force=false,y0,sl0){
 const K=KIND[k]||ensure(k),bd=BLD[k];if(!K)return 0;const edge=force?0.05:1+(bd||0);if(Math.abs(x)>S/2-edge||Math.abs(z)>S/2-edge)return 0;if(K.list.length>=K.max){if(!force)return 0;if(!growManualCapacity(k,K.list.length+1))return 0;if(K.list.length>=K.max)return 0}
-const y=bd?bY(x,z,bd):hgt(x,z),[ms,sp]=RULE[k]||[9,0],m=mAt(x,z),sl=slope(x,z),minAbove=bd?.7:RK[k]?-.3:force?.05:.25,grassKind=k==='grass'||k==='tallgrass',waterDepth=wl-y,shallowWaterGrass=force&&grassKind&&waterDepth>=.45&&waterDepth<=shallowBrushDepth;if(y<wl+minAbove&&!shallowWaterGrass)return 0;
+const y=y0===undefined||bd?(bd?bY(x,z,bd):hgt(x,z)):y0,[ms,sp]=RULE[k]||[9,0],m=mAt(x,z),sl=sl0===undefined||bd?slope(x,z):sl0,minAbove=bd?.7:RK[k]?-.3:force?.05:.25,grassKind=k==='grass'||k==='tallgrass',waterDepth=wl-y,shallowWaterGrass=force&&grassKind&&waterDepth>=.45&&waterDepth<=shallowBrushDepth;if(y<wl+minAbove&&!shallowWaterGrass)return 0;
 if(!force){if(!bd&&!RK[k]&&sl>ms)return 0;if(!bd&&!RK[k]&&k!='palm'&&f<1.5&&R()>veg)return 0;if(bd?m>1:k=='palm'?(biome==='jungle'?(m===2||m===4||m===5):m!=3):!RK[k]&&(['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k)?m!=0:m>1))return 0;if((k=='grass'||k=='tallgrass')&&vn(x*.09+9,z*.09+4)*f<(k=='tallgrass'?.18:.32))return 0;if(k in TL&&y>snowL+TL[k])return 0;if(PATCH[k]&&vn(x*.05+3,z*.05+8)*f<.22+scatterClustering*.46)return 0;if(RK[k]&&f<1.5&&R()>.25+sl*.8)return 0}
 const s=SM[k]*(1+(R()-.5)*2*K.vr);if(bd&&!force){for(const q in BLD)if(KIND[q].list.some(o=>(o.x-x)**2+(o.z-z)**2<(bd+BLD[q])**2*.8))return 0}else if(FP[k]&&!force){if(occBlocked(x,z,FP[k]*s*K.size,k,SPACING_KINDS.has(k)?br.minGap:0))return 0}else if(!force&&sp&&K.list.some(o=>(o.x-x)**2+(o.z-z)**2<(sp*(o.s+s)*.5)**2))return 0;
 K.list.push({x,y,z,s,r:bd?yaw+Math.floor(R()*4)*1.5708:R()*6.28,a:bd?.94+R()*.12:.88+R()*.24,v:.82+R()*.3,manual:!!force});if(FP[k]&&!force)occAdd(x,z,FP[k]*s*K.size,k);return 1}
@@ -65,11 +65,13 @@ function owFindSpawn(){const cfg=owHeightConfig(),sea=cfg.seaLevel,half=OW.confi
 function owValidChunk(cx,cz){const half=OW.config.sizeKm*500,edge=OW.chunkSize*.5;return Math.abs(cx*OW.chunkSize)-edge<=half&&Math.abs(cz*OW.chunkSize)-edge<=half}
 function owStatus(text){const n=document.getElementById('owstatus');if(n)n.textContent=text}
 function owPump(token){if(token!==OW.token||!OW.active)return;if(!OW.activeJob&&!OW.queue.length){OW.generating=false;if(OW.waterMapsDirty){OW.waterMapsDirty=false;updateOpenWorldWaterHeightMaps()}owStatus('Ready · '+OW.chunks.size+' terrain chunks loaded · '+[...OW.chunks.values()].reduce((n,c)=>n+Object.values(c.plants).reduce((a,b)=>a+b.length,0),0).toLocaleString()+' plants');return}try{if(!OW.activeJob){const next=OW.queue.shift();if(OW.editStore.has(next.key)){owLoadChunk(next.cx,next.cz);requestAnimationFrame(()=>owPump(token));return}OW.activeJob={...next,job:OpenWorldGenerator.createChunkJob(owChunkConfig(next.cx,next.cz))}}const current=OW.activeJob,result=current.job.step(8,1024);if(result.done){OW.activeJob=null;owLoadChunk(current.cx,current.cz,result.chunk);OW.generated=true;owStatus('Loaded '+current.key+' · '+OW.chunks.size+' chunks active, '+OW.queue.length+' queued')}else owStatus('Generating '+current.key+' · '+result.phase+' '+Math.round(result.progress*100)+'%')}catch(e){console.error('Open World chunk generation failed:',e);owStatus('Generation error: '+(e?.message||e));OW.activeJob=null;OW.generating=false;return}requestAnimationFrame(()=>owPump(token))}
-function owRefresh(force=false){if(!OW?.active)return;const p=owCenter(),half=OW.config.sizeKm*500,x=cl(p.x,-half,half),z=cl(p.z,-half,half),cx=Math.floor((x+OW.chunkSize*.5)/OW.chunkSize),cz=Math.floor((z+OW.chunkSize*.5)/OW.chunkSize);if(!force&&cx===OW.lastCenterX&&cz===OW.lastCenterZ)return;OW.lastCenterX=cx;OW.lastCenterZ=cz;const desired=new Set(),jobs=[];for(let dz=-OW.radius;dz<=OW.radius;dz++)for(let dx=-OW.radius;dx<=OW.radius;dx++){const ax=cx+dx,az=cz+dz,key=owKey(ax,az);if(!owValidChunk(ax,az))continue;desired.add(key);if(!OW.chunks.has(key)&&!OW.queue.some(q=>q.key===key))jobs.push({cx:ax,cz:az,key,d:dx*dx+dz*dz})}for(const [key,c] of OW.chunks){if(!desired.has(key)){owDisposeChunk(c);OW.chunks.delete(key)}}OW.queue=OW.queue.filter(q=>desired.has(q.key));if(OW.activeJob&&!desired.has(OW.activeJob.key))OW.activeJob=null;jobs.sort((a,b)=>a.d-b.d);OW.queue.push(...jobs);water.position.x=cx*OW.chunkSize;water.position.z=cz*OW.chunkSize;OW.waterMapsDirty=true;if(OW.queue.length&&!OW.generating){OW.generating=true;const token=OW.token;requestAnimationFrame(()=>owPump(token))}if(!OW.queue.length)owStatus('Ready · '+OW.chunks.size+' chunks loaded')}
+function owRefresh(force=false){if(!OW?.active)return;const p=owCenter(),half=OW.config.sizeKm*500,x=cl(p.x,-half,half),z=cl(p.z,-half,half),cx=Math.floor((x+OW.chunkSize*.5)/OW.chunkSize),cz=Math.floor((z+OW.chunkSize*.5)/OW.chunkSize);if(!force&&cx===OW.lastCenterX&&cz===OW.lastCenterZ)return;OW.lastCenterX=cx;OW.lastCenterZ=cz;const desired=new Set(),jobs=[],planCore=window.FELandscapeCore&&window.FELandscapeCore.ready&&typeof window.FELandscapeCore.owPlan==='function'?window.FELandscapeCore.owPlan({cx,cz,radius:OW.radius,chunkSize:OW.chunkSize,worldHalf:half}):null;
+if(planCore&&planCore.count){for(let i=0;i<planCore.count;i++){const ax=planCore.cells[i*3],az=planCore.cells[i*3+1],d=planCore.cells[i*3+2],key=owKey(ax,az);desired.add(key);if(!OW.chunks.has(key)&&!OW.queue.some(q=>q.key===key))jobs.push({cx:ax,cz:az,key,d})}}
+else for(let dz=-OW.radius;dz<=OW.radius;dz++)for(let dx=-OW.radius;dx<=OW.radius;dx++){const ax=cx+dx,az=cz+dz,key=owKey(ax,az);if(!owValidChunk(ax,az))continue;desired.add(key);if(!OW.chunks.has(key)&&!OW.queue.some(q=>q.key===key))jobs.push({cx:ax,cz:az,key,d:dx*dx+dz*dz})}for(const [key,c] of OW.chunks){if(!desired.has(key)){owDisposeChunk(c);OW.chunks.delete(key)}}OW.queue=OW.queue.filter(q=>desired.has(q.key));if(OW.activeJob&&!desired.has(OW.activeJob.key))OW.activeJob=null;jobs.sort((a,b)=>a.d-b.d);OW.queue.push(...jobs);water.position.x=cx*OW.chunkSize;water.position.z=cz*OW.chunkSize;OW.waterMapsDirty=true;if(OW.queue.length&&!OW.generating){OW.generating=true;const token=OW.token;requestAnimationFrame(()=>owPump(token))}if(!OW.queue.length)owStatus('Ready · '+OW.chunks.size+' chunks loaded')}
 function owCurrentSettings(){return{sizeKm:cl(+OW.config.sizeKm,1,50),seed:Math.round(cl(+OW.config.seed,1,999999)),blend:cl(+OW.config.blend,0,1),mountainHeight:cl(+OW.config.mountainHeight,0,100),waterCoverage:cl(+OW.config.waterCoverage,0,100),waterLevel:cl(+OW.config.waterLevel,-80,0),vegetationDensity:cl(+OW.config.vegetationDensity,0,2.5),biomeMix:{hills:cl(+OW.config.biomeMix.hills,0,2),alpine:cl(+OW.config.biomeMix.alpine,0,2),desert:cl(+OW.config.biomeMix.desert,0,2),volc:cl(+OW.config.biomeMix.volc,0,2)}}}
 function owSameSettings(a,b){return!!a&&!!b&&Object.keys(a).every(k=>k==='biomeMix'?Object.keys(a.biomeMix||{}).every(n=>a.biomeMix[n]===b.biomeMix?.[n]):a[k]===b[k])}
-function owStart(){const next=owCurrentSettings(),resume=OW.generated&&!OW.active&&owSameSettings(next,OW.currentConfig);if(exploreMode)deactivateExplore(false);if(!OW.active){OW.savedScene={visibility:new Map(),camera:{position:cam.position.clone(),target:oc.target.clone(),maxDistance:oc.maxDistance},water:water.position.clone(),waterLevel:wl,waterLevelUserSet:wlUserSet};const keep=[ter,...Object.values(KIND).flatMap(K=>[...K.meshes,...(K.shadowMeshes||[])]),...objs,...(mapRoot?[mapRoot]:[]),...(typeof SBM!=='undefined'?[SBM]:[])];for(const o of keep){OW.savedScene.visibility.set(o,o.visible);o.visible=false}}if(!resume){OW.config=next;OW.currentConfig={...next,biomeMix:{...next.biomeMix}};for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.editStore.clear();OW.history.length=OW.redo.length=0;OW.queue.length=0;OW.activeJob=null;OW.generated=false}OW.active=true;OW.group.visible=true;water.visible=true;setOpenWorldWaterRadius(true);wl=OW.config.waterLevel;U.wy.value=wl;water.position.y=wl;OW.segments=detail>=3?128:detail>=2?96:64;OW.lastCenterX=OW.lastCenterZ=NaN;const spawn=owFindSpawn(),dx=spawn.x-oc.target.x,dz=spawn.z-oc.target.z;oc.target.x=spawn.x;oc.target.z=spawn.z;cam.position.x+=dx;cam.position.z+=dz;const dy=spawn.y+6-oc.target.y;oc.target.y+=dy;cam.position.y+=dy;OW.token++;OW.generating=false;OW.activeJob=null;waterReflectionReady=false;water.position.y=wl;bt=tab==='plants'?'plants':tab==='terrain'?'terrain':'openworld';nav=false;setNav();owRefresh(true);msg(resume?'Resuming Open World':'Generating streamed Open World');build();}
-function owDeactivate(){if(!OW?.active)return;OW.token++;OW.queue.length=0;OW.activeJob=null;OW.generating=false;for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.group.visible=false;OW.active=false;OW.waterMapsDirty=false;setOpenWorldWaterRadius(false);if(OW.savedScene){for(const[o,v]of OW.savedScene.visibility)o.visible=v;for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.shadowMeshes||[])])m.visible=m.count>0;cam.position.copy(OW.savedScene.camera.position);oc.target.copy(OW.savedScene.camera.target);oc.maxDistance=OW.savedScene.camera.maxDistance;wl=OW.savedScene.waterLevel;wlUserSet=OW.savedScene.waterLevelUserSet===true;U.wy.value=wl;water.position.copy(OW.savedScene.water);U.hm.value=hmTex;U.hm2.value=SBT;U.uTerrainOrigin.value.set(0,0);cam.updateMatrixWorld(true);oc.update();OW.savedScene=null}OW.selected=null;waterReflectionReady=false;ring.visible=false;owStatus('Open World paused; generated chunks and edits are retained.');}
+function owStart(){const next=owCurrentSettings(),resume=OW.generated&&!OW.active&&owSameSettings(next,OW.currentConfig);if(exploreMode)deactivateExplore(false);if(!OW.active){OW.savedScene={visibility:new Map(),camera:{position:cam.position.clone(),target:oc.target.clone(),maxDistance:oc.maxDistance},water:water.position.clone(),waterLevel:wl,waterLevelUserSet:wlUserSet};const keep=[ter,...Object.values(KIND).flatMap(K=>[...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])]),...objs,...(mapRoot?[mapRoot]:[]),...(typeof SBM!=='undefined'?[SBM]:[])];for(const o of keep){OW.savedScene.visibility.set(o,o.visible);o.visible=false}}if(!resume){OW.config=next;OW.currentConfig={...next,biomeMix:{...next.biomeMix}};for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.editStore.clear();OW.history.length=OW.redo.length=0;OW.queue.length=0;OW.activeJob=null;OW.generated=false}OW.active=true;OW.group.visible=true;water.visible=true;setOpenWorldWaterRadius(true);wl=OW.config.waterLevel;U.wy.value=wl;water.position.y=wl;OW.segments=detail>=3?128:detail>=2?96:64;OW.lastCenterX=OW.lastCenterZ=NaN;const spawn=owFindSpawn(),dx=spawn.x-oc.target.x,dz=spawn.z-oc.target.z;oc.target.x=spawn.x;oc.target.z=spawn.z;cam.position.x+=dx;cam.position.z+=dz;const dy=spawn.y+6-oc.target.y;oc.target.y+=dy;cam.position.y+=dy;OW.token++;OW.generating=false;OW.activeJob=null;waterReflectionReady=false;water.position.y=wl;bt=tab==='plants'?'plants':tab==='terrain'?'terrain':'openworld';nav=false;setNav();owRefresh(true);msg(resume?'Resuming Open World':'Generating streamed Open World');build();}
+function owDeactivate(){if(!OW?.active)return;OW.token++;OW.queue.length=0;OW.activeJob=null;OW.generating=false;for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.group.visible=false;OW.active=false;OW.waterMapsDirty=false;setOpenWorldWaterRadius(false);if(OW.savedScene){for(const[o,v]of OW.savedScene.visibility)o.visible=v;for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=m.count>0;cam.position.copy(OW.savedScene.camera.position);oc.target.copy(OW.savedScene.camera.target);oc.maxDistance=OW.savedScene.camera.maxDistance;wl=OW.savedScene.waterLevel;wlUserSet=OW.savedScene.waterLevelUserSet===true;U.wy.value=wl;water.position.copy(OW.savedScene.water);U.hm.value=hmTex;U.hm2.value=SBT;U.uTerrainOrigin.value.set(0,0);cam.updateMatrixWorld(true);oc.update();OW.savedScene=null}OW.selected=null;waterReflectionReady=false;ring.visible=false;owStatus('Open World paused; generated chunks and edits are retained.');}
 function owHeightBrush(p,dt){const r=Math.max(.1,br.r),changed=new Set();for(const c of OW.chunks.values()){const row=c.segments+1,step=c.size/c.segments,src=br.tool==='smooth'||br.tool==='erode'?c.heights.slice():null;let minI=c.segments,maxI=0,minJ=c.segments,maxJ=0,any=false;for(let j=0;j<=c.segments;j++)for(let i=0;i<=c.segments;i++){const wx=c.originX-c.size*.5+i*step,wz=c.originZ-c.size*.5+j*step,d=Math.hypot(wx-p.x,wz-p.z)/r;if(d>=1)continue;const f=(1-d*d)**2,k=j*row+i,old=c.heights[k];if(['biome','paint'].includes(br.tool)){if(br.tool==='biome'||normalWorldMaterialBrush){const amount=cl(f*2*br.str,0,1),base=k*12,total=c.surfaceWeights.subarray(base,base+12).reduce((a,b)=>a+b,0),fade=1-amount;if(total>.001)for(let q=0;q<12;q++)c.surfaceWeights[base+q]=c.surfaceWeights[base+q]/total*fade;else for(let q=0;q<12;q++)c.surfaceWeights[base+q]=0;let id=br.tool==='biome'||normalWorldMaterialBrush?normalWorldMaterial:[6,1,5,7,1,10][br.tex]||0;c.surfaceWeights[base+id]+=amount}else if(f>.2){const base=k*12;for(let q=0;q<12;q++)c.surfaceWeights[base+q]=q===[6,1,5,7,1,10][br.tex]?1:0}any=true}else{switch(br.tool){case'raise':c.heights[k]+=br.str*f*dt*10;break;case'lower':c.heights[k]-=br.str*f*dt*10;break;case'flat':c.heights[k]+=(fl-old)*Math.min(1,f*dt*10*br.str);break;case'smooth':case'erode':{const a=(src[k-(i>0)]+src[k+(i<c.segments)]+src[k-(j>0)*row]+src[k+(j<c.segments)*row])/4;c.heights[k]+=(a-old)*Math.min(1,f*dt*(br.tool==='erode'?5:14)*br.str)}break;case'terrace':c.heights[k]+=(Math.round(old/3)*3-old)*Math.min(1,f*dt*10*br.str);break;default:break}if(c.heights[k]!==old)any=true}if(any){minI=Math.min(minI,i);maxI=Math.max(maxI,i);minJ=Math.min(minJ,j);maxJ=Math.max(maxJ,j)}}if(!any)continue;c.dirty=true;if(!['biome','paint'].includes(br.tool))c.dirtyTerrain=true;const pos=c.terrain.geometry.attributes.position,color=c.terrain.geometry.attributes.color.array;for(let j=minJ;j<=maxJ;j++)for(let i=minI;i<=maxI;i++){const k=j*row+i;pos.setY(k,c.heights[k]);const col=owColor(c.surfaceWeights,k);color[k*3]=col[0];color[k*3+1]=col[1];color[k*3+2]=col[2]}pos.needsUpdate=true;c.terrain.geometry.attributes.color.needsUpdate=true;c.terrain.geometry.computeVertexNormals();c.terrain.geometry.computeBoundingSphere();if(!['biome','paint'].includes(br.tool))owQueueSync(c);changed.add(c)}return changed}
 function owBrush(p,dt,from){if(bt==='plants')return owPlantAt(p,from);const touched=owHeightBrush(p,dt);if(touched.size)waterReflectionReady=false}
 function owSelectFoliageAt(e){const rect=cv.getBoundingClientRect();m2.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(m2,cam);const hits=ray.intersectObjects([OW.group],true),hit=hits.find(h=>h.object?.isInstancedMesh&&h.object.userData?.kind&&Number.isInteger(h.instanceId));if(!hit){OW.selected=null;selectedFoliage=null;ring.visible=false;updateFoliageGlow();build();msg('No Open World foliage hit. Zoom in or tap closer to a plant.');return false}const refs=hit.object.userData.sourcePlants,item=refs?.[hit.instanceId],chunk=OW.chunks.get(hit.object.userData.chunkKey);if(!item||!chunk){OW.selected=null;return false}OW.selected={kind:hit.object.userData.kind,item,chunk};selectedFoliage=null;updateFoliageGlow();ring.position.set(item.x,item.y+.08,item.z);ring.scale.setScalar(cl((ROOT_SPAN[OW.selected.kind]||1)*item.s*.22,.55,4));ring.visible=true;build();msg('Selected '+(LBL[OW.selected.kind]||OW.selected.kind)+' in Open World.');return true}
@@ -86,11 +88,126 @@ const k=br.kind,manualPaint=bt=='plants',cover=['grass','tallgrass'].includes(k)
 for(let j=0;j<samples;j++){const u=from?(j+.5)/samples:1,cx=from?from.x+dx*u:p.x,cz=from?from.z+dz*u:p.z;for(let i=0;i<n;i++){const a=manualPaint?i*2.3999632297+j*1.6180339887+(R()-.5)*.12:R()*6.283,d=manualPaint?br.r*Math.sqrt((i+.5)/n)*(.96+R()*.08):Math.sqrt(R())*br.r;add(k,cl(cx+Math.cos(a)*d,-S/2+.05,S/2-.05),cl(cz+Math.sin(a)*d,-S/2+.05,S/2-.05),1.7,cityAng,manualPaint)}}if(BLD[k])for(const q in KIND)if(!BLD[q]){const Q=KIND[q],n0=Q.list.length;Q.list=Q.list.filter(o=>Math.hypot(o.x-p.x,o.z-p.z)>br.r);if(Q.list.length!=n0)sync(q)}sync(k)}
 
 function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debClear();occRebuild();const density=cl(scatterDensity,1,2.5),big=BTAB[biome].filter(([n])=>FP[n]>=1.8),bw=big.reduce((a,[,w])=>a+w,0),ph=n=>RK[n]?0:FP[n]>=.9?1:2,smallBudget=36000*density,grassMixBonus=Math.round(36000*density),tallGrassMixBonus=Math.round(42000*density),wildflowerMixBonus=Math.round(7000*density),flowers=new Set(['flower','daisy','tulip','lavender']),coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1,tab=BTAB[biome].filter(([n])=>!(FP[n]>=1.8)).map(([n,w])=>[n,Math.round(smallBudget*w*coverBoost(n))+(n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0)]).sort((a,b)=>ph(a[0])-ph(b[0]));
-for(let i=0,N=Math.round(36000*bw*5*density);i<N;i++){let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}add(k,(R()-.5)*S*.96,(R()-.5)*S*.96)}
-for(const[n,c]of tab)for(let i=0;i<c;i++)add(n,(R()-.5)*S*.96,(R()-.5)*S*.96);if(kb)clearUnderB();for(const k in KIND)sync(k)}
+const bigCount=Math.round(36000*bw*5*density),SCBUF=new Float32Array(SCATTER_BATCH*4);
+let uploaded=false;const pickBig=()=>{let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}return k};
+const COVER_KINDS=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);
+function scatterFill(count,pick,cover){
+ const core=window.FELandscapeCore;let done=0;
+ if(core&&core.ready&&core.scatterBegin&&core.scatterBatch){
+  if(!uploaded)uploaded=!!core.scatterBegin({n:N,size:S,heights:H});
+  if(uploaded){
+   /* Ground cover asks the core for terrain-filtered, clumped candidates so the
+      expensive grass/flower budgets land where they can actually grow. Every
+      other kind keeps the jittered-grid candidates. */
+   const natural=cover&&typeof core.scatterNatural==='function';
+   while(done<count){const batch=Math.min(SCATTER_BATCH,count-done),seedBatch=(Math.round((seed||0)*1000)+done+1)>>>0;
+    const got=natural
+      ?core.scatterNatural({count:batch,spread:S*.96,seed:seedBatch,water:wl,maxSlope:cover.maxSlope,clump:cover.clump,patch:cover.patch,output:SCBUF})
+      :core.scatterBatch({count:batch,spread:S*.96,seed:seedBatch,output:SCBUF});
+    if(!got)break;
+    for(let i=0;i<got;i++){const o=i*4;add(pick(),SCBUF[o],SCBUF[o+1],1,0,false,SCBUF[o+2],SCBUF[o+3])}
+    done+=got;if(got<batch)break}
+   if(done>=count)return}}
+ for(let i=done;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96);
+}
+scatterFill(bigCount,pickBig);
+for(const[n,c]of tab)scatterFill(c,()=>n,COVER_KINDS.has(n)?{maxSlope:(RULE[n]||[9])[0],clump:.25+scatterClustering*.45,patch:22}:null);
+if(kb)clearUnderB();for(const k in KIND)sync(k)}
 function resnap(){for(const k in KIND){KIND[k].list.forEach(o=>o.y=BLD[k]?bY(o.x,o.z,BLD[k]):hgt(o.x,o.z));sync(k)}}
 
 
+
+const LOD_GROUND=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);
+const LOD_TREES=new Set(['pine','oak','birch','palm','spruce','krumm','juniper','acacia','joshua','saguaro','barrel','prickly','treefern','deadtree']);
+const LOD_BOTANICAL=new Set([...LOD_GROUND,...LOD_TREES,'shrub','fern','ashbush','agave','sage']);
+function plantLodTier(k,d,x=0,z=0,full=750,wasLow){
+ const far=LOD_GROUND.has(k)?8000:14000;
+ if(!(d<far))return -1;
+ const h=hh(x*.731+13.7,z*.917-7.3),threshold=full+h*Math.max(120,full*2),band=full;
+ if(wasLow===undefined)return d<=threshold?0:1;
+ return wasLow?(d<threshold-band?0:1):(d<=threshold+band?0:1);
+}
+function lowMeshesFor(k){
+ const K=KIND[k];
+ if(K.lowMeshes)return K.lowMeshes;
+ if(!LOD_KINDS.has(k)){K.lowMeshes=null;return null}
+ K.lowMeshes=K.meshes.map(m=>{
+  const lowMat=m.material.clone();
+  lowMat.onBeforeCompile=m.material.onBeforeCompile;
+  lowMat.customProgramCacheKey=m.material.customProgramCacheKey;
+  lowMat.normalMap=null;lowMat.roughnessMap=null;lowMat.bumpMap=null;lowMat.needsUpdate=true;
+  const low=new THREE.InstancedMesh(m.userData.lodGeom||m.geometry,lowMat,m.instanceMatrix.count);
+  low.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  low.instanceColor=new THREE.BufferAttribute(new Float32Array(m.instanceMatrix.count*3).fill(1),3);
+  low.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  low.count=0;low.frustumCulled=false;low.castShadow=false;low.receiveShadow=m.receiveShadow;
+  low.layers.mask=m.layers.mask;low.name=(m.name||k)+' low';low.userData={...m.userData,lowLod:true,sourceListIndices:[]};
+  scene.add(low);return low;
+ });
+ return K.lowMeshes;
+}
+function sync(k,allInstances=false){
+ const K=KIND[k],gr=['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k),tl=gr ? .4 : RK[k] ? .5 : (BLD[k]||NT[k]) ? 0 : .07,T=K.tint;
+ const lowAll=LOD_KINDS.has(k)?lowMeshesFor(k):null;
+ let lodTiers=null;
+ if(lowAll&&!allInstances&&LOD_BOTANICAL.has(k)&&window.FELandscapeCore?.lodClassify&&K.list.length){
+  const n=K.list.length,xyz=new Float32Array(n*3);
+  for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z}
+  lodTiers=window.FELandscapeCore.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+ }
+ K.meshes.forEach((m,mi)=>{
+  const pal=m.userData.pal,low=lowAll?.[mi]||null;
+  let ci=0,li=0;
+  const sourceListIndices=[],lowSourceListIndices=[];
+  K.list.forEach((o,sourceIndex)=>{
+   const nv=m.userData.vn;
+   if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
+   const h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
+   let rootSink=0,span=(ROOT_SPAN[k]||0)*s;
+   if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}
+   dm.position.set(o.x,o.y-(RK[k] ? .12*s : 0)-rootSink,o.z);
+   if(!BLD[k]){const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1;dm.quaternion.setFromUnitVectors(GROUND_UP,groundNormal(o.x,o.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,o.r);dm.quaternion.multiply(GROUND_Q);const bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dm.quaternion.multiply(GROUND_Q)}else dm.rotation.set((h2-.5)*tl,o.r,(h3-.5)*tl,'YXZ');
+   if(o.fl){dm.position.set(o.fl.x,o.fl.y,o.fl.z);if(o.fl.q)dm.quaternion.set(o.fl.q[0],o.fl.q[1],o.fl.q[2],o.fl.q[3]);else dm.rotation.set(o.fl.rx,o.fl.ry,o.fl.rz,'YXZ')}
+   const bw=BLD[k]?K.size*o.a:s*o.a;
+   dm.scale.set(bw,s,bw);
+   if(BLD[k]&&m.userData.part==='roof'&&o.roofGone)dm.scale.set(0,0,0);
+   dm.updateMatrix();
+   let useLow=false;
+   if(!allInstances&&LOD_BOTANICAL.has(k)){
+    if(low){if(lodTiers){useLow=lodTiers[sourceIndex]===1}
+     else{const cx=cam.position.x,cz=cam.position.z,d=Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz);
+      useLow=plantLodTier(k,d,o.x,o.z,lodFullDistance)===1}}
+   }
+   const target=useLow?low:m;
+   const i=useLow?li++:ci++;
+   target.setMatrixAt(i,dm.matrix);
+   (useLow?lowSourceListIndices:sourceListIndices)[i]=sourceIndex;
+   let c=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2];
+   if(gr&&!pal){const d=vn(o.x*.03+50,o.z*.03+20);c=[c[0]*(.85+d*.5),c[1]*(1-d*.15),c[2]*(1-d*.4)]}
+   const v=o.v,t=pal||m.userData.nt?[1,1,1]:T,dmgTint=BLD[k]?1-(o.damage||0)*.14:1;
+   target.setColorAt(i,tcol.setRGB(c[0]*v*t[0]*dmgTint,c[1]*v*t[1]*dmgTint,c[2]*v*t[2]*dmgTint));
+  });
+  m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;
+  if(low){low.count=li;low.visible=li>0;low.userData.sourceListIndices=lowSourceListIndices;low.instanceMatrix.needsUpdate=true;low.instanceColor.needsUpdate=true}
+  const shadow=K.shadowMeshes?.[mi];
+  if(shadow){const stride=Math.max(SHADOW_PROXY_STRIDE,Math.ceil(ci/Math.max(1,shadow.instanceMatrix.count)));let si=0;for(let j=0;j<ci;j+=stride){shadow.instanceMatrix.array.set(m.instanceMatrix.array.subarray(j*16,j*16+16),si*16);shadow.instanceColor.array.set(m.instanceColor.array.subarray(j*3,j*3+3),si*3);si++}shadow.count=si;shadow.visible=si>0;shadow.instanceMatrix.needsUpdate=true;shadow.instanceColor.needsUpdate=true}
+ });
+ K.selectionGridDirty=true;treeMapDirty=true;
+}
+
+const LOD_KINDS=new Set([...LOD_GROUND,...LOD_BOTANICAL,...LOD_TREES]);
+const lodCameraAnchor=cam.position.clone();
+let lodMotionAt=0,lodSettled=false,lodCursor=0;
+function updateFoliageLOD(now){
+ if(cam.position.distanceToSquared(lodCameraAnchor)>.0025){lodCameraAnchor.copy(cam.position);lodMotionAt=now;lodSettled=false;return}
+ if(lodSettled||now-lodMotionAt<240)return;
+ const kinds=[...LOD_KINDS].filter(k=>KIND[k]&&Array.isArray(KIND[k].list));
+ if(!kinds.length)return;
+ lodSettled=true;
+ const k=kinds[lodCursor++%kinds.length];
+ KIND[k].list.forEach(()=>{});
+ sync(k);
+}
 let season='summer';
 const SEAS={spring:{},summer:{},autumn:{},winter:{}};
 const kt=(k,s)=>(SEAS[s||season][k]||[1,1,1]).map((v,i)=>v*(k=='grass'||k=='tallgrass'?GT0[biome][i]:1));

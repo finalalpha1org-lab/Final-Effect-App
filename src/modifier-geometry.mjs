@@ -23,6 +23,63 @@ function ensureNormalsAndUv(geometry) {
 }
 function vertexKey(x, y, z, eps) { return `${Math.round(x / eps)},${Math.round(y / eps)},${Math.round(z / eps)}`; }
 
+/* =========================================================================
+ * C++ kernel bridge
+ *
+ * The editor ships the compiled core, so every geometry modifier below first
+ * hands its mesh to the C++ session and only falls back to the JS reference
+ * implementation when the core is unavailable (headless tests, blocked wasm)
+ * or when the mesh carries attributes the session does not carry.
+ * ========================================================================= */
+const cppExports = () => {
+  const exp = globalThis.FECppEngine?.exports;
+  return exp && typeof exp.fe_mod_begin === 'function' ? exp : null;
+};
+function kernelCapacities(geometry) {
+  const p = geometry?.attributes?.position;
+  if (!p) return null;
+  const v = p.count;
+  const src = geometry.index?.array;
+  const t = src ? Math.floor(src.length / 3) : Math.floor(v / 3);
+  if (!v || !t || (src && src.length % 3)) return null;
+  return { v, t };
+}
+function runCppKernel(geometry, capsFn, call) {
+  const exp = cppExports();
+  if (!exp) return null;
+  const base = kernelCapacities(geometry);
+  if (!base) return null;
+  const attrs = geometry.attributes;
+  for (const name of Object.keys(attrs)) if (name !== 'position' && name !== 'normal' && name !== 'uv') return null;
+  if (attrs.position.itemSize !== 3) return null;
+  const hasUv = !!(attrs.uv && attrs.uv.itemSize === 2);
+  if (attrs.uv && !hasUv) return null;
+  const caps = capsFn ? capsFn(base.v, base.t) : [base.v, base.t];
+  if (!caps) return null;
+  const vcap = Math.ceil(caps[0]), tcap = Math.ceil(caps[1]);
+  if (vcap < base.v || tcap < base.t || vcap > 131072 || tcap > 262144) return null;
+  try {
+    if (exp.fe_mod_begin(vcap, tcap, hasUv ? 1 : 0) !== 0) return null;
+    const buf = exp.memory.buffer;
+    new Float32Array(buf, exp.fe_mod_in_pos_ptr(), base.v * 3).set(attrs.position.array.subarray(0, base.v * 3));
+    const idxView = new Uint32Array(buf, exp.fe_mod_in_idx_ptr(), base.t * 3);
+    if (geometry.index) idxView.set(geometry.index.array.subarray(0, base.t * 3));
+    else for (let i = 0; i < base.t * 3; i++) idxView[i] = i;
+    if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
+    exp.fe_mod_set_counts(base.v, base.t);
+    if (call(exp) !== 0) return null;
+    const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
+    const outV = counts[0], outT = counts[1];
+    if (!outV || !outT) return null;
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_pos_ptr(), outV * 3).slice(), 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_normals_ptr(), outV * 3).slice(), 3));
+    if (hasUv) out.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_uv_ptr(), outV * 2).slice(), 2));
+    out.setIndex(new THREE.BufferAttribute(new Uint32Array(exp.memory.buffer, exp.fe_mod_in_idx_ptr(), outT * 3).slice(), 1));
+    return updateBounds(out);
+  } catch { return null; }
+}
+
 export function validateClosedManifold(geometry, label = 'Mesh', epsilon) {
   const p = assertPositions(geometry), idx = sourceIndices(geometry);
   if (idx.length < 12 || idx.length % 3) throw new Error(`${label} must be a closed manifold with at least four triangles`);
@@ -87,8 +144,13 @@ export function booleanGeometry(targetGeometry, operandGeometry, operandMatrixEl
   }
 }
 
-export function arrayGeometry(geometry, { count = 2, offset = [1.8,0,0], relative = [0,0,0] } = {}) {
-  const src = geometry.clone(), p = assertPositions(src), copies = clamp(Math.round(count), 1, 100);
+export function arrayGeometry(geometry, { count = 2, offset = [1.8,0,0], relative = [0,0,0], rotationPerStep = 0 } = {}) {
+  const copies = clamp(Math.round(count), 1, 100);
+  const viaCpp = copies > 1 ? runCppKernel(geometry, (v,t)=>[v*copies, t*copies],
+    exp => exp.fe_mod_array(copies, Number(offset[0])||0, Number(offset[1])||0, Number(offset[2])||0,
+                            Number(relative[0])||0, Number(relative[1])||0, Number(relative[2])||0, Number(rotationPerStep)||0)) : null;
+  if (viaCpp) return viaCpp;
+  const src = geometry.clone(), p = assertPositions(src);
   if (copies === 1) return src;
   src.computeBoundingBox(); const size=src.boundingBox.getSize(new THREE.Vector3());
   const step=[0,1,2].map(i=>(Number(offset[i])||0)+(Number(relative[i])||0)*size.getComponent(i));
@@ -112,6 +174,8 @@ export function arrayGeometry(geometry, { count = 2, offset = [1.8,0,0], relativ
 }
 
 export function weldGeometry(geometry, distance = 1e-5) {
+  const viaCpp = runCppKernel(geometry, null, exp => exp.fe_mod_weld(Math.max(Number(distance)||0, 1e-9)));
+  if (viaCpp) return viaCpp;
   const p=assertPositions(geometry), eps=Math.max(Number(distance)||0,1e-9), idx=sourceIndices(geometry), attrs=Object.entries(geometry.attributes);
   const unique=[], map=new Map(), oldToNew=new Uint32Array(p.count), values=Object.fromEntries(attrs.map(([n])=>[n,[]]));
   for(let i=0;i<p.count;i++) {
@@ -137,7 +201,14 @@ export function triangulateGeometry(geometry, { keepNormals = true } = {}) {
   return updateBounds(out);
 }
 
-export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000) {
+export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000, { preserveBoundary = true } = {}) {
+  /* Small meshes keep the higher-quality QEM collapse; the C++ clustering pass
+     takes over once QEM would block the main thread. */
+  const current = kernelCapacities(geometry);
+  const viaCpp = current && current.t > 12000
+    ? runCppKernel(geometry, null, exp => exp.fe_mod_decimate(clamp(Number(ratio)||.5, .01, 1), preserveBoundary ? 1 : 0))
+    : null;
+  if (viaCpp) return viaCpp;
   const g=weldGeometry(geometry,1e-7),p=g.attributes.position,idx=g.index.array;
   const initialFaces=idx.length/3;
   if(initialFaces>maxFaces){g.dispose();throw new Error(`Decimate currently caps edge-collapse input at ${maxFaces} triangles; reduce source density first`)}
@@ -303,6 +374,11 @@ export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000) {
 }
 
 export function mirrorGeometry(geometry, { axes = [true,false,false], clipping = false, mergeDistance = 1e-6 } = {}) {
+  const mirrorAxes = axes.map(Boolean);
+  const mirrorCopies = 1 << mirrorAxes.filter(Boolean).length;
+  const viaCpp = runCppKernel(geometry, (v,t)=>[v*mirrorCopies, t*mirrorCopies],
+    exp => exp.fe_mod_mirror((mirrorAxes[0]?1:0)|(mirrorAxes[1]?2:0)|(mirrorAxes[2]?4:0), clipping ? 1 : 0, mergeDistance));
+  if (viaCpp) return viaCpp;
   const src=geometry.clone(), p=assertPositions(src), idx=sourceIndices(src), enabled=axes.map(Boolean), flags=[];
   for(let bits=0;bits<(1<<enabled.filter(Boolean).length);bits++){const signs=[1,1,1];let j=0;for(let axis=0;axis<3;axis++)if(enabled[axis]){if(bits&(1<<j))signs[axis]=-1;j++}flags.push(signs)}
   const result=new THREE.BufferGeometry(), attrs=Object.entries(src.attributes);
@@ -314,7 +390,14 @@ export function mirrorGeometry(geometry, { axes = [true,false,false], clipping =
 }
 
 export function subdivideLoop(geometry, levels = 1, maxFaces = 200000) {
-  let g=weldGeometry(geometry,1e-7); const levelCount=clamp(Math.round(levels),0,4);
+  const levelCount = clamp(Math.round(levels), 0, 4);
+  const viaCpp = levelCount > 0 ? runCppKernel(geometry, (v,t) => {
+    let cv = v, ct = t;
+    for (let i = 0; i < levelCount; i++) { cv += ct * 3; ct *= 4; if (cv > 131072 || ct > 262144) return null; }
+    return [cv, ct];
+  }, exp => exp.fe_mod_subdivide(Math.min(levelCount, 3))) : null;
+  if (viaCpp) return viaCpp;
+  let g=weldGeometry(geometry,1e-7);
   if(!levelCount)return g;
   for(let level=0;level<levelCount;level++){
     const p=g.attributes.position, idx=g.index.array, faceCount=idx.length/3;
@@ -339,7 +422,10 @@ export function subdivideLoop(geometry, levels = 1, maxFaces = 200000) {
   return g;
 }
 
-export function solidifyGeometry(geometry, thickness = .1, offset = -1) {
+export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true } = {}) {
+  const viaCpp = Math.abs(thickness) < 1e-9 ? null : runCppKernel(geometry, (v,t)=>[v*2, t*5],
+    exp => exp.fe_mod_solidify(Number(thickness)||0, Number(offset)||0, rim ? 1 : 0, evenThickness ? 1 : 0));
+  if (viaCpp) return viaCpp;
   if(Math.abs(thickness)<1e-9)return geometry.clone();
   const src=geometry.clone(), p=assertPositions(src);if(!src.attributes.normal)src.computeVertexNormals();
   const n=src.attributes.normal, idx=sourceIndices(src), count=p.count, out=new THREE.BufferGeometry(), attrs=Object.entries(src.attributes), values=Object.fromEntries(attrs.map(([name])=>[name,[]]));
@@ -431,12 +517,69 @@ export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true}=
 
 function hash3(x,y,z){const q=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453123;return q-Math.floor(q)}
 function valueNoise3(x,y,z){const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z),fx=x-ix,fy=y-iy,fz=z-iz,s=t=>t*t*(3-2*t);let v=0;for(let dz=0;dz<=1;dz++)for(let dy=0;dy<=1;dy++)for(let dx=0;dx<=1;dx++){const w=(dx? s(fx):1-s(fx))*(dy?s(fy):1-s(fy))*(dz?s(fz):1-s(fz));v+=hash3(ix+dx,iy+dy,iz+dz)*w}return v}
-export function displaceGeometry(geometry,{strength=.35,midlevel=.5,frequency=1}={}){const g=geometry.clone();if(!g.attributes.normal)g.computeVertexNormals();const p=g.attributes.position,n=g.attributes.normal;for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i),noise=valueNoise3(x*frequency+11,y*frequency+17,z*frequency+23);const d=(noise-clamp(midlevel,0,1))*strength;p.setXYZ(i,x+n.getX(i)*d,y+n.getY(i)*d,z+n.getZ(i)*d)}g.attributes.position.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
-export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0}={}){const g=geometry.clone(),p=g.attributes.position;if(!p)throw new Error('Wave needs vertex positions');for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i),r=Math.hypot(x,z),phase=r*width*1.5-time*speed;p.setY(i,y+Math.sin(phase)*height*.2)}p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
-export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1}={}){const g=geometry.clone(),p=g.attributes.position;g.computeBoundingBox();const center=g.boundingBox.getCenter(new THREE.Vector3()),size=g.boundingBox.getSize(new THREE.Vector3()),base=Math.max(size.x,size.y,size.z)*.5*Math.max(radius,0),f=clamp(factor,0,1);for(let i=0;i<p.count;i++){let x=p.getX(i)-center.x,y=p.getY(i)-center.y,z=p.getZ(i)-center.z,tx=x,ty=y,tz=z;if(shape==='Sphere'){const l=Math.hypot(x,y,z)||1;tx=x/l*base;ty=y/l*base;tz=z/l*base}else if(shape==='Cylinder'){const l=Math.hypot(x,z)||1;tx=x/l*base;tz=z/l*base}else if(shape==='Cuboid'){tx=clamp(x,-base,base);ty=clamp(y,-base,base);tz=clamp(z,-base,base)}p.setXYZ(i,center.x+THREE.MathUtils.lerp(x,tx,f),center.y+THREE.MathUtils.lerp(y,ty,f),center.z+THREE.MathUtils.lerp(z,tz,f))}p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
-export function smoothGeometry(geometry,{factor=.6,iterations=3}={}){let g=weldGeometry(geometry,1e-7);const f=clamp(factor,0,1);for(let iter=0;iter<clamp(Math.round(iterations),1,20);iter++){const p=g.attributes.position,idx=g.index.array,neighbors=Array.from({length:p.count},()=>new Set());for(let i=0;i<idx.length;i+=3){const a=idx[i],b=idx[i+1],c=idx[i+2];neighbors[a].add(b);neighbors[a].add(c);neighbors[b].add(a);neighbors[b].add(c);neighbors[c].add(a);neighbors[c].add(b)}const next=new Float32Array(p.array);for(let i=0;i<p.count;i++){const ns=[...neighbors[i]];if(!ns.length)continue;const avg=new THREE.Vector3();for(const j of ns)avg.add(new THREE.Vector3(p.getX(j),p.getY(j),p.getZ(j)));avg.multiplyScalar(1/ns.length);next[i*3]=THREE.MathUtils.lerp(p.getX(i),avg.x,f);next[i*3+1]=THREE.MathUtils.lerp(p.getY(i),avg.y,f);next[i*3+2]=THREE.MathUtils.lerp(p.getZ(i),avg.z,f)}p.array.set(next);p.needsUpdate=true}g.computeVertexNormals();return updateBounds(g)}
+export function displaceGeometry(geometry,{strength=.35,midlevel=.5,frequency=1,direction='Normal',octaves=1,seed=0}={}){
+  const dirIndex = { Normal: 0, X: 1, Y: 2, Z: 3 }[direction] ?? 0;
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_displace(Number(strength)||0, Number(midlevel)||0, Number(frequency)||1, Number(seed)||0, Number(octaves)||1, dirIndex));
+  if (viaCpp) return viaCpp;
+  const g=geometry.clone();if(!g.attributes.normal)g.computeVertexNormals();const p=g.attributes.position,n=g.attributes.normal;
+  const fixed = dirIndex === 1 ? new THREE.Vector3(1,0,0) : dirIndex === 2 ? new THREE.Vector3(0,1,0) : dirIndex === 3 ? new THREE.Vector3(0,0,1) : null;
+  for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i);
+    let noise=0, amp=.5, norm=0, fx=x*frequency+11, fy=y*frequency+17, fz=z*frequency+23;
+    for(let o=0;o<Math.max(1,Math.min(6,Math.round(octaves)));o++){noise+=valueNoise3(fx,fy,fz)*amp;norm+=amp;fx*=2.03;fy*=2.01;fz*=1.99;amp*=.5}
+    noise=norm?noise/norm:0;
+    const d=(noise-clamp(midlevel,0,1))*strength;
+    const dx=fixed?fixed.x:n.getX(i), dy=fixed?fixed.y:n.getY(i), dz=fixed?fixed.z:n.getZ(i);
+    p.setXYZ(i,x+dx*d,y+dy*d,z+dz*d)}
+  p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis='Y',phase=0}={}){
+  const axisIndex = { X: 0, Y: 1, Z: 2 }[axis] ?? 1;
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_wave(Number(height)||0, Number(width)||0, Number(speed)||0, Number(time)||0, axisIndex, Number(phase)||0));
+  if (viaCpp) return viaCpp;
+  const g=geometry.clone(),p=g.attributes.position;if(!p)throw new Error('Wave needs vertex positions');
+  for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i);
+    const r=axisIndex===0?Math.hypot(y,z):axisIndex===1?Math.hypot(x,z):Math.hypot(x,y);
+    const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
+    if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
+  p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1}={}){
+  const shapeIndex = { Sphere: 0, Cylinder: 1, Cuboid: 2 }[shape] ?? 0;
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_cast(shapeIndex, Number(factor)||0, Number(radius)||0, Number(size)||1));
+  if (viaCpp) return viaCpp;
+  const g=geometry.clone(),p=g.attributes.position;g.computeBoundingBox();
+  const center=g.boundingBox.getCenter(new THREE.Vector3()),bbox=g.boundingBox.getSize(new THREE.Vector3());
+  const base=Math.max(bbox.x,bbox.y,bbox.z)*.5*Math.max(radius,0)*clamp(Number(size)||1,.05,8),f=clamp(factor,0,1);
+  for(let i=0;i<p.count;i++){let x=p.getX(i)-center.x,y=p.getY(i)-center.y,z=p.getZ(i)-center.z,tx=x,ty=y,tz=z;
+    if(shape==='Sphere'){const l=Math.hypot(x,y,z)||1;tx=x/l*base;ty=y/l*base;tz=z/l*base}
+    else if(shape==='Cylinder'){const l=Math.hypot(x,z)||1;tx=x/l*base;tz=z/l*base}
+    else if(shape==='Cuboid'){tx=clamp(x,-base,base);ty=clamp(y,-base,base);tz=clamp(z,-base,base)}
+    p.setXYZ(i,center.x+THREE.MathUtils.lerp(x,tx,f),center.y+THREE.MathUtils.lerp(y,ty,f),center.z+THREE.MathUtils.lerp(z,tz,f))}
+  p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+export function smoothGeometry(geometry,{factor=.6,iterations=3,preserveVolume=false,boundary='Smooth'}={}){
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_smooth(Math.round(iterations), Number(factor)||0, preserveVolume ? 1 : 0, boundary === 'Fixed' ? 0 : 1));
+  if (viaCpp) return viaCpp;
+  let g=weldGeometry(geometry,1e-7);const f=clamp(factor,0,1);
+  for(let iter=0;iter<clamp(Math.round(iterations),1,20);iter++){const p=g.attributes.position,idx=g.index.array,neighbors=Array.from({length:p.count},()=>new Set());
+    for(let i=0;i<idx.length;i+=3){const a=idx[i],b=idx[i+1],c=idx[i+2];neighbors[a].add(b);neighbors[a].add(c);neighbors[b].add(a);neighbors[b].add(c);neighbors[c].add(a);neighbors[c].add(b)}
+    const next=new Float32Array(p.array);for(let i=0;i<p.count;i++){const ns=[...neighbors[i]];if(!ns.length)continue;const avg=new THREE.Vector3();
+      for(const j of ns)avg.add(new THREE.Vector3(p.getX(j),p.getY(j),p.getZ(j)));avg.multiplyScalar(1/ns.length);
+      next[i*3]=THREE.MathUtils.lerp(p.getX(i),avg.x,f);next[i*3+1]=THREE.MathUtils.lerp(p.getY(i),avg.y,f);next[i*3+2]=THREE.MathUtils.lerp(p.getZ(i),avg.z,f)}
+    p.array.set(next);p.needsUpdate=true}
+  g.computeVertexNormals();return updateBounds(g)}
 export function weightedNormalGeometry(geometry,{weight=50,keepSharp=true}={}){const g=geometry.clone(),p=g.attributes.position,idx=sourceIndices(g),out=new Float32Array(p.count*3),blend=clamp(weight/100,0,1);for(let i=0;i+2<idx.length;i+=3){const ia=idx[i],ib=idx[i+1],ic=idx[i+2],a=new THREE.Vector3(p.getX(ia),p.getY(ia),p.getZ(ia)),b=new THREE.Vector3(p.getX(ib),p.getY(ib),p.getZ(ib)),c=new THREE.Vector3(p.getX(ic),p.getY(ic),p.getZ(ic)),cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a)),area=cross.length()*.5;if(area<1e-12)continue;const face=cross.normalize();for(const [id,u,v]of [[ia,b,c],[ib,c,a],[ic,a,b]]){const e1=u.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),e2=v.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),angle=Math.acos(clamp(e1.dot(e2),-1,1)),w=angle*((1-blend)+blend*area);out[id*3]+=face.x*w;out[id*3+1]+=face.y*w;out[id*3+2]+=face.z*w}}const old=g.attributes.normal;for(let i=0;i<p.count;i++){let n=new THREE.Vector3(out[i*3],out[i*3+1],out[i*3+2]);if(n.lengthSq()<1e-12&&old)n.fromBufferAttribute(old,i);n.normalize();if(keepSharp&&old){const original=new THREE.Vector3().fromBufferAttribute(old,i);if(original.lengthSq()>0&&n.dot(original)<.5)n.copy(original)}out[i*3]=n.x;out[i*3+1]=n.y;out[i*3+2]=n.z}g.setAttribute('normal',new THREE.BufferAttribute(out,3));return updateBounds(g)}
-export function twistGeometry(geometry,strength=1.2){const g=geometry.clone(),p=g.attributes.position;for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i),a=y*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x*c-z*s,y,x*s+z*c)}p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+export function twistGeometry(geometry,strength=1.2,axis='Y'){
+  const axisIndex = { X: 1, Y: 0, Z: 2 }[axis] ?? 0;
+  const viaCpp = runCppKernel(geometry, null, exp => exp.fe_mod_twist(Number(strength)||0, axisIndex));
+  if (viaCpp) return viaCpp;
+  const g=geometry.clone(),p=g.attributes.position;
+  for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i);
+    if(axisIndex===0){const a=y*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x*c-z*s,y,x*s+z*c)}
+    else if(axisIndex===1){const a=x*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x,y*c-z*s,y*s+z*c)}
+    else {const a=z*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x*c-y*s,x*s+y*c,z)}}
+  p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
 
 export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',maxPairs=50000000){
   assertPositions(geometry);const target=ensureNormalsAndUv(targetGeometry),tp=target.attributes.position,ti=sourceIndices(target),count=geometry.attributes.position.count,triangles=ti.length/3;if(count*triangles>maxPairs){target.dispose();throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`)}

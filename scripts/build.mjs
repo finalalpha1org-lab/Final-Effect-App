@@ -26,6 +26,8 @@ if (hasPublicDir) {
 } else {
   const staticAssets = [
     "index.html",
+    "fe-icons.js",
+    "fe-taa.js",
     "Terrain_system_.html",
     "celestial-math.js",
     "scatter-spacing.js",
@@ -33,6 +35,9 @@ if (hasPublicDir) {
     "open-world-generator.js",
     "open-world.js",
     "modifier-engine.js",
+    "volume-atlas.js",
+    "volume-library.js",
+    "volume-library.bin",
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
@@ -55,12 +60,16 @@ if (hasPublicDir) {
 const terrainMainFiles=Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).padStart(2,"0")}.js`);
 const minifiableJs = [
   "celestial-math.js",
+  "fe-icons.js",
+  "fe-taa.js",
   "scatter-spacing.js",
   "tessendorf-ocean.js",
   "open-world-generator.js",
   ...terrainMainFiles,
   "open-world.js",
   "modifier-engine.js",
+  "volume-atlas.js",
+  "volume-library.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
 ];
@@ -98,29 +107,41 @@ const optimizedTerrainHtml = await minifyInlineScripts(readFileSync(srcPath("Ter
 writeFileSync("build/client/index.html", optimizedIndexHtml);
 writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml);
 
+const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
+const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
+  ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
+  : "";
+
+const terrainBootstrap = `<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(cppWasmBase64)};</script>`;
+if (!optimizedTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
+  writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml.replace('<head>', `<head>\n${terrainBootstrap}`));
+}
+
 const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {
+  feIcons: readFileSync("build/client/fe-icons.js", "utf8"),
   celestialMath: readFileSync("build/client/celestial-math.js", "utf8"),
   scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
   tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
   openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
   terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),
   openWorldAddon: readFileSync("build/client/open-world.js", "utf8"),
+  cppWasmBase64,
 });
 writeFileSync("build/client/Terrain-System-Standalone.html", standaloneTerrainHtml);
-
-const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
-const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
-  ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
-  : "";
 
 const standaloneAppHtml = createStandaloneAppHtml(
   readFileSync(srcPath("index.html"), "utf8"),
   {
+    volumeAtlas: readFileSync(srcPath("volume-atlas.js"), "utf8"),
+    feIcons: readFileSync(srcPath("fe-icons.js"), "utf8"),
+    feTaa: readFileSync(srcPath("fe-taa.js"), "utf8"),
+    volumeLibrary: readFileSync(srcPath("volume-library.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),
     feCppEngine: readFileSync(srcPath("fe-cpp-engine.js"), "utf8"),
     cppWasmBase64,
     simWasmBase64,
+    volumeLibraryBase64: readFileSync(srcPath("volume-library.bin")).toString("base64"),
     terrainStandaloneHtml: standaloneTerrainHtml,
   }
 );

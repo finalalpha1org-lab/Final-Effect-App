@@ -1,16 +1,34 @@
-const CACHE_NAME = 'final-effect-cpp-v1';
+/* Bumped whenever the shipped shell changes so installed clients drop stale
+   copies of index.html / the wasm artifact on activate. */
+const CACHE_NAME = 'final-effect-cpp-v11';
 const CORE_ASSETS = [
   './',
   './index.html',
   './Terrain_system_.html',
   './fe-cpp-engine.js',
   './fe_core_engine.wasm',
+  './fe-icons.js',
+  './fe-taa.js',
+  './volume-atlas.js',
+  './volume-library.js',
+  './volume-library.bin',
   './simulationCore.js',
   './simulation_solver.wasm',
   './modifier-engine.js',
   './tessendorf-ocean.js',
   './celestial-math.js',
   './scatter-spacing.js',
+  './open-world-generator.js',
+  './open-world.js',
+  './terrain-main-01.js',
+  './terrain-main-02.js',
+  './terrain-main-03.js',
+  './terrain-main-04.js',
+  './terrain-main-05.js',
+  './terrain-main-06.js',
+  './terrain-main-07.js',
+  './terrain-main-08.js',
+  './terrain-main-09.js',
   './favicon.svg',
   './manifest.webmanifest'
 ];

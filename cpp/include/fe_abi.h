@@ -563,6 +563,46 @@ FE_EXPORT int32_t  fe_terrain_erode_thermal(
 );
 
 /* Tilted / Warped Sedimentary Strata & Canyon Outcrop Terracing */
+/* ---- Eulerian smoke & fire (MAC grid) + dual isosurface ---- */
+FE_EXPORT int32_t   fe_vol_init(uint32_t nx, uint32_t ny, uint32_t nz);
+FE_EXPORT int32_t   fe_vol_reset(void);
+FE_EXPORT uint32_t  fe_vol_grid_size(void);
+FE_EXPORT int32_t   fe_vol_source(float cx, float cy, float cz, float radius, float heat, float density, float lift);
+FE_EXPORT int32_t   fe_vol_step(float dt, float buoyancy, float vorticity, float dissipation, float cooling, uint32_t iterations);
+FE_EXPORT float*    fe_vol_density_ptr(void);
+FE_EXPORT float*    fe_vol_temperature_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_x_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_y_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_z_ptr(void);
+FE_EXPORT float*    fe_vol_stats_ptr(void);
+FE_EXPORT int32_t   fe_vol_surface(float iso, uint32_t max_verts);
+FE_EXPORT float*    fe_vol_surface_positions_ptr(void);
+FE_EXPORT float*    fe_vol_surface_normals_ptr(void);
+FE_EXPORT uint32_t* fe_vol_surface_indices_ptr(void);
+FE_EXPORT uint32_t  fe_vol_surface_index_count(void);
+
+/* Temporal filter applied to the accepted density / temperature fields.
+   0 disables it, 0.95 is the softest setting. */
+FE_EXPORT int32_t   fe_vol_set_temporal(float amount);
+FE_EXPORT float     fe_vol_temporal(void);
+
+/* Seamless detail-noise tile for the volume shader (RGBA8, size x size).
+   size 16..128, octaves 1..6; returns 0 ok / -3 invalid size. */
+FE_EXPORT int32_t   fe_vol_noise_generate(uint32_t size, uint32_t seed, uint32_t octaves);
+FE_EXPORT uint32_t  fe_vol_noise_ptr(void);
+FE_EXPORT uint32_t  fe_vol_noise_size(void);
+
+/* Terrain-aware natural scatter candidates (water/slope filtered, clumped) */
+FE_EXPORT int32_t  fe_terrain_scatter_natural(
+  uint32_t count,
+  float spread,
+  uint32_t seed,
+  float water_level,
+  float max_slope,
+  float clump,
+  float patch_scale
+);
+
 FE_EXPORT int32_t  fe_terrain_apply_strata(
   float strata_height,
   float strata_strength,
@@ -585,8 +625,50 @@ FE_EXPORT int32_t  fe_terrain_rebuild_region(
   const float* palette_18 /* 6 * RGB */
 );
 
+FE_EXPORT void fe_terrain_compute_normals(void);
+FE_EXPORT int32_t fe_terrain_set_palette(const float* pal, uint32_t count, float seed, float water, float rock, float snow, uint32_t desert);
+FE_EXPORT int32_t fe_terrain_set_paint_colors(const uint8_t* rgb, uint32_t count);
+FE_EXPORT int32_t fe_terrain_generate_layered(float seed, float hs, uint32_t continental, float base, float mountain);
+FE_EXPORT int32_t fe_terrain_compute_colors(uint32_t x0, uint32_t x1, uint32_t z0, uint32_t z1);
+FE_EXPORT int32_t fe_terrain_erode_brush(float x,float z,float radius,float strength,float seed);
+/* Jittered scatter candidate batch: C++ samples the heightfield + slopes so the
+   JS side only runs biome/occupancy rules per point. Writes 4 floats per point:
+   x, z, height, slope. */
+FE_EXPORT float*   fe_terrain_scatter_out_ptr(void);
+FE_EXPORT int32_t  fe_terrain_scatter_batch(uint32_t count, float spread, uint32_t seed);
 FE_EXPORT float    fe_terrain_sample_height(float world_x, float world_z);
 FE_EXPORT void     fe_terrain_sample_normal(float world_x, float world_z, float alignment, float* out_n3);
+
+/* --- Open World streamed generation, scheduling and hydrology (C++ kernels) --- */
+FE_EXPORT float*  fe_ow_height_ptr(void);
+FE_EXPORT float*  fe_ow_surface_ptr(void);
+FE_EXPORT int32_t* fe_ow_plan_cells_ptr(void);
+FE_EXPORT float*  fe_ow_plan_distance_ptr(void);
+FE_EXPORT int32_t* fe_ow_river_meta_ptr(void);
+FE_EXPORT float*  fe_ow_river_points_ptr(void);
+FE_EXPORT float*  fe_ow_hydro_input_ptr(void);
+FE_EXPORT float*  fe_ow_hydro_field_ptr(void);
+
+FE_EXPORT int32_t fe_ow_set_params(float seed, float mountain_height, float water_coverage,
+                                   float world_half, float sea_level, float blend,
+                                   const float* biome_mix4);
+FE_EXPORT float   fe_ow_height_at(float world_x, float world_z);
+FE_EXPORT int32_t fe_ow_biome_weights_at(float world_x, float world_z, float height, float* out4);
+/* Fills the resident (segments+1)^2 height grid for one streamed chunk. */
+FE_EXPORT int32_t fe_ow_height_grid(uint32_t segments, float origin_x, float origin_z, float chunk_size);
+/* Fills 12 blended surface weights per vertex from the resident height grid. */
+FE_EXPORT int32_t fe_ow_surface_grid(uint32_t segments, float origin_x, float origin_z, float chunk_size);
+/* Nearest-first chunk ring for the stream scheduler: cx, cz, ring distance^2. */
+FE_EXPORT int32_t fe_ow_plan_chunks(int32_t center_cx, int32_t center_cz, uint32_t radius,
+                                    float chunk_size, float world_half);
+/* Bulk foliage terrain-LOD classification: 0 = full, 1 = low tier, -1 = culled. */
+FE_EXPORT int8_t* fe_lod_out_ptr(void);
+FE_EXPORT int32_t fe_lod_classify(uint32_t count, const float* xyz, float cam_x, float cam_y,
+                                  float cam_z, float full_distance, uint32_t ground_cover);
+/* Copies the JS height grid, smooths it and builds a priority-flood drainage graph. */
+FE_EXPORT int32_t fe_ow_hydro_set_grid(uint32_t n, float span, float sea_level);
+/* Traces downhill river polylines; returns the river count (-1 on bad input). */
+FE_EXPORT int32_t fe_ow_hydro_trace(uint32_t max_rivers, float min_length, float spacing, uint32_t seed);
 
 /* Unreal Engine 5 / Gaea Continuous Stroke Terrain Sculpt & Surface Brush */
 FE_EXPORT int32_t  fe_terrain_brush_stroke(
@@ -622,7 +704,10 @@ FE_EXPORT int32_t  fe_ocean_update(
   float max_height_encode,
   float max_displace_encode
 );
+FE_EXPORT float*   fe_ocean_field_ptr(void);
+FE_EXPORT uint32_t fe_ocean_resolution(void);
 FE_EXPORT uint8_t* fe_ocean_get_cascade_rgba8_ptr(uint32_t cascade_idx);
+FE_EXPORT float*   fe_ocean_get_cascade_foam_ptr(uint32_t cascade_idx);
 FE_EXPORT float*   fe_ocean_get_cascade_float4_ptr(uint32_t cascade_idx);
 FE_EXPORT int32_t  fe_ocean_ifft2d_f32(float* real, float* imag, uint32_t n);
 
@@ -709,6 +794,36 @@ FE_EXPORT void     fe_celestial_moon_ephemeris(
   float phase_deg,
   float* out_7
 );
+
+/* ---- Modifier Kernel Session (C++ geometry modifiers) ----
+ * The JS editor writes an indexed triangle mesh into this session and calls a
+ * kernel. Every kernel reads the session mesh, writes the result back into the
+ * session (positions, uv, indices, normals) and updates the counts. JS only
+ * marshals buffers and uploads the result to the GPU.
+ *
+ * Session buffers live in a dedicated arena inside the core, so they never
+ * invalidate pointers handed to the renderer or the simulation.
+ * Return codes: 0 = ok, -1 = session missing, -2 = capacity exceeded,
+ *               -3 = invalid input, -4 = kernel produced an empty mesh.
+ */
+FE_EXPORT int32_t  fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, uint32_t has_uv);
+FE_EXPORT uint32_t fe_mod_counts_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_pos_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_uv_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_idx_ptr(void);
+FE_EXPORT uint32_t fe_mod_normals_ptr(void);
+FE_EXPORT void     fe_mod_set_counts(uint32_t vert_count, uint32_t tri_count);
+FE_EXPORT int32_t  fe_mod_weld(float epsilon);
+FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode);
+FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon);
+FE_EXPORT int32_t  fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness);
+FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction);
+FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
+FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
+FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
+FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
+FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels);
+FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
 
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 FE_EXPORT int32_t  fe_geo_qem_decimate(

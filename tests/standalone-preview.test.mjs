@@ -39,3 +39,13 @@ test('standalone generation rejects missing or unsafe inline scripts',()=>{
   const src='<script src="./celestial-math.js"></script><script src="./scatter-spacing.js"></script><script src="./tessendorf-ocean.js"></script><script src="./open-world-generator.js"></script><script src="./open-world.js"></script>';
   assert.throws(()=>createStandaloneTerrainHtml(src,{...helpers,openWorldAddon:'</script>'}),/Unsafe closing script marker/);
 });
+
+test('standalone terrain embeds the C++ WASM before the studio so frame-one terrain is C++-generated',()=>{
+  const helpers={celestialMath:'x',scatterSpacing:'y',tessendorf:'z',openWorld:'w',terrainMainParts:[['terrain-main-01.js','window.FELandscapeCore=1;']],openWorldAddon:'v'};
+  const src='<html><head></head><body><script src="./celestial-math.js"></script><script src="./scatter-spacing.js"></script><script src="./tessendorf-ocean.js"></script><script src="./open-world-generator.js"></script><script src="./terrain-main-01.js"></script><script src="./open-world.js"></script></body></html>';
+  const out=createStandaloneTerrainHtml(src,{...helpers,cppWasmBase64:'AGFzbQ=='});
+  assert.ok(out.includes('window.__FE_CPP_WASM_BASE64__="AGFzbQ=="'));
+  assert.ok(out.indexOf('__FE_CPP_WASM_BASE64__')<out.indexOf('window.FELandscapeCore=1;'),'the WASM bytes must be available synchronously before terrain boots');
+  assert.throws(()=>createStandaloneTerrainHtml(src,{...helpers,cppWasmBase64:'</script>'}),/Unsafe closing script marker in embedded terrain WASM/);
+  assert.ok(build.includes('writeFileSync("build/client/Terrain_system_.html"'),'the served terrain page also receives the embedded WASM');
+});

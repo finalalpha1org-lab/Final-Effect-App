@@ -41,7 +41,9 @@ test('normal terrain PBR paint uses a soft falloff and remains in terrain undo h
   assert.ok(html.includes('SA:shareHistoryArray(SWA.slice('));
 });
 
-test('Open World remains a blank placeholder and does not expose a map brush',()=>{
-  assert.ok(html.includes('PN.openworld=()=>[];'));
-  assert.ok(html.includes("btn('🌍 Generate Open World Map',()=>setTab('openworld'))"));
+test('Open World is a real streamed mode instead of a blank placeholder',()=>{
+  assert.ok(html.includes('PN.openworld=()=>'));
+  assert.ok(html.includes('Generate Open World Map'));
+  assert.ok(html.includes('function owStart()')&&html.includes('OpenWorldGenerator.createChunkJob'));
+  assert.ok(!html.includes('PN.openworld=()=>[];'),'the retired blank placeholder must not return');
 });

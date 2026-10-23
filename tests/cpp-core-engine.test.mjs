@@ -172,12 +172,16 @@ test('UI shell wires C++ Animation Studio, Render Engine, Sculpt Mode, GPU Tier,
   assert.ok(existsSync(appPath('../CMakeLists.txt')) || existsSync('CMakeLists.txt'));
 });
 
-test('standalone 1-file portable build embeds C++20 WASM and passes live 6/6 self-test offline without fetch', async () => {
+test('standalone 1-file portable build embeds C++20 WASM and passes the live self-test offline without fetch', async () => {
   const html = readFileSync(appPath('index.html'), 'utf8');
   const bridge = readFileSync(appPath('fe-cpp-engine.js'), 'utf8');
   const b64 = wasmBytes.toString('base64');
 
   const standalone = createStandaloneAppHtml(html, {
+    volumeAtlas: readFileSync(appPath('volume-atlas.js'), 'utf8'),
+    feIcons: readFileSync(appPath('fe-icons.js'), 'utf8'),
+    feTaa: readFileSync(appPath('fe-taa.js'), 'utf8'),
+    volumeLibrary: readFileSync(appPath('volume-library.js'), 'utf8'),
     simulationCore: 'window.__simStub = true;',
     modifierEngine: 'window.__modStub = true;',
     feCppEngine: bridge,
@@ -221,7 +225,8 @@ test('standalone 1-file portable build embeds C++20 WASM and passes live 6/6 sel
     getContext: () => ({ putImageData(img) { putPixels = img; } })
   };
   const report = await ctx.FECppEngine.runLiveSelfTest(fakeCanvas);
-  assert.equal(report.ok, true, 'All 6 on-device C++20 self-test checks must pass offline');
-  assert.equal(report.results.length, 6);
+  assert.equal(report.ok, true, 'All on-device self-test checks must pass offline');
+  assert.equal(report.results.length, 8);
+  assert.ok(report.results.some(r=>r.name==='Smoke & Fire Volume Solver' && r.ok),'the volumetric solver runs inside the offline standalone build');
   assert.ok(putPixels && putPixels.width === 240 && putPixels.height === 135);
 });

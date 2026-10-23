@@ -7,7 +7,11 @@ const CPP_SOURCES = [
   'cpp/src/fe_renderer.cpp',
   'cpp/src/fe_sculpt_touch.cpp',
   'cpp/src/fe_simulation.cpp',
-  'cpp/src/fe_landscape.cpp'
+  'cpp/src/fe_landscape.cpp',
+  'cpp/src/fe_openworld.cpp',
+  'cpp/src/fe_ocean.cpp',
+  'cpp/src/fe_volumetrics.cpp',
+  'cpp/src/fe_modifiers.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -46,7 +50,45 @@ const REQUIRED_EXPORTS = [
   'fe_sim_pyro_step',
   'fe_forest_input_ptr',
   'fe_forest_output_ptr',
-  'fe_forest_classify'
+  'fe_forest_classify',
+  'fe_terrain_erode_brush',
+  'fe_terrain_compute_normals',
+  'fe_terrain_set_palette',
+  'fe_terrain_set_paint_colors',
+  'fe_terrain_generate_layered',
+  'fe_terrain_compute_colors',
+  'fe_terrain_erode_hydraulic',
+  'fe_terrain_erode_thermal',
+  'fe_terrain_scatter_out_ptr',
+  'fe_terrain_scatter_batch',
+  'fe_terrain_apply_strata',
+  'fe_terrain_scatter_natural',
+  'fe_ow_height_ptr',
+  'fe_ow_surface_ptr',
+  'fe_ow_set_params',
+  'fe_ow_height_at',
+  'fe_ow_biome_weights_at',
+  'fe_ow_height_grid',
+  'fe_ow_surface_grid',
+  'fe_ow_plan_chunks',
+  'fe_ow_hydro_set_grid',
+  'fe_ow_hydro_trace',
+  'fe_lod_classify',
+  'fe_lod_out_ptr',
+  'fe_ocean_field_ptr',
+  'fe_ocean_configure',
+  'fe_ocean_update',
+  'fe_ocean_get_cascade_foam_ptr',
+  'fe_vol_init','fe_vol_reset','fe_vol_grid_size','fe_vol_source','fe_vol_step',
+  'fe_vol_density_ptr','fe_vol_temperature_ptr','fe_vol_velocity_x_ptr','fe_vol_velocity_y_ptr',
+  'fe_vol_velocity_z_ptr','fe_vol_stats_ptr','fe_vol_surface','fe_vol_surface_positions_ptr',
+  'fe_vol_surface_normals_ptr','fe_vol_surface_indices_ptr','fe_vol_surface_index_count',
+  'fe_vol_noise_generate','fe_vol_noise_ptr','fe_vol_noise_size',
+  'fe_vol_set_temporal','fe_vol_temporal',
+  'fe_mod_begin','fe_mod_counts_ptr','fe_mod_in_pos_ptr','fe_mod_in_uv_ptr','fe_mod_in_idx_ptr',
+  'fe_mod_normals_ptr','fe_mod_set_counts','fe_mod_weld','fe_mod_smooth','fe_mod_mirror',
+  'fe_mod_solidify','fe_mod_displace','fe_mod_wave','fe_mod_cast','fe_mod_twist','fe_mod_array',
+  'fe_mod_subdivide','fe_mod_decimate'
 ];
 
 function findZigCompiler() {

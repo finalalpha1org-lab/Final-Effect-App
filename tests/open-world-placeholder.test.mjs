@@ -5,12 +5,12 @@ import { appPath } from './app-paths.mjs';
 
 const html=readFileSync(appPath('Terrain_system_.html'),'utf8');
 
-test('Open World is a blank placeholder with no generator, state, or scene hooks',()=>{
-  assert.ok(html.includes("btn('🌍 Generate Open World Map',()=>setTab('openworld'))"),'the Terrain shortcut only opens the blank sheet');
-  assert.ok(html.includes('PN.openworld=()=>[];'),'the bottom sheet contains no controls');
-  assert.ok(html.includes("['openworld','🌍','Open World']"),'the placeholder remains reachable');
-  for(const token of ['generateOpenWorldMap','generateOpenWorldTerrain','buildOpenWorldMesh','paintOpenWorld','openWorldActive','openWorldScene','openWorldMesh','OPEN_WORLD_SIZE','open-world-generator.js','OpenWorldTerrainBundle'])assert.ok(!html.includes(token),'unexpected generator residue: '+token);
-  assert.ok(html.includes('ren.render(scene,cam)'),'the normal scene remains the only rendered scene');
+test('Open World ships a generator, streamed scene and real controls',()=>{
+  assert.ok(html.includes("['openworld','🌍','Open World']"),'Open World remains reachable');
+  assert.ok(html.includes('PN.openworld=()=>'),'the bottom sheet exposes real controls');
+  assert.ok(html.includes('OpenWorldGenerator.createChunkJob'),'chunks come from the real generator');
+  assert.ok(html.includes('function owStart()')&&html.includes('function owDeactivate()'),'Open World can be entered and exited');
+  assert.ok(html.includes('ren.render(scene,cam)'),'the main scene remains the single render loop');
 });
 
 test('normal terrain generation and material painting remain available',()=>{

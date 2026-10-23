@@ -73,6 +73,15 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .mode{color:#818cf8;font-weight:600;max-width:120px}
 .shading-select{color:#e2e8f0;font-weight:500;cursor:pointer}
 .hdri-toggle-btn{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;cursor:pointer}
+.ws-perf-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.ws-stat{display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center;padding:9px 6px;background:#0d1018;border:1px solid #262c40;border-radius:10px}
+.ws-stat span{font-size:15px;font-weight:800;color:#e2e8f0;font-variant-numeric:tabular-nums}
+.ws-stat small{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em}
+.ws-hdri-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.ws-hdri-opt{background:#161a27;border:1px solid #2f364f;border-radius:9px;padding:9px 6px;color:#e2e8f0;font-size:12px;font-weight:600;cursor:pointer}
+.ws-hdri-opt:active{background:#1d2436}
+#workspace-settings-sheet .diagnostics-body{overscroll-behavior:contain;touch-action:pan-y}
+@media(max-width:420px){.ws-perf-row,.ws-hdri-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 [data-act=export],.btn-export{color:#38bdf8;border-color:#0284c7;background:rgba(2,132,199,0.18);margin-left:auto;font-weight:600;display:inline-flex;align-items:center;gap:4px;transition:all .18s ease}
 [data-act=export]:hover,.btn-export:hover{background:rgba(2,132,199,0.32);border-color:#38bdf8;color:#fff;transform:scale(1.02)}
 [data-act=import]{color:#34d399;border-color:#10b981;margin-left:auto}
@@ -1721,7 +1730,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .autosave-status{font-size:11px;color:#86efac;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.17);border-radius:8px;padding:8px 10px}
 @media(max-width:640px){.global-settings-modal{align-items:flex-end;padding:0}.global-settings-card{width:100%;height:min(88dvh,850px);min-height:0;max-height:92dvh;border-radius:20px 20px 0 0;border-bottom:0;animation:slideUpSettings .22s ease-out}.global-settings-body{grid-template-columns:1fr;padding:14px 14px calc(22px + env(safe-area-inset-bottom,0px));gap:10px}.global-settings-header{padding:14px 16px}.setting-item{gap:8px}.setting-label small{max-width:240px}.setting-select{min-width:136px}}
 /* =========================================================
-   C++20 ENGINE UI: KEYFRAME STUDIO, RENDER STUDIO, SCULPT & MOBILE HUD
+   WORKSPACE UI: KEYFRAME STUDIO, RENDER STUDIO, SCULPT & MOBILE HUD
    ========================================================= */
 .cpp-badge-pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,0.16);border:1px solid rgba(129,140,248,0.4);color:#a5b4fc;letter-spacing:.03em}
 .home-actions-group{display:flex;align-items:center;gap:8px}
@@ -1791,9 +1800,66 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   #camera-sheet,#light-sheet,#modifiers-sheet,#animation-sheet{height:62dvh;max-height:68dvh}
   #nav-gizmo-wrapper{transform:scale(0.84);transform-origin:top left}
 }
+/* ============================================================
+   FE design system
+   One icon set (fe-icons.js), one surface language, one radius
+   scale. Everything below is additive: existing selectors keep
+   working, the new tokens only refine spacing, colour and type.
+   ============================================================ */
+:root{
+  --fe-ink:#eef2ff;
+  --fe-muted:#98a5c4;
+  --fe-line:rgba(148,163,184,.16);
+  --fe-line-strong:rgba(148,163,184,.28);
+  --fe-surface:rgba(255,255,255,.045);
+  --fe-surface-2:rgba(255,255,255,.075);
+  --fe-accent:#7c8cff;
+  --fe-accent-2:#22d3ee;
+  --fe-radius:16px;
+  --fe-shadow:0 18px 40px -26px rgba(2,6,23,.95);
+}
+::selection{background:rgba(124,140,255,.35);color:#fff}
+:focus-visible{outline:2px solid rgba(124,140,255,.7);outline-offset:2px;border-radius:10px}
+
+/* Icons inherit type colour and baseline, so a label with an icon keeps the
+   same rhythm as a plain one. */
+.ico-wrap{display:inline-flex;align-items:center;justify-content:center;line-height:0;vertical-align:-.16em;color:inherit;flex:none}
+.ico-wrap>.ico{display:block;width:1em;height:1em}
+button .ico-wrap, .tag .ico-wrap{pointer-events:none}
+
+/* ---------- Home ---------- */
+#home .home-tabs-bar{gap:8px;border-bottom:1px solid var(--fe-line);padding-bottom:10px}
+#home .home-tab{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:12px;background:rgba(255,255,255,.028);border:1px solid transparent;color:var(--fe-muted);font-weight:600;font-size:13px;transition:background .18s ease,color .18s ease,border-color .18s ease}
+#home .home-tab .ico-wrap{font-size:16px}
+#home .home-tab:hover{color:var(--fe-ink);background:rgba(255,255,255,.055)}
+#home .home-tab.active{color:#e2e6ff;background:rgba(124,140,255,.14);border-color:rgba(124,140,255,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+#home-title-row p{color:var(--fe-muted)}
+#home-grid{gap:12px}
+#home-grid .card{position:relative;overflow:hidden;align-items:center;gap:14px;border-radius:var(--fe-radius);padding:16px 16px 16px 18px;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));border:1px solid var(--fe-line);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),var(--fe-shadow);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+#home-grid .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--c,#6366f1),transparent);opacity:.9}
+#home-grid .card:hover{transform:translateY(-2px);border-color:var(--fe-line-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 22px 44px -26px rgba(2,6,23,1)}
+#home-grid .card:active{transform:translateY(0) scale(.995)}
+#home-grid .card>i.card-ico{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;flex:none;color:var(--c,#94a3b8);background:radial-gradient(120% 120% at 28% 18%,rgba(255,255,255,.18),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+#home-grid .card>i.card-ico .ico{width:22px;height:22px}
+#home-grid .card>span>b{display:block;font-size:15px;font-weight:650;letter-spacing:.01em;color:var(--fe-ink)}
+#home-grid .card>span>small{display:block;margin-top:3px;font-size:12.5px;color:var(--fe-muted)}
+#home-grid .tag{font-size:11px;font-weight:600;letter-spacing:.02em;padding:4px 9px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--fe-line);color:var(--fe-muted);display:inline-flex;align-items:center;gap:5px}
+#home-grid .card.locked{opacity:.9}
+#home-grid .card.locked .tag{color:#c7d2fe;border-color:rgba(129,140,248,.3);background:rgba(99,102,241,.12)}
+.recent-empty-icon{display:grid;place-items:center;color:var(--fe-accent)}
+.install-app-btn,.settings-btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;font-weight:650}
+.settings-btn .ico-wrap{font-size:18px}
+/* ---------- Sheets and panels ---------- */
+.global-settings-icon{display:grid;place-items:center;color:var(--fe-accent)}
+.diagnostics-body,.render-modal-grid{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.35) transparent}
+.export-modal-close{display:inline-flex;align-items:center;justify-content:center}
 </style>
 </head>
 <body>
+<script src="fe-icons.js"></script>
+<script src="fe-taa.js"></script>
+<script src="volume-atlas.js"></script>
+<script src="volume-library.js"></script>
 <script src="simulationCore.js"></script>
 <script src="modifier-engine.js"></script>
 <script src="fe-cpp-engine.js"></script>
@@ -1805,12 +1871,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <h1>Final Effect 3D</h1>
-          <span class="cpp-badge-pill">⚡ C++20 / WASM Core</span>
+          
         </div>
         <p>All-Platform Mobile & Desktop Creation Suite — Choose a studio to start.</p>
       </div>
       <div class="home-actions-group">
-        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Run Live On-Device C++20 Engine Self-Test & Ray-Trace Benchmark">🧪 Test C++</button>
+        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Measure animation, sculpt, touch and path-tracing speed on this device"><i class="ico" data-ico="flask"></i> Run Benchmark</button>
         <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -1823,29 +1889,29 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
     <!-- Home Navigation Tabs -->
     <div class="home-tabs-bar">
       <button class="home-tab active" id="tab-btn-studios" onclick="switchHomeTab('studios')">
-        <span>🏠</span><span>Home</span>
+        <i class="ico" data-ico="home"></i><span>Home</span>
       </button>
       <button class="home-tab" id="tab-btn-recent" onclick="switchHomeTab('recent')">
-        <span>📂</span><span>Recent Projects</span>
+        <i class="ico" data-ico="folder"></i><span>Recent Projects</span>
       </button>
     </div>
 
     <!-- Studios Grid (Tab 1) -->
     <div id="home-grid">
-      <button class="card" style="--c:#6366f1" data-open="core"><i>🧊</i><span><b>Workspace (3D Animation)</b><small>Objects, scene and animation</small></span><span class="tag">Open</span></button>
-      <button class="card" style="--c:#34d399" data-open="landscape"><i>🏞️</i><span><b>Landscaping Studio</b><small>Terrain, water and foliage</small></span><span class="tag">Open</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="Video Editor"><i>🎬</i><span><b>Video Editor</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#fb923c" data-locked="VFX Studio"><i>💥</i><span><b>VFX Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="Sculpting Studio"><i>🗿</i><span><b>Sculpting Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#f472b6" data-locked="Character Studio"><i>🎭</i><span><b>Character Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#fbbf24" data-locked="Shader Studio"><i>🎨</i><span><b>Shader Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="2D Animation"><i>🖼️</i><span><b>2D Animation</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
+      <button class="card" style="--c:#6366f1" data-open="core"><i class="card-ico" data-ico="cube"></i><span><b>3D Workspace</b><small>Objects, scene and animation</small></span><span class="tag">Open</span></button>
+      <button class="card" style="--c:#34d399" data-open="landscape"><i class="card-ico" data-ico="landscape"></i><span><b>Landscaping Studio</b><small>Terrain, water and foliage</small></span><span class="tag">Open</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="Video Editor"><i class="card-ico" data-ico="film"></i><span><b>Video Editor</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#fb923c" data-locked="VFX Studio"><i class="card-ico" data-ico="bolt"></i><span><b>VFX Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="Sculpting Studio"><i class="card-ico" data-ico="skull"></i><span><b>Sculpting Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#f472b6" data-locked="Character Studio"><i class="card-ico" data-ico="masks"></i><span><b>Character Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#fbbf24" data-locked="Shader Studio"><i class="card-ico" data-ico="palette"></i><span><b>Shader Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="2D Animation"><i class="card-ico" data-ico="image"></i><span><b>2D Animation</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
     </div>
 
     <!-- Recent Projects Section (Tab 2) -->
     <div id="recent-projects-section" style="display:none; max-width:900px; width:100%;">
       <div id="recent-empty-state" class="recent-empty-card">
-        <div class="recent-empty-icon">📂</div>
+        <div class="recent-empty-icon"><i class="ico" data-ico="folder" data-size="34"></i></div>
         <h3>No Recent Projects</h3>
         <p>Make changes to any studio scene or project to automatically save them here.</p>
         <button class="btn btn-primary" onclick="switchHomeTab('studios')" style="margin-top:14px;padding:8px 18px;font-weight:600;">Return to Home Studio</button>
@@ -1860,16 +1926,16 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   <div class="global-settings-card" onclick="event.stopPropagation()">
     <header class="global-settings-header">
       <div class="global-settings-title">
-        <span class="global-settings-icon">⚙</span>
+        <span class="global-settings-icon"><i class="ico" data-ico="gear" data-size="20"></i></span>
         <div><strong>Application Settings</strong><small>One place for Workspace and all active studios</small></div>
       </div>
-      <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings">✕</button>
+      <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings"><i class="ico" data-ico="close"></i></button>
     </header>
     <div class="global-settings-body">
       <!-- 1. Viewport & 3D Workspace -->
       <div class="settings-section">
         <div class="settings-section-title">
-          <span>🧊</span> Viewport & 3D Workspace
+          <i class="ico" data-ico="cube"></i> Viewport & 3D Workspace
         </div>
         <div class="setting-item">
           <div class="setting-label">
@@ -1890,6 +1956,26 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
             <input type="checkbox" id="set-shadows" checked>
             <span class="setting-toggle-slider"></span>
           </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Temporal Anti-Aliasing</span>
+            <small>Sub-pixel jitter plus a reprojected history buffer in the viewport</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-taa" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>AA Blend</span>
+            <small>History weight of the temporal filter (0.05 = sharp, 0.5 = calm)</small>
+          </div>
+          <div class="setting-range-wrap">
+            <input type="range" id="set-taa-blend" min="0.05" max="0.5" step="0.01" value="0.12">
+            <span class="setting-range-val" id="val-taa-blend">0.12</span>
+          </div>
         </div>
         <div class="setting-item">
           <div class="setting-label">
@@ -1936,21 +2022,21 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
             <span>Touch Gestures</span>
             <small>1 finger orbits, 2 fingers pinch-zoom & pan, double-tap focuses object</small>
           </div>
-          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">C++ Touch Filter</span>
+          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">Touch Input</span>
         </div>
         <div class="setting-item">
           <div class="setting-label">
             <span>Mobile / Desktop GPU Performance Tier</span>
-            <small>C++ frame-time governor adapts pixel ratio & shadow maps for smooth FPS</small>
+            <small>Adapts resolution and shadow quality to keep the viewport smooth</small>
           </div>
           <select class="setting-select" id="set-gpu-tier">
-            <option value="0">Auto (C++ Adaptive)</option>
+            <option value="0">Auto (Adaptive)</option>
             <option value="1">Low (Mobile 60fps / Battery)</option>
             <option value="2">Medium (Balanced Mobile)</option>
             <option value="3">High (Flagship / Desktop Pro)</option>
           </select>
         </div>
-        <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">C++20 Core Engine · Adaptive Governor Ready</div>
+        <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">Adaptive performance ready</div>
         <div class="setting-item">
           <div class="setting-label">
             <span>All-Platform Standalone App</span>
@@ -2313,6 +2399,99 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
+     VIEWPORT SETTINGS: SCROLLABLE BOTTOM SHEET (workspace gear)
+========================================================= -->
+<div id="workspace-settings-sheet" class="render-modal-backdrop" onclick="if(event.target===this)closeWorkspaceSettings()" hidden>
+  <div class="render-modal-window" role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title">
+    <header class="render-modal-head">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">⚙️</span>
+        <div style="min-width:0;">
+          <strong id="workspace-settings-title" style="font-size:15px;color:#f8fafc;display:block;">Viewport Settings</strong>
+          <div style="font-size:11px;color:#94a3b8;">Performance, camera and display options for the 3D workspace</div>
+        </div>
+      </div>
+      <button class="export-modal-close" type="button" onclick="closeWorkspaceSettings()" aria-label="Close viewport settings">✕</button>
+    </header>
+    <div class="diagnostics-body" style="padding:14px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1;min-height:0;">
+      <div class="settings-section">
+        <div class="settings-section-title"><span>📊</span> Performance</div>
+        <div class="ws-perf-row">
+          <div class="ws-stat"><span id="ws-perf-fps">--</span><small>FPS</small></div>
+          <div class="ws-stat"><span id="ws-perf-ms">--</span><small>Frame time</small></div>
+          <div class="ws-stat"><span id="ws-perf-tier">Auto</span><small>Quality</small></div>
+          <div class="ws-stat"><span id="ws-perf-dpr">--</span><small>Resolution</small></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Quality tier</span><small>Adjusts resolution and shadows to hold a steady frame rate</small></div>
+          <select class="setting-select" id="ws-quality">
+            <option value="0">Auto</option>
+            <option value="1">Low</option>
+            <option value="2">Medium</option>
+            <option value="3">High</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🧊</span> Viewport</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Floor Grid</span><small>Coordinate grid on the ground plane</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-grid"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Shadows</span><small>Directional shadows in the viewport</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-shadows"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Temporal AA</span><small>Reprojected history buffer, less shimmer</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-taa"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>AA Blend</span><small>Higher keeps more history</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-taa-blend" min="0.05" max="0.5" step="0.01" value="0.12"><span class="setting-range-val" id="ws-taa-blend-val">0.12</span></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Navigation Gizmo</span><small>Axis widget and view buttons</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-gizmo"><span class="setting-toggle-slider"></span></label>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🎛️</span> Camera &amp; Light</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Exposure</span><small>Viewport brightness</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-exposure" min="0.4" max="2.4" step="0.05" value="1.25"><span class="setting-range-val" id="ws-exposure-val">1.25</span></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Orbit Speed</span><small>Viewport navigation sensitivity</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-sensitivity" min="0.5" max="2.5" step="0.1" value="1"><span class="setting-range-val" id="ws-sensitivity-val">1.0x</span></div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🌅</span> Environment</div>
+        <div class="ws-hdri-row">
+          <button type="button" class="ws-hdri-opt" data-hdri="studio">☀️ Studio</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="city">🏙️ City</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="forest">🌲 Forest</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="night">🌃 Night</button>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Custom HDRI</span><small>Load a .hdr or .exr environment</small></div>
+          <button class="settings-action-btn" type="button" id="ws-hdr-import">📂 Import</button>
+        </div>
+        <input type="file" id="ws-hdr-file" accept=".hdr,.exr" style="display:none">
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>📱</span> App</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Loaded build</span><small id="ws-build-stamp">Checking…</small></div>
+          <button class="settings-action-btn" type="button" onclick="refreshAppCache()" title="Clear cached files and reload the latest build">⟳ Update</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
      MODIFIERS TOOL: SCROLLABLE BOTTOM SHEET FLOATING PANEL
 ========================================================= -->
 <aside id="modifiers-sheet" aria-label="Modifiers Tool" style="display:none;">
@@ -2345,14 +2524,14 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
-     ANIMATION STUDIO: C++20 KEYFRAME & DOPE SHEET PANEL
+     ANIMATION STUDIO: KEYFRAME & DOPE SHEET PANEL
 ========================================================= -->
 <aside id="animation-sheet" aria-label="Animation Studio" style="display:none;">
   <header class="animation-sheet-head">
     <div class="animation-sheet-title">
       <span>🎬</span>
       <strong>Animation Studio</strong>
-      <small>C++20 Keyframes & Curves</small>
+      <small>Keyframes &amp; Curves</small>
     </div>
     <div class="animation-header-actions" style="display:flex;align-items:center;gap:6px;">
       <button class="anim-btn" id="btn-anim-autokey" type="button" onclick="FECppEngine.autoKey=!FECppEngine.autoKey;refreshAnimationStudioUI();FE.toast(FECppEngine.autoKey?'⏺ Auto-Key Enabled':'Auto-Key Disabled')">⏺ Auto-Key</button>
@@ -2373,7 +2552,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('scale')">+ Scale</button>
         <button class="anim-btn danger" type="button" onclick="FECppEngine.deleteKeyframeAtCurrentFrame()" title="Delete Keyframe at Current Frame">🗑 Del Key</button>
         <button class="anim-btn" type="button" onclick="FECppEngine.clearActiveObjectAnimation()" title="Clear All Keyframes on Selected Object">🧹 Clear</button>
-        <select class="anim-select" id="anim-interp-select" title="C++ Curve Interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
+        <select class="anim-select" id="anim-interp-select" title="Curve interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
           <option value="0">Curve: Bezier Smooth</option>
           <option value="1">Curve: Linear</option>
           <option value="2">Curve: Step / Hold</option>
@@ -2387,11 +2566,11 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <option value="2">Mode: Ping-Pong</option>
         </select>
       </div>
-      <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames & inspect C++ animation curves">
+      <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
         <canvas id="anim-dopesheet-canvas"></canvas>
       </div>
       <div class="anim-presets-bar">
-        <span style="font-size:11px;font-weight:700;color:#818cf8;flex:none;margin-right:2px;">⚡ C++ Motion Clips:</span>
+        <span style="font-size:11px;font-weight:700;color:#818cf8;flex:none;margin-right:2px;">⚡ Motion clips:</span>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(0)">🔄 Turntable 360°</button>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(1)">☁️ Float Hover</button>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(2)">🏀 Squash & Bounce</button>
@@ -2407,7 +2586,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
-     C++20 RENDER ENGINE & VIDEO SEQUENCE EXPORT STUDIO
+     RENDER ENGINE & VIDEO SEQUENCE EXPORT STUDIO
 ========================================================= -->
 <div id="render-engine-modal" class="render-modal-backdrop" onclick="if(event.target===this)closeRenderEngineModal()" hidden>
   <div class="render-modal-window" role="dialog" aria-modal="true" aria-labelledby="render-studio-title">
@@ -2415,8 +2594,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <div style="display:flex;align-items:center;gap:10px;">
         <span style="font-size:20px;">⚡</span>
         <div>
-          <strong id="render-studio-title" style="font-size:15px;color:#f8fafc;">C++20 Render Engine & Video Exporter</strong>
-          <div style="font-size:11px;color:#94a3b8;">Progressive BVH Path Tracer (FE Cycles) · WebGL + C++ Post-FX (FE Eevee) · Mobile 9:16 & 16:9</div>
+          <strong id="render-studio-title" style="font-size:15px;color:#f8fafc;">Render Engine &amp; Video Exporter</strong>
+          <div style="font-size:11px;color:#94a3b8;">Progressive path tracer (FE Cycles) · WebGL + GPU post-processing (FE Eevee) · Mobile 9:16 &amp; 16:9</div>
         </div>
       </div>
       <button class="export-modal-close" type="button" onclick="closeRenderEngineModal()" aria-label="Close Render Engine">✕</button>
@@ -2427,7 +2606,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <canvas id="render-preview-canvas" width="450" height="800"></canvas>
         </div>
         <div class="render-progress-track"><div id="render-progress-fill"></div></div>
-        <div id="render-progress-text" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">Ready to render with C++20 Core Engine</div>
+        <div id="render-progress-text" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">Ready to render</div>
       </div>
       <div class="render-controls-pane">
         <div class="render-group">
@@ -2435,8 +2614,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <div class="render-row">
             <label for="render-engine-select">Render Engine</label>
             <select class="anim-select" id="render-engine-select" onchange="FECppEngine.startStillRender()">
-              <option value="cycles_cpp">⚡ FE Cycles (C++ BVH Path Tracer)</option>
-              <option value="eevee_cpp">🚀 FE Eevee (WebGL + C++ Post-FX)</option>
+              <option value="cycles_cpp">⚡ FE Cycles (Path Tracer)</option>
+              <option value="eevee_cpp">🚀 FE Eevee (WebGL + Post-FX)</option>
             </select>
           </div>
           <div class="render-row">
@@ -2499,7 +2678,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           </label>
         </div>
         <div class="render-group">
-          <div class="render-group-title">3. C++ Color Grading & Post-FX</div>
+          <div class="render-group-title">3. Color Grading &amp; Post-FX</div>
           <div class="render-row">
             <label for="render-tonemap-select">Tone Mapper</label>
             <select class="anim-select" id="render-tonemap-select" onchange="FECppEngine.renderState.tonemap=parseInt(this.value)||0;FECppEngine.reResolveToneMapInstant()">
@@ -2514,7 +2693,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <div class="render-row"><label>Contrast</label><input type="range" id="render-contrast-range" min="0.7" max="1.6" step="0.05" value="1.05" oninput="FECppEngine.renderState.contrast=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Saturation</label><input type="range" id="render-sat-range" min="0.0" max="1.8" step="0.05" value="1.08" oninput="FECppEngine.renderState.saturation=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Temperature</label><input type="range" id="render-temp-range" min="-0.8" max="0.8" step="0.05" value="0.0" oninput="FECppEngine.renderState.temperature=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
-          <div class="render-row"><label>C++ Bloom</label><input type="range" id="render-bloom-range" min="0.0" max="1.0" step="0.05" value="0.22" oninput="FECppEngine.renderState.bloom=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Bloom</label><input type="range" id="render-bloom-range" min="0.0" max="1.0" step="0.05" value="0.22" oninput="FECppEngine.renderState.bloom=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Vignette</label><input type="range" id="render-vig-range" min="0.0" max="0.9" step="0.05" value="0.18" oninput="FECppEngine.renderState.vignette=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Chromatic Ab.</label><input type="range" id="render-ca-range" min="0.0" max="1.0" step="0.05" value="0.0" oninput="FECppEngine.renderState.chromatic=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Film Grain</label><input type="range" id="render-grain-range" min="0.0" max="0.8" step="0.05" value="0.02" oninput="FECppEngine.renderState.grain=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
@@ -2522,9 +2701,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       </div>
     </div>
     <footer class="render-actions-bar">
-      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Re-Render Frame</button>
-      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG Image</button>
-      <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Timeline Video (Start → End)</button>
+      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Render Frame</button>
+      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG</button>
+      <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Video</button>
       <button class="btn btn-secondary" type="button" onclick="FECppEngine.stopActiveRender()">⏹ Stop</button>
       <button class="btn btn-secondary" type="button" style="margin-left:auto;" onclick="closeRenderEngineModal()">Close</button>
     </footer>
@@ -2630,23 +2809,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <option value="rendered">🎬 Rendered</option>
       </select>
 
-      <!-- HDRI Popover Toggle Button -->
-      <button class="btn hdri-toggle-btn" title="HDRI Environment Settings">⚙️</button>
+      <!-- Viewport Settings -->
+      <button class="btn hdri-toggle-btn" type="button" onclick="openWorkspaceSettings()" title="Viewport settings" aria-label="Viewport settings">⚙️</button>
 
-      <button class="btn btn-export" type="button" onclick="openRenderEngineModal()" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:#818cf8;" title="Open C++20 Render Engine & Video Exporter">Render ⚡</button>
+      <button class="btn btn-export" type="button" onclick="openRenderEngineModal()" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:#818cf8;" title="Open the render engine &amp; video exporter">Render ⚡</button>
       <button class="btn btn-export" data-act="export" onclick="openExportModal()" title="Export 3D Project & Assets">Export 📤</button>
 
-      <!-- Material Preview HDRI Settings Popover Menu -->
-      <div class="hdri-popover hdri-menu">
-        <div class="preset-title">HDRI Presets</div>
-        <button class="hdri-opt" data-preset="studio">☀️ Studio</button>
-        <button class="hdri-opt" data-preset="city">🏙️ City</button>
-        <button class="hdri-opt" data-preset="forest">🌲 Forest</button>
-        <button class="hdri-opt" data-preset="night">🌃 Night</button>
-        <div class="divider"></div>
-        <button class="import-hdr-btn">📂 Import Custom HDR...</button>
-        <input type="file" class="hdr-file-input" accept=".hdr,.exr" style="display: none;" />
-      </div>
     </header>
 
     <div class="viewport">
@@ -2871,10 +3039,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         </div>
       </div>
 
-      <!-- C++20 Sculpt & Vertex/Weight Paint Brush Toolbar -->
+      <!-- Sculpt & Vertex/Weight Paint Brush Toolbar -->
       <div id="cpp-sculpt-paint-bar" hidden>
         <span id="cpp-sculpt-brush-wrap" style="display:inline-flex;align-items:center;gap:4px;">
-          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="C++ Sculpt Brush">
+          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="Sculpt brush">
             <option value="0">🗿 Draw / Clay</option>
             <option value="1">🌊 Smooth</option>
             <option value="2">🎈 Inflate</option>
@@ -2896,8 +3064,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <!-- Pro Mobile Touch Quick Action Pill -->
       <div id="mobile-quick-hud" aria-label="Mobile Quick Controls">
         <button class="mob-hud-btn" type="button" onclick="focusActiveObjectInViewport()" title="Focus Selected Object (or Double-Tap Mesh)">🎯</button>
-        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert Keyframe at Current Frame (C++)">◆ Key</button>
-        <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open C++ Render Engine & Video Exporter">⚡</button>
+        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert keyframe at the current frame">◆ Key</button>
+        <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open the render engine &amp; video exporter">⚡</button>
         <button class="mob-hud-btn" type="button" onclick="toggleMobileFullscreen()" title="Full-Screen Mobile Studio">⛶</button>
       </div>
     </div>
@@ -2912,7 +3080,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" onclick="stepTimelineFrame(-1)">◀</button>
           <button class="tb-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" onclick="stepTimelineFrame(1)">▶</button>
           <button class="tb-btn" id="tb-last-btn" title="Jump to End Frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)">⏭</button>
-          <button class="tb-btn" id="tb-insert-key-btn" title="Insert C++ Keyframe on Active Object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
+          <button class="tb-btn" id="tb-insert-key-btn" title="Insert keyframe on the active object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
           
           <div class="tb-field">
             <label>Frame</label>
@@ -2938,8 +3106,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
         </div>
         <div class="timeline-right-info">
-          <span id="tb-cpp-badge" style="color:#a5b4fc;font-weight:700;margin-right:8px;">C++20 WASM · Loading…</span>
-          <span id="tb-status-badge">Physics: Loading Rust/WASM…</span>
+          
+          <span id="tb-status-badge">Physics: starting…</span>
         </div>
       </div>
       <div class="timeline-tracks-wrapper" id="timeline-tracks-wrapper">
@@ -2986,7 +3154,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
    ========================================================= */
 const BACK=['@core','🧊','Return to Workspace'];
 const STUDIOS={
-  core:{title:'Workspace (3D Animation)',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
+  core:{title:'3D Workspace',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
     modes:[['object','Object Mode'],['edit','Edit Mode'],['sculpt','Sculpt Mode'],['vpaint','Vertex Paint'],['wpaint','Weight Paint'],['tpaint','Texture Paint']],
     tools:[
       ['add','➕','Add 3D'],
@@ -3007,7 +3175,7 @@ const STUDIOS={
 };
 
 const HOME_WORKSPACES = [
-  { id: 'core', title: 'Workspace (3D Animation)', icon: '🧊', accent: '#6366f1', desc: 'Objects, scene and animation', locked: false },
+  { id: 'core', title: '3D Workspace', icon: '🧊', accent: '#6366f1', desc: 'Objects, scene and animation', locked: false },
   { id: 'landscape', title: 'Landscaping Studio', icon: '🏞️', accent: '#34d399', desc: 'Terrain, water and foliage', locked: false },
   { id: 'video', title: 'Video Editor', icon: '🎬', accent: '#475569', desc: 'Video editing and timeline tools', locked: true },
   { id: 'vfx', title: 'VFX Studio', icon: '💥', accent: '#fb923c', desc: 'Particles, fire and smoke', locked: true },
@@ -3048,17 +3216,18 @@ try {
 }
 
 const APP_SETTINGS_KEY='fe_global_settings_v1';
-const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
+const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,taa:true,taaBlend:0.12,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
 function loadGlobalSettings(){try{const saved=JSON.parse(localStorage.getItem(APP_SETTINGS_KEY)||'{}');return{...DEFAULT_GLOBAL_SETTINGS,...saved,undoLimit:Math.min(1000,Math.max(1,Math.round(Number(saved.undoLimit)||100))),autoSaveMinutes:[2,5,10,60].includes(Number(saved.autoSaveMinutes))?Number(saved.autoSaveMinutes):2}}catch{return{...DEFAULT_GLOBAL_SETTINGS}}}
 let GLOBAL_SETTINGS=loadGlobalSettings();
 const initialGizmo=document.getElementById('nav-gizmo-wrapper');if(initialGizmo)initialGizmo.style.display=GLOBAL_SETTINGS.gizmo?'flex':'none';
 
 /* build home cards + studio screens */
+const iconName=(glyph,fallback='sparkle')=>((window.FEIcons&&FEIcons.glyphIcon(glyph))||fallback);
 const app=$('#app'), grid=$('#home-grid');
 if (grid) grid.innerHTML = '';
 HOME_WORKSPACES.forEach((item)=>{
   if (item.locked) {
-    grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:${item.accent}" data-locked="${item.title}"><i>${item.icon}</i><span><b>${item.title}</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>`);
+    grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:${item.accent}" data-locked="${item.title}"><i class="card-ico" data-ico="${iconName(item.icon)}"></i><span><b>${item.title}</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>`);
     return;
   }
 
@@ -3066,7 +3235,7 @@ HOME_WORKSPACES.forEach((item)=>{
   const s = STUDIOS[id];
   if (!s) return;
 
-  grid.insertAdjacentHTML('beforeend',`<button class="card" style="--c:${s.accent}" data-open="${id}"><i>${s.icon}</i><span><b>${s.title}</b><small>${s.desc}</small></span><span class="tag">Open</span></button>`);
+  grid.insertAdjacentHTML('beforeend',`<button class="card" style="--c:${s.accent}" data-open="${id}"><i class="card-ico" data-ico="${iconName(s.icon)}"></i><span><b>${s.title}</b><small>${s.desc}</small></span><span class="tag">Open</span></button>`);
   const el=$('#tpl-studio').content.firstElementChild.cloneNode(true);
   el.id='studio-'+id; el.dataset.screen=id; el.style.setProperty('--ac',s.accent);
   $('.title',el).textContent=s.title;
@@ -3096,38 +3265,31 @@ HOME_WORKSPACES.forEach((item)=>{
   };
 
   // Wire HDRI Popover Menu & Import
+  /* The gear opens the viewport settings sheet; environment presets live there. */
   const hdriBtn = $('.hdri-toggle-btn', el);
+  if (hdriBtn) hdriBtn.onclick = (e) => { e.stopPropagation(); openWorkspaceSettings(); };
   const hdriPopover = $('.hdri-popover', el);
-  const importHdrBtn = $('.import-hdr-btn', el);
-  const hdrFileInput = $('.hdr-file-input', el);
-
-  hdriBtn.onclick = (e) => {
-    e.stopPropagation();
-    $$('.hdri-menu').forEach(m => { if(m !== hdriPopover) m.classList.remove('open'); });
-    hdriPopover.classList.toggle('open');
-  };
-
-  $$('.hdri-opt', hdriPopover).forEach(btn => {
-    btn.onclick = () => {
-      const preset = btn.dataset.preset;
-      emit('hdriPreset', { studio: id, preset });
-      hdriPopover.classList.remove('open');
-      FE.toast('HDR Preset: ' + btn.textContent);
-    };
-  });
-
-  importHdrBtn.onclick = () => {
-    hdrFileInput.click();
-  };
-
-  hdrFileInput.onchange = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    emit('hdriFile', { studio: id, url, name: file.name });
-    hdriPopover.classList.remove('open');
-    FE.toast(`Loaded custom HDR: ${file.name}`);
-  };
+  if (hdriPopover) {
+    const importHdrBtn = $('.import-hdr-btn', el);
+    const hdrFileInput = $('.hdr-file-input', el);
+    $$('.hdri-opt', hdriPopover).forEach(btn => {
+      btn.onclick = () => {
+        emit('hdriPreset', { studio: id, preset: btn.dataset.preset });
+        hdriPopover.classList.remove('open');
+        FE.toast('HDR Preset: ' + btn.textContent);
+      };
+    });
+    if (importHdrBtn && hdrFileInput) {
+      importHdrBtn.onclick = () => hdrFileInput.click();
+      hdrFileInput.onchange = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        emit('hdriFile', { studio: id, url: URL.createObjectURL(file), name: file.name });
+        hdriPopover.classList.remove('open');
+        FE.toast(`Loaded custom HDR: ${file.name}`);
+      };
+    }
+  }
 
   // Safe ResizeObserver
   new ResizeObserver(([e])=>{
@@ -3343,6 +3505,13 @@ function syncGlobalSettingsUI() {
   const chkShadows = document.getElementById('set-shadows');
   if (chkShadows) chkShadows.checked = !!GLOBAL_SETTINGS.shadows;
 
+  const chkTaa = document.getElementById('set-taa');
+  if (chkTaa) chkTaa.checked = GLOBAL_SETTINGS.taa !== false;
+  const rangeTaa = document.getElementById('set-taa-blend');
+  if (rangeTaa) rangeTaa.value = String(GLOBAL_SETTINGS.taaBlend ?? 0.12);
+  const taaOut = document.getElementById('val-taa-blend');
+  if (taaOut) taaOut.textContent = Number(GLOBAL_SETTINGS.taaBlend ?? 0.12).toFixed(2);
+
   const chkGizmo = document.getElementById('set-gizmo');
   const gizmoWrap = document.getElementById('nav-gizmo-wrapper');
   if (chkGizmo && gizmoWrap) {
@@ -3382,6 +3551,133 @@ function syncGlobalSettingsUI() {
   if(status)status.textContent=localStorage.getItem('fe_last_autosave_status')||(GLOBAL_SETTINGS.autoSave?`Auto-save is on · interval: ${GLOBAL_SETTINGS.autoSaveMinutes===60?'1 hour':GLOBAL_SETTINGS.autoSaveMinutes+' minutes'}`:'Auto-save is off');
 }
 window.syncGlobalSettingsUI = syncGlobalSettingsUI;
+/* ---------------- Viewport settings sheet (workspace gear) ---------------- */
+const WS_TIERS = ['Low', 'Medium', 'High'];
+function renderWorkspacePerf(stats) {
+  if (!stats) return;
+  const put = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+  put('ws-perf-fps', String(Math.max(0, Math.round(stats.fps || 0))));
+  put('ws-perf-ms', (stats.avgMs || 0).toFixed(1) + ' ms');
+  put('ws-perf-tier', stats.tierLabel || WS_TIERS[stats.tier] || 'Auto');
+  put('ws-perf-dpr', (stats.dpr || 1).toFixed(2) + 'x');
+}
+function syncWorkspaceSettingsUI() {
+  const mirror = (dstId, srcId, prop) => {
+    const dst = document.getElementById(dstId), src = document.getElementById(srcId);
+    if (!dst || !src) return;
+    if (dst.type === 'checkbox') dst.checked = !!src.checked;
+    else dst.value = prop === 'value' ? src.value : src.checked;
+  };
+  mirror('ws-grid', 'set-grid');
+  mirror('ws-shadows', 'set-shadows');
+  mirror('ws-taa', 'set-taa');
+  const taaBlend = document.getElementById('ws-taa-blend');
+  if (taaBlend) taaBlend.value = String(GLOBAL_SETTINGS.taaBlend ?? 0.12);
+  const taaBlendVal = document.getElementById('ws-taa-blend-val');
+  if (taaBlendVal) taaBlendVal.textContent = Number(taaBlend ? taaBlend.value : GLOBAL_SETTINGS.taaBlend ?? 0.12).toFixed(2);
+  mirror('ws-gizmo', 'set-gizmo');
+  const quality = document.getElementById('ws-quality'), tier = document.getElementById('set-gpu-tier');
+  if (quality && tier) quality.value = tier.value;
+  const exposure = document.getElementById('ws-exposure');
+  if (exposure) {
+    if (window.renderer && typeof window.renderer.toneMappingExposure === 'number') exposure.value = window.renderer.toneMappingExposure;
+    const out = document.getElementById('ws-exposure-val');
+    if (out) out.textContent = (+exposure.value).toFixed(2);
+  }
+  const sensitivity = document.getElementById('ws-sensitivity');
+  if (sensitivity) {
+    const eng = FE.engines?.core;
+    if (eng?.oc?.rotateSpeed) sensitivity.value = eng.oc.rotateSpeed;
+    const out = document.getElementById('ws-sensitivity-val');
+    if (out) out.textContent = (+sensitivity.value).toFixed(1) + 'x';
+  }
+  renderWorkspacePerf(window.FEWorkspacePerf);
+}
+function renderAppBuildStamp() {
+  const el = document.getElementById('ws-build-stamp');
+  if (!el) return;
+  let stamp = '';
+  try { const d = new Date(document.lastModified); if (!Number.isNaN(d.getTime())) stamp = 'Loaded ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) {}
+  el.textContent = stamp || 'Loaded build unknown — tap Update if the interface looks old';
+}
+async function refreshAppCache() {
+  const btn = document.querySelector('#workspace-settings-sheet .settings-action-btn[onclick="refreshAppCache()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Updating…'; }
+  try {
+    if ('caches' in window) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+    if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+  } catch (_) {}
+  try { location.reload(); } catch (_) {}
+}
+window.refreshAppCache = refreshAppCache;
+function openWorkspaceSettings() {
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (!sheet) return;
+  /* Opening the sheet must never depend on any other panel being healthy. */
+  sheet.hidden = false;
+  try { syncGlobalSettingsUI(); } catch (_) {}
+  try { syncWorkspaceSettingsUI(); } catch (_) {}
+  try { renderAppBuildStamp(); } catch (_) {}
+}
+function closeWorkspaceSettings() {
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (sheet) sheet.hidden = true;
+}
+window.openWorkspaceSettings = openWorkspaceSettings;
+window.closeWorkspaceSettings = closeWorkspaceSettings;
+window.fepdateWorkspacePerf = function (stats) {
+  window.FEWorkspacePerf = stats;
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (sheet && !sheet.hidden) renderWorkspacePerf(stats);
+};
+function initWorkspaceSettingsEvents() {
+  if (window.__feWorkspaceSettingsBound) return;
+  window.__feWorkspaceSettingsBound = true;
+  const forward = (dstId, srcId, eventName) => {
+    const dst = document.getElementById(dstId), src = document.getElementById(srcId);
+    if (!dst || !src) return;
+    dst.addEventListener(eventName, () => {
+      if (dst.type === 'checkbox') src.checked = dst.checked;
+      else src.value = dst.value;
+      src.dispatchEvent(new Event(eventName === 'input' ? 'input' : 'change', { bubbles: true }));
+    });
+  };
+  forward('ws-grid', 'set-grid', 'change');
+  forward('ws-shadows', 'set-shadows', 'change');
+  forward('ws-taa', 'set-taa', 'change');
+  forward('ws-taa-blend', 'set-taa-blend', 'input');
+  const wsTaaBlend = document.getElementById('ws-taa-blend');
+  if (wsTaaBlend) wsTaaBlend.addEventListener('input', () => { const out = document.getElementById('ws-taa-blend-val'); if (out) out.textContent = Number(wsTaaBlend.value).toFixed(2); });
+  forward('ws-gizmo', 'set-gizmo', 'change');
+  forward('ws-quality', 'set-gpu-tier', 'change');
+  forward('ws-exposure', 'set-exposure', 'input');
+  forward('ws-sensitivity', 'set-sensitivity', 'input');
+  const exposure = document.getElementById('ws-exposure');
+  if (exposure) exposure.addEventListener('input', () => { const out = document.getElementById('ws-exposure-val'); if (out) out.textContent = (+exposure.value).toFixed(2); });
+  const sensitivity = document.getElementById('ws-sensitivity');
+  if (sensitivity) sensitivity.addEventListener('input', () => { const out = document.getElementById('ws-sensitivity-val'); if (out) out.textContent = (+sensitivity.value).toFixed(1) + 'x'; });
+  document.querySelectorAll('.ws-hdri-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.hdri;
+      if (typeof applyHdriPreset === 'function') applyHdriPreset(preset, true);
+      FE.toast('Environment: ' + btn.textContent.trim());
+    });
+  });
+  const importBtn = document.getElementById('ws-hdr-import'), fileInput = document.getElementById('ws-hdr-file');
+  if (importBtn && fileInput) {
+    importBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      document.dispatchEvent(new CustomEvent('fe:hdriFile', { detail: { studio: 'core', url: URL.createObjectURL(file), name: file.name } }));
+      FE.toast('Loaded custom HDR: ' + file.name);
+    });
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWorkspaceSettings(); });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initWorkspaceSettingsEvents);
+else setTimeout(initWorkspaceSettingsEvents, 0);
+
 
 let globalSettingsInitialized = false;
 function initGlobalSettingsEvents() {
@@ -3411,6 +3707,30 @@ function initGlobalSettingsEvents() {
       }
       FE.toast(e.target.checked ? 'Real-time Shadows Enabled' : 'Real-time Shadows Disabled');
     };
+  }
+
+  const chkTaa = document.getElementById('set-taa');
+  if (chkTaa) {
+    chkTaa.onchange = (e) => {
+      GLOBAL_SETTINGS.taa = e.target.checked;
+      persistGlobalSettings();
+      const eng = FE.engines?.core;
+      if (eng?.taa) { eng.taa.setEnabled(e.target.checked); eng.taa.reset(); }
+      FE.toast(e.target.checked ? 'Temporal AA enabled' : 'Temporal AA disabled');
+    };
+  }
+  const rangeTaaBlend = document.getElementById('set-taa-blend');
+  if (rangeTaaBlend) {
+    rangeTaaBlend.addEventListener('input', (e) => {
+      GLOBAL_SETTINGS.taaBlend = Math.max(0.05, Math.min(0.5, Number(e.target.value) || 0.12));
+      persistGlobalSettings();
+      const eng = FE.engines?.core;
+      if (eng?.taa) eng.taa.setBlend(GLOBAL_SETTINGS.taaBlend);
+      const out = document.getElementById('val-taa-blend');
+      if (out) out.textContent = Number(GLOBAL_SETTINGS.taaBlend).toFixed(2);
+      const mirrorOut = document.getElementById('ws-taa-blend-val');
+      if (mirrorOut) mirrorOut.textContent = Number(GLOBAL_SETTINGS.taaBlend).toFixed(2);
+    });
   }
 
   const chkGizmo = document.getElementById('set-gizmo');
@@ -7226,6 +7546,7 @@ FE.register('core',{
       applyCameraAspect(this.sceneCamera,curAspect);
     }
     this.r.setSize(w,h,false);
+    if (this.taa) this.taa.reset();
     if (typeof updateCameraFrame === 'function') updateCameraFrame();
   },
 
@@ -7332,7 +7653,19 @@ FE.register('core',{
 
       const activeCam = isCameraView ? this.sceneCamera : this.viewportCamera;
       const renderStart=performance.now();
-      this.r.render(this.sc, activeCam);
+      /* Temporal AA: jittered scene pass + reprojected history. Created lazily
+         and always guarded - any failure falls back to a direct render. */
+      if (!this.taa && !this._taaChecked && window.FE_TAA) {
+        this._taaChecked = true;
+        try { this.taa = window.FE_TAA.create(this.r, { blend: GLOBAL_SETTINGS.taaBlend || 0.12 }); } catch (_) { this.taa = null; }
+      }
+      if (this.taa) {
+        this.taa.setEnabled(GLOBAL_SETTINGS.taa !== false);
+        this.taa.setBlend(GLOBAL_SETTINGS.taaBlend || 0.12);
+        if (this._taaCam !== activeCam) { this._taaCam = activeCam; this.taa.reset(); }
+      }
+      if (this.taa && this.taa.enabled && this.taa.ok) this.taa.render(this.sc, activeCam);
+      else this.r.render(this.sc, activeCam);
 
       if (!isCameraView && this.viewHelper) {
         this.viewHelper.update();
@@ -8993,12 +9326,12 @@ window.addEventListener('keydown', (e) => {
    ========================================================= */
 const modifiersData = {
   Generate: [
-    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1]]},
+    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}]]},
     {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
-    {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01]]},
-    {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false]]},
-    {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01]]},
+    {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
+    {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
+    {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
     {name:"Subdivision Surface", fields:[["Viewport Levels","range",0,4,2,1],["Render Levels","range",0,4,2,1]]},
     {name:"Triangulate", fields:[["Keep Normals","check",true]]},
     {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
@@ -9006,14 +9339,14 @@ const modifiersData = {
   ],
   Deform: [
     {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
-    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1]]},
-    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1]]},
+    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0.1,4,1,.05,{advanced:true}]]},
+    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
-    {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1]]},
+    {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}]]},
     {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01],["Falloff","range",1,8,2.5,.25]]},
-    {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1]]},
-    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1]]}
+    {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1],["Axis","select",["Y","X","Z"],{advanced:true}]]},
+    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1],["Axis","select",["Y","X","Z"],{advanced:true}],["Phase","range",0,6.28,0,.01,{advanced:true}]]}
   ],
   Normals: [
     {name:"Weighted Normal", fields:[["Weight","range",0,100,50,1],["Keep Sharp","check",true]]}
@@ -9072,6 +9405,23 @@ const modifiersData = {
       // Common Dynamics & Vorticity
       ["Vorticity Confinement","range",0,1,0.12,0.02],
       ["Resolution","range",32,96,80,8],["Surface Resolution","range",16,96,64,4],
+      ["Volume Solver","check",true],
+      ["Volume Quality","select",["Balanced","Mobile","Cinematic"],{advanced:true}],
+      ["Volume Steps","range",16,64,48,4,{advanced:true}],
+      ["Detail","range",0,2,1,.05],
+      ["Detail Scale","range",.5,8,2.5,.1,{advanced:true}],
+      ["Detail Speed","range",0,3,.6,.05,{advanced:true}],
+      ["Self Shadow","range",0,1,1,.05,{advanced:true}],
+      ["Scatter Samples","range",1,4,2,1,{advanced:true}],
+      ["Ambient","range",0,1,.15,.01,{advanced:true}],
+      ["Extinction","range",.2,3,1,.05,{advanced:true}],
+      ["Emission","range",0,3,1.3,.05,{advanced:true}],
+      ["Detail Contrast","range",.2,3,1,.05,{advanced:true}],
+      ["Fire Tint","select",["Natural","Amber","Blue","Green"],{advanced:true}],
+      ["Temporal Blend","range",0,.95,.55,.05,{advanced:true}],
+      ["Volume Source","select",["Live Simulation","Baked Library"],{advanced:true}],
+      ["Library Variant","select",["Fire","Smoke","Steam"],{advanced:true}],
+      ["Library Motion","range",.2,3,1,.05,{advanced:true}],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -9635,7 +9985,7 @@ function modifierRelativeMatrix(sourceObj, targetObj) {
 }
 function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
 function applySubdivisionModifier(geometry, levels) { return modifierGeometryApi().subdivideLoop(geometry, levels); }
-function applySolidifyModifier(geometry, thickness, offset) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset); }
+function applySolidifyModifier(geometry, thickness, offset, rim=true, evenThickness=true) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset, { rim, evenThickness }); }
 function applyBooleanModifier(targetObj, geometry, params) {
   const operand = getAllSceneMeshes().find(mesh => mesh.uuid === params['Operand Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
   if (!operand) throw new Error('Boolean needs a different closed mesh selected as Operand Object.');
@@ -9643,17 +9993,17 @@ function applyBooleanModifier(targetObj, geometry, params) {
   const relative = modifierRelativeMatrix(targetObj, operand);
   return modifierGeometryApi().booleanGeometry(geometry, operand.geometry, relative.elements, params.Operation || 'Difference');
 }
-function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz] }); }
-function applyMirrorModifier(geometry, x, y, z, clipping=false) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping }); }
-function applyDecimateModifier(geometry, ratio) { return modifierGeometryApi().decimateGeometry(geometry, ratio); }
+function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep }); }
+function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e-6) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping, mergeDistance }); }
+function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
 function applyTriangulateModifier(geometry, keepNormals=true) { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
 function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal }); }
-function applyDisplaceModifier(geometry, strength, midlevel, frequency=1) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency }); }
-function applyWaveModifier(geometry, speed, height, width, time=0) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time }); }
-function applyCastModifier(geometry, shape, factor, radius) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius }); }
-function applySmoothModifier(geometry, factor, iterations) { return modifierGeometryApi().smoothGeometry(geometry, { factor, iterations }); }
-function applyWarpModifier(geometry, strength) { return modifierGeometryApi().twistGeometry(geometry, strength); }
+function applyDisplaceModifier(geometry, strength, midlevel, frequency=1, options={}) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency, ...options }); }
+function applyWaveModifier(geometry, speed, height, width, time=0, options={}) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time, ...options }); }
+function applyCastModifier(geometry, shape, factor, radius, size=1) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size }); }
+function applySmoothModifier(geometry, factor, iterations, options={}) { return modifierGeometryApi().smoothGeometry(geometry, { factor, iterations, ...options }); }
+function applyWarpModifier(geometry, strength, axis='Y') { return modifierGeometryApi().twistGeometry(geometry, strength, axis); }
 function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode) {
   if (!targetObj?.geometry) throw new Error('Shrinkwrap needs a different mesh selected as Target Object.');
   const relative = modifierRelativeMatrix(sourceObj, targetObj);
@@ -9947,7 +10297,7 @@ function updateModifiersOnScene(targetOverride) {
     } else if (mod.name === "Solidify") {
       const th = parseFloat(p["Thickness"] ?? 0.1);
       const off = parseFloat(p["Offset"] ?? -1);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applySolidifyModifier(currentGeo, th, off));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySolidifyModifier(currentGeo, th, off, p["Rim Fill"] !== false, p["Even Thickness"] !== false));
     } else if (mod.name === "Boolean") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyBooleanModifier(targetObj, currentGeo, p));
     } else if (mod.name === "Array") {
@@ -9955,15 +10305,15 @@ function updateModifiersOnScene(targetOverride) {
       const ox = parseFloat(p["Offset X"] ?? 1.8);
       const oy = parseFloat(p["Offset Y"] ?? 0);
       const oz = parseFloat(p["Offset Z"] ?? 0);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0), parseFloat(p["Rotation Per Step"] ?? 0)));
     } else if (mod.name === "Mirror") {
       const xA = p["X Axis"] ?? true;
       const yA = p["Y Axis"] ?? false;
       const zA = p["Z Axis"] ?? false;
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyMirrorModifier(currentGeo, xA, yA, zA, p["Clipping"] === true));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyMirrorModifier(currentGeo, xA, yA, zA, p["Clipping"] === true, parseFloat(p["Merge Distance"] ?? 1e-6)));
     } else if (mod.name === "Decimate") {
       const ratio = parseFloat(p["Ratio"] || 0.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio, p["Preserve Boundaries"] !== false));
     } else if (mod.name === "Triangulate") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false));
     } else if (mod.name === "Weld") {
@@ -9976,24 +10326,24 @@ function updateModifiersOnScene(targetOverride) {
     } else if (mod.name === "Displace") {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
     } else if (mod.name === "Wave") {
       const speed = parseFloat(p["Speed"] ?? 1.5);
       const height = parseFloat(p["Height"] ?? 0.6);
       const width = parseFloat(p["Width"] ?? 2.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWaveModifier(currentGeo, speed, height, width, parseFloat(p["Time"] ?? 0)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWaveModifier(currentGeo, speed, height, width, parseFloat(p["Time"] ?? 0), { axis: p["Axis"] || "Y", phase: parseFloat(p["Phase"] ?? 0) }));
     } else if (mod.name === "Cast") {
       const shape = p["Shape"] || "Sphere";
       const factor = parseFloat(p["Factor"] || 1);
       const rad = parseFloat(p["Radius"] || 1);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyCastModifier(currentGeo, shape, factor, rad));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyCastModifier(currentGeo, shape, factor, rad, parseFloat(p["Size"] ?? 1)));
     } else if (mod.name === "Smooth") {
       const factor = parseFloat(p["Factor"] || 0.6);
       const iter = parseInt(p["Iterations"] || 3, 10);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applySmoothModifier(currentGeo, factor, iter));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySmoothModifier(currentGeo, factor, iter, { preserveVolume: p["Preserve Volume"] === true, boundary: p["Boundary"] || "Smooth" }));
     } else if (mod.name === "Warp") {
       const str = parseFloat(p["Strength"] || 1.2);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWarpModifier(currentGeo, str));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWarpModifier(currentGeo, str, p["Axis"] || "Y"));
     } else if (mod.name === "Lattice") {
       if (!p['Cage Object']) {
         throw new Error('Lattice needs an editable control-cage object; click "Create & Bind Lattice Cage" or select a Cage Object.');
@@ -10136,6 +10486,19 @@ function applyFluidPreset(mod, presetName) {
   Object.keys(cfg).forEach(k => {
     mod.values[k] = cfg[k];
   });
+}
+
+/* Volume render quality presets: a starting point for the knobs below, not a
+   lock. Every value stays editable afterwards. */
+const VOLUME_QUALITY_PRESETS = {
+  Mobile:    { "Volume Steps": 32, "Detail": .8,  "Detail Scale": 2.2, "Detail Speed": .5,  "Self Shadow": .7, "Scatter Samples": 1, "Ambient": .18, "Extinction": 1,   "Emission": 1.2, "Detail Contrast": 1,   "Temporal Blend": .7 },
+  Balanced:  { "Volume Steps": 48, "Detail": 1,   "Detail Scale": 2.5, "Detail Speed": .6,  "Self Shadow": 1,  "Scatter Samples": 2, "Ambient": .15, "Extinction": 1,   "Emission": 1.3, "Detail Contrast": 1,   "Temporal Blend": .55 },
+  Cinematic: { "Volume Steps": 64, "Detail": 1.35,"Detail Scale": 3.1, "Detail Speed": .7,  "Self Shadow": 1,  "Scatter Samples": 3, "Ambient": .2,  "Extinction": 1.15,"Emission": 1.5, "Detail Contrast": 1.15,"Temporal Blend": .4 }
+};
+function applyVolumeQualityPreset(mod, preset) {
+  const cfg = VOLUME_QUALITY_PRESETS[preset] || VOLUME_QUALITY_PRESETS.Balanced;
+  Object.keys(cfg).forEach(key => { mod.values[key] = cfg[key]; });
+  mod.values["Volume Quality"] = preset;
 }
 
 function addModifierToStack(category, definition) {
@@ -10324,19 +10687,19 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       const stage=(fn)=>{geometry=applyModifierGeometryStage(geometry,()=>fn(geometry))};
       if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false)); }
       else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2)));
-      else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1)));
+      else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1),p['Rim Fill']!==false,p['Even Thickness']!==false));
       else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));
-      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0)));
-      else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true));
-      else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5)));
+      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0)));
+      else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true,Number(p['Merge Distance']??1e-6)));
+      else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false));
       else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false));
       else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
       else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false));
-      else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1)));
-      else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0)));
-      else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1)));
-      else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3)));
-      else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2)));
+      else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),{direction:p.Direction||'Normal',octaves:Number(p.Octaves??2),seed:Number(p.Seed??0)}));
+      else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0),{axis:p.Axis||'Y',phase:Number(p.Phase??0)}));
+      else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));
+      else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
+      else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));
       else if(mod.name==='Armature')stage(g=>applyArmatureSkinModifier(g,targetObj,mod));
       else if(mod.name==='Surface Deform')stage(g=>applySurfaceDeformModifier(g,targetObj,mod));
@@ -10415,6 +10778,9 @@ function renderModifierStack() {
 
     const body = document.createElement("div");
     body.className = "mod-body";
+    const advancedWrap = document.createElement("div");
+    advancedWrap.className = "mod-advanced";
+    advancedWrap.style.display = "none";
     
     mod.definition.fields.forEach((field, i) => {
       const label = field[0];
@@ -10433,13 +10799,13 @@ function renderModifierStack() {
             const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Vorticity Confinement", "Resolution", "Surface Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!liquidOnly.includes(label)) return;
           } else if (domainType === "Fire") {
-            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireOnly.includes(label)) return;
           } else if (domainType === "Smoke") {
-            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!smokeOnly.includes(label)) return;
           } else if (domainType === "Fire + Smoke") {
-            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Flow") {
@@ -10470,7 +10836,7 @@ function renderModifierStack() {
       // Dynamic Preset Auto-Population & Immediate Re-render (Blender Style)
       if (mod.name === "Fluid") {
          const select = fieldEl.querySelector('select');
-         const presetFields = ["Type", "Domain Type", "Flow Type", "Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset"];
+         const presetFields = ["Type", "Domain Type", "Flow Type", "Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset", "Volume Quality"];
          if (select && presetFields.includes(label)) {
             const originalOnChange = select.onchange;
             select.onchange = (e) => {
@@ -10526,6 +10892,9 @@ function renderModifierStack() {
                   if (typeof FE !== 'undefined' && FE.toast) {
                      FE.toast(`Set Fluid Type to ${val}`);
                   }
+               } else if (label === "Volume Quality") {
+                  applyVolumeQualityPreset(mod, val);
+                  if (typeof FE !== 'undefined' && FE.toast) FE.toast(`Volume quality: ${val}`);
                } else if (["Liquid Preset", "Fire Preset", "Smoke Preset", "Fire & Smoke Preset"].includes(label)) {
                   applyFluidPreset(mod, val);
                   if (window.SimEngine && targetObj) {
@@ -10543,8 +10912,20 @@ function renderModifierStack() {
          }
       }
       
-      body.appendChild(fieldEl);
+      const advancedMarker = field.find(entry => entry && typeof entry === 'object' && !Array.isArray(entry));
+      if (advancedMarker && advancedMarker.advanced) advancedWrap.appendChild(fieldEl);
+      else body.appendChild(fieldEl);
     });
+    if (advancedWrap.childElementCount) {
+      const advBtn = document.createElement("button");
+      advBtn.className = "small-btn";
+      advBtn.style.cssText = "width:100%;margin:8px 0 4px;background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.28);color:#cbd5e1;font-weight:600";
+      const advLabel = (open) => open ? "⚙ Hide Advanced Settings" : `⚙ Advanced Settings (${advancedWrap.childElementCount})`;
+      advBtn.textContent = advLabel(false);
+      advBtn.onclick = () => { const open = advancedWrap.style.display !== "none"; advancedWrap.style.display = open ? "none" : "block"; advBtn.textContent = advLabel(!open); };
+      body.appendChild(advBtn);
+      body.appendChild(advancedWrap);
+    }
     if (mod.name === "Lattice") {
       const cageBtn = document.createElement('button');
       cageBtn.className = 'small-btn';
@@ -10567,7 +10948,7 @@ function renderModifierStack() {
       bindBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) bindSurfaceDeformTarget(t, mod); };
       body.appendChild(bindBtn);
     }
-    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the C++20/WASM solver loads. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with C++20 spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
+    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically when the physics solver is ready. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with a spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
 
     const buttons = document.createElement("div");
     buttons.className = "buttons";
