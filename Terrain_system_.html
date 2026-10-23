@@ -101,6 +101,38 @@ body.explore-heli:not(.explore-compact) #exJoystick{bottom:calc(env(safe-area-in
 #ng{position:fixed;right:10px;top:calc(env(safe-area-inset-top,0px) + 50px);width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.07)}
 #ng b{position:absolute;width:18px;height:18px;margin:-9px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#111;cursor:pointer}
 @media(max-width:520px){.b{display:none}#top{justify-content:space-between;gap:4px}#fps{display:none}.pill button,.ib{padding:8px 6px;font-size:12px}}
+/* ---- Landscape / wide-short: dock tool panels right, free the canvas ---- */
+@media (orientation: landscape) and (max-height: 620px) {
+  #top { padding-top: calc(env(safe-area-inset-top, 0px) + 3px); padding-bottom: 3px; }
+  #info { top: calc(env(safe-area-inset-top, 0px) + 40px); font-size: 11px; }
+  #ng { top: calc(env(safe-area-inset-top, 0px) + 40px); width: 68px; height: 68px; }
+  #dr { max-height: 30vh; }
+  #dock #dr { max-height: 26vh; }
+  #panel, #exploreSheet {
+    left: auto;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(420px, 52vw);
+    max-width: min(420px, 52vw);
+    max-height: none;
+    border-radius: 14px 0 0 14px;
+    border-left: 1px solid var(--ln);
+    border-right: 0;
+    box-shadow: -14px 0 34px rgba(0, 0, 0, .5);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  #panel { border: 0; border-left: 1px solid var(--ln); }
+  #exploreSheet { transform: translateX(calc(100% + 24px)); }
+  #exploreSheet.open { transform: none; }
+  #exploreSheet.settings-open { max-height: none; }
+  #exJoystick { left: 10px; bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); width: 104px; height: 104px; }
+  body.explore-compact #exJoystick,
+  body.explore-first:not(.explore-compact) #exJoystick,
+  body.explore-heli:not(.explore-compact) #exJoystick { bottom: calc(env(safe-area-inset-bottom, 0px) + 84px); }
+  #bar { padding: 6px 8px calc(env(safe-area-inset-bottom, 0px) + 6px); gap: 6px; }
+  #bar button { padding: 5px 4px; font-size: 10px; }
+}
 </style></head><body>
 <canvas id="c"></canvas><div id="info"></div><div id="ng"></div>
 <div id="top"><span class="b">Final Effect</span><div class="pill" id="sh"></div><button class="ib" id="un" aria-label="Undo">↶</button><button class="ib" id="re" aria-label="Redo">↷</button><button class="ib" id="mode"></button><button class="ib" id="imp" title="Import to Main Grid">⤴ Import<span class="lg"> to Main Grid</span></button><button class="ib" id="cls" title="Close / Exit">✖ Close</button><span id="fps"></span></div>
