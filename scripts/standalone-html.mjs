@@ -26,6 +26,7 @@ export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterS
 export function createStandaloneAppHtml(html, {
   volumeAtlas,
   feIcons,
+  feTaa,
   volumeLibrary,
   volumeLibraryBase64 = '',
   simulationCore,
@@ -91,6 +92,7 @@ export function createStandaloneAppHtml(html, {
   let out = html.replace('<link rel="manifest" href="./manifest.webmanifest">', '');
   const helpers = [
     ['fe-icons.js', feIcons],
+    ['fe-taa.js', feTaa],
     ['volume-atlas.js', volumeAtlas],
     ['volume-library.js', volumeLibrary],
     ['simulationCore.js', simulationCore],

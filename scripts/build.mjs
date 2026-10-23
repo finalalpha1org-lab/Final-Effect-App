@@ -27,6 +27,7 @@ if (hasPublicDir) {
   const staticAssets = [
     "index.html",
     "fe-icons.js",
+    "fe-taa.js",
     "Terrain_system_.html",
     "celestial-math.js",
     "scatter-spacing.js",
@@ -60,6 +61,7 @@ const terrainMainFiles=Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).
 const minifiableJs = [
   "celestial-math.js",
   "fe-icons.js",
+  "fe-taa.js",
   "scatter-spacing.js",
   "tessendorf-ocean.js",
   "open-world-generator.js",
@@ -132,6 +134,7 @@ const standaloneAppHtml = createStandaloneAppHtml(
   {
     volumeAtlas: readFileSync(srcPath("volume-atlas.js"), "utf8"),
     feIcons: readFileSync(srcPath("fe-icons.js"), "utf8"),
+    feTaa: readFileSync(srcPath("fe-taa.js"), "utf8"),
     volumeLibrary: readFileSync(srcPath("volume-library.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),

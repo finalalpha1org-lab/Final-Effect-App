@@ -102,10 +102,16 @@ frame x slice into one RGBA atlas and exposes a ping-pong clock, so a short clip
 never snaps from the last frame to the first. In `Baked Library` mode the solver
 is not stepped at all - the shader blends two frames.
 
+## Image-space TAA
+
+The render-target pass (history buffer + depth reprojection) lives in
+`fe-taa.js` and is documented in `docs/TEMPORAL-AA.md`. It is enabled by default
+in the workspace and can be turned off in the viewport sheet. The volume
+raymarch jitter is frame-indexed through `uFrame`, so the temporal history has
+something to converge. The field filter above stays separate.
+
 ## Not in this phase
 
-- Render-target TAA (history buffer + reprojection). The temporal filter above
-  smooths the *field*, not the final image.
 - Adaptive per-frame budget that lowers `Volume Steps` under load.
-
-Those remain marked experimental and are not presented as finished.
+- Per-pixel motion vectors (object motion), which would improve history on
+  animated meshes.

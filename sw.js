@@ -1,6 +1,6 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v10';
+const CACHE_NAME = 'final-effect-cpp-v11';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const CORE_ASSETS = [
   './fe-cpp-engine.js',
   './fe_core_engine.wasm',
   './fe-icons.js',
+  './fe-taa.js',
   './volume-atlas.js',
   './volume-library.js',
   './volume-library.bin',

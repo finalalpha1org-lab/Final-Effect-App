@@ -1857,6 +1857,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 </head>
 <body>
 <script src="fe-icons.js"></script>
+<script src="fe-taa.js"></script>
 <script src="volume-atlas.js"></script>
 <script src="volume-library.js"></script>
 <script src="simulationCore.js"></script>
@@ -1955,6 +1956,26 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
             <input type="checkbox" id="set-shadows" checked>
             <span class="setting-toggle-slider"></span>
           </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Temporal Anti-Aliasing</span>
+            <small>Sub-pixel jitter plus a reprojected history buffer in the viewport</small>
+          </div>
+          <label class="setting-toggle">
+            <input type="checkbox" id="set-taa" checked>
+            <span class="setting-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>AA Blend</span>
+            <small>History weight of the temporal filter (0.05 = sharp, 0.5 = calm)</small>
+          </div>
+          <div class="setting-range-wrap">
+            <input type="range" id="set-taa-blend" min="0.05" max="0.5" step="0.01" value="0.12">
+            <span class="setting-range-val" id="val-taa-blend">0.12</span>
+          </div>
         </div>
         <div class="setting-item">
           <div class="setting-label">
@@ -2420,6 +2441,14 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="setting-item">
           <div class="setting-label"><span>Shadows</span><small>Directional shadows in the viewport</small></div>
           <label class="setting-toggle"><input type="checkbox" id="ws-shadows"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Temporal AA</span><small>Reprojected history buffer, less shimmer</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-taa"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>AA Blend</span><small>Higher keeps more history</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-taa-blend" min="0.05" max="0.5" step="0.01" value="0.12"><span class="setting-range-val" id="ws-taa-blend-val">0.12</span></div>
         </div>
         <div class="setting-item">
           <div class="setting-label"><span>Navigation Gizmo</span><small>Axis widget and view buttons</small></div>
@@ -3187,17 +3216,18 @@ try {
 }
 
 const APP_SETTINGS_KEY='fe_global_settings_v1';
-const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
+const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,taa:true,taaBlend:0.12,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
 function loadGlobalSettings(){try{const saved=JSON.parse(localStorage.getItem(APP_SETTINGS_KEY)||'{}');return{...DEFAULT_GLOBAL_SETTINGS,...saved,undoLimit:Math.min(1000,Math.max(1,Math.round(Number(saved.undoLimit)||100))),autoSaveMinutes:[2,5,10,60].includes(Number(saved.autoSaveMinutes))?Number(saved.autoSaveMinutes):2}}catch{return{...DEFAULT_GLOBAL_SETTINGS}}}
 let GLOBAL_SETTINGS=loadGlobalSettings();
 const initialGizmo=document.getElementById('nav-gizmo-wrapper');if(initialGizmo)initialGizmo.style.display=GLOBAL_SETTINGS.gizmo?'flex':'none';
 
 /* build home cards + studio screens */
+const iconName=(glyph,fallback='sparkle')=>((window.FEIcons&&FEIcons.glyphIcon(glyph))||fallback);
 const app=$('#app'), grid=$('#home-grid');
 if (grid) grid.innerHTML = '';
 HOME_WORKSPACES.forEach((item)=>{
   if (item.locked) {
-    grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:${item.accent}" data-locked="${item.title}"><i>${item.icon}</i><span><b>${item.title}</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>`);
+    grid.insertAdjacentHTML('beforeend',`<button class="card locked" style="--c:${item.accent}" data-locked="${item.title}"><i class="card-ico" data-ico="${iconName(item.icon)}"></i><span><b>${item.title}</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>`);
     return;
   }
 
@@ -3205,7 +3235,7 @@ HOME_WORKSPACES.forEach((item)=>{
   const s = STUDIOS[id];
   if (!s) return;
 
-  grid.insertAdjacentHTML('beforeend',`<button class="card" style="--c:${s.accent}" data-open="${id}"><i>${s.icon}</i><span><b>${s.title}</b><small>${s.desc}</small></span><span class="tag">Open</span></button>`);
+  grid.insertAdjacentHTML('beforeend',`<button class="card" style="--c:${s.accent}" data-open="${id}"><i class="card-ico" data-ico="${iconName(s.icon)}"></i><span><b>${s.title}</b><small>${s.desc}</small></span><span class="tag">Open</span></button>`);
   const el=$('#tpl-studio').content.firstElementChild.cloneNode(true);
   el.id='studio-'+id; el.dataset.screen=id; el.style.setProperty('--ac',s.accent);
   $('.title',el).textContent=s.title;
@@ -3475,6 +3505,13 @@ function syncGlobalSettingsUI() {
   const chkShadows = document.getElementById('set-shadows');
   if (chkShadows) chkShadows.checked = !!GLOBAL_SETTINGS.shadows;
 
+  const chkTaa = document.getElementById('set-taa');
+  if (chkTaa) chkTaa.checked = GLOBAL_SETTINGS.taa !== false;
+  const rangeTaa = document.getElementById('set-taa-blend');
+  if (rangeTaa) rangeTaa.value = String(GLOBAL_SETTINGS.taaBlend ?? 0.12);
+  const taaOut = document.getElementById('val-taa-blend');
+  if (taaOut) taaOut.textContent = Number(GLOBAL_SETTINGS.taaBlend ?? 0.12).toFixed(2);
+
   const chkGizmo = document.getElementById('set-gizmo');
   const gizmoWrap = document.getElementById('nav-gizmo-wrapper');
   if (chkGizmo && gizmoWrap) {
@@ -3533,6 +3570,11 @@ function syncWorkspaceSettingsUI() {
   };
   mirror('ws-grid', 'set-grid');
   mirror('ws-shadows', 'set-shadows');
+  mirror('ws-taa', 'set-taa');
+  const taaBlend = document.getElementById('ws-taa-blend');
+  if (taaBlend) taaBlend.value = String(GLOBAL_SETTINGS.taaBlend ?? 0.12);
+  const taaBlendVal = document.getElementById('ws-taa-blend-val');
+  if (taaBlendVal) taaBlendVal.textContent = Number(taaBlend ? taaBlend.value : GLOBAL_SETTINGS.taaBlend ?? 0.12).toFixed(2);
   mirror('ws-gizmo', 'set-gizmo');
   const quality = document.getElementById('ws-quality'), tier = document.getElementById('set-gpu-tier');
   if (quality && tier) quality.value = tier.value;
@@ -3602,6 +3644,10 @@ function initWorkspaceSettingsEvents() {
   };
   forward('ws-grid', 'set-grid', 'change');
   forward('ws-shadows', 'set-shadows', 'change');
+  forward('ws-taa', 'set-taa', 'change');
+  forward('ws-taa-blend', 'set-taa-blend', 'input');
+  const wsTaaBlend = document.getElementById('ws-taa-blend');
+  if (wsTaaBlend) wsTaaBlend.addEventListener('input', () => { const out = document.getElementById('ws-taa-blend-val'); if (out) out.textContent = Number(wsTaaBlend.value).toFixed(2); });
   forward('ws-gizmo', 'set-gizmo', 'change');
   forward('ws-quality', 'set-gpu-tier', 'change');
   forward('ws-exposure', 'set-exposure', 'input');
@@ -3661,6 +3707,30 @@ function initGlobalSettingsEvents() {
       }
       FE.toast(e.target.checked ? 'Real-time Shadows Enabled' : 'Real-time Shadows Disabled');
     };
+  }
+
+  const chkTaa = document.getElementById('set-taa');
+  if (chkTaa) {
+    chkTaa.onchange = (e) => {
+      GLOBAL_SETTINGS.taa = e.target.checked;
+      persistGlobalSettings();
+      const eng = FE.engines?.core;
+      if (eng?.taa) { eng.taa.setEnabled(e.target.checked); eng.taa.reset(); }
+      FE.toast(e.target.checked ? 'Temporal AA enabled' : 'Temporal AA disabled');
+    };
+  }
+  const rangeTaaBlend = document.getElementById('set-taa-blend');
+  if (rangeTaaBlend) {
+    rangeTaaBlend.addEventListener('input', (e) => {
+      GLOBAL_SETTINGS.taaBlend = Math.max(0.05, Math.min(0.5, Number(e.target.value) || 0.12));
+      persistGlobalSettings();
+      const eng = FE.engines?.core;
+      if (eng?.taa) eng.taa.setBlend(GLOBAL_SETTINGS.taaBlend);
+      const out = document.getElementById('val-taa-blend');
+      if (out) out.textContent = Number(GLOBAL_SETTINGS.taaBlend).toFixed(2);
+      const mirrorOut = document.getElementById('ws-taa-blend-val');
+      if (mirrorOut) mirrorOut.textContent = Number(GLOBAL_SETTINGS.taaBlend).toFixed(2);
+    });
   }
 
   const chkGizmo = document.getElementById('set-gizmo');
@@ -7476,6 +7546,7 @@ FE.register('core',{
       applyCameraAspect(this.sceneCamera,curAspect);
     }
     this.r.setSize(w,h,false);
+    if (this.taa) this.taa.reset();
     if (typeof updateCameraFrame === 'function') updateCameraFrame();
   },
 
@@ -7582,7 +7653,19 @@ FE.register('core',{
 
       const activeCam = isCameraView ? this.sceneCamera : this.viewportCamera;
       const renderStart=performance.now();
-      this.r.render(this.sc, activeCam);
+      /* Temporal AA: jittered scene pass + reprojected history. Created lazily
+         and always guarded - any failure falls back to a direct render. */
+      if (!this.taa && !this._taaChecked && window.FE_TAA) {
+        this._taaChecked = true;
+        try { this.taa = window.FE_TAA.create(this.r, { blend: GLOBAL_SETTINGS.taaBlend || 0.12 }); } catch (_) { this.taa = null; }
+      }
+      if (this.taa) {
+        this.taa.setEnabled(GLOBAL_SETTINGS.taa !== false);
+        this.taa.setBlend(GLOBAL_SETTINGS.taaBlend || 0.12);
+        if (this._taaCam !== activeCam) { this._taaCam = activeCam; this.taa.reset(); }
+      }
+      if (this.taa && this.taa.enabled && this.taa.ok) this.taa.render(this.sc, activeCam);
+      else this.r.render(this.sc, activeCam);
 
       if (!isCameraView && this.viewHelper) {
         this.viewHelper.update();

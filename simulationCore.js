@@ -1394,7 +1394,7 @@ uniform sampler2D uNoise;
 uniform vec3 uBoxMin, uBoxMax, uSunDir;
 uniform vec2 uTiles, uAtlasSize;
 uniform float uGrid, uDensityScale, uTempScale, uSigma, uFireGain, uSmokeGain, uSteps;
-uniform float uDetail, uDetailScale, uDetailSpeed, uTime, uSelfShadow, uAmbient, uEmission, uExtinction;
+uniform float uDetail, uDetailScale, uDetailSpeed, uTime, uSelfShadow, uAmbient, uEmission, uExtinction, uFrame;
 uniform float uDetailContrast;
 uniform vec3 uFireTint;
 uniform int uScatter;
@@ -1476,7 +1476,9 @@ void main(){
   if (tf <= tn) discard;
   float span = tf - tn;
   float stepLen = span / max(uSteps, 1.0);
-  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  /* Frame-indexed jitter: with temporal history each frame samples a
+     different set of depths, so the grain averages out instead of crawling. */
+  float jitter = fract(sin(dot(gl_FragCoord.xy + vec2(uFrame * 5.588238, uFrame * 3.1731), vec2(12.9898, 78.233))) * 43758.5453);
   vec3 col = vec3(0.0);
   float trans = 1.0;
   for (int i = 0; i < 64; i++) {
@@ -1564,7 +1566,8 @@ void main(){
           uLibBlend: { value: 0 },
           uLibMix: { value: v.library ? 1 : 0 },
           uDetailContrast: { value: v.detailContrast },
-          uFireTint: { value: volumeTint(v.fireTint) }
+          uFireTint: { value: volumeTint(v.fireTint) },
+          uFrame: { value: 0 }
         },
         vertexShader: shaders.vertexShader,
         fragmentShader: shaders.fragmentShader,
@@ -1731,6 +1734,9 @@ void main(){
       const stepDt = Math.min(v.accum, 0.05);
       v.accum = 0;
       v.time = (v.time + stepDt) % 3600;
+      v.frame = (v.frame | 0) + 1;
+      const volumeUniforms = record.visual && record.visual.material && record.visual.material.uniforms;
+      if (volumeUniforms && volumeUniforms.uFrame) volumeUniforms.uFrame.value = v.frame;
       if (typeof v.exports.fe_vol_set_temporal === 'function') v.exports.fe_vol_set_temporal(v.temporal);
       this.seedVolumeSource(record, stepDt);
       const rc = v.exports.fe_vol_step(stepDt, v.buoyancy, v.vorticity, v.dissipation, v.cooling, v.iterations);
