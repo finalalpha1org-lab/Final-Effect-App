@@ -563,6 +563,24 @@ FE_EXPORT int32_t  fe_terrain_erode_thermal(
 );
 
 /* Tilted / Warped Sedimentary Strata & Canyon Outcrop Terracing */
+/* ---- Eulerian smoke & fire (MAC grid) + dual isosurface ---- */
+FE_EXPORT int32_t   fe_vol_init(uint32_t nx, uint32_t ny, uint32_t nz);
+FE_EXPORT int32_t   fe_vol_reset(void);
+FE_EXPORT uint32_t  fe_vol_grid_size(void);
+FE_EXPORT int32_t   fe_vol_source(float cx, float cy, float cz, float radius, float heat, float density, float lift);
+FE_EXPORT int32_t   fe_vol_step(float dt, float buoyancy, float vorticity, float dissipation, float cooling, uint32_t iterations);
+FE_EXPORT float*    fe_vol_density_ptr(void);
+FE_EXPORT float*    fe_vol_temperature_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_x_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_y_ptr(void);
+FE_EXPORT float*    fe_vol_velocity_z_ptr(void);
+FE_EXPORT float*    fe_vol_stats_ptr(void);
+FE_EXPORT int32_t   fe_vol_surface(float iso, uint32_t max_verts);
+FE_EXPORT float*    fe_vol_surface_positions_ptr(void);
+FE_EXPORT float*    fe_vol_surface_normals_ptr(void);
+FE_EXPORT uint32_t* fe_vol_surface_indices_ptr(void);
+FE_EXPORT uint32_t  fe_vol_surface_index_count(void);
+
 /* Terrain-aware natural scatter candidates (water/slope filtered, clumped) */
 FE_EXPORT int32_t  fe_terrain_scatter_natural(
   uint32_t count,

@@ -9,7 +9,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_simulation.cpp',
   'cpp/src/fe_landscape.cpp',
   'cpp/src/fe_openworld.cpp',
-  'cpp/src/fe_ocean.cpp'
+  'cpp/src/fe_ocean.cpp',
+  'cpp/src/fe_volumetrics.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -76,7 +77,11 @@ const REQUIRED_EXPORTS = [
   'fe_ocean_field_ptr',
   'fe_ocean_configure',
   'fe_ocean_update',
-  'fe_ocean_get_cascade_foam_ptr'
+  'fe_ocean_get_cascade_foam_ptr',
+  'fe_vol_init','fe_vol_reset','fe_vol_grid_size','fe_vol_source','fe_vol_step',
+  'fe_vol_density_ptr','fe_vol_temperature_ptr','fe_vol_velocity_x_ptr','fe_vol_velocity_y_ptr',
+  'fe_vol_velocity_z_ptr','fe_vol_stats_ptr','fe_vol_surface','fe_vol_surface_positions_ptr',
+  'fe_vol_surface_normals_ptr','fe_vol_surface_indices_ptr','fe_vol_surface_index_count'
 ];
 
 function findZigCompiler() {

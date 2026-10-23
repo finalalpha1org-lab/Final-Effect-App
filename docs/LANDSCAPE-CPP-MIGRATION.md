@@ -227,6 +227,50 @@ those numbers.
 Max deviation from the reference is 4e-7 on amplitudes around 1.5 (float32
 storage rounding) and the packed RGBA8 bytes match exactly. CPU numbers only.
 
+## Eulerian smoke & fire core
+
+`cpp/src/fe_volumetrics.cpp` is the gas half of the solver stack. The land/ocean
+kernels above are heightfield and spectral work; this one is a volumetric field:
+
+- **Staggered MAC grid** (`fe_vol_init(nx,ny,nz)`, 8–40 cells per axis, at most
+  40³). Face velocities `u/v/w`, cell-centred density, temperature and pressure.
+- **Semi-Lagrangian transport** with RK2 backtracing for all three velocity
+  components and both scalars, which keeps the step stable at any time step.
+- **Temperature buoyancy** on the y faces, **vorticity confinement** from a
+  centre-difference curl, and a **Jacobi pressure projection** with Neumann
+  walls (`fe_vol_step(dt, buoyancy, vorticity, dissipation, cooling, iterations)`).
+- **`fe_vol_source(cx,cy,cz,r,heat,density,lift)`** injects a smooth puff;
+  `fe_vol_stats_ptr()` returns `[divBefore, divAfter, meanDensity, maxTemp,
+  maxSpeed, steps]`; density, temperature and the centre velocity fields are
+  exposed as raw pointers for the GPU volume texture.
+- **`fe_vol_surface(iso, maxVerts)`** extracts the isosurface with a dual
+  (surface-nets) pass: one vertex per crossed cube, then one quad per
+  sign-changing sample edge, plus analytic gradient normals. It returns a vertex
+  count, `-2` when a buffer would overflow and `-1` for invalid input. It is a
+  smooth, closed manifold without the 256-case marching-cubes table; it is not
+  adaptive and it caps at 36³ for meshing.
+
+Measured in Node 22 on the sandbox CPU (single wasm instance, 40 Jacobi
+iterations, source injected every ten frames):
+
+| grid | step | divergence before → after | notes |
+| --- | --- | --- | --- |
+| 24³ | 9.3 ms | 14.6 → 1.05 | real-time budget at 30 Hz |
+| 32³ | 19.0 ms | 49.3 → 4.70 | 30 Hz with a reduced iteration count |
+| 40³ | 38.2 ms | 84.9 → 4.06 | offline / heavy preset |
+
+Surface extraction on a noisy 32³ sphere: 1762 vertices, 10560 indices, 1.2 ms.
+The tests assert a >75 % divergence reduction, temperature-driven rise,
+dissipation, bit-identical determinism and a watertight manifold (every edge
+shared by exactly two triangles, unit outward normals).
+
+**Not wired to the viewport yet.** There is no volume raymarch material, no 3D
+texture upload and no UI in this change, so nothing in the app displays fire or
+smoke. The kernel is also deliberately absent from `FELandscapeCore.missing`:
+adding it there before the bridge uses it would flag every current artifact as
+degraded. Do not describe smoke/fire as a shipped feature until a renderer and a
+panel exist.
+
 ## Degraded / stale artifacts
 
 The landscape bridge treats only the nine original terrain kernels as mandatory.
