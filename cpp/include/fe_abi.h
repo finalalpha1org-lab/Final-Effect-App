@@ -585,6 +585,8 @@ FE_EXPORT int32_t  fe_terrain_rebuild_region(
   const float* palette_18 /* 6 * RGB */
 );
 
+FE_EXPORT void fe_terrain_compute_normals(void);
+FE_EXPORT int32_t fe_terrain_erode_brush(float x,float z,float radius,float strength,float seed);
 FE_EXPORT float    fe_terrain_sample_height(float world_x, float world_z);
 FE_EXPORT void     fe_terrain_sample_normal(float world_x, float world_z, float alignment, float* out_n3);
 

@@ -49,5 +49,33 @@ float fe_terrain_sample_height(float x,float z){return finite(x)&&finite(z)?samp
 void fe_terrain_sample_normal(float x,float z,float alignment,float* out){if(!out)return;float d=size/N;Vec3 n=normalize(Vec3((sample(H,x-d,z)-sample(H,x+d,z))*alignment,2*d,(sample(H,x,z-d)-sample(H,x,z+d))*alignment));out[0]=n.x;out[1]=n.y;out[2]=n.z;}
 int32_t fe_terrain_generate_gaea(float seed,uint32_t mode,float height,float sharp,float warp,float strata,float freq,uint32_t continental,float base,float mountain){if(!finite(seed)||!finite(height)||!finite(sharp)||!finite(warp)||!finite(strata)||!finite(freq)||!finite(base)||!finite(mountain)||mode>5)return -1;uint32_t s=uint32_t(absf(seed));for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){float x=(float(i)/N-.5f)*size,z=(float(j)/N-.5f)*size;float wx=(noise(x*.012f,z*.012f,s)-.5f)*warp,wz=(noise(x*.012f+43,z*.012f-17,s)-.5f)*warp;float a=.5f,f=.026f,h=0,r=0;for(int o=0;o<6;o++){float n=noise((x+wx)*f,(z+wz)*f,s+o*17);h+=(n-.5f)*a;r+=powf(1-absf(n*2-1),clampf(sharp,.2f,8))*a;a*=.5f;f*=2.03f;}h=(h*1.6f+r*(mode==1?1.2f:.6f)-.25f)*height;if(mode==4){float q=sqrtf(x*x+z*z)/size;h+=height*(expf(-q*q*35)-.7f*expf(-q*q*240));}if(mode==2||mode==5)h=lerpf(h,floorf(h/maxf(freq,.1f))*maxf(freq,.1f),clampf(strata,0,1));if(!continental){float edge=smoothstepf(.62f,.98f,maxf(absf(x),absf(z))/(size*.5f));h=lerpf(h,-14,edge);}H[j*W+i]=h+base+mountain*r;materials[j*W+i]=255;}return 0;}
 int32_t fe_terrain_rebuild_region(uint32_t x0,uint32_t x1,uint32_t z0,uint32_t z1,float seed,float water,float rock,float snow,uint32_t biome,const float* pal){(void)seed;(void)biome;if(!pal||x0>x1||z0>z1||x1>N||z1>N)return -1;float d=size/N;for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++){uint32_t k=j*W+i;float gx=(H[j*W+(i<N?i+1:i)]-H[j*W+(i?i-1:i)])/(d*(i&&i<N?2:1)),gz=(H[(j<N?j+1:j)*W+i]-H[(j?j-1:j)*W+i])/(d*(j&&j<N?2:1));Vec3 n=normalize(Vec3(-gx,1,-gz));normals[k*3]=n.x;normals[k*3+1]=n.y;normals[k*3+2]=n.z;uint32_t m=materials[k]!=255?materials[k]:H[k]<water+1?3:H[k]>snow?4:sqrtf(gx*gx+gz*gz)>rock?2:0;if(m>5)m=0;float total=0;for(int c=0;c<3;c++)for(int q=0;q<4;q++)total+=weights[c][k*4+q];for(int c=0;c<3;c++)colors[k*3+c]=pal[m*3+c];float avg=(H[j*W+(i?i-1:i)]+H[j*W+(i<N?i+1:i)]+H[(j?j-1:j)*W+i]+H[(j<N?j+1:j)*W+i])*.25f;masks[k*4+3]=uint8_t(clampf((avg-H[k])/d*.5f+.5f,0,1)*255);(void)total;}return 0;}
+void fe_terrain_compute_normals(){
+ const float d=size/N;
+ for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){
+  const float gx=(H[j*W+(i<N?i+1:i)]-H[j*W+(i?i-1:i)])/(d*(i&&i<N?2:1));
+  const float gz=(H[(j<N?j+1:j)*W+i]-H[(j?j-1:j)*W+i])/(d*(j&&j<N?2:1));
+  const Vec3 n=normalize(Vec3(-gx,1,-gz));const uint32_t k=(j*W+i)*3;
+  normals[k]=n.x;normals[k+1]=n.y;normals[k+2]=n.z;
+ }
+}
+int32_t fe_terrain_erode_brush(float px,float pz,float radius,float strength,float seed){
+ if(!finite(px)||!finite(pz)||!finite(radius)||!finite(strength)||!finite(seed)||radius<=0||strength<0||strength>10||absf(seed)>1000000)return -1;
+ uint32_t rng=uint32_t(absf(seed)*1000)+12345u;
+ auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
+ const float d=size/N;
+ auto bump=[&](float x,float z,float amount){float u=clampf((x/size+.5f)*N,0,float(N)-.001f),v=clampf((z/size+.5f)*N,0,float(N)-.001f);uint32_t i=uint32_t(u),j=uint32_t(v),k=j*W+i;float a=u-i,b=v-j;H[k]+=amount*(1-a)*(1-b);H[k+1]+=amount*a*(1-b);H[k+W]+=amount*(1-a)*b;H[k+W+1]+=amount*a*b;};
+ const uint32_t count=uint32_t(floorf(30+90*strength+.5f));
+ for(uint32_t q=0;q<count;q++){float a=random()*6.2831853f,r=sqrtf(random())*radius,x=px+cosf(a)*r,z=pz+sinf(a)*r,vx=0,vz=0,sed=0,sp=1;
+  for(int t=0;t<32;t++){if(absf(x)>size*.5f-d*.5f||absf(z)>size*.5f-d*.5f)break;
+   const float h=sample(H,x,z),gx=(sample(H,x+d,z)-sample(H,x-d,z))/(2*d),gz=(sample(H,x,z+d)-sample(H,x,z-d))/(2*d);
+   vx=vx*.5f-gx;vz=vz*.5f-gz;float length=sqrtf(vx*vx+vz*vz);if(length<.0001f)break;vx/=length;vz/=length;
+   const float nx=x+vx*d,nz=z+vz*d,dh=sample(H,nx,nz)-h,capacity=maxf(-dh,.03f)*sp*6;
+   if(sed>capacity||dh>0){float m=dh>0?minf(dh,sed):(sed-capacity)*.3f;bump(x,z,m);sed-=m;}
+   else {float m=minf((capacity-sed)*.3f,-dh);bump(x,z,-m*.5f);sed+=m*.5f;}
+   sp=sqrtf(maxf(sp*sp-dh*2,.05f));x=nx;z=nz;
+  }
+ }
+ return int32_t(count);
+}
 int32_t fe_terrain_brush_stroke(uint32_t tool,float ax,float az,float bx,float bz,float radius,float strength,float dt,float target,uint32_t paint,uint32_t pbr,float seed,uint32_t* rect){if(tool==5||tool==6)return -2;if(tool>10||!finite(ax)||!finite(az)||!finite(bx)||!finite(bz)||!finite(radius)||radius<=0||!finite(strength)||!finite(dt)||dt<0||!finite(target)||!rect)return -1;(void)seed;float d=size/N;uint32_t x0=uint32_t(clampf(floorf((minf(ax,bx)-radius)/d+N*.5f),0,N)),x1=uint32_t(clampf(ceilf((maxf(ax,bx)+radius)/d+N*.5f),0,N)),z0=uint32_t(clampf(floorf((minf(az,bz)-radius)/d+N*.5f),0,N)),z1=uint32_t(clampf(ceilf((maxf(az,bz)+radius)/d+N*.5f),0,N));for(uint32_t j=z0?z0-1:0;j<=minf(N,z1+1);j++)for(uint32_t i=x0?x0-1:0;i<=minf(N,x1+1);i++)scratch[j*W+i]=H[j*W+i];float dx=bx-ax,dz=bz-az,l=dx*dx+dz*dz;int changed=0;for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++){float x=i*d-size*.5f,z=j*d-size*.5f,t=l>0?clampf(((x-ax)*dx+(z-az)*dz)/l,0,1):0,rx=x-ax-t*dx,rz=z-az-t*dz,q=(rx*rx+rz*rz)/(radius*radius);if(q>=1)continue;float f=(1-q)*(1-q),a=clampf(f*strength*dt*10,0,1);uint32_t k=j*W+i;float old=scratch[k];if(tool==0)H[k]+=f*strength*dt*10;else if(tool==1)H[k]-=f*strength*dt*10;else if(tool==2||tool==9)H[k]=lerpf(old,target,a);else if(tool==3){float avg=(scratch[j*W+(i?i-1:i)]+scratch[j*W+(i<N?i+1:i)]+scratch[(j?j-1:j)*W+i]+scratch[(j<N?j+1:j)*W+i])*.25f;H[k]=lerpf(old,avg,a);}else if(tool==4)H[k]=lerpf(old,floorf(old/3+.5f)*3,a);else if(tool==7)H[k]+=f*strength*dt*10*(1-q);else if(tool==8)H[k]+=(noise(x,z,uint32_t(absf(seed)))-.5f)*a;else if(tool==10){if(pbr&&paint<12){for(int c=0;c<3;c++)for(int v=0;v<4;v++)weights[c][k*4+v]*=1-a;weights[paint/4][k*4+paint%4]+=a;materials[k]=255;}else materials[k]=uint8_t(paint<6?paint:0);}changed++;}rect[0]=x0?x0-1:0;rect[1]=x1<N?x1+1:N;rect[2]=z0?z0-1:0;rect[3]=z1<N?z1+1:N;return changed;}
 }

@@ -22,3 +22,23 @@ Tests: `node --test tests/landscape-cpp.test.mjs tests/cpp-core-engine.test.mjs`
 Measure CPU kernels, worker latency, upload bytes, GPU frame time, p50/p95 brush latency and full viewport frame time separately on named hardware. 60 FPS means a full-frame budget of 16.67 ms; kernel timings alone are not viewport FPS. C++ does not automatically provide Gaea/Unreal visual parity. Browser GPU rendering still requires a thin JS/WebGL or WebGPU bridge and shaders.
 
 Baseline landscape suites before migration: 61 tests, 48 passing, 13 failing (including obsolete blank Open World expectations and mismatched LOD/reflection assertions). Reconcile behavior-based tests explicitly, not by hiding failures or removing functional Open World features.
+
+## Live Studio wiring update
+
+`terrain-main-01.js` now loads a dedicated instance of the shared WASM artifact.
+The actual default-terrain sculpt entry point routes raise/lower/flatten/smooth/
+terrace and brush hydraulic erosion to C++. The terrain GPU upload path receives
+C++ finite-difference normals. Current JS height data is copied in before every
+operation, so undo/import/external edits remain authoritative; GPU uploads, colour
+calculation, history and surface-paint workflows remain JS. Erosion preserves the
+existing droplet model, with seeded native randomness (not JS Math.random parity).
+
+Inspect `FELandscapeCore.ready`, `.backend`, `.error`, and `.commands` in the studio
+frame. Loading/unsupported tools/WASM failure retains the existing JS path, and a
+load failure emits a warning. This instance runs on the main thread: this update
+is **not** the terrain worker migration. Normal calculation uses height gradients,
+not triangle-averaged Three.js normals, so shading may change slightly.
+
+Still outstanding: UI wiring for C++ terrain generation, surface paint/colour,
+full erosion stack, ocean, hydrology, scatter, planet/open-world generation and
+worker scheduling. Do not describe Landscaping as fully C++ migrated.

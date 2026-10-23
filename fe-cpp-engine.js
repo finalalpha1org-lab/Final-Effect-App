@@ -1900,11 +1900,13 @@
       FECppEngine.exports?.fe_perf_reset();
       FECppEngine.lastFrameTick = performance.now();
     }
+    FECppEngine.lastDiagnosticsReport = report;
+    console.info('[FECppEngine] Diagnostics report', report);
     if (summaryEl) {
       summaryEl.style.color = report.ok ? '#34d399' : '#f87171';
       summaryEl.textContent = report.ok
-        ? `✅ ALL ${report.results.length}/${report.results.length} C++20 ENGINE SYSTEMS VERIFIED (${report.totalMs} ms total)`
-        : '⚠️ Some C++ subsystems reported an issue';
+        ? `✅ ${report.results.length}/${report.results.length} C++ CORE SELF-TESTS PASSED (${report.totalMs} ms total)`
+        : `⚠️ Failed: ${report.results.filter(r => !r.ok).map(r => r.name).join(' · ')}. See details below.`;
     }
     if (listEl) {
       listEl.innerHTML = report.results.map(r =>

@@ -46,7 +46,9 @@ const REQUIRED_EXPORTS = [
   'fe_sim_pyro_step',
   'fe_forest_input_ptr',
   'fe_forest_output_ptr',
-  'fe_forest_classify'
+  'fe_forest_classify',
+  'fe_terrain_erode_brush',
+  'fe_terrain_compute_normals'
 ];
 
 function findZigCompiler() {
