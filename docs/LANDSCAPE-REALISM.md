@@ -122,11 +122,13 @@ stale in the Performance Benchmark sheet, so the repair path can fix it.
 
 `docs/FLORA.md` — the grown tree/rock kernel that feeds these materials
 (space colonisation, da Vinci radii, golden-angle leaf anchors).
+`docs/CLIMATE.md` — the seeded climate field that decides rain, snow, fog,
+wind and the snow line the wetness term follows.
 
 ## Verification
 
 ```bash
 node --test tests/landscape-realism.test.mjs   # 14 tests
 node --test tests/landscape-flora.test.mjs     # 8 tests
-npm test                                       # 309 tests
+npm test                                       # 320 tests
 ```

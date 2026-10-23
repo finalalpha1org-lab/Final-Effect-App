@@ -51,7 +51,15 @@ PN.import=()=>[el('<div class="hint">Bring a real-world 3D map or city into the 
 fileBtn('🏙 Import 3D model / city (GLB, GLTF, OBJ)','',importModel),
 G(sl('Heightmap relief (m)',5,80,1,dem,v=>dem=v)),fileBtn('🗻 Import heightmap image (PNG / JPG)','image/*',importHeightmap),
 ...(mapRoot?[Object.assign(el('<div class="hint"></div>'),{textContent:'Imported: '+mapName}),G(sl('Model size',.1,4,.05,mapK,v=>{mapK=v;fitMap()}),sl('Raise / lower',-20,40,.5,mapY,v=>{mapY=v;fitMap()}),sl('Rotate',0,360,5,mapR,v=>{mapR=v;fitMap()})),chips([['f','▭ Flatten terrain under model'],['x','🗑 Remove model']],0,v=>v=='f'?flattenUnder():rmMap())]:[])];
-PN.weather=()=>[chips([['clear','☀ Clear'],['fog','🌫 Fog'],['drizzle','🌦 Drizzle'],['rain','🌧 Rain'],['storm','⛈ Storm'],['blizzard','🌨 Snow']],WX.preset,wxPreset),
+PN.weather=()=>{const CL=window.FELandscapeWeather,cs=CL&&CL.settings;const climate=CL?[
+el('<div class="hint">Climate field: latitude, sea-level temperature and humidity decide the biome, the snow line, the fog and the incoming front. Rain darkens and glosses every surface; wind drives the sea, the grass and the tree tops.</div>'),
+chips([['a','Climate-driven weather: '+(cs.enabled?'on':'off')],['r','Reset climate']],cs.enabled?0:-1,v=>{if(v=='a')CL.set('enabled',!cs.enabled);else CL.reset()}),
+G(sl('Latitude °',-70,70,1,cs.latitude,v=>CL.set('latitude',v)),sl('Sea-level temperature °C',-20,40,.5,cs.temperature,v=>CL.set('temperature',v)),sl('Humidity',0,1,.02,cs.humidity,v=>CL.set('humidity',v))),
+G(sl('Continentality',0,1,.02,cs.continentality,v=>CL.set('continentality',v)),sl('Prevailing wind m/s',0,30,.5,cs.wind,v=>CL.set('wind',v)),sl('Weather speed (world h / min)',1,240,1,cs.timeScale,v=>CL.set('timeScale',v))),
+el('<div class="hint" id="fe-climate-readout">Reading the climate field…</div>'),
+chips([['f','Fog from climate: '+(cs.fog?'on':'off')],['w','Wet surfaces from rain: '+(cs.wetnessFromRain?'on':'off')],['t','Storm tornadoes: '+(cs.autoTornado?'on':'off')]],0,v=>{if(v=='f')CL.set('fog',!cs.fog);else if(v=='w')CL.set('wetnessFromRain',!cs.wetnessFromRain);else CL.set('autoTornado',!cs.autoTornado)}),
+btn('Long-wave sea wave at its real phase speed',()=>{const o=CL.tsunami(WX.tsu.amp,120);WX.tsu.spd=Math.max(10,Math.min(50,Math.round(o.speed)));tsuLaunch();const q=document.getElementById('fe-climate-readout');if(q)q.textContent='Long wave '+o.speed.toFixed(0)+' m/s · wavelength '+Math.round(o.wavelength/1000)+' km · run-up '+o.runup.toFixed(1)+' m'})]:[];
+return [...climate,chips([['clear','☀ Clear'],['fog','🌫 Fog'],['drizzle','🌦 Drizzle'],['rain','🌧 Rain'],['storm','⛈ Storm'],['blizzard','🌨 Snow']],WX.preset,wxPreset),
 G(sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Overcast',0,1,.05,WX.overT,v=>WX.overT=v),sl('Storm',0,1,.05,WX.stormT,v=>WX.stormT=v),sl('Wind',0,3,.1,windUser,v=>windUser=v)),
 el('<div class="hint">Snow</div>'),
 G(sl('Snowfall',0,1,.05,WX.snowfallT,v=>{WX.snowfallT=v;WX.snowAuto=false}),sl('Snow cover',0,1,.05,WX.coverT,v=>{WX.coverT=v;WX.snowAuto=false}),sl('Melt speed',0,3,.1,WX.melt,v=>WX.melt=v)),
@@ -67,7 +75,7 @@ G(sl('Size',3,20,1,WX.tor.r,v=>WX.tor.r=v),sl('Speed',3,25,1,WX.tor.spd,v=>WX.to
 chips([['go','🌪 Spawn tornado'],['stop','Stop'],['d','Damage: '+(WX.tor.dmg?'on':'off')],['c','Clear debris']],0,v=>{if(v=='go')torSpawn();else if(v=='stop')torStop();else if(v=='c')debClear();else WX.tor.dmg=!WX.tor.dmg}),
 el('<div class="hint">Tsunami</div>'),
 G(sl('Height (m)',2,18,1,WX.tsu.amp,v=>WX.tsu.amp=v),sl('Speed (m/s)',10,50,1,WX.tsu.spd,v=>WX.tsu.spd=v),sl('Direction °',0,360,5,WX.tsu.dir,v=>WX.tsu.dir=v)),
-chips([['go','🌊 Launch tsunami'],['stop','Reset'],['d','Damage: '+(WX.tsu.dmg?'on':'off')],['c','Clear debris']],0,v=>{if(v=='go')tsuLaunch();else if(v=='stop')tsuReset();else if(v=='c')debClear();else WX.tsu.dmg=!WX.tsu.dmg})];
+chips([['go','🌊 Launch tsunami'],['stop','Reset'],['d','Damage: '+(WX.tsu.dmg?'on':'off')],['c','Clear debris']],0,v=>{if(v=='go')tsuLaunch();else if(v=='stop')tsuReset();else if(v=='c')debClear();else WX.tsu.dmg=!WX.tsu.dmg})]};
 
 const posXYZ=(o,ch)=>{const v=()=>CelestialMath.cartesianFromSpherical(o),set=(x,y,z)=>{const angularSize=o.size;CelestialMath.setFromCartesian(o,x,y,z);o.size=angularSize;ch()},p=v();
 return[sl('Position X',-200,200,1,Math.round(p[0]),vx=>{const q=v();set(vx,q[1],q[2])}),sl('Position Y',-200,200,1,Math.round(p[1]),vy=>{const q=v();set(q[0],vy,q[2])}),sl('Position Z',-200,200,1,Math.round(p[2]),vz=>{const q=v();set(q[0],q[1],vz)})]};

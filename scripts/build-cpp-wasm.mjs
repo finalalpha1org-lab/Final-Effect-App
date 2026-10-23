@@ -13,7 +13,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_volumetrics.cpp',
   'cpp/src/fe_modifiers.cpp',
   'cpp/src/fe_surface.cpp',
-  'cpp/src/fe_flora.cpp'
+  'cpp/src/fe_flora.cpp',
+  'cpp/src/fe_climate.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -106,7 +107,12 @@ const REQUIRED_EXPORTS = [
   'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
   'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
   'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
-  'fe_flora_species_count','fe_flora_rock_kind_count'
+  'fe_flora_species_count','fe_flora_rock_kind_count',
+  /* Climate & weather: seeded temperature / moisture / fronts / hazards */
+  'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
+  'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
+  'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
+  'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the

@@ -26,11 +26,12 @@ is the contract below.
 | `terrain` | `fe_terrain_erode_brush`, `fe_terrain_erode_hydraulic` |
 | `surface` | `fe_surface_pbr`, `fe_surface_detail`, `fe_water_optical` |
 | `flora` | `fe_flora_tree`, `fe_flora_rock`, `fe_flora_leaf_ptr` |
+| `climate` | `fe_climate_at`, `fe_climate_weather`, `fe_climate_biome` |
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1016525` bytes, ABI v1, **209 exports**; every group above
+The shipped build is `1051634` bytes, ABI v1, **225 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 ## When a row is red
@@ -50,7 +51,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1016525 bytes, ABI v1, 209 exports)`.
+that passes `Validated fe_core_engine.wasm (1051634 bytes, ABI v1, 225 exports)`.
 
 ## Verification
 
@@ -58,6 +59,7 @@ that passes `Validated fe_core_engine.wasm (1016525 bytes, ABI v1, 209 exports)`
 node --test tests/cpp-live-diagnostics.test.mjs   # 6 tests
 node --test tests/landscape-realism.test.mjs      # 14 tests
 node --test tests/landscape-flora.test.mjs        # 8 tests
-npm test                                          # 309 tests
+node --test tests/landscape-climate.test.mjs      # 11 tests
+npm test                                          # 320 tests
 npm run build                                     # revalidates + copies the artifact
 ```

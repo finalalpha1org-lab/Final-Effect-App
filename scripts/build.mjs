@@ -43,6 +43,7 @@ if (hasPublicDir) {
     "fe-cpp-engine.js",
     "landscape-realism.js",
     "landscape-flora.js",
+    "landscape-weather.js",
     "fe_core_engine.wasm",
     "manifest.webmanifest",
     "sw.js",
@@ -76,6 +77,7 @@ const minifiableJs = [
   "fe-cpp-engine.js",
   "landscape-realism.js",
   "landscape-flora.js",
+  "landscape-weather.js",
 ];
 
 async function minifyInlineScripts(html, label) {
@@ -129,6 +131,7 @@ const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, 
   openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
   landscapeRealism: readFileSync("build/client/landscape-realism.js", "utf8"),
   landscapeFlora: readFileSync("build/client/landscape-flora.js", "utf8"),
+  landscapeWeather: readFileSync("build/client/landscape-weather.js", "utf8"),
   terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),
   openWorldAddon: readFileSync("build/client/open-world.js", "utf8"),
   cppWasmBase64,

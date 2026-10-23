@@ -16,7 +16,12 @@
    'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
    'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
    'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
-   'fe_flora_species_count','fe_flora_rock_kind_count'];
+   'fe_flora_species_count','fe_flora_rock_kind_count',
+   /* Climate & weather (fe_climate.cpp): seeded temperature / moisture / fronts */
+   'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
+   'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
+   'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
+   'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami'];
   const missing=required.filter(name=>typeof x[name]!=='function');
   if(missing.length)throw Error('Terrain C++ export missing: '+missing.join(', '));
   /* A partially stale/older artifact must not kill the whole landscape bridge:
@@ -327,6 +332,72 @@
  core.floraCounts=function(){
   return {species:core.has('fe_flora_species_count')?ex.fe_flora_species_count():0,
           rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0};
+ };
+ /* ---- Climate & weather (optional kernels; the JS weather runs unchanged) --- */
+ let climatePtr=0;
+ function climateOut(n){
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  return Array.from(new Float32Array(ex.memory.buffer,climatePtr,n));
+ }
+ core.climateInit=function(seed,lat,baseC,humidity,continentality,wind){
+  return core.has('fe_climate_init')?ex.fe_climate_init(seed>>>0,lat,baseC,humidity,continentality,wind):0;
+ };
+ core.climateSetClock=function(hours){
+  return core.has('fe_climate_set_clock')?ex.fe_climate_set_clock(+hours||0):0;
+ };
+ core.climateSetSeason=function(t){
+  return core.has('fe_climate_set_season')?ex.fe_climate_set_season(+t||0):0;
+ };
+ core.climateStep=function(dtHours){
+  return core.has('fe_climate_step')?ex.fe_climate_step(+dtHours||0):0;
+ };
+ core.climateClock=function(){
+  return core.has('fe_climate_clock')?ex.fe_climate_clock():0;
+ };
+ core.climateSeaLevelTemp=function(hour){
+  return core.has('fe_climate_sea_level_temp')?ex.fe_climate_sea_level_temp(+hour||0):0;
+ };
+ core.climateSnowLine=function(hour){
+  return core.has('fe_climate_snow_line')?ex.fe_climate_snow_line(+hour||0):0;
+ };
+ core.climateWeather=function(){
+  if(!core.has('fe_climate_weather'))return null;
+  if(ex.fe_climate_weather(climatePtr||(climatePtr=ex.fe_malloc(64)))<1)return null;
+  return climateOut(10);
+ };
+ core.climateAt=function(x,z,altitude,hour){
+  if(!core.has('fe_climate_at'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_at(+x||0,+z||0,+altitude||0,+hour||0,climatePtr)<1)return null;
+  return climateOut(10);
+ };
+ core.climateBiome=function(tempC,moisture){
+  return core.has('fe_climate_biome')?ex.fe_climate_biome(+tempC||0,+moisture||0):-1;
+ };
+ core.climateBiomeOnSlope=function(tempC,moisture,slope){
+  return core.has('fe_climate_biome_on_slope')?ex.fe_climate_biome_on_slope(+tempC||0,+moisture||0,+slope||0):-1;
+ };
+ core.climateBiomeCount=function(){
+  return core.has('fe_climate_biome_count')?ex.fe_climate_biome_count():0;
+ };
+ core.climateTornado=function(ef){
+  if(!core.has('fe_climate_tornado'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_tornado(+ef||0,climatePtr)<1)return null;
+  return climateOut(4);
+ };
+ core.climateTsunami=function(amplitude,depth){
+  if(!core.has('fe_climate_tsunami'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_tsunami(+amplitude||0,+depth||0,climatePtr)<1)return null;
+  return climateOut(6);
+ };
+ core.climateRankine=function(r,coreRadius,vmax){
+  return core.has('fe_climate_rankine')?ex.fe_climate_rankine(+r||0,+coreRadius||0,+vmax||0):0;
  };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;

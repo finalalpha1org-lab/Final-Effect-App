@@ -45,6 +45,7 @@
     terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic'],
     surface: ['fe_surface_pbr', 'fe_surface_detail', 'fe_water_optical'],
     flora: ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_leaf_ptr'],
+    climate: ['fe_climate_at', 'fe_climate_weather', 'fe_climate_biome'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
     modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
     simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']
