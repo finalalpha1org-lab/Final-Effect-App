@@ -124,11 +124,13 @@ stale in the Performance Benchmark sheet, so the repair path can fix it.
 (space colonisation, da Vinci radii, golden-angle leaf anchors).
 `docs/CLIMATE.md` — the seeded climate field that decides rain, snow, fog,
 wind and the snow line the wetness term follows.
+`docs/STUDIO-SETTINGS.md` — the JSON document that keeps every studio control
+across a reload.
 
 ## Verification
 
 ```bash
 node --test tests/landscape-realism.test.mjs   # 14 tests
-node --test tests/landscape-flora.test.mjs     # 8 tests
-npm test                                       # 330 tests
+node --test tests/landscape-flora.test.mjs     # 18 tests
+npm test                                       # 341 tests
 ```

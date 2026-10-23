@@ -308,6 +308,13 @@
     return seed >>> 0 || 1;
   }
 
+  /* Re-seeds the kernel from the current settings. Used by actions that read
+     the climate field (the biome map) without moving the live weather. */
+  function syncKernel() {
+    const c = bridge();
+    return c ? pushSettings(c) : false;
+  }
+
   const api = {
     version: '1.0.0',
     BIOMES,
@@ -317,6 +324,7 @@
     settings,
     state,
     init,
+    syncKernel,
     tick,
     apply,
     set,

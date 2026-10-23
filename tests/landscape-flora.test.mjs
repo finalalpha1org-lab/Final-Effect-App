@@ -411,8 +411,7 @@ test('compliance is a property of the branch path, not of the height', async () 
 
 test('the wind shader bends the skeleton and the JS builders carry the channels', () => {
   assert.match(scene, /attribute float aSway;attribute float aPhase;/, 'the foliage shader has to read the skeletal channels');
-  assert.match(scene, /const SKEL='float skH=clamp\(max\(position\.y,0\.\)\*\.34/, 'the bend is scaled by the plant height so a bracken does not sway like an oak');
-  assert.match(scene, /float skA=aSway\*aSway\*skH;/, 'the bend must be driven by compliance, not height');
+  assert.match(scene, /const SKEL='float skH=max\(position\.y,0\.\);float skA=aSway\*aSway\*clamp\(skH\*\.34,\.12,1\.\);/, 'the bend is driven by compliance and scaled by the plant height, so a bracken does not sway like an oak');
   assert.match(scene, /transformed\.xz\+=wd\*\(skA\*uW\*/, 'the skeleton moves along the wind direction');
   assert.match(scene, /aPhase\*1\.6/, 'neighbouring limbs must swing out of phase');
   assert.match(scene, /float wv=position\.y\*position\.y\*uW;/, 'unskinned foliage keeps the old height law');

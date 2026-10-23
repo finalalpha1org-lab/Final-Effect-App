@@ -26,12 +26,12 @@ is the contract below.
 | `terrain` | `fe_terrain_erode_brush`, `fe_terrain_erode_hydraulic` |
 | `surface` | `fe_surface_pbr`, `fe_surface_detail`, `fe_water_optical` |
 | `flora` | `fe_flora_tree`, `fe_flora_rock`, `fe_flora_leaf_ptr`, `fe_flora_sway_ptr`, `fe_flora_phase_ptr`, `fe_flora_lsystem`, `fe_flora_lsystem_plant` |
-| `climate` | `fe_climate_at`, `fe_climate_weather`, `fe_climate_biome` |
+| `climate` | `fe_climate_at`, `fe_climate_weather`, `fe_climate_biome`, `fe_climate_biome_grid` |
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1107766` bytes, ABI v1, **235 exports**; every group above
+The shipped build is `1111534` bytes, ABI v1, **236 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 ## When a row is red
@@ -51,7 +51,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1107766 bytes, ABI v1, 235 exports)`.
+that passes `Validated fe_core_engine.wasm (1111534 bytes, ABI v1, 236 exports)`.
 
 ## Verification
 
@@ -59,7 +59,8 @@ that passes `Validated fe_core_engine.wasm (1107766 bytes, ABI v1, 235 exports)`
 node --test tests/cpp-live-diagnostics.test.mjs   # 6 tests
 node --test tests/landscape-realism.test.mjs      # 14 tests
 node --test tests/landscape-flora.test.mjs        # 18 tests
-node --test tests/landscape-climate.test.mjs      # 11 tests
-npm test                                          # 330 tests
+node --test tests/landscape-climate.test.mjs      # 15 tests
+node --test tests/landscape-settings-persistence.test.mjs  # 7 tests
+npm test                                          # 341 tests
 npm run build                                     # revalidates + copies the artifact
 ```

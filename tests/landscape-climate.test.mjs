@@ -300,6 +300,133 @@ test('the page, the panel and the build all carry the climate layer', () => {
   assert.match(buildScript, /"landscape-weather\.js"/, 'the build ships the module');
   assert.match(cppBuild, /'cpp\/src\/fe_climate\.cpp'/, 'the wasm build compiles the climate kernel');
   assert.match(cppBuild, /'fe_climate_at',\s*'fe_climate_weather'/, 'the wasm build requires the climate exports');
-  assert.ok(sw.includes("'final-effect-cpp-v23'"), 'the service worker cache is bumped for the new module');
+  assert.ok(sw.includes("'final-effect-cpp-v24'"), 'the service worker cache is bumped for the new module');
   assert.ok(sw.includes("'./landscape-weather.js'"), 'and precaches it');
+});
+
+/* ------------------------------------------------------------------ */
+/* Climate biomes are an explicit action over the paint layers         */
+/* ------------------------------------------------------------------ */
+
+const BIOME_BLOCK = panel.slice(panel.indexOf('const CLIMATE_SURFACE_KEYS'), panel.indexOf('PN.openworld=()=>{'));
+
+/* Boots the real apply action over a real climate bridge: the module, the
+   terrain arrays and the panel code are all the shipped ones. */
+async function bootBiomeAction({ ow = false } = {}) {
+  const { core } = await bootBridge();
+  const events = [];
+  const N = 32, W = N + 1, S = 256;
+  const heights = new Float32Array(W * W);
+  for (let j = 0; j < W; j++) for (let i = 0; i < W; i++) {
+    const x = i * S / N - S / 2, z = j * S / N - S / 2;
+    heights[j * W + i] = 24 + 30 * Math.sin(x * 0.016) * Math.cos(z * 0.019) + 6 * Math.sin(x * 0.06 + z * 0.04);
+  }
+  const paintA = new Float32Array(W * W * 4), paintB = new Float32Array(W * W * 4), paintC = new Float32Array(W * W * 4);
+  for (let k = 0; k < W * W; k++) paintA[k * 4] = 1;   /* the artist painted hills everywhere */
+  const materials = new Uint8Array(W * W).fill(255);
+  const status = { textContent: 'Ready to generate' };
+  const chunk = ow ? {
+    segments: N, size: S, originX: 256, originZ: -256, dirty: false,
+    heights: heights.slice(), surfaceWeights: new Float32Array(W * W * 12)
+  } : null;
+  const context = {
+    console, Math, Promise, setTimeout, Date, JSON, Object, Array, Number, String, isFinite,
+    Float32Array, Uint8Array, Uint32Array,
+    document: { readyState: 'loading', addEventListener() {}, getElementById: (id) => (id === 'owstatus' ? status : null) },
+    requestAnimationFrame: () => 0,
+    WX: { rainT: 0, overT: 0, stormT: 0, snowfallT: 0, coverT: 0, snowAuto: true, seasonT: 0.32, tsu: {} },
+    scene: { fog: { density: 0.004 } },
+    FELandscapeCore: core,
+    OW_SURFACE_DEFS: [['hills', 'Hills'], ['alpine', 'Alpine'], ['desert', 'Desert'], ['volcano', 'Volcano'],
+      ['shore', 'Sand Shores'], ['rocky', 'Rocky Mountains'], ['grassy', 'Grassy'], ['sand', 'Sand'],
+      ['lava', 'Lava'], ['magma', 'Magma'], ['pebbles', 'Pebbles'], ['beach', 'Beach Sand']].map(([key, label]) => ({ key, label })),
+    H: heights, W, S, SWA: paintA, SWB: paintB, SWC: paintC, MI: materials,
+    OW: ow ? { active: true, chunks: new Map([['0,0', chunk]]) } : { active: false, chunks: new Map() },
+    upd: () => events.push('upd'),
+    push: () => events.push('push'),
+    owUpdateChunkGeometry: (c) => { events.push('chunk'); c.updated = (c.updated || 0) + 1; }
+  };
+  vm.createContext(context);
+  context.window = context;
+  vm.runInContext(moduleSource, context);
+  vm.runInContext(BIOME_BLOCK, context);
+  return { context, core, events, status, heights, paints: [paintA, paintB, paintC], materials, W, S, N, chunk };
+}
+
+test('applying the climate map rewrites every vertex once, after one undo step', async () => {
+  const env = await bootBiomeAction();
+  const { context, core, events } = env;
+  assert.deepEqual(Array.from(env.paints[0].slice(0, 8)), [1, 0, 0, 0, 1, 0, 0, 0], 'the painted layers are untouched before the action');
+
+  const out = vm.runInContext('applyClimateBiomes()', context);
+  assert.ok(out && out.cells === env.W * env.W, 'every vertex is classified');
+  assert.deepEqual(events, ['push', 'upd'], 'one undo step is pushed first, then the ground is refreshed');
+
+  const weather = context.FELandscapeWeather;
+  const keys = context.OW_SURFACE_DEFS.map((d) => d.key);
+  const expected = core.climateBiomeGrid(env.heights, env.W, env.S, 0, 0, weather.state.clock % 24);
+  for (let k = 0; k < env.W * env.W; k++) {
+    const id = keys.indexOf(weather.BIOME_SURFACE[weather.BIOMES[expected[k]]]);
+    const w = [0, 1, 2].flatMap((c) => [env.paints[c][k * 4], env.paints[c][k * 4 + 1], env.paints[c][k * 4 + 2], env.paints[c][k * 4 + 3]]);
+    assert.equal(w[id], 1, `vertex ${k} carries its biome surface`);
+    assert.equal(w.filter((v) => v !== 0).length, 1, `vertex ${k} carries exactly one surface`);
+    assert.equal(env.materials[k], 255, 'the old material index must not fight the painted weights');
+  }
+  assert.match(env.status.textContent, /^Climate biomes applied · /, 'the sheet reports what changed');
+  assert.match(env.status.textContent, /%/, 'and how much of the map each biome covers');
+});
+
+test('applying over an open world writes the twelve chunk weights, not the island', async () => {
+  const env = await bootBiomeAction({ ow: true });
+  const before = env.paints.map((p) => p.slice());
+  const out = vm.runInContext('applyClimateBiomes()', env.context);
+  assert.ok(out.cells === env.W * env.W);
+  assert.deepEqual(env.events, ['push', 'chunk'], 'the chunk is rebuilt, the island is not refreshed');
+  for (let c = 0; c < 3; c++) assert.deepEqual(env.paints[c], before[c], 'the island keeps its paint');
+  const sw = env.chunk.surfaceWeights, row = env.W;
+  assert.equal(env.chunk.dirty, true);
+  assert.equal(env.chunk.updated, 1);
+  for (let k = 0; k < row * row; k++) {
+    let sum = 0, ones = 0;
+    for (let q = 0; q < 12; q++) { const v = sw[k * 12 + q]; sum += v; if (v === 1) ones++; }
+    assert.equal(sum, 1, `chunk vertex ${k} is fully weighted`);
+    assert.equal(ones, 1, `chunk vertex ${k} has exactly one surface`);
+  }
+});
+
+test('the climate never replaces painted biomes on its own', async () => {
+  /* Structural promise: the action exists, and nothing calls it but the button. */
+  const calls = panel.match(/applyClimateBiomes\(\)/g) || [];
+  assert.equal(calls.length, 2, 'one definition and one button handler — no timer, no boot hook, no weather hook');
+  assert.match(panel, /btn\('[^']*Apply Climate Biomes',\(\)=>applyClimateBiomes\(\)\)/,
+    'the button is the only way in, and it is a deliberate press');
+  const moduleCode = moduleSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(moduleCode, /SWA|SWB|SWC|surfaceWeights|OW_SURFACE_DEFS|MI\[/,
+    'the weather module has no access to the paint layers at all');
+  const live = await bootBiomeAction();
+  live.context.FELandscapeWeather.apply();
+  live.context.FELandscapeWeather.set('humidity', 0.9);
+  assert.deepEqual(live.events, [], 'a weather tick never touches the ground');
+});
+
+test('fill-only mode leaves every hand-painted vertex exactly as it was', async () => {
+  const env = await bootBiomeAction();
+  const { context } = env;
+  /* Paint only the even vertices, so half the island is the artist's work. */
+  for (const p of env.paints) p.fill(0);
+  for (let k = 0; k < env.W * env.W; k += 2) env.paints[0][k * 4 + 3] = 0.8;   /* a blend, not a pure surface */
+  const snapshot = env.paints.map((p) => p.slice());
+  vm.runInContext("climateApplyMode='free'", context);
+  const out = vm.runInContext('applyClimateBiomes()', context);
+  assert.ok(out.kept > 0 && out.kept < env.W * env.W, 'some vertices are kept and some are filled');
+  for (let k = 0; k < env.W * env.W; k++) {
+    if (k % 2 === 0) {
+      for (let q = 0; q < 4; q++) assert.equal(env.paints[0][k * 4 + q], snapshot[0][k * 4 + q], `painted vertex ${k} is untouched`);
+      assert.equal(env.paints[1][k * 4], snapshot[1][k * 4]);
+    } else {
+      const w = [0, 1, 2].flatMap((c) => [env.paints[c][k * 4], env.paints[c][k * 4 + 1], env.paints[c][k * 4 + 2], env.paints[c][k * 4 + 3]]);
+      assert.equal(w.filter((v) => v === 1).length, 1, `unpainted vertex ${k} receives exactly one climate surface`);
+    }
+  }
+  assert.match(env.status.textContent, /kept from your painting/, 'the sheet says how much was preserved');
 });

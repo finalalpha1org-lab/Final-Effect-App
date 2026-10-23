@@ -85,27 +85,33 @@ inline float hashUnit(uint32_t x) {
   return static_cast<float>(hash32(x) & 0x00FFFFFFu) * (1.0f / 16777215.0f);
 }
 
-/* smooth 1D value noise in [0,1] */
-inline float noise1(float x, uint32_t salt) {
-  const float fl = floorf(x);
-  const int32_t i = static_cast<int32_t>(fl);
-  const float t = x - fl;
-  const float u = t * t * (3.0f - 2.0f * t);
-  const float a = hashUnit(static_cast<uint32_t>(i) * 0x9E3779B9u ^ salt);
-  const float b = hashUnit(static_cast<uint32_t>(i + 1) * 0x9E3779B9u ^ salt);
-  return a + (b - a) * u;
+/* 2D value noise. Two lattice octaves are summed, so a 500 m landscape gets
+   both local texture and regional districts (a wet valley beside a dry ridge)
+   instead of a single uniform air mass. Bilinear + smoothstep, output in [0,1]. */
+inline float lattice(int32_t ix, int32_t iz, uint32_t salt) {
+  return hashUnit(static_cast<uint32_t>(ix) * 0x9E3779B9u ^
+                  static_cast<uint32_t>(iz) * 0x85EBCA6Bu ^ salt);
 }
 
-/* two octaves, still in [0,1] */
-inline float noise2(float x, uint32_t salt) {
-  return (noise1(x, salt) * 0.667f + noise1(x * 2.17f + 11.3f, salt ^ 0x5bd1e995u) * 0.333f);
+inline float value2d(float x, float z, uint32_t salt) {
+  const float fx = floorf(x), fz = floorf(z);
+  const int32_t ix = static_cast<int32_t>(fx), iz = static_cast<int32_t>(fz);
+  float tx = x - fx, tz = z - fz;
+  tx = tx * tx * (3.0f - 2.0f * tx);
+  tz = tz * tz * (3.0f - 2.0f * tz);
+  const float a = lattice(ix, iz, salt), b = lattice(ix + 1, iz, salt);
+  const float c = lattice(ix, iz + 1, salt), d = lattice(ix + 1, iz + 1, salt);
+  const float top = a + (b - a) * tx;
+  const float bot = c + (d - c) * tx;
+  return top + (bot - top) * tz;
 }
 
-/* spatial noise used by the moisture field */
+/* Spatial noise used by the moisture field: ~420 m districts over ~95 m
+   detail, combined 60/40 and left in [0,1]. */
 inline float noise2d(float x, float z, uint32_t salt) {
-  const float nx = noise2(x * 0.011f, salt);
-  const float nz = noise2(z * 0.011f + 37.0f, salt ^ 0x27d4eb2fu);
-  return (nx + nz) * 0.5f;
+  const float regional = value2d(x * 0.0024f, z * 0.0024f, salt);
+  const float local = value2d(x * 0.0105f + 3.0f, z * 0.0105f + 7.0f, salt ^ 0x27d4eb2fu);
+  return regional * 0.60f + local * 0.40f;
 }
 
 inline float deg2rad(float d) { return d * kDeg2Rad; }
@@ -164,7 +170,9 @@ float moistureAt(float x, float z, float altitude) {
   const float drift = 0.35f * inland;
   /* Low ground near the sea stays humid; ridges sit in their own rain shadow. */
   const float shadow = 0.22f * smoothstepf(40.0f, 520.0f, maxf(0.0f, altitude));
-  const float n = (noise2d(x, z, C.seed ^ 0x68E31DA4u) - 0.5f) * 0.18f;
+  /* Districts differ: the same coast can carry a rainforest and a dry lee
+     basin within a few hundred metres, exactly as real orography does. */
+  const float n = (noise2d(x, z, C.seed ^ 0x68E31DA4u) - 0.5f) * 0.45f;
   return clampf(C.humidity - drift - shadow + n, 0.02f, 1.0f);
 }
 
@@ -371,6 +379,46 @@ FE_EXPORT int32_t fe_climate_biome(float temp_c, float moisture) {
 }
 
 FE_EXPORT int32_t fe_climate_biome_count(void) { return BIOME_COUNT; }
+
+/* Defined below; the grid uses the slope-aware classifier. */
+FE_EXPORT int32_t fe_climate_biome_on_slope(float temp_c, float moisture, float slope);
+
+/* Whole-map classification for the explicit "Apply Climate Biomes" action.
+   heights is a row-major n*n grid spanning `size` metres on both axes (the
+   terrain vertex grid); out receives the biome id per cell. Nothing is written
+   anywhere else: the studio only paints when the user asks, because replacing
+   hand-painted biome layers without a prompt would destroy their work. */
+FE_EXPORT int32_t fe_climate_biome_grid(const float* heights, int32_t n, float size,
+                                        float origin_x, float origin_z, float hour,
+                                        uint8_t* out) {
+  if (!out || n < 2 || n > 1025) return 0;
+  if (!C.init) fe_climate_init(1u, 15.0f, 15.0f, 0.55f, 0.35f, 5.0f);
+  const float step = size / float(n - 1);
+  const float half = size * 0.5f;
+  const int32_t cells = n * n;
+  for (int32_t j = 0; j < n; ++j) {
+    const float z = origin_z - half + step * float(j);
+    for (int32_t i = 0; i < n; ++i) {
+      const float x = origin_x - half + step * float(i);
+      const float h = heights ? heights[j * n + i] : 0.0f;
+      const float t = temperatureAt(x, z, h, hour);
+      const float m = moistureAt(x, z, h);
+      /* Steep or high ground has no soil whatever the climate says, so the
+         slope is part of the classification rather than a paint trick. */
+      float slope = 0.0f;
+      if (heights) {
+        const int32_t i0 = i > 0 ? i - 1 : i, i1 = i < n - 1 ? i + 1 : i;
+        const int32_t j0 = j > 0 ? j - 1 : j, j1 = j < n - 1 ? j + 1 : j;
+        const float hx = heights[j * n + i1] - heights[j * n + i0];
+        const float hz = heights[j1 * n + i] - heights[j0 * n + i];
+        const float run = step * float((i1 - i0) + (j1 - j0)) * 0.5f;
+        slope = run > 1e-4f ? sqrtf(hx * hx + hz * hz) / (2.0f * run) : 0.0f;
+      }
+      out[j * n + i] = uint8_t(fe_climate_biome_on_slope(t, m, slope));
+    }
+  }
+  return cells;
+}
 
 /* Bare-rock override: steep or very high ground has no soil regardless of the
    climate, so the studio can bias the biome before it paints. */

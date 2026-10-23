@@ -25,7 +25,8 @@
    'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
    'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
    'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
-   'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami'];
+   'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami',
+   'fe_climate_biome_grid'];
   const missing=required.filter(name=>typeof x[name]!=='function');
   if(missing.length)throw Error('Terrain C++ export missing: '+missing.join(', '));
   /* A partially stale/older artifact must not kill the whole landscape bridge:
@@ -457,6 +458,23 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
  core.climateBiomeOnSlope=function(tempC,moisture,slope){
   return core.has('fe_climate_biome_on_slope')?ex.fe_climate_biome_on_slope(+tempC||0,+moisture||0,+slope||0):-1;
  };
+ /* Whole-map biome classification, computed in the kernel. The caller owns the
+   heights; `n` is the vertex grid (n*n) and `size` the span in metres. The
+   scratch buffers are reused so repeated presses never mint new allocations. */
+ let biomeGrid={n:0,h:0,o:0};
+ core.climateBiomeGrid=function(heights,n,size,originX,originZ,hour){
+  if(!core.has('fe_climate_biome_grid')||!heights)return null;
+  const cells=(n|0)*(n|0);if(cells<4||heights.length<cells)return null;
+  if(biomeGrid.n!==cells){
+   const h=ex.fe_malloc(cells*4),o=ex.fe_malloc(cells);
+   if(!h||!o)return null;
+   biomeGrid={n:cells,h,o};
+  }
+  new Float32Array(ex.memory.buffer,biomeGrid.h,cells).set(heights.subarray?heights.subarray(0,cells):heights);
+  const got=ex.fe_climate_biome_grid(biomeGrid.h,n|0,+size||1,+originX||0,+originZ||0,+hour||0,biomeGrid.o);
+  if(got!==cells)return null;
+  return new Uint8Array(ex.memory.buffer,biomeGrid.o,cells);
+ };
  core.climateBiomeCount=function(){
   return core.has('fe_climate_biome_count')?ex.fe_climate_biome_count():0;
  };
@@ -720,7 +738,7 @@ const NOLEAF='vTree=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vFall=0.
    swings as a unit, and two limbs of the same length swing out of step — which
    a single height-squared law can never do. Geometry without the attributes
    reads 0 and keeps the old behaviour exactly. */
-const SKEL='float skH=clamp(max(position.y,0.)*.34,.12,1.);float skA=aSway*aSway*skH;float skB=(sin(uT*.85+aPhase)+.42*sin(uT*1.9+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
+const SKEL='float skH=max(position.y,0.);float skA=aSway*aSway*clamp(skH*.34,.12,1.);float skB=(sin(uT*.85+aPhase)+.42*sin(uT*1.9+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
 function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w6'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;const fa=(a>=.0015&&a<.01)?a*18:0;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.||vR<vTs*.9)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF||vR<vTs)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
 if(fx.includes('a'))fr+='float at=clamp(uAut*1.35-vTree*.55+(vR-.5)*.25,0.,1.);float fam=fract(vTree*7.7);vec3 endc=fam<.35?vec3(1.6,.4,.2):(fam<.7?vec3(1.75,.9,.22):vec3(1.1,.62,.28));vec3 ac=mix(vec3(1.),vec3(1.45,1.3,.4),smoothstep(0.,.35,at));ac=mix(ac,endc,smoothstep(.35,.8,at));ac*=1.-.25*smoothstep(.85,1.,at)*fract(vR*3.3);diffuseColor.rgb*=ac;\n';if(fx.includes('g'))fr+='diffuseColor.rgb*=mix(vec3(1.),vec3(1.45,1.15,.55),uAut);\n';

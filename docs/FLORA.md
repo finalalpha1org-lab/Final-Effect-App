@@ -212,7 +212,7 @@ These are recorded as incomplete rather than finished.
 
 ```bash
 node --test tests/landscape-flora.test.mjs    # 18 tests
-npm test                                      # 330 tests
+npm test                                      # 341 tests
 ```
 
 The tests grow all eight species and all three rocks from the shipped artifact,

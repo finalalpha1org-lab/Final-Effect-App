@@ -58,7 +58,7 @@ G(sl('Latitude °',-70,70,1,cs.latitude,v=>CL.set('latitude',v)),sl('Sea-level t
 G(sl('Continentality',0,1,.02,cs.continentality,v=>CL.set('continentality',v)),sl('Prevailing wind m/s',0,30,.5,cs.wind,v=>CL.set('wind',v)),sl('Weather speed (world h / min)',1,240,1,cs.timeScale,v=>CL.set('timeScale',v))),
 el('<div class="hint" id="fe-climate-readout">Reading the climate field…</div>'),
 chips([['f','Fog from climate: '+(cs.fog?'on':'off')],['w','Wet surfaces from rain: '+(cs.wetnessFromRain?'on':'off')],['t','Storm tornadoes: '+(cs.autoTornado?'on':'off')]],0,v=>{if(v=='f')CL.set('fog',!cs.fog);else if(v=='w')CL.set('wetnessFromRain',!cs.wetnessFromRain);else CL.set('autoTornado',!cs.autoTornado)}),
-btn('Long-wave sea wave at its real phase speed',()=>{const o=CL.tsunami(WX.tsu.amp,120);WX.tsu.spd=Math.max(10,Math.min(50,Math.round(o.speed)));tsuLaunch();const q=document.getElementById('fe-climate-readout');if(q)q.textContent='Long wave '+o.speed.toFixed(0)+' m/s · wavelength '+Math.round(o.wavelength/1000)+' km · run-up '+o.runup.toFixed(1)+' m'})]:[];
+btn('Long-wave tsunami at its real phase speed (you launch it)',()=>{const o=CL.tsunami(WX.tsu.amp,120);WX.tsu.spd=Math.max(10,Math.min(50,Math.round(o.speed)));tsuLaunch();const q=document.getElementById('fe-climate-readout');if(q)q.textContent='Long wave '+o.speed.toFixed(0)+' m/s · wavelength '+Math.round(o.wavelength/1000)+' km · run-up '+o.runup.toFixed(1)+' m'})]:[];
 return [...climate,chips([['clear','☀ Clear'],['fog','🌫 Fog'],['drizzle','🌦 Drizzle'],['rain','🌧 Rain'],['storm','⛈ Storm'],['blizzard','🌨 Snow']],WX.preset,wxPreset),
 G(sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Overcast',0,1,.05,WX.overT,v=>WX.overT=v),sl('Storm',0,1,.05,WX.stormT,v=>WX.stormT=v),sl('Wind',0,3,.1,windUser,v=>windUser=v)),
 el('<div class="hint">Snow</div>'),
@@ -73,7 +73,7 @@ chips([['p','Auto cycle: '+(WX.seasonAuto?'on':'off')],['w','Wait for leaves: '+
 el('<div class="hint">Tornado</div>'),
 G(sl('Size',3,20,1,WX.tor.r,v=>WX.tor.r=v),sl('Speed',3,25,1,WX.tor.spd,v=>WX.tor.spd=v),sl('Intensity (EF)',1,5,1,WX.tor.ef,v=>WX.tor.ef=v)),
 chips([['go','🌪 Spawn tornado'],['stop','Stop'],['d','Damage: '+(WX.tor.dmg?'on':'off')],['c','Clear debris']],0,v=>{if(v=='go')torSpawn();else if(v=='stop')torStop();else if(v=='c')debClear();else WX.tor.dmg=!WX.tor.dmg}),
-el('<div class="hint">Tsunami</div>'),
+el('<div class="hint">Tsunami · a tectonic event you launch yourself. The climate only supplies the wave physics (phase speed, wavelength, shoaling, run-up); nothing starts one on its own.</div>'),
 G(sl('Height (m)',2,18,1,WX.tsu.amp,v=>WX.tsu.amp=v),sl('Speed (m/s)',10,50,1,WX.tsu.spd,v=>WX.tsu.spd=v),sl('Direction °',0,360,5,WX.tsu.dir,v=>WX.tsu.dir=v)),
 chips([['go','🌊 Launch tsunami'],['stop','Reset'],['d','Damage: '+(WX.tsu.dmg?'on':'off')],['c','Clear debris']],0,v=>{if(v=='go')tsuLaunch();else if(v=='stop')tsuReset();else if(v=='c')debClear();else WX.tsu.dmg=!WX.tsu.dmg})]};
 
@@ -102,10 +102,185 @@ o.push(el('<div class="hint">Atmosphere and clouds</div>'),G(sl('Atmosphere dens
 o.push(el('<div class="hint">Night side and rotation</div>'),G(sl('City lights',0,2,.05,PLAN.lights,v=>{PLAN.lights=v;a()}),sl('Spin',0,5,.1,PLAN.spin,v=>PLAN.spin=v),sl('Axial tilt °',0,90,1,PLAN.tilt,v=>{PLAN.tilt=v;a()})),chips([['lava',PLAN.lava?'Lava world: on':'Lava world: off'],['alien',PLAN.alien?'Alien colours: on':'Alien colours: off']],0,planetAct));
 return o};
 {const _pt=PN.terrain;PN.terrain=()=>{const region=PLAN.landed,context=region?[el(`<div class="hint">Planet surface: ${region.c.kind} biome · ${Math.abs(region.lat).toFixed(1)}° ${region.lat>=0?'N':'S'}, ${Math.abs(region.lon).toFixed(1)}° ${region.lon>=0?'E':'W'} · seed ${Math.round(PLAN.seed)}</div>`),chips([['orbit','🪐 Return to planet orbit']],0,()=>{setTab('planet');planetEnter()})]:[];function runMapErosion(mode){const core=window.FELandscapeCore;if(!core.ready){showErr('C++ terrain engine is still loading');return}const ok=mode==='strata'?core.strata({n:N,size:S,heights:H,height:9,strength:.55,tiltX:.03,tiltZ:.012,warp:7}):core.erode({mode,n:N,size:S,heights:H,seed:(Math.round(seed*1000)+1)>>>0,droplets:12000,iterations:24,talus:Math.tan(.6),slump:.5});if(!ok){showErr('C++ erosion failed: '+(core.error||'unknown'));return}upd();msg('Whole-map '+(mode==='strata'?'strata terracing':mode==='thermal'?'thermal erosion':'hydraulic erosion')+' completed in C++');if(tab=='terrain')build()}
-return[...context,chips([['p','🪐 Create a whole planet']],0,()=>setTab('planet')),..._pt(),chips([['hydro','💧 Hydraulic erosion'],['thermal','⛰ Thermal erosion'],['strata','🪨 Strata terraces']],0,runMapErosion),el('<div class="hint">Whole-map erosion and strata terracing run in the C++ core. They modify terrain height and can be undone.</div>')]}}
+return[...context,chips([['p','🪐 Create a whole planet']],0,()=>setTab('planet')),..._pt(),chips([['hydro','💧 Hydraulic erosion'],['thermal','⛰ Thermal erosion'],['strata','🪨 Strata terraces']],0,runMapErosion),el('<div class="hint">Whole-map erosion and strata terracing run in the C++ core. They modify terrain height and can be undone.</div>'),el('<div class="hint">Studio settings · every slider, the open-world setup and the climate are saved automatically as one JSON document and come back after a reload.</div>'),chips([['exp','Export settings JSON'],['imp','Load settings from JSON']],0,v=>{if(v==='exp')exportStudioSettings();else importStudioSettings()})]}}
 $('#cls').onclick=()=>$('#bw').click();
 function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
-PN.openworld=()=>{const c=OW.config;return[el('<div class="hint">Separate seeded terrain streamed as 256 m chunks around the camera. Only a 3×3 neighborhood is active; deterministic chunks and edited terrain are retained independently of the normal island. Hills, Alpine, Desert and Volcano biomes blend naturally. Existing sky, weather, water, quality and foliage tools remain shared.</div>'),G(sl('World size (km)',1,50,1,c.sizeKm,v=>c.sizeKm=v),sl('Seed',1,999999,1,c.seed,v=>c.seed=v)),G(sl('Hills influence ×',0,2,.05,c.biomeMix.hills,v=>c.biomeMix.hills=v),sl('Alpine influence ×',0,2,.05,c.biomeMix.alpine,v=>c.biomeMix.alpine=v),sl('Desert influence ×',0,2,.05,c.biomeMix.desert,v=>c.biomeMix.desert=v),sl('Volcano influence ×',0,2,.05,c.biomeMix.volc,v=>c.biomeMix.volc=v)),G(sl('Natural biome blend',0,1,.05,c.blend,v=>c.blend=v),sl('Mountain height',0,100,1,c.mountainHeight,v=>c.mountainHeight=v),sl('Water coverage',0,100,1,c.waterCoverage,v=>c.waterCoverage=v),sl('Sea level (m)',-100,0,1,c.waterLevel,v=>c.waterLevel=v),sl('Vegetation density ×',0,2.5,.05,c.vegetationDensity,v=>c.vegetationDensity=v)),el('<div class="hint">World presets · all four biome systems remain available</div>'),chips([['temperate','Temperate'],['desert','Desert'],['alpine','Alpine'],['island','Island']],'',v=>{if(v==='temperate')Object.assign(c,{blend:.68,biomeMix:{hills:1.4,alpine:.9,desert:.55,volc:.4},mountainHeight:42,waterCoverage:28,waterLevel:-24,vegetationDensity:.95});else if(v==='desert')Object.assign(c,{blend:.42,biomeMix:{hills:.5,alpine:.2,desert:1.9,volc:.55},mountainHeight:35,waterCoverage:18,waterLevel:-26,vegetationDensity:.75});else if(v==='alpine')Object.assign(c,{blend:.35,biomeMix:{hills:.55,alpine:1.9,desert:.2,volc:.8},mountainHeight:82,waterCoverage:32,waterLevel:-28,vegetationDensity:.8});else Object.assign(c,{blend:.58,biomeMix:{hills:1.2,alpine:.55,desert:1.2,volc:.55},mountainHeight:48,waterCoverage:56,waterLevel:-32,vegetationDensity:.9})}),el(`<div class="hint" id="owstatus">${OW.active?(OW.generating?'Streaming chunks…':OW.chunks.size+' chunks loaded'):OW.generated?'World generated · press Enter to resume':'Ready to generate'}</div>`),...(OW.active?[btn('🌿 Foliage & scatter settings',()=>setTab('plants'))]:[]),btn(OW.active?'Regenerate Open World Map':OW.generated?'Enter Open World':'Generate Open World Map',()=>OW.start()),btn('Return to default terrain',()=>{OW.deactivate();setTab('terrain')})]};
+/* ---- studio settings: one JSON document -------------------------------
+   Every landscape sheet writes straight into a live variable, so until now a
+   reload threw the whole studio back to its defaults. The full set is now
+   serialised into a single JSON document with three sections (studio,
+   open-world, climate), written to localStorage on a short debounce, and it
+   can be exported as a file or pasted back in. A native build has no
+   localStorage; the same document is what it writes to disk. */
+const STUDIO_CONFIG_KEY='fe_landscape_config_v1',STUDIO_CONFIG_KIND='landscape-settings';
+let studioConfigTimer=0,studioConfigDirty=false;
+function studioConfigDoc(){
+  const wx=window.FELandscapeWeather;
+  return{app:'final-effect',kind:STUDIO_CONFIG_KIND,version:1,savedAt:new Date().toISOString(),
+    studio:captureStudioSettings(),
+    openWorld:{...OW.config,biomeMix:{...OW.config.biomeMix}},
+    climate:wx?{...wx.settings}:null};
+}
+function serializeStudioConfig(){return JSON.stringify(studioConfigDoc(),null,1)}
+function persistStudioConfig(){
+  try{localStorage.setItem(STUDIO_CONFIG_KEY,JSON.stringify(studioConfigDoc()));return true}
+  catch(error){return false}
+}
+function readStudioConfig(){
+  try{
+    const raw=localStorage.getItem(STUDIO_CONFIG_KEY);
+    if(!raw)return null;
+    const doc=JSON.parse(raw);
+    return doc&&doc.kind===STUDIO_CONFIG_KIND&&doc.studio?doc:null;
+  }catch(error){return null}
+}
+/* Unknown or differently typed fields are ignored, so an older or newer
+   document can never inject a string where the studio expects a number. */
+function applyStudioConfig(doc){
+  if(!doc||typeof doc!=='object'||doc.kind!==STUDIO_CONFIG_KIND||!doc.studio||typeof doc.studio!=='object')return false;
+  restoreStudioSettings(doc.studio);
+  if(Number.isFinite(doc.studio.seed))window.__feStartupSeed=doc.studio.seed;
+  if(doc.openWorld&&typeof doc.openWorld==='object'){
+    const c=OW.config;
+    for(const k in c)if(Object.prototype.hasOwnProperty.call(doc.openWorld,k)&&typeof doc.openWorld[k]===typeof c[k])c[k]=doc.openWorld[k];
+    if(doc.openWorld.biomeMix&&typeof doc.openWorld.biomeMix==='object')Object.assign(c.biomeMix,doc.openWorld.biomeMix);
+  }
+  const wx=window.FELandscapeWeather;
+  if(wx&&doc.climate&&typeof doc.climate==='object'){
+    for(const k in wx.settings)if(Object.prototype.hasOwnProperty.call(doc.climate,k)&&typeof doc.climate[k]===typeof wx.settings[k])wx.settings[k]=doc.climate[k];
+    if(typeof wx.syncKernel==='function')wx.syncKernel();
+  }
+  return true;
+}
+function queueStudioConfigSave(){
+  studioConfigDirty=true;
+  if(studioConfigTimer)return;
+  studioConfigTimer=setTimeout(()=>{studioConfigTimer=0;if(studioConfigDirty){studioConfigDirty=false;persistStudioConfig()}},700);
+}
+function restorePersistedStudioConfig(){
+  const doc=readStudioConfig();
+  return doc?applyStudioConfig(doc):false;
+}
+window.__feRestoreStudioConfig=restorePersistedStudioConfig;
+window.__feSerializeStudioConfig=serializeStudioConfig;
+const studioPanel=typeof document!=='undefined'?document.getElementById('panel'):null;
+if(studioPanel){
+  studioPanel.addEventListener('input',queueStudioConfigSave,true);
+  studioPanel.addEventListener('change',queueStudioConfigSave,true);
+  studioPanel.addEventListener('click',queueStudioConfigSave,true);
+}
+window.addEventListener('pagehide',()=>{if(studioConfigDirty||studioConfigTimer)persistStudioConfig()});
+function exportStudioSettings(){
+  showLandscapeExportFallback(serializeStudioConfig(),'Studio settings JSON. Copy it as a backup, or paste a saved document into this box and press Load settings from JSON.');
+  return true;
+}
+function importStudioSettings(){
+  const box=document.getElementById('exp');
+  let doc=null;
+  try{doc=JSON.parse((box&&box.value)||'')}catch(error){showErr('That is not a JSON document');return false}
+  if(!applyStudioConfig(doc)){showErr('That JSON is not a studio settings document');return false}
+  try{gen(window.__feStartupSeed);scatter();updSky();build()}catch(error){showErr('Settings restored, but the scene could not be rebuilt: '+(error&&error.message))}
+  persistStudioConfig();
+  msg('Studio settings loaded');
+  return true;
+}
+
+/* ---- Climate biomes: an explicit action, never an automatic one --------
+   The painted layers (SWA/SWB/SWC on the default island, twelve weights per
+   vertex on open-world chunks) belong to the artist. The climate field is
+   consulted only when this action is pressed, it writes one fully weighted
+   surface per vertex, and it pushes an undo step first so a press is always
+   reversible. */
+const CLIMATE_SURFACE_KEYS=OW_SURFACE_DEFS.map(d=>d.key);
+function climateSurfaceIds(){
+  const wx=window.FELandscapeWeather;
+  if(!wx||!wx.BIOMES||!wx.BIOME_SURFACE)return null;
+  return wx.BIOMES.map(b=>CLIMATE_SURFACE_KEYS.indexOf(wx.BIOME_SURFACE[b]));
+}
+function setOwStatus(text){const n=document.getElementById('owstatus');if(n)n.textContent=text}
+/* `all` repaints every vertex; `free` only touches ground that carries no
+   painted weight, so a hand-painted island keeps its own biomes and the climate
+   fills the rest. Both are explicit presses. */
+let climateApplyMode='all';
+function paintedWeightAt(weights,base,count){let sum=0;for(let q=0;q<count;q++)sum+=weights[base+q];return sum}
+function climateBatch(){
+  const wx=window.FELandscapeWeather,core=window.FELandscapeCore;
+  if(!wx||!core||!core.ready||typeof core.climateBiomeGrid!=='function')return null;
+  if(typeof wx.syncKernel==='function')wx.syncKernel();
+  const ids=climateSurfaceIds();
+  if(!ids)return null;
+  const hour=wx.state&&Number.isFinite(wx.state.clock)?((wx.state.clock%24)+24)%24:12;
+  const batch=[];
+  if(OW&&OW.active&&OW.chunks&&OW.chunks.size){
+    for(const c of OW.chunks.values()){
+      const grid=core.climateBiomeGrid(c.heights,c.segments+1,c.size,c.originX,c.originZ,hour);
+      if(!grid)return null;
+      batch.push({grid:Uint8Array.from(grid),chunk:c});
+    }
+  }else{
+    const grid=core.climateBiomeGrid(H,W,S,0,0,hour);
+    if(!grid)return null;
+    batch.push({grid:Uint8Array.from(grid),chunk:null});
+  }
+  return {batch,ids,biomes:wx.BIOMES};
+}
+function applyClimateBiomes(){
+  const plan=climateBatch();
+  if(!plan){setOwStatus('Climate biomes need the engine build — reload the page and try again');return false}
+  const {batch,ids,biomes}=plan;
+  const tally=new Array(biomes.length).fill(0);
+  push();
+  let kept=0;
+  for(const {grid,chunk} of batch){
+    if(chunk){
+      if(climateApplyMode==='free'){
+        for(let k=0;k<grid.length;k++){
+          if(paintedWeightAt(chunk.surfaceWeights,k*12,12)>.001){kept++;continue}
+          const id=ids[grid[k]];
+          if(id<0)continue;
+          chunk.surfaceWeights.fill(0,k*12,k*12+12);
+          chunk.surfaceWeights[k*12+id]=1;
+        }
+      }else{
+        chunk.surfaceWeights.fill(0);
+        for(let k=0;k<grid.length;k++){const id=ids[grid[k]];if(id>=0)chunk.surfaceWeights[k*12+id]=1}
+      }
+      chunk.dirty=true;
+      owUpdateChunkGeometry(chunk);
+    }else{
+      if(climateApplyMode==='free'){
+        for(let k=0;k<grid.length;k++){
+          if(SWA[k*4]+SWA[k*4+1]+SWA[k*4+2]+SWA[k*4+3]+SWB[k*4]+SWB[k*4+1]+SWB[k*4+2]+SWB[k*4+3]+SWC[k*4]+SWC[k*4+1]+SWC[k*4+2]+SWC[k*4+3]>.001){kept++;continue}
+          const id=ids[grid[k]],b=k*4;
+          if(id<0)continue;
+          SWA[b]=SWA[b+1]=SWA[b+2]=SWA[b+3]=0;
+          SWB[b]=SWB[b+1]=SWB[b+2]=SWB[b+3]=0;
+          SWC[b]=SWC[b+1]=SWC[b+2]=SWC[b+3]=0;
+          if(id<4)SWA[b+id]=1;else if(id<8)SWB[b+id-4]=1;else if(id<12)SWC[b+id-8]=1;
+          MI[k]=255;
+        }
+      }else{
+        SWA.fill(0);SWB.fill(0);SWC.fill(0);MI.fill(255);
+        for(let k=0;k<grid.length;k++){
+          const id=ids[grid[k]],b=k*4;
+          if(id<0)continue;
+          if(id<4)SWA[b+id]=1;else if(id<8)SWB[b+id-4]=1;else if(id<12)SWC[b+id-8]=1;
+        }
+      }
+    }
+    for(let k=0;k<grid.length;k++)tally[grid[k]]++;
+  }
+  if(!batch.length)return false;
+  if(batch[0].chunk===null)upd();
+  const total=tally.reduce((a,b)=>a+b,0)||1;
+  const top=tally.map((n,i)=>({n,i})).filter(x=>x.n).sort((a,b)=>b.n-a.n).slice(0,3)
+    .map(x=>`${(window.FELandscapeWeather.BIOME_LABELS||{})[biomes[x.i]]||biomes[x.i]} ${Math.round(x.n/total*100)}%`);
+  const suffix=climateApplyMode==='free'?` · ${Math.round(kept/Math.max(1,kept+total)*100)}% kept from your painting`:'';
+  setOwStatus('Climate biomes applied · '+top.join(' · ')+suffix);
+  return {cells:total,tally,kept};
+}
+
+PN.openworld=()=>{const c=OW.config;return[el('<div class="hint">Separate seeded terrain streamed as 256 m chunks around the camera. Only a 3×3 neighborhood is active; deterministic chunks and edited terrain are retained independently of the normal island. Hills, Alpine, Desert and Volcano biomes blend naturally. Existing sky, weather, water, quality and foliage tools remain shared.</div>'),G(sl('World size (km)',1,50,1,c.sizeKm,v=>c.sizeKm=v),sl('Seed',1,999999,1,c.seed,v=>c.seed=v)),G(sl('Hills influence ×',0,2,.05,c.biomeMix.hills,v=>c.biomeMix.hills=v),sl('Alpine influence ×',0,2,.05,c.biomeMix.alpine,v=>c.biomeMix.alpine=v),sl('Desert influence ×',0,2,.05,c.biomeMix.desert,v=>c.biomeMix.desert=v),sl('Volcano influence ×',0,2,.05,c.biomeMix.volc,v=>c.biomeMix.volc=v)),G(sl('Natural biome blend',0,1,.05,c.blend,v=>c.blend=v),sl('Mountain height',0,100,1,c.mountainHeight,v=>c.mountainHeight=v),sl('Water coverage',0,100,1,c.waterCoverage,v=>c.waterCoverage=v),sl('Sea level (m)',-100,0,1,c.waterLevel,v=>c.waterLevel=v),sl('Vegetation density ×',0,2.5,.05,c.vegetationDensity,v=>c.vegetationDensity=v)),el('<div class="hint">World presets · all four biome systems remain available</div>'),chips([['temperate','Temperate'],['desert','Desert'],['alpine','Alpine'],['island','Island']],'',v=>{if(v==='temperate')Object.assign(c,{blend:.68,biomeMix:{hills:1.4,alpine:.9,desert:.55,volc:.4},mountainHeight:42,waterCoverage:28,waterLevel:-24,vegetationDensity:.95});else if(v==='desert')Object.assign(c,{blend:.42,biomeMix:{hills:.5,alpine:.2,desert:1.9,volc:.55},mountainHeight:35,waterCoverage:18,waterLevel:-26,vegetationDensity:.75});else if(v==='alpine')Object.assign(c,{blend:.35,biomeMix:{hills:.55,alpine:1.9,desert:.2,volc:.8},mountainHeight:82,waterCoverage:32,waterLevel:-28,vegetationDensity:.8});else Object.assign(c,{blend:.58,biomeMix:{hills:1.2,alpine:.55,desert:1.2,volc:.55},mountainHeight:48,waterCoverage:56,waterLevel:-32,vegetationDensity:.9})}),el('<div class="hint">Climate biomes · your painted layers stay exactly as they are until you apply the climate map. The action is undoable.</div>'),chips([['all','Apply to all ground'],['free','Fill unpainted ground only']],climateApplyMode,v=>{climateApplyMode=v}),btn('<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" style="vertical-align:-2px"><path d="M2 13c2-1 4-1.6 6-1.6S12.2 12 14 13"/><path d="M2.6 9.2c1.9-.9 3.9-1.4 5.4-1.4s3.5.5 5.4 1.4"/><path d="M4.6 5.6C5.6 4.2 7 3.4 8 3.4s2.4.8 3.4 2.2"/></svg> Apply Climate Biomes',()=>applyClimateBiomes()),el(`<div class="hint" id="owstatus">${OW.active?(OW.generating?'Streaming chunks…':OW.chunks.size+' chunks loaded'):OW.generated?'World generated · press Enter to resume':'Ready to generate'}</div>`),...(OW.active?[btn('🌿 Foliage & scatter settings',()=>setTab('plants'))]:[]),btn(OW.active?'Regenerate Open World Map':OW.generated?'Enter Open World':'Generate Open World Map',()=>OW.start()),btn('Return to default terrain',()=>{OW.deactivate();setTab('terrain')})]};
 const TABS=[['terrain','⛰','Terrain'],['openworld','🌍','Open World'],['planet','🪐','Planet'],['plants','🌲','Foliage'],['city','🏙','City'],['quality','✨','Quality'],['sky','☀️','Lighting'],['skyx','🌌','Sky'],['water','🌊','Water'],['weather','⛈','Weather'],['obj','🪑','Objects'],['import','🌍','Import']];
 TABS.forEach(([id,i,l])=>{const b=el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);b.onclick=()=>setTab(id);$('#tabs').append(b)});
 const brushTab=()=>OW?.active?(bt=='terrain'||bt=='openworld'||bt=='plants'): (bt=='terrain'||bt=='plants'||bt=='city'&&!cityTap);

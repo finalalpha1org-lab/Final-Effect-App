@@ -12,6 +12,12 @@ fronts, cloud, rain, snow, fog, storm strength, wind and the biome. The existing
 weather system keeps ownership of the *rendering* (particles, lightning timing,
 easing); it just receives targets that mean something now.
 
+**This is a parameterisation, not a general circulation model.** Every term in
+the table below is a closed-form function of the seed and the world clock. There
+is no grid, no advection between cells, no radiation budget and no pressure
+field solved anywhere in the kernel. It is honest about that everywhere: the
+sheet calls it *Climate-driven weather*, and it never claims a climate model.
+
 ## The model
 
 | Term | Formula | Physical basis |
@@ -32,6 +38,11 @@ easing); it just receives targets that mean something now.
 | Snow line | `T(0 m) / 6.5 K/km` | the altitude where the current field reaches 0 °C |
 
 ### Biomes (Whittaker, temperature × moisture)
+
+The classification is a pure function of the temperature and moisture fields, so
+it can be evaluated anywhere — and, through `fe_climate_biome_grid()`, for a
+whole vertex grid at once. Applying it to the ground is a **deliberate action**
+(see *Applying the climate map* below).
 
 | id | biome | painted surface | example |
 | --- | --- | --- | --- |
@@ -73,6 +84,9 @@ int32_t fe_climate_at(float x, float z, float altitude, float hour, float *out10
 int32_t fe_climate_weather(float *out10);
 int32_t fe_climate_biome(float temp_c, float moisture);
 int32_t fe_climate_biome_count(void);          /* 8 */
+int32_t fe_climate_biome_grid(const float *heights, int32_t n, float size,
+                              float origin_x, float origin_z, float hour,
+                              uint8_t *out);   /* n*n biome ids */
 int32_t fe_climate_biome_on_slope(float temp_c, float moisture, float slope);
 int32_t fe_climate_tornado(float ef, float *out4);
 float   fe_climate_rankine(float r, float core_radius, float vmax);
@@ -110,23 +124,53 @@ studio's existing weather state:
 Every one of those is a switch on the weather sheet, and switching
 **Climate-driven weather** off returns the manual sliders and presets unchanged.
 
+## Applying the climate map
+
+The painted surface layers belong to the artist. Nothing in the weather loop
+writes them, and nothing repaints them on a timer, on a seed change or on load.
+The biome classification reaches the ground through one explicit control in the
+Open World sheet — **Apply Climate Biomes** — which:
+
+1. re-seeds the kernel from the current climate settings;
+2. asks `fe_climate_biome_grid()` for one biome per terrain vertex of the visible
+   surface (the default island, or every loaded open-world chunk);
+3. maps the biome to a painted surface (`BIOME_SURFACE` → `OW_SURFACE_DEFS`) and
+   writes *one fully weighted surface* per vertex;
+4. pushes a single undo step before the first write, so the press is reversible.
+
+Two modes make the choice explicit: **Apply to all ground** replaces the painted
+weights everywhere, while **Fill unpainted ground only** skips every vertex that
+already carries a painted weight, so a hand-painted island keeps its own biomes
+and the climate only fills the rest. The sheet reports the biome coverage and,
+in fill mode, how much of the map was kept from the artist.
+
+It never runs on its own, so hand-painted biome layers survive every reload,
+every weather tick and every seed change.
+
 ## What this does not do
 
-* It is not a general circulation model. There is no advection between grid
+* It is **not a general circulation model**. There is no advection between grid
   cells, no radiation budget and no pressure field — it is a parameterisation.
-* The biome *classification* is computed and exposed (`FELandscapeWeather.biomeAt`,
-  `biomeSurface`), but the painted biome layers still come from the existing
-  Open World generator. Any automatic repaint would silently overwrite a user's
-  own painting, so it is not wired in yet.
+* It does not place foliage. Species are still placed by the scatter pass; the
+  biome map only decides what the ground is painted as.
 * Tsunamis stay a user-triggered tectonic event; the climate only supplies the
-  physics envelope. Automatic earthquakes are not modelled.
+  physics envelope (`FELandscapeWeather.tsunami()`), and the panel button reads
+  its approach speed from that envelope. Automatic earthquakes are not modelled.
 * No hail, no graupel, no cloud shadowing from the front itself.
+
+## Settings that persist
+
+The climate controls are part of the studio's settings document
+(`fe_landscape_config_v1`, see `docs/STUDIO-SETTINGS.md`): latitude, sea-level
+temperature, humidity, continentality, wind, time scale, the fog and wetness
+couplings and the seed are all serialised, so a reload resumes the same field
+instead of resetting it to the defaults.
 
 ## Verification
 
 ```bash
-node --test tests/landscape-climate.test.mjs   # 11 tests
-npm test                                       # 330 tests
+node --test tests/landscape-climate.test.mjs   # 15 tests
+npm test                                       # 341 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn
@@ -134,4 +178,6 @@ but not at noon, the latitude and season signs (including the southern
 hemisphere), moisture falling inland and with altitude, the whole Whittaker
 table, front reproducibility per seed with bounded rain/cloud/snow/storm,
 snow only near freezing, `√(g·d)` phase speed, Rankine decay, and that a missing
-kernel leaves the manual weather untouched.
+kernel leaves the manual weather untouched. They also pin the biome map: one
+weighted surface per vertex, one undo step, the open-world twelve-weight layout,
+and that neither a weather tick nor a boot ever touches the paint.
