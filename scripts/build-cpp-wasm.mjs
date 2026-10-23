@@ -96,12 +96,20 @@ const REQUIRED_EXPORTS = [
   'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap'
 ];
 
+/* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
+ * `ziglang` Python module used by CI. Probe both so a checkout can always
+ * rebuild the full engine instead of silently validating an older artifact. */
 function findZigCompiler() {
-  const candidates = ['/tmp/zig_pkg/ziglang/zig', 'zig'];
-  for (const bin of candidates) {
+  const candidates = [
+    { cmd: '/tmp/zig_pkg/ziglang/zig', args: [] },
+    { cmd: 'zig', args: [] },
+    { cmd: 'python3', args: ['-m', 'ziglang'] },
+    { cmd: 'python', args: ['-m', 'ziglang'] }
+  ];
+  for (const candidate of candidates) {
     try {
-      execFileSync(bin, ['version'], { stdio: 'ignore' });
-      return bin;
+      execFileSync(candidate.cmd, [...candidate.args, 'version'], { stdio: 'ignore' });
+      return candidate;
     } catch {}
   }
   return null;
@@ -109,8 +117,7 @@ function findZigCompiler() {
 
 const zig = findZigCompiler();
 if (zig) {
-  execFileSync(zig, [
-    'c++',
+  execFileSync(zig.cmd, [...zig.args, 'c++',
     '-std=c++20',
     '-O3',
     '-fno-builtin',
