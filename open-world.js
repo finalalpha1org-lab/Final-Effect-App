@@ -242,8 +242,8 @@ function owBuildNode(n){const top=owTileTopology(owTileSegments(n)),seg=top.seg,
 function owDisposeNode(n){if(n.mesh){OW.root.remove(n.mesh);n.mesh.geometry.dispose();n.mesh=null}n.built=false}
 function owInitTiles(){owDisposeAllTiles();const half=OW.P.half||OW.P.size/2,RS=2048,nr=Math.ceil(OW.P.size/RS);roots=[];for(let j=0;j<nr;j++)for(let i=0;i<nr;i++)roots.push(owMkNode(5,-OW.P.size/2+i*RS,-OW.P.size/2+j*RS,RS,null));owQ=QS[OW.Q]}
 function owDisposeAllTiles(){for(const n of ownodes)owDisposeNode(n);ownodes.length=0;roots=[];prevDrawn=[];drawn.length=0;blocks.clear()}
-function owTileInView(n){owCullSphere.center.set(n.cx,n.cy,n.cz);const terrainRadius=Math.hypot(n.size*.72,320),prefetchMargin=Math.max(192,n.size*.3);owCullSphere.radius=terrainRadius+prefetchMargin;return owViewFrustum.intersectsSphere(owCullSphere)}
-function owVisit(n,cp){if(!owTileInView(n))return;const dx=n.cx-cp.x,dz=n.cz-cp.z,dy=n.cy-cp.y,d=Math.sqrt(dx*dx+dz*dz+dy*dy),K=Math.max(owQ.K,detail>=3?2.8:detail>=2?2.2:1.6),threshold=n.size*K,wantSplit=n.l>0&&d<threshold*.9,keepSplit=n.l>0&&d<threshold*1.3;
+function owTileInView(n){owCullSphere.center.set(n.cx,n.cy,n.cz);const terrainRadius=Math.hypot(n.size*.72,320),prefetchMargin=Math.max(256,n.size*.4);owCullSphere.radius=terrainRadius+prefetchMargin;return owViewFrustum.intersectsSphere(owCullSphere)}
+function owVisit(n,cp){if(!owTileInView(n))return;const dx=n.cx-cp.x,dz=n.cz-cp.z,dy=n.cy-cp.y,d=Math.sqrt(dx*dx+dz*dz+dy*dy),K=Math.max(owQ.K,detail>=3?2.8:detail>=2?2.2:1.6),threshold=n.size*K,wantSplit=n.l>0&&d<threshold*.8,keepSplit=n.l>0&&d<threshold*1.4;
  if(keepSplit&&!n.ch){const h=n.size/2,l=n.l-1;n.ch=[owMkNode(l,n.x0,n.z0,h,n),owMkNode(l,n.x0+h,n.z0,h,n),owMkNode(l,n.x0,n.z0+h,h,n),owMkNode(l,n.x0+h,n.z0+h,h,n)]}
  if(n.ch){if(n.split){if(!keepSplit&&n.built)n.split=false;else if(!n.built)wantQ.push([d,n])}
   else if(keepSplit){let all=true;for(const c of n.ch)if(!c.built){wantQ.push([Math.hypot(c.cx-cp.x,c.cz-cp.z),c]);all=false}if(all&&wantSplit)n.split=true}}
