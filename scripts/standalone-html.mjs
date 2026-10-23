@@ -19,6 +19,7 @@ export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,t
 }
 
 export function createStandaloneAppHtml(html, {
+  volumeAtlas,
   simulationCore,
   modifierEngine,
   feCppEngine,
@@ -76,6 +77,7 @@ export function createStandaloneAppHtml(html, {
 
   let out = html.replace('<link rel="manifest" href="./manifest.webmanifest">', '');
   const helpers = [
+    ['volume-atlas.js', volumeAtlas],
     ['simulationCore.js', simulationCore],
     ['modifier-engine.js', modifierEngine],
     ['fe-cpp-engine.js', feCppEngine]

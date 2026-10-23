@@ -1803,6 +1803,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </style>
 </head>
 <body>
+<script src="volume-atlas.js"></script>
 <script src="simulationCore.js"></script>
 <script src="modifier-engine.js"></script>
 <script src="fe-cpp-engine.js"></script>
@@ -9266,6 +9267,7 @@ const modifiersData = {
       // Common Dynamics & Vorticity
       ["Vorticity Confinement","range",0,1,0.12,0.02],
       ["Resolution","range",32,96,80,8],["Surface Resolution","range",16,96,64,4],
+      ["Volume Solver","check",true],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -10627,13 +10629,13 @@ function renderModifierStack() {
             const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Vorticity Confinement", "Resolution", "Surface Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!liquidOnly.includes(label)) return;
           } else if (domainType === "Fire") {
-            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireOnly.includes(label)) return;
           } else if (domainType === "Smoke") {
-            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!smokeOnly.includes(label)) return;
           } else if (domainType === "Fire + Smoke") {
-            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Flow") {

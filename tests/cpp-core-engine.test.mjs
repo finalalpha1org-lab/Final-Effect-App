@@ -178,6 +178,7 @@ test('standalone 1-file portable build embeds C++20 WASM and passes the live sel
   const b64 = wasmBytes.toString('base64');
 
   const standalone = createStandaloneAppHtml(html, {
+    volumeAtlas: readFileSync(appPath('volume-atlas.js'), 'utf8'),
     simulationCore: 'window.__simStub = true;',
     modifierEngine: 'window.__modStub = true;',
     feCppEngine: bridge,

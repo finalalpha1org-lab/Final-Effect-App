@@ -33,6 +33,7 @@ if (hasPublicDir) {
     "open-world-generator.js",
     "open-world.js",
     "modifier-engine.js",
+    "volume-atlas.js",
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
@@ -61,6 +62,7 @@ const minifiableJs = [
   ...terrainMainFiles,
   "open-world.js",
   "modifier-engine.js",
+  "volume-atlas.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
 ];
@@ -122,6 +124,7 @@ writeFileSync("build/client/Terrain-System-Standalone.html", standaloneTerrainHt
 const standaloneAppHtml = createStandaloneAppHtml(
   readFileSync(srcPath("index.html"), "utf8"),
   {
+    volumeAtlas: readFileSync(srcPath("volume-atlas.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),
     feCppEngine: readFileSync(srcPath("fe-cpp-engine.js"), "utf8"),

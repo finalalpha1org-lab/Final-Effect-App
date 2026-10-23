@@ -264,21 +264,47 @@ The tests assert a >75 % divergence reduction, temperature-driven rise,
 dissipation, bit-identical determinism and a watertight manifold (every edge
 shared by exactly two triangles, unit outward normals).
 
-**Exercised in-app, but not rendered.** The ⚙ diagnostics self-test gained an
-eighth row, "Smoke & Fire Volume Solver": it runs a 16³ MAC grid for four steps,
-reports `div x→y`, then fills an analytic sphere and meshes it, so a phone can
-prove the kernel runs. That row is a solver check, not a picture - there is still
-no volume raymarch material, no 3D texture upload and no volume panel, so nothing
-in the viewport displays fire or smoke yet.
+**Rendered as a voxel volume in the Fluid modifier.** `Fire`, `Smoke` and
+`Fire + Smoke` domains now default to the voxel solver and are drawn by a
+raymarch pass; the particle tracers stay as the fallback.
 
-The Fluid modifier stays on its existing particle path for now. Its
-`Domain Type` already offers `Fire` / `Smoke` / `Fire + Smoke`, and those domains
-are rendered by `simulationCore.createBuoyantParticles` (particle tracers driven
-by the XPBD/PBF solver), not by this voxel grid. Wiring the Fluid modifier to the
-voxel solver needs a volume renderer and a device check first; the kernel is
-deliberately absent from `FELandscapeCore.missing` because the landscape bridge
-does not consume it. Do not describe smoke/fire as a shipped feature until the
-renderer and panel exist.
+- `simulationCore.createVolumeSimulation` maps `Resolution` (32–96) onto a
+  16–28³ grid (default 24³), calls `fe_vol_init`, and builds the volume mesh from
+  the domain bounds.
+- `volume-atlas.js` tiles the z slices of the density/temperature grid into one
+  RGBA8 2D atlas (R density, G temperature), so the shader works on WebGL1 and
+  WebGL2 without `sampler3D`. `stepVolumeSimulation` runs `fe_vol_step` at 30 Hz
+  (accumulated from the fixed simulation step), repacks the atlas and marks the
+  texture dirty.
+- The raymarch shader intersects the domain box from `cameraPosition`, samples
+  two neighbouring slices per step, and composites emissive fire (temperature
+  ramp) plus absorbing smoke (Beer–Lambert) with a per-pixel dither offset.
+- Mapping: `Heat Emission`/`Fuel` → source heat, `Smoke Density` → source
+  density, `Buoyancy` → y acceleration, `Dissipation Rate` → density decay and
+  cooling, `Vorticity Confinement` → confinement, `Time Scale` → step rate.
+  `Gravity` does not act on the gas (buoyancy is applied directly), which is a
+  limitation, not a physical gravity solve.
+- The `Volume Solver` checkbox (default on, shown only for fire/smoke domains)
+  turns the voxel path off; `createBuoyantParticles` then renders the previous
+  tracers unchanged. The C++ grid is static, so a second simultaneous volume
+  domain also falls back to particles.
+
+The ⚙ diagnostics self-test keeps its eighth row, "Smoke & Fire Volume Solver"
+(16³, four steps, divergence + a meshed sphere), so a phone can prove the kernel
+runs even without opening the viewport.
+
+**Verification boundary:** the C++ field, the atlas packing, the record plumbing
+and the shader source are covered by tests against the real wasm
+(`tests/fire-smoke-volume.test.mjs`, `tests/volume-atlas.test.mjs`), but no GPU
+renders in CI or in the sandbox. Colour, opacity and step count are tuned from
+sampled field ranges (max density ≈0.34, max temperature ≈1.3 at 24³ with the
+default presets) and still need a device check before this is called
+photorealistic. Browser volume rendering also costs fill rate: the 24³ grid at
+30 Hz is roughly 5 ms of CPU on the sandbox and the raymarch is 48–64 samples per
+pixel.
+
+The kernel is deliberately absent from `FELandscapeCore.missing` because the
+landscape bridge does not consume it.
 
 ## Degraded / stale artifacts
 
@@ -303,6 +329,7 @@ still stuck.
 
 Still JS: worker message passing, chunk mesh/instance buffer construction and the
 GPU uploads themselves (three.js buffers and WebGL calls cannot move into wasm),
-the occupancy/capacity rules that accept or reject a scatter candidate, and the
-plant-placement solver inside `createChunkJob`. The ocean math, its foam field,
-strata and both scatter candidate generators are C++.
+the occupancy/capacity rules that accept or reject a scatter candidate, the
+plant-placement solver inside `createChunkJob`, and the volume raymarch shader
+plus its 2D atlas packing (a GPU bridge concern). The ocean math, its foam field,
+strata, both scatter candidate generators and the smoke/fire grid are C++.

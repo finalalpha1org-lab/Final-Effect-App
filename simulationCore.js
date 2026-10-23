@@ -32,6 +32,9 @@
     20
   );
   const align = (value, boundary) => Math.ceil(value / boundary) * boundary;
+  /* The C++ volumetric solver keeps one static grid, so only one volume
+     domain can be live at a time; extra domains keep the particle path. */
+  let volumeLocks = 0;
 
   /* ---- Procedural Studio + Sky HDRI Reflection Texture (works offline & in all viewport modes) ---- */
   let cachedStudioEnvMap = null;
@@ -1178,7 +1181,14 @@
         mesh.add(record.domainEdges);
       }
       if (domainType === 'Liquid') this.createLiquidParticles(mesh, params, record);
-      else if (['Fire', 'Smoke', 'Fire + Smoke'].includes(domainType)) this.createBuoyantParticles(mesh, params, record);
+      else if (['Fire', 'Smoke', 'Fire + Smoke'].includes(domainType)) {
+        /* Fire and smoke run as a voxel volume when the C++ core is available.
+           The particle tracers remain the fallback for a device without the
+           kernel, for a second simultaneous domain, and when the modifier
+           turns the volume solver off. */
+        const volume = params['Volume Solver'] !== false && this.createVolumeSimulation(mesh, params, record);
+        if (!volume) this.createBuoyantParticles(mesh, params, record);
+      }
       else throw new Error(`Unsupported fluid domain type: ${domainType}`);
       mesh.userData.simMesh = record.visual;
       mesh.userData.poolMesh = null;
@@ -1368,6 +1378,217 @@
       this.scene().add(group);
     }
 
+    volumeShader() {
+      return {
+        vertexShader: `
+varying vec3 vWorld;
+void main(){
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vWorld = world.xyz;
+  gl_Position = projectionMatrix * viewMatrix * world;
+}`,
+        fragmentShader: `
+precision highp float;
+uniform sampler2D uAtlas;
+uniform vec3 uBoxMin, uBoxMax;
+uniform vec2 uTiles, uAtlasSize;
+uniform float uGrid, uDensityScale, uTempScale, uSigma, uFireGain, uSmokeGain, uSteps;
+varying vec3 vWorld;
+vec2 atlasUv(vec2 xy, float slice){
+  float tx = mod(slice, uTiles.x);
+  float ty = floor(slice / uTiles.x);
+  vec2 texel = xy * (uGrid - 1.0) + 0.5;
+  return (vec2(tx, ty) * uGrid + texel) / uAtlasSize;
+}
+vec2 sampleField(vec3 uvw){
+  float s = clamp(uvw.z, 0.0, 1.0) * (uGrid - 1.0);
+  float s0 = floor(s);
+  float s1 = min(uGrid - 1.0, s0 + 1.0);
+  vec2 xy = clamp(uvw.xy, 0.0, 1.0);
+  vec2 a = texture2D(uAtlas, atlasUv(xy, s0)).rg;
+  vec2 b = texture2D(uAtlas, atlasUv(xy, s1)).rg;
+  return mix(a, b, s - s0) * vec2(uDensityScale, uTempScale);
+}
+void main(){
+  vec3 ro = cameraPosition;
+  vec3 rd = normalize(vWorld - ro);
+  vec3 rdx = vec3(abs(rd.x) < 1e-4 ? 1e-4 : rd.x, abs(rd.y) < 1e-4 ? 1e-4 : rd.y, abs(rd.z) < 1e-4 ? 1e-4 : rd.z);
+  vec3 tA = (uBoxMin - ro) / rdx;
+  vec3 tB = (uBoxMax - ro) / rdx;
+  vec3 tmin = min(tA, tB), tmax = max(tA, tB);
+  float tn = max(max(tmin.x, tmin.y), max(tmin.z, 0.0));
+  float tf = min(min(tmax.x, tmax.y), tmax.z);
+  if (tf <= tn) discard;
+  float span = tf - tn;
+  float stepLen = span / max(uSteps, 1.0);
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  vec3 col = vec3(0.0);
+  float trans = 1.0;
+  for (int i = 0; i < 64; i++) {
+    if (float(i) >= uSteps) break;
+    float t = tn + (float(i) + jitter) * stepLen;
+    vec3 uvw = (ro + rd * t - uBoxMin) / (uBoxMax - uBoxMin);
+    if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.z < 0.0 || uvw.x > 1.0 || uvw.y > 1.0 || uvw.z > 1.0) continue;
+    vec2 field = sampleField(uvw);
+    float dens = max(field.x, 0.0);
+    float temp = max(field.y, 0.0);
+    float fire = smoothstep(0.25, 1.7, temp) * uFireGain;
+    float smoke = dens * uSmokeGain;
+    float sigma = (smoke * 0.9 + fire * 1.5) * uSigma;
+    if (sigma <= 0.0) continue;
+    float a = 1.0 - exp(-sigma * stepLen);
+    vec3 fireCol = mix(vec3(1.0, 0.16, 0.02), vec3(1.0, 0.86, 0.42), smoothstep(0.4, 1.9, temp));
+    vec3 smokeCol = vec3(0.52, 0.55, 0.6) * (0.35 + 0.65 * (1.0 - exp(-dens)));
+    col += trans * (fireCol * fire * 2.1 + smokeCol * smoke * 0.42) * a;
+    trans *= 1.0 - a;
+    if (trans < 0.02) break;
+  }
+  float alpha = 1.0 - trans;
+  if (alpha < 0.004) discard;
+  gl_FragColor = vec4(col / max(alpha, 0.004), alpha);
+}`
+      };
+    }
+
+    volumeMaterial(record, isFire, isSmoke, box) {
+      const v = record.volume;
+      const shaders = this.volumeShader();
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uAtlas: { value: v.texture },
+          uBoxMin: { value: new THREE.Vector3(box[0], box[1], box[2]) },
+          uBoxMax: { value: new THREE.Vector3(box[3], box[4], box[5]) },
+          uTiles: { value: new THREE.Vector2(v.layout.tilesX, v.layout.tilesY) },
+          uAtlasSize: { value: new THREE.Vector2(v.layout.width, v.layout.height) },
+          uGrid: { value: v.grid },
+          uDensityScale: { value: v.densityScale },
+          uTempScale: { value: v.tempScale },
+          uSigma: { value: 2.4 },
+          uFireGain: { value: isFire ? 1 : 0 },
+          uSmokeGain: { value: isSmoke ? 1 : 0 },
+          uSteps: { value: v.steps }
+        },
+        vertexShader: shaders.vertexShader,
+        fragmentShader: shaders.fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        side: THREE.BackSide,
+        blending: THREE.NormalBlending
+      });
+    }
+
+    volumeSourcePoint(mesh, record) {
+      const box = record.bounds;
+      const spanX = Math.max(box[3] - box[0], 1e-3), spanY = Math.max(box[4] - box[1], 1e-3), spanZ = Math.max(box[5] - box[2], 1e-3);
+      if (record.role === 'Flow' && mesh && typeof mesh.getWorldPosition === 'function') {
+        const world = mesh.getWorldPosition(new THREE.Vector3());
+        return {
+          x: clamp((world.x - box[0]) / spanX, 0.08, 0.92),
+          y: clamp((world.y - box[1]) / spanY, 0.06, 0.5),
+          z: clamp((world.z - box[2]) / spanZ, 0.08, 0.92)
+        };
+      }
+      return {
+        x: clamp((((box[0] + box[3]) * 0.5) - box[0]) / spanX, 0.1, 0.9),
+        y: 0.08,
+        z: clamp((((box[2] + box[5]) * 0.5) - box[2]) / spanZ, 0.1, 0.9)
+      };
+    }
+
+    createVolumeSimulation(mesh, params, record) {
+      const engine = global.FECppEngine;
+      const exports = engine && engine.ready !== false ? engine.exports : null;
+      if (!exports || typeof exports.fe_vol_init !== 'function' || typeof exports.fe_vol_step !== 'function') return false;
+      const atlas = global.FEVolumeAtlas;
+      if (!atlas || typeof atlas.pack !== 'function' || typeof atlas.layout !== 'function') return false;
+      if (volumeLocks > 0) return false;
+      const grid = Math.max(16, Math.round(clamp(number(params, 'Resolution', 80) * 0.3, 16, 28)));
+      if (exports.fe_vol_init(grid, grid, grid) !== 0) return false;
+      const box = record.bounds;
+      const sizeX = Math.max(box[3] - box[0], 1e-3), sizeY = Math.max(box[4] - box[1], 1e-3), sizeZ = Math.max(box[5] - box[2], 1e-3);
+      const info = atlas.layout(grid);
+      const data = new Uint8Array(info.width * info.height * 4);
+      const texture = new THREE.DataTexture(data, info.width, info.height, THREE.RGBAFormat);
+      texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearFilter;
+      texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.generateMipmaps = false;
+      texture.needsUpdate = true;
+      const isFire = domainTypeHasFire(record.domainType);
+      const isSmoke = record.domainType === 'Smoke' || record.domainType === 'Fire + Smoke';
+      const heatEmission = clamp(number(params, 'Heat Emission', 1.2), 0.2, 3);
+      const smokeDensity = clamp(number(params, 'Smoke Density', 1), 0.1, 3);
+      const dissipation = clamp(number(params, 'Dissipation Rate', 0.15), 0.01, 1);
+      record.volume = {
+        exports, grid, data, texture, layout: info,
+        densityScale: 0.8, tempScale: 2.2,
+        accum: 0, stepInterval: 1 / 30,
+        timeScale: clamp(number(params, 'Time Scale', 1), 0.1, 4),
+        buoyancy: clamp(number(params, 'Buoyancy', 0.8), -1, 3) * 0.45 + (isFire ? 0.08 : 0),
+        vorticity: clamp(number(params, 'Vorticity Confinement', 0.12), 0, 1) * 8,
+        dissipation: dissipation * 1.2,
+        cooling: 0.3 + dissipation,
+        iterations: 20,
+        heatPerSecond: (isFire ? 10 : 1.2) * heatEmission * clamp(number(params, 'Fuel', 1), 0.1, 2),
+        smokePerSecond: (isSmoke ? 3 : 0.2) * smokeDensity,
+        source: this.volumeSourcePoint(mesh, record),
+        steps: clamp(Math.round(grid * 2), 32, 64)
+      };
+      record.kind = 'volume';
+      const material = this.volumeMaterial(record, isFire, isSmoke, box);
+      const geometry = new THREE.BoxGeometry(sizeX, sizeY, sizeZ);
+      const visual = new THREE.Mesh(geometry, material);
+      visual.position.set((box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5);
+      visual.frustumCulled = false;
+      visual.renderOrder = 2;
+      visual.name = 'Smoke & Fire Volume';
+      record.visual = visual;
+      record.volumeTexture = texture;
+      record.volumeData = data;
+      volumeLocks++;
+      this.seedVolumeSource(record, 0.05);
+      this.writeVolumeTexture(record);
+      this.scene().add(visual);
+      return true;
+    }
+
+    seedVolumeSource(record, dt) {
+      const v = record.volume, exports = v && v.exports;
+      if (!exports || typeof exports.fe_vol_source !== 'function') return;
+      const heat = v.heatPerSecond * dt, density = v.smokePerSecond * dt;
+      if (heat <= 0 && density <= 0) return;
+      exports.fe_vol_source(v.source.x, v.source.y, v.source.z, 0.12, heat, density, 0.25 * (heat + density));
+    }
+
+    stepVolumeSimulation(record, dt) {
+      const v = record.volume;
+      if (!v) return;
+      v.accum = Math.min(v.accum + dt * v.timeScale, 0.12);
+      if (v.accum < v.stepInterval) return;
+      const stepDt = Math.min(v.accum, 0.05);
+      v.accum = 0;
+      this.seedVolumeSource(record, stepDt);
+      const rc = v.exports.fe_vol_step(stepDt, v.buoyancy, v.vorticity, v.dissipation, v.cooling, v.iterations);
+      if (rc < 0) {
+        record.status = 'error';
+        this.updateStatusBadge();
+        return;
+      }
+      this.writeVolumeTexture(record);
+    }
+
+    writeVolumeTexture(record) {
+      const v = record.volume;
+      if (!v || !v.exports || !global.FEVolumeAtlas) return;
+      const cells = v.grid * v.grid * v.grid;
+      const buffer = v.exports.memory.buffer;
+      const density = new Float32Array(buffer, v.exports.fe_vol_density_ptr(), cells);
+      const temperature = new Float32Array(buffer, v.exports.fe_vol_temperature_ptr(), cells);
+      global.FEVolumeAtlas.pack({ density, temperature, grid: v.grid, out: record.volumeData, densityScale: v.densityScale, temperatureScale: v.tempScale });
+      v.texture.needsUpdate = true;
+    }
+
     liquidMaterial(params) {
       const preset = params['Liquid Preset'] || 'Water';
       const color = preset === 'Honey' ? 0xd99a22 : preset === 'Oil' ? 0x653c20 : preset === 'Slime' ? 0x32a77c : 0x2d91b4;
@@ -1480,6 +1701,8 @@
         if (record.visual?.material?.userData?.liquidUniforms) {
           record.visual.material.userData.liquidUniforms.uSimTime.value = this.simClock;
         }
+      } else if (record.kind === 'volume') {
+        this.stepVolumeSimulation(record, dt);
       } else if (record.kind === 'tracer') {
         this.recycleExpired(record);
         if (this.isCppBackend && typeof this.wasm.fe_sim_pyro_step === 'function') {
@@ -1769,6 +1992,7 @@
     }
 
     updateParticleInstances(record) {
+      if (record.kind === 'volume') return;
       if (record.kind === 'sph') { this.updateFluidSurface(record); return; }
       const positions = this.arena.f32(record.positionPtr, record.count * 3);
       const temperatures = record.temperaturePtr ? this.arena.f32(record.temperaturePtr, record.count) : null;
@@ -1895,6 +2119,11 @@
           record.visual.material?.dispose?.();
         }
       }
+      if (record?.volumeTexture) {
+        record.volumeTexture.dispose?.();
+        record.volumeTexture = null;
+      }
+      if (record?.kind === 'volume') volumeLocks = Math.max(0, volumeLocks - 1);
       if (record?.savedMaterial) mesh.material = record.savedMaterial;
       if ((type === 'Cloth' || type === 'SoftBody') && mesh.userData?.savedSimBaseMaterial) {
         if (mesh.material && mesh.material !== mesh.userData.savedSimBaseMaterial) mesh.material.dispose?.();
