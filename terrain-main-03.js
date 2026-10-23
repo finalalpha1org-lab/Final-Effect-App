@@ -181,12 +181,17 @@ function lowMeshesFor(k){
  });
  return K.lowMeshes;
 }
+/* One scratch buffer for the LoD classification, grown once and then reused, so
+a camera settle never allocates. */
+let lodScratch=new Float32Array(0);
 function sync(k,allInstances=false){
  const K=KIND[k],gr=['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k),tl=gr ? .4 : RK[k] ? .5 : (BLD[k]||NT[k]) ? 0 : .07,T=K.tint;
  const lowAll=LOD_KINDS.has(k)?lowMeshesFor(k):null;
  let lodTiers=null;
  if(lowAll&&!allInstances&&LOD_BOTANICAL.has(k)&&window.FELandscapeCore?.lodClassify&&K.list.length){
-  const n=K.list.length,xyz=new Float32Array(n*3);
+  const n=K.list.length;
+  if(lodScratch.length<n*3)lodScratch=new Float32Array(n*3);
+  const xyz=lodScratch;
   for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z}
   lodTiers=window.FELandscapeCore.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
  }
@@ -195,6 +200,9 @@ function sync(k,allInstances=false){
   let ci=0,li=0;
   const sourceListIndices=[],lowSourceListIndices=[];
   K.list.forEach((o,sourceIndex)=>{
+   /* The core already classifies every instance; -1 means it is past the far
+      plane for this kind, so it must not reach the GPU at all. */
+   if(lodTiers&&lodTiers[sourceIndex]<0)return;
    const nv=m.userData.vn;
    if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
    const h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
@@ -233,14 +241,27 @@ function sync(k,allInstances=false){
 const LOD_KINDS=new Set([...LOD_GROUND,...LOD_BOTANICAL,...LOD_TREES]);
 const lodCameraAnchor=cam.position.clone();
 let lodMotionAt=0,lodSettled=false,lodCursor=0;
+/* The render loop must not allocate. The kind list and its camera anchor are
+   built once, and the per-frame work is a distance compare plus, at most, one
+   matrix rebuild. */
+let lodKindList=null;
+function foliageLodKinds(){
+ const dirty=typeof window!=='undefined'&&window.__feFoliageLodDirty===true;
+ if(!lodKindList||dirty){
+  if(typeof window!=='undefined')window.__feFoliageLodDirty=false;
+  lodKindList=[];
+  for(const k of LOD_KINDS)if(KIND[k]&&Array.isArray(KIND[k].list))lodKindList.push(k);
+ }
+ return lodKindList;
+}
 function updateFoliageLOD(now){
  if(cam.position.distanceToSquared(lodCameraAnchor)>.0025){lodCameraAnchor.copy(cam.position);lodMotionAt=now;lodSettled=false;return}
  if(lodSettled||now-lodMotionAt<240)return;
- const kinds=[...LOD_KINDS].filter(k=>KIND[k]&&Array.isArray(KIND[k].list));
+ const kinds=foliageLodKinds();
  if(!kinds.length)return;
  lodSettled=true;
  const k=kinds[lodCursor++%kinds.length];
- KIND[k].list.forEach(()=>{});
+ if(!KIND[k]||!KIND[k].list||!KIND[k].list.length)return;
  sync(k);
 }
 let season='summer';

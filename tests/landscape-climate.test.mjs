@@ -300,7 +300,7 @@ test('the page, the panel and the build all carry the climate layer', () => {
   assert.match(buildScript, /"landscape-weather\.js"/, 'the build ships the module');
   assert.match(cppBuild, /'cpp\/src\/fe_climate\.cpp'/, 'the wasm build compiles the climate kernel');
   assert.match(cppBuild, /'fe_climate_at',\s*'fe_climate_weather'/, 'the wasm build requires the climate exports');
-  assert.ok(sw.includes("'final-effect-cpp-v24'"), 'the service worker cache is bumped for the new module');
+  assert.ok(sw.includes("'final-effect-cpp-v25'"), 'the service worker cache is bumped for the new module');
   assert.ok(sw.includes("'./landscape-weather.js'"), 'and precaches it');
 });
 
@@ -517,4 +517,64 @@ test('the sheet exposes the toggle and reads the sea state back in physical unit
   assert.match(panel, /stepWaveClimate\(\);/, 'the render loop steps it once a frame');
   assert.match(readFileSync('terrain-main-09.js', 'utf8'), /stepWaveClimate\(\);syncWaterPhysical\(\)/, 'from the frame loop, before the water uniforms are synced');
   assert.match(panel.slice(panel.indexOf('Waves follow the weather'), panel.indexOf('Waves follow the weather') + 700), /^\s*(?!.*(?:C\+\+|WASM|kernel|shader)).*$/is, 'and never names the implementation');
+});
+
+/* ------------------------------------------------------------------ */
+/* Tsunami envelope against the wind sea                               */
+/* ------------------------------------------------------------------ */
+
+function tsunamiBlendFn() {
+  const source = readFileSync('terrain-main-06.js', 'utf8');
+  const block = source.slice(source.indexOf('function tsunamiBlend'), source.indexOf('function tsuLaunch'));
+  const context = { console, Math, Number, window: {} };
+  vm.createContext(context);
+  vm.runInContext(block + '\nglobalThis.__blend = tsunamiBlend;', context);
+  return context.__blend;
+}
+
+test('the surface switches to the long wave over time, not in one frame', () => {
+  const blend = tsunamiBlendFn();
+  assert.equal(typeof blend, 'function');
+  /* A triggered long wave ramps in; the short waves yield as it does. */
+  let f = 0;
+  const ramp = [];
+  for (let i = 0; i < 120; i++) { f = blend(f, true, 8, 1 / 60); ramp.push(f); }
+  assert.ok(ramp[0] > 0 && ramp[0] < 0.1, 'the first frame does not jump to a full tsunami');
+  assert.ok(ramp[5] < ramp[30] && ramp[30] < ramp[119], 'the factor only ever moves towards the long wave');
+  assert.ok(ramp[119] > 0.95, 'and gets there in a couple of seconds');
+  assert.ok(ramp.every((v) => v >= 0 && v <= 1), 'the factor is always a 0..1 blend');
+
+  /* When the front has passed the amplitude goes to zero and the sea returns. */
+  let g = 1;
+  const decay = [];
+  for (let i = 0; i < 150; i++) { g = blend(g, false, 0, 1 / 60); decay.push(g); }
+  assert.ok(decay[0] < 1 && decay[10] < decay[0], 'the long wave leaves gradually');
+  assert.ok(decay[149] < 0.02, 'and the wind sea is back');
+  assert.ok(decay.every((v, i) => i === 0 || v <= decay[i - 1]), 'the decay is monotone');
+
+  /* A tiny amplitude still takes over the silhouette, a huge one clamps. */
+  assert.equal(blend(0, true, 0, 10) <= 1, true);
+  assert.ok(blend(0, true, 0.4, 5) > 0.34, 'a small long wave still gets a visible share');
+  assert.ok(blend(0, true, 40, 5) <= 1, 'and a giant one cannot exceed a full blend');
+});
+
+test('height and normal are blended by the same factor, so the mesh cannot tear', () => {
+  const bridge = readFileSync('terrain-main-01.js', 'utf8');
+  assert.match(bridge, /uniform float uTf,uTl,uTa,uTdx,uTdz,uTsF;/, 'the shader has the blend factor');
+  assert.match(bridge, /float tsF=clamp\(uTsF,0\.,1\.\);/, 'it is clamped to a blend');
+  assert.match(bridge, /vec2 windSlope=waterGrad\*amp\*waterFade\*\(1\.-tsF\*\.85\);/, 'the wind sea yields its slope');
+  assert.match(bridge, /vec2 waterSlope=windSlope\+tsSlope\*tsF;/, 'the long wave takes the slope over');
+  assert.match(bridge, /objectNormal=normalize\(vec3\(-waterSlope\.x,1\.,-waterSlope\.y\)\);/, 'the normal comes from the blended slope');
+  assert.match(bridge, /transformed\.y\+=waterWave\*amp\*waterFade\*\(1\.-tsF\*\.85\)\+tsH\(waterBaseWorld\.xz\)\*tsF\+waterRainHeight\*\(1\.-tsF\*\.7\);/, 'the height uses the identical factor');
+  /* The slope is taken from the same profile the height uses. */
+  assert.match(bridge, /float tsHx=tsH\(waterBaseWorld\.xz\+vec2\(tsE,0\.\)\)-tsH\(waterBaseWorld\.xz\);/, 'the long-wave slope is a finite difference of the height field');
+  assert.match(bridge, /'uTf','uTl','uTa','uTdx','uTdz','uTsF',/, 'and the factor is wired into the material uniforms');
+});
+
+test('the weather step drives the factor and never leaves a stale amplitude', () => {
+  const source = readFileSync('terrain-main-06.js', 'utf8');
+  assert.match(source, /WX\.tsF=tsunamiBlend\(WX\.tsF,WX\.tsAmp>0&&WX\.tsu\.on,WX\.tsAmp,dt\);/, 'the factor is integrated once a frame');
+  assert.match(source, /U\.uTsF\.value=WX\.tsF;U\.uTa\.value=WX\.tsAmp\*WX\.tsF;/, 'the shader amplitude follows the blend instead of snapping to zero');
+  assert.match(source, /if\(Q\.f>215\)\{Q\.on=false;WX\.tsAmp=0/, 'the end of the event drops the target, not the value');
+  assert.match(source, /function tsuReset\(\)\{WX\.tsu\.on=false;WX\.tsAmp=0;/, 'a hard reset clears both');
 });

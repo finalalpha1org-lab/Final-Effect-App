@@ -92,7 +92,7 @@ function tsuDamage(){const Q=WX.tsu,vx=U.uTdx.value*Q.spd*.4,vz=U.uTdz.value*Q.s
 for(const k in KIND){if(RK[k])continue;const K=KIND[k],keep=[];let ch=0;
 for(const o of K.list){const h=tsJS(o.x,o.z),lim=TSU_LIM[k]===undefined?1.2:TSU_LIM[k];if(h>.5&&wl+h-o.y>lim){ch=1;if(BLD[k])buildingDebris(k,o,vx,vz,2);else if(!GRND[k]){spawnDeb(o.x,o.y+1,o.z,2,'wood',vx,vz,2,2);spawnDeb(o.x,o.y+1.5,o.z,4,'leaf',vx,vz,3,2)}}else keep.push(o)}
 if(ch){K.list=keep;sync(k)}}}
-function tsuStep(dt,now){const Q=WX.tsu;if(!Q.on)return;Q.f+=Q.spd*dt;U.uTf.value=Q.f;FXU.wet.value=Math.max(FXU.wet.value,.85);if(Q.dmg&&now-lastDmg2>250){lastDmg2=now;tsuDamage()}if(Q.f>215){Q.on=false;U.uTa.value=0;U.uTf.value=-1e4}}
+function tsuStep(dt,now){const Q=WX.tsu;if(!Q.on)return;Q.f+=Q.spd*dt;U.uTf.value=Q.f;FXU.wet.value=Math.max(FXU.wet.value,.85);if(Q.dmg&&now-lastDmg2>250){lastDmg2=now;tsuDamage()}if(Q.f>215){Q.on=false;WX.tsAmp=0;U.uTf.value=-1e4}}
 /* ---------- real directional shadows only; retain the foliage light-map refresh ---------- */
 const blobO=new THREE.Object3D();
 function rebuildTreeMap(){drawTreeMap()}
@@ -134,10 +134,21 @@ g.attributes.position.needsUpdate=g.attributes.aG.needsUpdate=g.attributes.aRnd.
 function newBolt(){const P=bolt.geometry.attributes.position.array,cx=oc.target.x+(R()-.5)*90,cz=oc.target.z+(R()-.5)*90,n=P.length/3,gy=hgt(cl(cx,-50,50),cl(cz,-50,50));let x=cx,z=cz;for(let i=0;i<n;i++){const t=i/(n-1);P[i*3]=x;P[i*3+1]=95*(1-t)+gy*t;P[i*3+2]=z;x+=(R()-.5)*7;z+=(R()-.5)*7}bolt.geometry.attributes.position.needsUpdate=true}
 function torSpawn(){const a=R()*6.283,T=WX.tor,x0=Math.cos(a)*72,z0=Math.sin(a)*72,tx=(R()-.5)*30,tz=(R()-.5)*30,l=Math.hypot(tx-x0,tz-z0)||1;T.x=x0;T.z=z0;T.dx=(tx-x0)/l;T.dz=(tz-z0)/l;T.on=true;T.t=0;torGrp.visible=true}
 function torStop(){WX.tor.on=false}
-function tsuLaunch(){const T=WX.tsu,a=T.dir*Math.PI/180;T.on=true;T.f=-175;U.uTa.value=T.amp;U.uTl.value=Math.max(12,T.amp*1.7);U.uTdx.value=Math.cos(a);U.uTdz.value=Math.sin(a);U.uTf.value=T.f}
-function tsuReset(){WX.tsu.on=false;U.uTa.value=0;U.uTf.value=-1e4}
+/* A long wave cannot appear or vanish in one frame. This factor ramps the water
+   surface between the wind sea and the tsunami profile, so the vertex shader
+   never has to mix two unrelated wavelength sets in a single step — that jump
+   is what tears the mesh. */
+function tsunamiBlend(cur,on,amp,dt){
+ const c=Number.isFinite(cur)?cur:0,a=Number.isFinite(amp)?amp:0,d=Math.max(0,Number.isFinite(dt)?dt:0);
+ const target=on?Math.min(1,Math.max(.35,a/8)):0;
+ return c+(target-c)*(1-Math.exp(-(on?1.6:2.6)*d));
+}
+window.__feTsunamiBlend=tsunamiBlend;
+function tsuLaunch(){const T=WX.tsu,a=T.dir*Math.PI/180;T.on=true;T.f=-175;WX.tsAmp=T.amp;WX.tsF=Math.max(WX.tsF||0,.05);U.uTa.value=T.amp;U.uTl.value=Math.max(12,T.amp*1.7);U.uTdx.value=Math.cos(a);U.uTdz.value=Math.sin(a);U.uTf.value=T.f}
+function tsuReset(){WX.tsu.on=false;WX.tsAmp=0;U.uTa.value=0;U.uTf.value=-1e4;WX.tsF=0;U.uTsF.value=0}
 function wxPreset(p){WX.preset=p;const P={clear:[0,0,0,0],fog:[0,.88,0,0],drizzle:[.35,.55,0,0],rain:[.75,.85,0,0],storm:[1,1,1,0],blizzard:[0,.9,.5,1]}[p];WX.rainT=P[0];WX.overT=P[1];WX.stormT=P[2];WX.snowfallT=P[3];if(P[3]){WX.snowAuto=false;WX.coverT=Math.max(WX.coverT,.9)}}
 function wxStep(dt,realDt=dt){const e=(c,t,k)=>c+(t-c)*Math.min(1,dt*k),sm=(a,b,x)=>{const q=cl((x-a)/(b-a),0,1);return q*q*(3-2*q)},now=(WX.clk=(WX.clk||0)+dt)*1000;
+WX.tsAmp=Number.isFinite(WX.tsAmp)?WX.tsAmp:0;WX.tsF=tsunamiBlend(WX.tsF,WX.tsAmp>0&&WX.tsu.on,WX.tsAmp,dt);U.uTsF.value=WX.tsF;U.uTa.value=WX.tsAmp*WX.tsF;
 if(SKY.cycle.on){tod=(tod+realDt*24/Math.max(3600,SKY.cycle.length)*SKY.cycle.speed)%24;if(now-SKY.cycle.lastUpdate>80){SKY.cycle.lastUpdate=now;updSky()}}
 if(WX.seasonAuto){const adv=dt/WX.cycle,t1=WX.seasonT,SH=WX.sh,cs=SH?Math.min(SH.e,SH.s0+SH.r*Math.max(0,WX.clk-SH.t0)):0;if(WX.waitLeaves&&t1<.75&&t1+adv>=.75&&cs<.97)WX.seasonT=.7499;else WX.seasonT=(t1+adv)%1;if(WX.seasonAuto)WX.snowAuto=true}
 const t=WX.seasonT;let shed=0,aut=0,bloom=0;

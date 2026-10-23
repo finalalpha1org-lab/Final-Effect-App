@@ -68,6 +68,22 @@ soil whatever the climate says.
   The panel's "sea wave at its real phase speed" button sets the approach speed
   from a 120 m depth instead of the old fixed 26 m/s.
 
+  The water surface does **not** add the long wave on top of the wind sea. One
+  uniform, `uTsF`, blends between them — height, horizontal displacement and
+  normal all move by the same factor, and the long-wave slope is a finite
+  difference of the same profile the height comes from:
+
+  ```glsl
+  float tsF = clamp(uTsF, 0., 1.);
+  windSlope = waterGrad * amp * waterFade * (1. - tsF * .85);
+  waterSlope = windSlope + tsSlope * tsF;
+  ```
+
+  `tsunamiBlend()` integrates the factor towards 1 while a long wave is armed
+  and back to 0 after it passes, so the surface never jumps in one frame —
+  which is exactly the step that used to tear the mesh. The wind-sea
+  amplitude and the rain ripples fade out as the long wave takes over.
+
 ## ABI
 
 ```c
@@ -197,7 +213,7 @@ weather comes back with that switch still on.
 
 ```bash
 node --test tests/landscape-climate.test.mjs   # 19 tests
-npm test                                       # 351 tests
+npm test                                       # 358 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn

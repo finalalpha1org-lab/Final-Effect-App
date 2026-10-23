@@ -61,6 +61,6 @@ node --test tests/landscape-realism.test.mjs      # 14 tests
 node --test tests/landscape-flora.test.mjs        # 18 tests
 node --test tests/landscape-climate.test.mjs      # 15 tests
 node --test tests/landscape-settings-persistence.test.mjs  # 7 tests
-npm test                                          # 351 tests
+npm test                                          # 358 tests
 npm run build                                     # revalidates + copies the artifact
 ```
