@@ -264,12 +264,21 @@ The tests assert a >75 % divergence reduction, temperature-driven rise,
 dissipation, bit-identical determinism and a watertight manifold (every edge
 shared by exactly two triangles, unit outward normals).
 
-**Not wired to the viewport yet.** There is no volume raymarch material, no 3D
-texture upload and no UI in this change, so nothing in the app displays fire or
-smoke. The kernel is also deliberately absent from `FELandscapeCore.missing`:
-adding it there before the bridge uses it would flag every current artifact as
-degraded. Do not describe smoke/fire as a shipped feature until a renderer and a
-panel exist.
+**Exercised in-app, but not rendered.** The ⚙ diagnostics self-test gained an
+eighth row, "Smoke & Fire Volume Solver": it runs a 16³ MAC grid for four steps,
+reports `div x→y`, then fills an analytic sphere and meshes it, so a phone can
+prove the kernel runs. That row is a solver check, not a picture - there is still
+no volume raymarch material, no 3D texture upload and no volume panel, so nothing
+in the viewport displays fire or smoke yet.
+
+The Fluid modifier stays on its existing particle path for now. Its
+`Domain Type` already offers `Fire` / `Smoke` / `Fire + Smoke`, and those domains
+are rendered by `simulationCore.createBuoyantParticles` (particle tracers driven
+by the XPBD/PBF solver), not by this voxel grid. Wiring the Fluid modifier to the
+voxel solver needs a volume renderer and a device check first; the kernel is
+deliberately absent from `FELandscapeCore.missing` because the landscape bridge
+does not consume it. Do not describe smoke/fire as a shipped feature until the
+renderer and panel exist.
 
 ## Degraded / stale artifacts
 

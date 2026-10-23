@@ -23,11 +23,17 @@ async function runSelfTest(landscape){
 test('actual on-device self-test passes against current WASM artifact',async()=>{
   const report=await runSelfTest();
   assert.equal(report.ok,true,JSON.stringify(report.results));
-  assert.equal(report.results.length,7);
+  assert.equal(report.results.length,8);
   const landscape=report.results.find(r=>r.name==='Landscape & Ocean Kernels');
   assert.ok(landscape,'the landscape/ocean check must run');
   assert.ok(landscape.ok,'the ocean kernel must run inside the engine');
   assert.match(landscape.detail,/Wave field 32²/);
+  const smoke=report.results.find(r=>r.name==='Smoke & Fire Volume Solver');
+  assert.ok(smoke,'the volumetric solver must be exercised in the same report');
+  assert.equal(smoke.ok,true,smoke.detail);
+  assert.match(smoke.detail,/16³ MAC grid/);
+  assert.match(smoke.detail,/surface verts/);
+  assert.match(smoke.detail,/div \d+\.\d+→\d+\.\d+/);
 });
 
 test('a fully bound landscape bridge keeps every check green',async()=>{

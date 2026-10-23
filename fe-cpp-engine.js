@@ -1874,6 +1874,42 @@
       results.push({ name: 'Landscape & Ocean Kernels', ok: false, detail: String(error.message || error) });
     }
 
+    /* 8. Eulerian smoke & fire core: MAC-grid transport + pressure projection
+       + the dual isosurface, exercised at a small grid so this row is cheap
+       enough to run on a phone. There is no volume renderer yet - this row
+       proves the solver runs, not that fire is visible in the viewport. */
+    t0 = performance.now();
+    try {
+      let smokeOk = false, smokeDetail = 'Smoke & fire solver unavailable';
+      if (typeof exp.fe_vol_init === 'function' && typeof exp.fe_vol_step === 'function' && typeof exp.fe_vol_surface === 'function') {
+        const grid = 16, cells = grid * grid * grid;
+        exp.fe_vol_init(grid, grid, grid);
+        exp.fe_vol_source(0.5, 0.2, 0.5, 0.16, 1.2, 0.6, 0.8);
+        for (let step = 0; step < 4; step++) exp.fe_vol_step(1 / 60, 4, 1, 0.2, 0.3, 24);
+        const stats = new Float32Array(exp.memory.buffer, exp.fe_vol_stats_ptr(), 6);
+        const density = new Float32Array(exp.memory.buffer, exp.fe_vol_density_ptr(), cells);
+        let smokeMass = 0;
+        for (let n = 0; n < cells; n++) smokeMass += density[n];
+        for (let k = 0; k < grid; k++) {
+          for (let j = 0; j < grid; j++) {
+            for (let i = 0; i < grid; i++) {
+              const x = (i + 0.5) / grid - 0.5, y = (j + 0.5) / grid - 0.5, z = (k + 0.5) / grid - 0.5;
+              density[(k * grid + j) * grid + i] = 0.3 - Math.sqrt(x * x + y * y + z * z);
+            }
+          }
+        }
+        const verts = exp.fe_vol_surface(0, 1 << 16);
+        smokeOk = exp.fe_vol_grid_size() === grid && Number.isFinite(stats[1]) &&
+          stats[1] <= stats[0] && smokeMass > 0 && verts > 0 &&
+          exp.fe_vol_surface_index_count() > 0 && exp.fe_vol_surface_index_count() % 3 === 0;
+        smokeDetail = `16³ MAC grid · div ${Number(stats[0]).toFixed(1)}→${Number(stats[1]).toFixed(2)} · ${verts} surface verts · ${(performance.now() - t0).toFixed(2)} ms`;
+        exp.fe_vol_init(grid, grid, grid);
+      }
+      results.push({ name: 'Smoke & Fire Volume Solver', ok: smokeOk, detail: smokeDetail });
+    } catch (error) {
+      results.push({ name: 'Smoke & Fire Volume Solver', ok: false, detail: String(error.message || error) });
+    }
+
     const allOk = results.every(r => r.ok);
     return { ok: allOk, results, totalMs: +(performance.now() - tTotal0).toFixed(1) };
   };
