@@ -784,6 +784,36 @@ FE_EXPORT void     fe_celestial_moon_ephemeris(
   float* out_7
 );
 
+/* ---- Modifier Kernel Session (C++ geometry modifiers) ----
+ * The JS editor writes an indexed triangle mesh into this session and calls a
+ * kernel. Every kernel reads the session mesh, writes the result back into the
+ * session (positions, uv, indices, normals) and updates the counts. JS only
+ * marshals buffers and uploads the result to the GPU.
+ *
+ * Session buffers live in a dedicated arena inside the core, so they never
+ * invalidate pointers handed to the renderer or the simulation.
+ * Return codes: 0 = ok, -1 = session missing, -2 = capacity exceeded,
+ *               -3 = invalid input, -4 = kernel produced an empty mesh.
+ */
+FE_EXPORT int32_t  fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, uint32_t has_uv);
+FE_EXPORT uint32_t fe_mod_counts_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_pos_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_uv_ptr(void);
+FE_EXPORT uint32_t fe_mod_in_idx_ptr(void);
+FE_EXPORT uint32_t fe_mod_normals_ptr(void);
+FE_EXPORT void     fe_mod_set_counts(uint32_t vert_count, uint32_t tri_count);
+FE_EXPORT int32_t  fe_mod_weld(float epsilon);
+FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode);
+FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon);
+FE_EXPORT int32_t  fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness);
+FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction);
+FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
+FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
+FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
+FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
+FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels);
+FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
+
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 FE_EXPORT int32_t  fe_geo_qem_decimate(
   const float* in_pos_xyz,
