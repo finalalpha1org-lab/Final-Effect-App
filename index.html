@@ -1812,6 +1812,144 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #camera-sheet,#light-sheet,#modifiers-sheet,#animation-sheet{height:62dvh;max-height:68dvh}
   #nav-gizmo-wrapper{transform:scale(0.84);transform-origin:top left}
 }
+
+/* ============================================================
+   FE-LANDSCAPE-LAYOUT
+   Landscape / wide-short viewports (phones held sideways, tablets
+   and small desktop windows). The bottom sheets dock to the right
+   so the short vertical axis stays free for the 3D viewport, and
+   every modal takes the full height instead of a slice of it.
+   ============================================================ */
+@media (orientation: landscape) and (max-height: 620px) {
+  :root { --tb: 44px; }
+
+  /* --- compact studio chrome: keep the canvas as tall as possible --- */
+  .top-bar {
+    padding: calc(env(safe-area-inset-top, 0px) + 2px) calc(env(safe-area-inset-right, 0px) + 10px) 2px calc(env(safe-area-inset-left, 0px) + 10px);
+    gap: 4px;
+  }
+  .top-bar .title { max-width: 36vw; }
+  .layer-bar {
+    height: 34px;
+    padding: 0 calc(env(safe-area-inset-right, 0px) + 10px) 0 calc(env(safe-area-inset-left, 0px) + 10px);
+    font-size: 10.5px;
+  }
+  .toolbar {
+    height: calc(var(--tb) + var(--sb));
+    gap: 6px;
+    padding-left: calc(env(safe-area-inset-left, 0px) + 10px);
+    padding-right: calc(env(safe-area-inset-right, 0px) + 10px);
+  }
+  .tool { min-height: 34px; padding: 6px 11px; font-size: 11.5px; }
+  .tb-btn { min-width: 30px; min-height: 30px; }
+  .timeline-bar { height: 58px; }
+  .timeline-bar.minimized { height: 28px; }
+  .timeline-header { height: 26px; min-height: 26px; }
+  #nav-gizmo-wrapper { transform: scale(0.72); transform-origin: top left; }
+  #mobile-quick-hud { right: calc(env(safe-area-inset-right, 0px) + 8px); bottom: 8px; gap: 5px; }
+  .mob-hud-btn { min-width: 34px; height: 34px; border-radius: 10px; }
+  #cpp-sculpt-paint-bar { top: 6px; max-width: calc(100% - 12px); }
+  #toast { bottom: calc(var(--tb) + var(--sb) + 8px); max-width: 72vw; }
+
+  /* --- studio sheets become right-hand side panels --- */
+  #camera-sheet,
+  #light-sheet,
+  #modifiers-sheet,
+  #animation-sheet,
+  #landscape-sheet,
+  #import-3d-sheet,
+  #add-3d-sheet {
+    top: 0;
+    bottom: 0;
+    left: auto;
+    right: 0;
+    width: min(430px, 48vw);
+    max-width: min(430px, 48vw);
+    height: auto;
+    max-height: none;
+    border-top: 0;
+    border-left: 1px solid #34394d;
+    border-radius: 14px 0 0 14px;
+    box-shadow: -16px 0 36px rgba(0, 0, 0, .62);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: none;
+  }
+  #camera-sheet-body,
+  #light-sheet-body,
+  #animation-sheet-body,
+  #landscape-sheet-body,
+  #import-3d-sheet-body,
+  #add-3d-body { padding: 10px 12px; }
+  #modifiers-sheet-body { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+  #add-3d-body { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
+  .camera-sheet-head,
+  .animation-sheet-head,
+  .modifiers-sheet-head,
+  .landscape-sheet-head,
+  .add-3d-head { min-height: 40px; padding: 6px 12px; }
+  #anim-dopesheet-wrap { height: 132px; }
+  .anim-top-strip { padding: 6px 8px; gap: 5px; }
+
+  /* --- modal sheets: full-height right panels (no more clipped cards) --- */
+  .render-modal-backdrop { align-items: stretch; justify-content: flex-end; padding: 0; }
+  .render-modal-window {
+    width: min(560px, 56vw) !important;
+    max-width: min(560px, 56vw) !important;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    border-radius: 14px 0 0 14px;
+    border-right: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .render-modal-grid { padding: 10px 12px; gap: 10px; }
+  .render-preview-pane { min-height: 96px; }
+  .render-canvas-stage { min-height: 84px; max-height: 26dvh; }
+  #render-preview-canvas { max-height: 24dvh; }
+  .render-actions-bar { padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
+
+  .global-settings-modal { align-items: stretch; justify-content: flex-end; padding: 0; }
+  .global-settings-card {
+    width: min(620px, 60vw);
+    max-width: min(620px, 60vw);
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    border-radius: 14px 0 0 14px;
+    border-right: 0;
+    animation: none;
+  }
+  .global-settings-body { grid-template-columns: 1fr; padding: 12px 14px calc(16px + env(safe-area-inset-bottom, 0px)); gap: 10px; }
+  .global-settings-header { padding: 12px 14px; }
+
+  /* --- parameter drawer docks right like the sheets --- */
+  #drawer {
+    left: auto;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(360px, 44vw);
+    max-height: none;
+    border-top: 0;
+    border-left: 1px solid var(--line2);
+    border-radius: 14px 0 0 14px;
+    transform: translateX(110%);
+  }
+  #drawer.open { transform: none; }
+  #drawer-body { padding: 0 12px 12px; }
+
+  /* --- home --- */
+  #home {
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 14px) calc(env(safe-area-inset-left, 0px) + 16px);
+  }
+  #home h1 { font-size: 21px; }
+  .home-title-row { margin-bottom: 12px; }
+  #home-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; max-width: none; }
+  .card { padding: 12px; gap: 10px; }
+  .card i { width: 38px; height: 38px; font-size: 19px; }
+  .card b { font-size: 14px; }
+}
 /* ============================================================
    FE design system
    One icon set (fe-icons.js), one surface language, one radius
