@@ -36,7 +36,7 @@ function rangeHarness({end = 250, keys = [], bakeEnd = 0, currentFrame = 0} = {}
     String,
     timelineConfig:{
       currentFrame, startFrame:0, endFrame:end, fps:30, isPlaying:false,
-      isMinimized:false, snapToKeys:true, loopRange:false, isScrubbing:false, playAccumulator:0,
+      isMinimized:false, snapToKeys:true, loopRange:false, customRange:false, isScrubbing:false, playAccumulator:0,
       _physicsDirty:false
     },
     renderTimelineRulerCanvas(){ renders.count++; },
@@ -75,15 +75,38 @@ test('the timeline is unlimited: there is no frame ceiling',()=>{
   assert.ok(!/TIMELINE_HARD_MAX/.test(readFileSync('index.html','utf8')), 'the old 10000-frame cap is gone');
 });
 
-test('playback extends the axis instead of stopping, unless looping is on',()=>{
+test('the end frame is a wall: playback stops there instead of growing the scene',()=>{
   const {ctx} = rangeHarness({end:250});
-  assert.equal(ctx.timelineConfig.loopRange, false, 'unlimited playback is the default');
-  ctx.growTimelineForFrame(480);
+  assert.equal(ctx.timelineConfig.loopRange, false, 'stop-at-end is the default');
+
+  ctx.timelineConfig.currentFrame = 10;
+  let tick = ctx.advanceTimelinePlayback(5);
+  assert.deepEqual({frame:tick.frame,wrapped:tick.wrapped,stopped:tick.stopped},{frame:15,wrapped:false,stopped:false});
+
+  ctx.timelineConfig.currentFrame = 248;
+  tick = ctx.advanceTimelinePlayback(4);
+  assert.equal(tick.frame, 250, 'the playhead lands exactly on the end frame');
+  assert.equal(tick.stopped, true, 'and playback is told to stop');
+  assert.equal(ctx.timelineConfig.endFrame, 250, 'playing never stretches the scene');
+
+  ctx.timelineConfig.loopRange = true;
+  tick = ctx.advanceTimelinePlayback(4);
+  assert.equal(tick.wrapped, true, 'looping wraps instead of stopping');
+  assert.equal(tick.frame, 1, '4 frames from 248 wrap 249, 250, 0, 1');
+  assert.equal(ctx.timelineConfig.endFrame, 250, 'looping never stretches the scene either');
+});
+
+test('dragging the ruler past the edge is how time is added',()=>{
+  const {ctx} = rangeHarness({end:250});
+  assert.equal(ctx.timelineConfig.customRange, false, 'a fresh timeline tracks its content');
+  assert.equal(ctx.growTimelineForFrame(480), true);
   assert.equal(ctx.timelineConfig.endFrame, 500, 'the axis grows in 50-frame pages');
-  ctx.growTimelineForFrame(120);
-  assert.equal(ctx.timelineConfig.endFrame, 500, 'frames already inside the range do not shrink it');
-  assert.equal(ctx.toggleTimelineLoop(), true);
-  assert.equal(ctx.timelineConfig.loopRange, true, 'looping can be turned on explicitly');
+  assert.equal(ctx.timelineConfig.customRange, true, 'the dragged length becomes the wall playback stops on');
+  assert.equal(ctx.growTimelineForFrame(120), false, 'frames already inside the range do not shrink it');
+  assert.equal(ctx.timelineAutoFitRange(), false, 'auto-fit never overrides a hand-set length');
+
+  ctx.applyTimelineRange(0, 120);
+  assert.equal(ctx.timelineConfig.customRange, true, 'a typed end frame is owned by the user too');
 });
 
 test('the range stays sane without a hard guard',()=>{

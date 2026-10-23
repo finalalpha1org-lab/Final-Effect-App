@@ -1,78 +1,78 @@
-# Timeline: unlimited range and playback
+# Timeline: range, playback stop and transport
 
-The timeline has no fixed length. Frame `0` is the origin, and the end of the
-visible range is just a window that grows whenever something needs more room.
+Blender rules on a phone: the timeline has **no length ceiling**, but once an
+end frame is known it is a **wall**. Time is added by dragging the ruler past
+the right edge or by typing a longer end frame — never as a side effect of
+playback.
 
-## What "unlimited" means
+## What the range means
 
 | Behaviour | Rule |
 | --- | --- |
-| End frame | Any finite non-negative integer. Only `Number.MAX_SAFE_INTEGER` is a guard, so `1e999` cannot poison the axis math. |
+| End frame | Any finite non-negative integer, pinned to the right of the transport row. Only `Number.MAX_SAFE_INTEGER` is a guard, so `1e999` cannot poison the axis math. |
 | Start frame | `0` or later, always `< end`. |
-| Keyframes | A key beyond the window widens it (`timelineAutoFitRange`). |
-| Simulation bake | A bake whose `frameEnd` is beyond the window widens it. |
-| Playhead | A frame typed into the **Frame** field past the end widens it. |
-| Scrubbing | Dragging past the right edge of the ruler adds time instead of stopping. |
-| Playback | Keeps extending the axis in 50-frame pages. Nothing wraps or stops. |
-| Fit to keys | Sizes the window to the last key (or bake) plus a 12-frame tail. |
+| Playback | **Stops exactly on the end frame** (`advanceTimelinePlayback().stopped`). With `Loop: on` it wraps inside `[start, end]` instead. |
+| Play on the wall | Pressing play while parked on the end frame rewinds to `start` first, so the button never looks dead. |
+| Frame step | `stepTimelineFrame(±1)` stops at both walls; it never wraps. |
+| Dragging | A drag past the right edge adds `overshoot × framesPerPx × 1.6` frames (≤ 320 px of overshoot per move) and the new length becomes the wall. |
+| Typing | `End` (header) or `Start`/`End` (Animation Studio strip) sets the wall directly. |
+| Fit to keys | Sizes the wall to the last key (or bake) plus a 12-frame tail, and hands the range back to content tracking. |
+| Auto-grow | Only while `timelineConfig.customRange` is **false** — a length the user typed, fitted or dragged is never silently stretched again. |
 
-`timelineAutoFitRange()` never shrinks the window; only the explicit range
-controls do (`applyTimelineRange`, `fitTimelineRangeToKeys`).
+`timelineConfig.customRange` is the single switch: `false` = derive the length
+from content, `true` = the user owns it.
 
 ## Controls
 
-**Timeline header** (`#studio-timeline-bar`)
+**Timeline header** (`#studio-timeline-bar`, 122 px tall — 132 px on phones)
 
-* `Frame`, `Start`, `End` numeric fields
-* `▶` play/pause, `⏮` first frame, `⏭` end frame, `◀ ◆` / `◆ ▶` previous/next key
-* `SNAP` — magnet scrubbing onto keyframes
+* `End` numeric field **pinned** to the right, outside the scrolling row, so the
+  wall is always one tap away
+* raised 3D play disc (`#tb-play-btn`): glossy gradient, hard lip, indigo halo,
+  pulsing ring while playing; play/pause swap is an SVG swap, not a text glyph
+* `skipBack` / `skipForward` — first and last frame
+* `stepBack` / `stepForward` — one frame (stops at the walls)
+* amber `keyPrev` / `keyNext` — previous / next keyframe (a key beyond the wall
+  widens the range to reach it)
+* `SNAP`, `Key`, `Frame`, `Start`, `FPS`, `Bake Sim` live in the scrolling part
+* chevron button collapses the bar to just the control row
 
 **Animation Studio → Timeline strip** (`#anim-range-strip`)
 
-* `Start` / `End` fields
-* `+50` — extend the end by 50 frames
-* `Fit to keys` — size the window to the last keyframe
-* `Loop: off/on` — off (default) means unlimited playback; on loops inside
-  `[start, end]`
+* `Start` / `End` fields, `+50`, `Fit to keys`
+* `Loop: off/on` — off (default) stops on the end frame, on loops inside the range
 * status chip showing the current `start – end`
 
 ## Playback
 
 ```js
-if (nextFrame > timelineConfig.endFrame) {
-  if (timelineConfig.loopRange) { /* wrap inside the range */ }
-  else growTimelineForFrame(nextFrame);       /* unlimited */
-}
+const advance = advanceTimelinePlayback(steps);   // pure: no DOM, no physics
+if (advance.wrapped) resetAllPhysicsSimulations();
+setTimelineCurrentFrame(advance.frame);
+if (advance.stopped) stopTimelinePlayback();      // leaves the play disc in play state
 ```
 
-`growTimelineForFrame(frame)` rounds up to the next 50-frame page so the ruler
-does not rescale on every single frame.
+`advanceTimelinePlayback` is pure so the rule is testable without a browser; the
+render loop owns the side effects. `stopTimelinePlayback()` announces *how to add
+time* once per session and never nags again.
 
 ## Scrubbing
 
-`applyTimelineScrub(clientX)` still maps the pointer position absolutely (never
-`currentFrame + delta`, which used to drift). Two additions:
-
-* a pointer left of the plot clamps to `startFrame`;
-* a pointer past the right edge adds `overshoot × framesPerPx × 1.6` frames
-  (capped at 320 px of overshoot per move) and then lands the playhead on the
-  new end.
+`applyTimelineScrub(clientX)` maps the pointer position absolutely (never
+`currentFrame + delta`, which used to drift). A pointer left of the plot clamps
+to `startFrame`; a pointer past the right edge grows the range (see the table)
+and then lands the playhead on the new end.
 
 ## No solver badge
 
-The timeline header used to carry a green readiness pill
-(`#tb-status-badge`, e.g. `Physics: ready`). It is gone: the viewport chrome
-never reports engine or solver state. `getSolverDiagnostics()` still returns
-`backendLabel`, and that is shown in ⚙ → Run Benchmark only.
-
+The header used to carry a green readiness pill (`#tb-status-badge`). It is
+gone: the viewport chrome never reports engine or solver state.
 `removePhysicsBadgeFromDom()` deletes the pill if an installed client still has
-it cached, and `SimulationEngine.updateStatusBadge()` now only performs that
-removal.
+it cached, and `SimulationEngine.updateStatusBadge()` only performs that removal.
 
 ## Verifying
 
-* `node --test tests/timeline-range.test.mjs tests/timeline-scrub.test.mjs`
-* `node --test tests/physics-badge-guard.test.mjs`
-* In the app: set `End` to 5000 → the ruler spans it; play → the playhead keeps
-  going and the end keeps growing; drag past the right edge → the timeline
-  extends; tap `Loop: on` → playback wraps inside the range instead.
+* `node --test tests/timeline-range.test.mjs tests/timeline-scrub.test.mjs tests/timeline-transport.test.mjs`
+* In the app: set `End` to 120 → play → the playhead stops on 120 and the disc
+  returns to play; press play again → it rewinds and replays; drag past the right
+  edge → the range grows to the next 50; `Loop: on` → playback wraps instead.
