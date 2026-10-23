@@ -1,0 +1,11 @@
+node_modules/
+build/
+build-native/
+dist/
+.wrangler/
+public/simulation_solver.wasm
+/fe_core_engine.wasm
+package-lock.json
+Final-Effect-3D-Standalone.html
+cpp-engine-verified-preview.png
+.DS_Store

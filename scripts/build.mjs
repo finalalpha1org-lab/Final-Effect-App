@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { build } from "esbuild";
-import { createStandaloneTerrainHtml } from "./standalone-html.mjs";
+import { createStandaloneAppHtml, createStandaloneTerrainHtml } from "./standalone-html.mjs";
+
+execFileSync(process.execPath, ["./scripts/build-cpp-wasm.mjs"], { stdio: "inherit" });
 
 const testFiles = readdirSync("tests").filter((name) => name.endsWith(".test.mjs")).map((name) => `tests/${name}`);
 if (testFiles.length) execFileSync(process.execPath, ["--test", ...testFiles], { stdio: "inherit" });
@@ -10,7 +12,32 @@ if (testFiles.length) execFileSync(process.execPath, ["--test", ...testFiles], {
 rmSync("build", { recursive: true, force: true });
 mkdirSync("build/client", { recursive: true });
 mkdirSync("build/server", { recursive: true });
-cpSync("public", "build/client", { recursive: true });
+
+const resolveAsset = (name) => (existsSync(`public/${name}`) ? `public/${name}` : name);
+if (existsSync("public/index.html")) {
+  cpSync("public", "build/client", { recursive: true });
+} else {
+  const staticAssets = [
+    "index.html",
+    "Terrain_system_.html",
+    "styles.css",
+    "main.js",
+    "celestial-math.js",
+    "scatter-spacing.js",
+    "simulationCore.js",
+    "fe-cpp-engine.js",
+    "favicon.svg",
+    "og-image.svg",
+    "robots.txt",
+    "metadata.json",
+    "manifest.webmanifest",
+    "sw.js"
+  ];
+  for (const asset of staticAssets) {
+    if (existsSync(asset)) cpSync(asset, `build/client/${asset}`);
+  }
+}
+
 cpSync("worker.js", "build/server/worker.js");
 await build({
   entryPoints: ["src/modifier-entry.mjs"],
@@ -28,13 +55,17 @@ await build({
 console.log("Bundled modifier geometry/CSG engine against the app's global Three.js runtime.");
 await build({ entryPoints: ["src/tessendorf-ocean.mjs"], outfile: "build/client/tessendorf-ocean.js", bundle: true, minify: true, legalComments: "none", format: "iife", globalName: "TessendorfOceanBundle", target: "es2018" });
 console.log("Bundled the CPU inverse-FFT Tessendorf ocean solver.");
-const standaloneHtml = createStandaloneTerrainHtml(readFileSync("public/Terrain_system_.html", "utf8"), {
-  celestialMath: readFileSync("public/celestial-math.js", "utf8"),
-  scatterSpacing: readFileSync("public/scatter-spacing.js", "utf8"),
+const standaloneHtml = createStandaloneTerrainHtml(readFileSync(resolveAsset("Terrain_system_.html"), "utf8"), {
+  celestialMath: readFileSync(resolveAsset("celestial-math.js"), "utf8"),
+  scatterSpacing: readFileSync(resolveAsset("scatter-spacing.js"), "utf8"),
   tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
 });
 writeFileSync("build/client/Terrain-System-Standalone.html", standaloneHtml);
 console.log(`Built Terrain-System-Standalone.html (${Buffer.byteLength(standaloneHtml)} bytes).`);
+
+const cppWasm = readFileSync("wasm/fe_core_engine.wasm");
+writeFileSync("build/client/fe_core_engine.wasm", cppWasm);
+console.log(`Copied C++20 Core Engine fe_core_engine.wasm (${cppWasm.length} bytes).`);
 
 const solverPartsDir = "wasm/artifact-parts";
 const solverParts = readdirSync(solverPartsDir)
@@ -55,6 +86,18 @@ const solverAbi = solverInstance.exports.sim_solver_abi_version();
 if (![1, 2].includes(solverAbi)) throw new Error(`Unsupported simulation solver ABI version ${solverAbi}.`);
 writeFileSync("build/client/simulation_solver.wasm", solverWasm);
 console.log(`Built simulation_solver.wasm (${solverWasm.length} bytes, ABI v${solverAbi}).`);
+
+const fullStandaloneApp = createStandaloneAppHtml(readFileSync(resolveAsset("index.html"), "utf8"), {
+  simulationCore: readFileSync(resolveAsset("simulationCore.js"), "utf8"),
+  modifierEngine: readFileSync("build/client/modifier-engine.js", "utf8"),
+  feCppEngine: readFileSync(resolveAsset("fe-cpp-engine.js"), "utf8"),
+  cppWasmBase64: cppWasm.toString("base64"),
+  simWasmBase64: solverBase64,
+  terrainStandaloneHtml: standaloneHtml,
+});
+writeFileSync("build/client/Final-Effect-3D-Standalone.html", fullStandaloneApp);
+writeFileSync("Final-Effect-3D-Standalone.html", fullStandaloneApp);
+console.log(`Built portable 1-file Final-Effect-3D-Standalone.html (${Buffer.byteLength(fullStandaloneApp)} bytes).`);
 
 const rawConfig = readFileSync("wrangler.jsonc", "utf8");
 const config = JSON.parse(rawConfig.replace(/\/\/[^\n]*/g, "").replace(/,(\s*[}\]])/g, "$1"));
