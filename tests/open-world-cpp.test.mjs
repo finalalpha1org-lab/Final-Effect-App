@@ -100,3 +100,28 @@ test('Open World generation, scheduling and hydrology route through the C++ brid
  assert.ok(studio.includes('owPlan({cx,cz,radius:OW.radius'),'chunk scheduling uses the C++ planner');
  assert.ok(studio.includes('lodClassify({count:n,xyz'),'foliage LOD classification uses the C++ kernel');
 });
+
+test('a generated chunk matches the C++ sampler end to end through the bridge',async()=>{
+ const vm=await import('node:vm');
+ const wasmBytes=readFileSync('fe_core_engine.wasm');
+ const ctx={console,URL,WebAssembly,Float32Array,Float64Array,Int8Array,Uint8Array,Int32Array,Math,Object,Number,String,Array,Map,Set,
+  document:{baseURI:'https://example.test/Terrain_system_.html'},
+  fetch:async()=>({ok:true,arrayBuffer:async()=>wasmBytes.buffer.slice(wasmBytes.byteOffset,wasmBytes.byteOffset+wasmBytes.byteLength)})};
+ ctx.window=ctx;ctx.globalThis=ctx;
+ vm.createContext(ctx);
+ vm.runInContext(readFileSync('terrain-main-01.js','utf8').split('/* END LANDSCAPE CORE BRIDGE */')[0],ctx);
+ await ctx.FELandscapeCore.loading;
+ assert.equal(ctx.FELandscapeCore.ready,true);
+ vm.runInContext(readFileSync('open-world-generator.js','utf8'),ctx);
+ const cfg={cx:1,cz:-2,chunkSize:256,segments:64,seed:1234,vegetationSeed:55,mountainHeight:42,waterCoverage:28,blend:.62,seaLevel:-24,worldHalf:4096,biomeMix:{hills:1.2,alpine:.8,desert:.7,volc:.5},clustering:.3,vegetationDensity:1,maxPlantsPerChunk:600,biomeTables:{hills:[['pine',.2],['grass',1]],alpine:[['spruce',.4]],desert:[['saguaro',.2]],volc:[['basalt',.2]]},rules:{},sizes:{},variations:{},spacing:{}};
+ const job=ctx.OpenWorldGenerator.createChunkJob(cfg);
+ let result;do{result=job.step(8,2048)}while(!result.done);
+ const chunk=result.chunk;
+ assert.equal(chunk.heights.length,65*65);
+ assert.equal(chunk.surfaceWeights.length,65*65*12);
+ assert.ok(chunk.heights.every(Number.isFinite));
+ assert.equal(chunk.heights[0].toFixed(3),ctx.FELandscapeCore.owHeightAt(cfg,chunk.originX-128,chunk.originZ-128).toFixed(3),'chunk vertex 0 must equal the C++ point sampler');
+ const total=chunk.surfaceWeights.slice(0,12).reduce((a,b)=>a+b,0);
+ assert.ok(Math.abs(total-1)<1e-3,'surface weights stay normalised through the bridge');
+ assert.ok(chunk.plantCount<=600,'plants still respect the JS placement budget');
+});
