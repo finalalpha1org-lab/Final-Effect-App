@@ -14,7 +14,7 @@ function terrainForTests(){
   combinedTerrainPath=join(tmpdir(),`final-effect-terrain-${process.pid}.html`);writeFileSync(combinedTerrainPath,html);return combinedTerrainPath;
 }
 export function appPath(name) {
-  if(name==='Terrain_system_.html'&&existsSync(resolve(projectRoot,'public','terrain-main-01.js')))return terrainForTests();
+  if(name==='Terrain_system_.html'&&(existsSync(resolve(projectRoot,'public','terrain-main-01.js'))||existsSync(resolve(projectRoot,'terrain-main-01.js'))))return terrainForTests();
   const publicPath = resolve(projectRoot, 'public', name);
   return existsSync(publicPath) ? publicPath : resolve(projectRoot, name);
 }

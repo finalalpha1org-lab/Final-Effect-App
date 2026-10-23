@@ -1,0 +1,34 @@
+{
+  "name": "Final Effect 3D — Cross-Platform Creation Suite",
+  "short_name": "Final Effect",
+  "description": "C++20 / WebAssembly 3D Animation, Terrain, Sculpting, Physics & Render Suite for Mobile and Desktop Editors.",
+  "start_url": "./#/home",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0e12",
+  "theme_color": "#0d0e12",
+  "categories": ["graphics", "video", "design", "productivity"],
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "3D Animation Workspace",
+      "short_name": "Workspace",
+      "description": "Open 3D Modeling, Keyframe Animation & C++ Render Engine",
+      "url": "./#/core"
+    },
+    {
+      "name": "Landscaping Studio",
+      "short_name": "Landscape",
+      "description": "Open Terrain, Ocean & Biome Studio",
+      "url": "./#/landscape"
+    }
+  ]
+}

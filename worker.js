@@ -9,6 +9,14 @@ export default {
       headers.set("Content-Disposition", 'attachment; filename="Terrain-System-Standalone.html"');
       return new Response(request.method === "HEAD" ? null : assetResponse.body, { status: assetResponse.status, headers });
     }
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/download/Final-Effect-3D-Standalone.html") {
+      const assetUrl = new URL("/Final-Effect-3D-Standalone.html", url);
+      const assetResponse = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: request.headers }));
+      if (assetResponse.status === 404) return assetResponse;
+      const headers = new Headers(assetResponse.headers);
+      headers.set("Content-Disposition", 'attachment; filename="Final-Effect-3D-Standalone.html"');
+      return new Response(request.method === "HEAD" ? null : assetResponse.body, { status: assetResponse.status, headers });
+    }
     const assetResponse = await env.ASSETS.fetch(request);
     if (assetResponse.status !== 404) return assetResponse;
 

@@ -8,6 +8,14 @@
 <meta http-equiv="Expires" content="0">
 <title>Final Effect 3D</title>
 <meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
+<meta name="theme-color" content="#0d0e12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Final Effect">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./favicon.svg">
+<link rel="manifest" href="./manifest.webmanifest">
 <meta property="og:title" content="Final Effect 3D">
 <meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js" crossorigin="anonymous"></script>
@@ -1712,26 +1720,92 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .setting-number-wrap span{font-size:11px;color:#a5b4fc;min-width:36px;text-align:right}
 .autosave-status{font-size:11px;color:#86efac;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.17);border-radius:8px;padding:8px 10px}
 @media(max-width:640px){.global-settings-modal{align-items:flex-end;padding:0}.global-settings-card{width:100%;height:min(88dvh,850px);min-height:0;max-height:92dvh;border-radius:20px 20px 0 0;border-bottom:0;animation:slideUpSettings .22s ease-out}.global-settings-body{grid-template-columns:1fr;padding:14px 14px calc(22px + env(safe-area-inset-bottom,0px));gap:10px}.global-settings-header{padding:14px 16px}.setting-item{gap:8px}.setting-label small{max-width:240px}.setting-select{min-width:136px}}
+/* =========================================================
+   C++20 ENGINE UI: KEYFRAME STUDIO, RENDER STUDIO, SCULPT & MOBILE HUD
+   ========================================================= */
+.cpp-badge-pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,0.16);border:1px solid rgba(129,140,248,0.4);color:#a5b4fc;letter-spacing:.03em}
+.home-actions-group{display:flex;align-items:center;gap:8px}
+.install-app-btn{display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 14px;border-radius:12px;background:linear-gradient(135deg,#4f46e5,#6366f1);border:1px solid #818cf8;color:#fff;font-size:12px;font-weight:700;box-shadow:0 6px 18px rgba(99,102,241,0.32);transition:transform .15s ease}
+.install-app-btn:active{transform:scale(0.96)}
+.anim-studio-wrap{display:flex;flex-direction:column;gap:10px;padding:2px 0 12px}
+.anim-top-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:#141824;border:1px solid #262c40;border-radius:10px;padding:8px 10px}
+.anim-target-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:#1c2133;border:1px solid #323a56;font-size:12px;font-weight:700;color:#e2e8f0}
+.anim-key-badge{font-size:10px;padding:2px 7px;border-radius:999px;background:rgba(245,158,11,0.18);border:1px solid rgba(245,158,11,0.45);color:#fbbf24;font-weight:700}
+.anim-btn{min-height:36px;padding:6px 11px;border-radius:8px;background:#1e2334;border:1px solid #333b54;color:#e2e8f0;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.anim-btn:active{transform:scale(0.96);background:#283048}
+.anim-btn.primary{background:rgba(99,102,241,0.25);border-color:#6366f1;color:#c7d2fe}
+.anim-btn.danger{background:rgba(239,68,68,0.14);border-color:rgba(239,68,68,0.45);color:#fca5a5}
+.anim-btn.active-autokey{background:rgba(239,68,68,0.28);border-color:#ef4444;color:#fff;box-shadow:0 0 12px rgba(239,68,68,0.4)}
+.anim-select{min-height:36px;padding:0 9px;border-radius:8px;background:#10131d;border:1px solid #333b54;color:#e2e8f0;font-size:11px;font-weight:600}
+#anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:none}
+#anim-dopesheet-canvas{width:100%;height:100%;display:block;cursor:ew-resize}
+.anim-presets-bar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.anim-presets-bar::-webkit-scrollbar{display:none}
+.anim-preset-chip{flex:none;min-height:34px;padding:5px 11px;border-radius:999px;background:#181c2a;border:1px solid #2e354d;color:#cbd5e1;font-size:11px;font-weight:600;white-space:nowrap}
+.anim-preset-chip:hover,.anim-preset-chip:active{border-color:#818cf8;color:#fff;background:#222840}
+.render-modal-backdrop{position:fixed;inset:0;z-index:10050;background:rgba(4,6,12,0.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:12px}
+.render-modal-backdrop[hidden]{display:none !important}
+.render-modal-window{width:min(1040px,100%);max-height:94dvh;background:#11141e;border:1px solid #2f364f;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,0.85);display:flex;flex-direction:column;overflow:hidden}
+.render-modal-head{padding:12px 16px;background:#161a27;border-bottom:1px solid #272d42;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.render-modal-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(290px,0.95fr);gap:14px;padding:14px;overflow-y:auto;flex:1;min-height:0}
+.render-preview-pane{display:flex;flex-direction:column;gap:10px;background:#090b10;border:1px solid #23283b;border-radius:12px;padding:10px;min-height:260px}
+.render-canvas-stage{flex:1;min-height:220px;max-height:56dvh;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#0d1018 0% 25%,#121622 0% 50%) 50%/18px 18px;border-radius:8px}
+#render-preview-canvas{max-width:100%;max-height:54dvh;width:auto;height:auto;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,0.7)}
+.render-progress-track{height:6px;border-radius:999px;background:#1b2030;overflow:hidden}
+#render-progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#38bdf8);transition:width .14s ease}
+.render-controls-pane{display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+.render-group{background:#161926;border:1px solid #262c40;border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.render-group-title{font-size:11px;font-weight:700;color:#a5b4fc;text-transform:uppercase;letter-spacing:.06em}
+.render-row{display:grid;grid-template-columns:108px 1fr;align-items:center;gap:8px;font-size:11px;color:#cbd5e1}
+.render-row select,.render-row input[type=range]{width:100%}
+.render-actions-bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;background:#161a27;border-top:1px solid #272d42}
+#cpp-sculpt-paint-bar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:128;display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(16,19,28,0.92);border:1px solid #353d58;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.65);backdrop-filter:blur(8px);max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none}
+#cpp-sculpt-paint-bar[hidden]{display:none !important}
+#mobile-quick-hud{position:absolute;right:10px;bottom:10px;z-index:124;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
+.mob-hud-btn{min-width:38px;height:38px;padding:0 10px;border-radius:11px;background:rgba(18,21,32,0.88);border:1px solid rgba(129,140,248,0.32);color:#e2e8f0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 4px 14px rgba(0,0,0,0.55);backdrop-filter:blur(6px)}
+.mob-hud-btn:active{transform:scale(0.94);border-color:#6366f1;background:#232942}
+@media(max-width:760px){
+  .render-modal-grid{grid-template-columns:1fr;padding:10px}
+  .render-modal-backdrop{padding:0;align-items:flex-end}
+  .render-modal-window{max-height:95dvh;border-radius:18px 18px 0 0}
+  .tool{min-height:40px;padding:8px 13px}
+  .tb-btn{min-width:32px;min-height:32px}
+}
+@media(orientation:landscape) and (max-height:520px){
+  .top-bar{padding-top:4px;padding-bottom:4px}
+  .layer-bar{height:40px}
+  .toolbar{--tb:44px}
+  #camera-sheet,#light-sheet,#modifiers-sheet,#animation-sheet{height:62dvh;max-height:68dvh}
+  #nav-gizmo-wrapper{transform:scale(0.84);transform-origin:top left}
+}
 </style>
 </head>
 <body>
 <script src="simulationCore.js"></script>
 <script src="modifier-engine.js"></script>
+<script src="fe-cpp-engine.js"></script>
 
 <div id="app">
   <!-- Home screen -->
   <main id="home" class="screen active" data-screen="home">
     <div class="home-title-row">
       <div>
-        <h1>Final Effect 3D</h1>
-        <p>Choose a studio to start.</p>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <h1>Final Effect 3D</h1>
+          <span class="cpp-badge-pill">⚡ C++20 / WASM Core</span>
+        </div>
+        <p>All-Platform Mobile & Desktop Creation Suite — Choose a studio to start.</p>
       </div>
-      <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
+      <div class="home-actions-group">
+        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Run Live On-Device C++20 Engine Self-Test & Ray-Trace Benchmark">🧪 Test C++</button>
+        <button class="install-app-btn pwa-install-btn" type="button" onclick="installFinalEffectPWA()" title="Install Final Effect 3D on Phone or Desktop">📲 Install App</button>
+        <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
+      </div>
     </div>
 
     <!-- Home Navigation Tabs -->
@@ -1848,9 +1922,29 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <div class="setting-item">
           <div class="setting-label">
             <span>Touch Gestures</span>
-            <small>1 finger orbits, 2 fingers pinch-zoom & pan</small>
+            <small>1 finger orbits, 2 fingers pinch-zoom & pan, double-tap focuses object</small>
           </div>
-          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">Multi-Touch Active</span>
+          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">C++ Touch Filter</span>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>Mobile / Desktop GPU Performance Tier</span>
+            <small>C++ frame-time governor adapts pixel ratio & shadow maps for smooth FPS</small>
+          </div>
+          <select class="setting-select" id="set-gpu-tier">
+            <option value="0">Auto (C++ Adaptive)</option>
+            <option value="1">Low (Mobile 60fps / Battery)</option>
+            <option value="2">Medium (Balanced Mobile)</option>
+            <option value="3">High (Flagship / Desktop Pro)</option>
+          </select>
+        </div>
+        <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">C++20 Core Engine · Adaptive Governor Ready</div>
+        <div class="setting-item">
+          <div class="setting-label">
+            <span>All-Platform Standalone App</span>
+            <small>Install full-screen PWA on Android, iOS, Windows, macOS or Linux</small>
+          </div>
+          <button class="settings-action-btn" type="button" onclick="installFinalEffectPWA()">📲 Install App</button>
         </div>
       </div>
 
@@ -2239,28 +2333,191 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
-     ANIMATION STUDIO: SCROLLABLE BOTTOM SHEET FLOATING PANEL
+     ANIMATION STUDIO: C++20 KEYFRAME & DOPE SHEET PANEL
 ========================================================= -->
 <aside id="animation-sheet" aria-label="Animation Studio" style="display:none;">
   <header class="animation-sheet-head">
     <div class="animation-sheet-title">
       <span>🎬</span>
       <strong>Animation Studio</strong>
-      <small>Timeline & Keyframes</small>
+      <small>C++20 Keyframes & Curves</small>
     </div>
-    <div class="animation-header-actions">
+    <div class="animation-header-actions" style="display:flex;align-items:center;gap:6px;">
+      <button class="anim-btn" id="btn-anim-autokey" type="button" onclick="FECppEngine.autoKey=!FECppEngine.autoKey;refreshAnimationStudioUI();FE.toast(FECppEngine.autoKey?'⏺ Auto-Key Enabled':'Auto-Key Disabled')">⏺ Auto-Key</button>
       <button class="btn animation-close" type="button" aria-label="Close Animation Studio" onclick="closeAnimationModal(event)">✕</button>
     </div>
   </header>
   <div id="animation-sheet-body">
-    <!-- Empty scrollable bottom sheet area -->
-    <div style="min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #64748b; font-size: 13px; gap: 8px; text-align: center; padding: 40px 20px;">
-      <span style="font-size: 28px;">🎬</span>
-      <span style="font-weight: 600; color: #94a3b8;">Animation Studio Panel</span>
-      <span style="font-size: 11px; max-width: 300px; color: #475569;">Timeline & Keyframe animation tools placeholder. Scrollable bottom sheet ready.</span>
+    <div class="anim-studio-wrap">
+      <div class="anim-top-strip">
+        <div class="anim-target-pill">
+          <span>🎯</span>
+          <span id="anim-active-target">Cube</span>
+          <span class="anim-key-badge" id="anim-key-count-badge">0 Keys</span>
+        </div>
+        <button class="anim-btn primary" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')">◆ + Key All</button>
+        <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('loc')">+ Loc</button>
+        <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('rot')">+ Rot</button>
+        <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('scale')">+ Scale</button>
+        <button class="anim-btn danger" type="button" onclick="FECppEngine.deleteKeyframeAtCurrentFrame()" title="Delete Keyframe at Current Frame">🗑 Del Key</button>
+        <button class="anim-btn" type="button" onclick="FECppEngine.clearActiveObjectAnimation()" title="Clear All Keyframes on Selected Object">🧹 Clear</button>
+        <select class="anim-select" id="anim-interp-select" title="C++ Curve Interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
+          <option value="0">Curve: Bezier Smooth</option>
+          <option value="1">Curve: Linear</option>
+          <option value="2">Curve: Step / Hold</option>
+          <option value="3">Curve: Ease In</option>
+          <option value="4">Curve: Ease Out</option>
+          <option value="5">Curve: Bounce</option>
+        </select>
+        <select class="anim-select" id="anim-extrap-select" title="Track Repeat Mode" onchange="if(FECppEngine.ready){FECppEngine.exports.fe_anim_set_extrapolation(FECppEngine.getSlotForObjectId(FE.getActiveObjectId?.()||'cube'),parseInt(this.value)||0);renderDopeSheetAndCurveCanvas();}">
+          <option value="0">Mode: Hold</option>
+          <option value="1">Mode: Loop Cycle</option>
+          <option value="2">Mode: Ping-Pong</option>
+        </select>
+      </div>
+      <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames & inspect C++ animation curves">
+        <canvas id="anim-dopesheet-canvas"></canvas>
+      </div>
+      <div class="anim-presets-bar">
+        <span style="font-size:11px;font-weight:700;color:#818cf8;flex:none;margin-right:2px;">⚡ C++ Motion Clips:</span>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(0)">🔄 Turntable 360°</button>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(1)">☁️ Float Hover</button>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(2)">🏀 Squash & Bounce</button>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(3)">🕰 Pendulum</button>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(4)">🎥 Cinema Orbit</button>
+        <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(5)">💓 Pulse Scale</button>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;flex:none;margin-left:6px;">
+          Amp <input type="range" id="anim-preset-amp" min="0.2" max="2.5" step="0.1" value="1.0" style="width:70px;">
+        </label>
+      </div>
     </div>
   </div>
 </aside>
+
+<!-- =========================================================
+     C++20 RENDER ENGINE & VIDEO SEQUENCE EXPORT STUDIO
+========================================================= -->
+<div id="render-engine-modal" class="render-modal-backdrop" onclick="if(event.target===this)closeRenderEngineModal()" hidden>
+  <div class="render-modal-window" role="dialog" aria-modal="true" aria-labelledby="render-studio-title">
+    <header class="render-modal-head">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px;">⚡</span>
+        <div>
+          <strong id="render-studio-title" style="font-size:15px;color:#f8fafc;">C++20 Render Engine & Video Exporter</strong>
+          <div style="font-size:11px;color:#94a3b8;">Progressive BVH Path Tracer (FE Cycles) · WebGL + C++ Post-FX (FE Eevee) · Mobile 9:16 & 16:9</div>
+        </div>
+      </div>
+      <button class="export-modal-close" type="button" onclick="closeRenderEngineModal()" aria-label="Close Render Engine">✕</button>
+    </header>
+    <div class="render-modal-grid">
+      <div class="render-preview-pane">
+        <div class="render-canvas-stage">
+          <canvas id="render-preview-canvas" width="450" height="800"></canvas>
+        </div>
+        <div class="render-progress-track"><div id="render-progress-fill"></div></div>
+        <div id="render-progress-text" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">Ready to render with C++20 Core Engine</div>
+      </div>
+      <div class="render-controls-pane">
+        <div class="render-group">
+          <div class="render-group-title">1. Engine & Output Format (Mobile / Film)</div>
+          <div class="render-row">
+            <label for="render-engine-select">Render Engine</label>
+            <select class="anim-select" id="render-engine-select" onchange="FECppEngine.startStillRender()">
+              <option value="cycles_cpp">⚡ FE Cycles (C++ BVH Path Tracer)</option>
+              <option value="eevee_cpp">🚀 FE Eevee (WebGL + C++ Post-FX)</option>
+            </select>
+          </div>
+          <div class="render-row">
+            <label for="render-aspect-select">Frame Aspect</label>
+            <select class="anim-select" id="render-aspect-select" onchange="FECppEngine.startStillRender()">
+              <option value="9:16">📱 9:16 Vertical (Reels / TikTok / Shorts)</option>
+              <option value="16:9" selected>🎬 16:9 Widescreen (YouTube / Film)</option>
+              <option value="1:1">🟦 1:1 Square (Social Post)</option>
+              <option value="21:9">🎞 21:9 Anamorphic Cinema</option>
+            </select>
+          </div>
+          <div class="render-row">
+            <label for="render-quality-select">Resolution</label>
+            <select class="anim-select" id="render-quality-select" onchange="FECppEngine.startStillRender()">
+              <option value="draft">Fast Preview (Mobile Draft)</option>
+              <option value="hd" selected>HD Production</option>
+              <option value="fhd">Full HD High-Detail</option>
+            </select>
+          </div>
+          <div class="render-row">
+            <label for="render-cam-source">Camera Source</label>
+            <select class="anim-select" id="render-cam-source" onchange="FECppEngine.startStillRender()">
+              <option value="viewport" selected>Active Viewport View</option>
+              <option value="scene">Scene Camera 1 Rig</option>
+            </select>
+          </div>
+        </div>
+        <div class="render-group">
+          <div class="render-group-title">2. Ray Tracing & Environment</div>
+          <div class="render-row">
+            <label for="render-samples-select">Path Samples</label>
+            <select class="anim-select" id="render-samples-select" onchange="FECppEngine.startStillRender()">
+              <option value="8">8 SPP (Fast)</option>
+              <option value="24" selected>24 SPP (Balanced)</option>
+              <option value="48">48 SPP (Clean GI)</option>
+              <option value="96">96 SPP (Studio Final)</option>
+            </select>
+          </div>
+          <div class="render-row">
+            <label for="render-bounces-select">Light Bounces</label>
+            <select class="anim-select" id="render-bounces-select" onchange="FECppEngine.startStillRender()">
+              <option value="1">1 Bounce (Direct + Spec)</option>
+              <option value="2" selected>2 Bounces (Global Illum)</option>
+              <option value="4">4 Bounces (Deep GI)</option>
+            </select>
+          </div>
+          <div class="render-row">
+            <label for="render-env-select">Sky / HDRI</label>
+            <select class="anim-select" id="render-env-select" onchange="FECppEngine.startStillRender()">
+              <option value="0" selected>☀️ Studio Softbox</option>
+              <option value="1">🏙️ Urban Daylight</option>
+              <option value="2">🌲 Forest Canopy</option>
+              <option value="4">🌅 Golden Sunset</option>
+              <option value="3">🌃 Midnight Moon</option>
+            </select>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;">
+            <input type="checkbox" id="render-shadow-catcher" checked onchange="FECppEngine.startStillRender()">
+            <span>Ground Studio Shadow Catcher Plane</span>
+          </label>
+        </div>
+        <div class="render-group">
+          <div class="render-group-title">3. C++ Color Grading & Post-FX</div>
+          <div class="render-row">
+            <label for="render-tonemap-select">Tone Mapper</label>
+            <select class="anim-select" id="render-tonemap-select" onchange="FECppEngine.renderState.tonemap=parseInt(this.value)||0;FECppEngine.reResolveToneMapInstant()">
+              <option value="0" selected>ACES Filmic</option>
+              <option value="1">AgX Punchy</option>
+              <option value="3">Uncharted 2 Filmic</option>
+              <option value="2">Reinhard</option>
+              <option value="4">Linear sRGB</option>
+            </select>
+          </div>
+          <div class="render-row"><label>Exposure</label><input type="range" id="render-exp-range" min="0.4" max="2.8" step="0.05" value="1.25" oninput="FECppEngine.renderState.exposure=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Contrast</label><input type="range" id="render-contrast-range" min="0.7" max="1.6" step="0.05" value="1.05" oninput="FECppEngine.renderState.contrast=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Saturation</label><input type="range" id="render-sat-range" min="0.0" max="1.8" step="0.05" value="1.08" oninput="FECppEngine.renderState.saturation=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Temperature</label><input type="range" id="render-temp-range" min="-0.8" max="0.8" step="0.05" value="0.0" oninput="FECppEngine.renderState.temperature=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>C++ Bloom</label><input type="range" id="render-bloom-range" min="0.0" max="1.0" step="0.05" value="0.22" oninput="FECppEngine.renderState.bloom=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Vignette</label><input type="range" id="render-vig-range" min="0.0" max="0.9" step="0.05" value="0.18" oninput="FECppEngine.renderState.vignette=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Chromatic Ab.</label><input type="range" id="render-ca-range" min="0.0" max="1.0" step="0.05" value="0.0" oninput="FECppEngine.renderState.chromatic=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Film Grain</label><input type="range" id="render-grain-range" min="0.0" max="0.8" step="0.05" value="0.02" oninput="FECppEngine.renderState.grain=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+        </div>
+      </div>
+    </div>
+    <footer class="render-actions-bar">
+      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Re-Render Frame</button>
+      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG Image</button>
+      <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Timeline Video (Start → End)</button>
+      <button class="btn btn-secondary" type="button" onclick="FECppEngine.stopActiveRender()">⏹ Stop</button>
+      <button class="btn btn-secondary" type="button" style="margin-left:auto;" onclick="closeRenderEngineModal()">Close</button>
+    </footer>
+  </div>
+</div>
 
 <!-- =========================================================
      EXPORT 3D PROJECT MODAL (.final3d, .glb, .gltf, .obj, .fbx)
@@ -2364,6 +2621,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <!-- HDRI Popover Toggle Button -->
       <button class="btn hdri-toggle-btn" title="HDRI Environment Settings">⚙️</button>
 
+      <button class="btn btn-export" type="button" onclick="openRenderEngineModal()" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:#818cf8;" title="Open C++20 Render Engine & Video Exporter">Render ⚡</button>
       <button class="btn btn-export" data-act="export" onclick="openExportModal()" title="Export 3D Project & Assets">Export 📤</button>
 
       <!-- Material Preview HDRI Settings Popover Menu -->
@@ -2600,6 +2858,36 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           </div>
         </div>
       </div>
+
+      <!-- C++20 Sculpt & Vertex/Weight Paint Brush Toolbar -->
+      <div id="cpp-sculpt-paint-bar" hidden>
+        <span id="cpp-sculpt-brush-wrap" style="display:inline-flex;align-items:center;gap:4px;">
+          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="C++ Sculpt Brush">
+            <option value="0">🗿 Draw / Clay</option>
+            <option value="1">🌊 Smooth</option>
+            <option value="2">🎈 Inflate</option>
+            <option value="3">🤏 Pinch</option>
+            <option value="4">📐 Flatten</option>
+            <option value="5">✊ Grab</option>
+          </select>
+          <button class="anim-btn" type="button" onclick="FECppEngine.subdivideActiveMeshForSculpt()" title="Subdivide mesh for finer sculpting">+ Subdiv</button>
+        </span>
+        <span id="cpp-paint-color-wrap" style="display:none;align-items:center;gap:4px;">
+          <input type="color" value="#6366f1" oninput="FECppEngine.sculptState.paintColor=this.value" style="width:30px;height:30px;border:0;background:none;cursor:pointer;">
+        </span>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#cbd5e1;">R <input type="range" min="0.12" max="1.6" step="0.04" value="0.48" oninput="FECppEngine.sculptState.radius=+this.value" style="width:62px;"></label>
+        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#cbd5e1;">Str <input type="range" min="0.08" max="1.2" step="0.04" value="0.55" oninput="FECppEngine.sculptState.strength=+this.value" style="width:62px;"></label>
+        <button class="anim-btn" type="button" onclick="FECppEngine.sculptState.invert=!FECppEngine.sculptState.invert;this.classList.toggle('primary',FECppEngine.sculptState.invert)">± Inv</button>
+        <button class="anim-btn primary" type="button" onclick="FECppEngine.sculptState.symmetryX=!FECppEngine.sculptState.symmetryX;this.classList.toggle('primary',FECppEngine.sculptState.symmetryX)">Mir X</button>
+      </div>
+
+      <!-- Pro Mobile Touch Quick Action Pill -->
+      <div id="mobile-quick-hud" aria-label="Mobile Quick Controls">
+        <button class="mob-hud-btn" type="button" onclick="focusActiveObjectInViewport()" title="Focus Selected Object (or Double-Tap Mesh)">🎯</button>
+        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert Keyframe at Current Frame (C++)">◆ Key</button>
+        <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open C++ Render Engine & Video Exporter">⚡</button>
+        <button class="mob-hud-btn" type="button" onclick="toggleMobileFullscreen()" title="Full-Screen Mobile Studio">⛶</button>
+      </div>
     </div>
 
     <!-- Persistent Timeline Bar (Blender-style Frame Axis & Playback Controls) -->
@@ -2612,6 +2900,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" onclick="stepTimelineFrame(-1)">◀</button>
           <button class="tb-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" onclick="stepTimelineFrame(1)">▶</button>
           <button class="tb-btn" id="tb-last-btn" title="Jump to End Frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)">⏭</button>
+          <button class="tb-btn" id="tb-insert-key-btn" title="Insert C++ Keyframe on Active Object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
           
           <div class="tb-field">
             <label>Frame</label>
@@ -2637,6 +2926,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
         </div>
         <div class="timeline-right-info">
+          <span id="tb-cpp-badge" style="color:#a5b4fc;font-weight:700;margin-right:8px;">C++20 WASM · Loading…</span>
           <span id="tb-status-badge">Physics: Loading Rust/WASM…</span>
         </div>
       </div>
@@ -2729,6 +3019,7 @@ const out = id => document.getElementById(id);
 
 const FE=window.FE={
   current:null, engines:{},
+  getActiveObjectId(){return activeObject},
   register(id,engine){this.engines[id]=engine; if(this.current===id) enter(id)},
   open(id){location.hash='#/'+id}, home(){location.hash='#/home'},
   toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800)}
@@ -3280,6 +3571,7 @@ function serializeSceneToFinal3d() {
     terrain: null,
     water: null,
     foliage: {},
+    animation: window.FECppEngine?.serializeAnimation?.() || null,
     objects: []
   };
 
