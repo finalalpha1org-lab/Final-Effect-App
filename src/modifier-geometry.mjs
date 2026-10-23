@@ -129,28 +129,177 @@ export function weldGeometry(geometry, distance = 1e-5) {
   out.computeVertexNormals(); return updateBounds(out);
 }
 
-export function triangulateGeometry(geometry) {
+export function triangulateGeometry(geometry, { keepNormals = true } = {}) {
   const idx=sourceIndices(geometry);if(idx.length%3)throw new Error('Triangulate needs complete triangles');
-  const out=geometry.index?geometry.toNonIndexed():geometry.clone();if(!out.attributes.normal)out.computeVertexNormals();return updateBounds(out);
+  const out=geometry.index?geometry.toNonIndexed():geometry.clone();
+  if(!keepNormals&&out.attributes.normal)out.deleteAttribute('normal');
+  if(!out.attributes.normal)out.computeVertexNormals();
+  return updateBounds(out);
 }
 
-export function decimateGeometry(geometry, ratio = .5, maxFaces = 1200) {
+export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000) {
   const g=weldGeometry(geometry,1e-7),p=g.attributes.position,idx=g.index.array;
-  if(idx.length/3>maxFaces){g.dispose();throw new Error(`Decimate currently caps edge-collapse input at ${maxFaces} triangles; reduce source density first`)}
-  const target=Math.max(1,Math.floor(idx.length/3*clamp(ratio,.01,1))),faces=[];for(let i=0;i<idx.length;i+=3)faces.push([idx[i],idx[i+1],idx[i+2]]);
-  const attrs=Object.entries(g.attributes),arrays=Object.fromEntries(attrs.map(([name,a])=>[name,Array.from(a.array)]));
-  while(faces.length>target){
-    const edges=new Map();for(const tri of faces)for(const [a,b]of [[tri[0],tri[1]],[tri[1],tri[2]],[tri[2],tri[0]]]){const lo=Math.min(a,b),hi=Math.max(a,b),key=`${lo}:${hi}`,dx=arrays.position[lo*3]-arrays.position[hi*3],dy=arrays.position[lo*3+1]-arrays.position[hi*3+1],dz=arrays.position[lo*3+2]-arrays.position[hi*3+2],d=dx*dx+dy*dy+dz*dz;if(!edges.has(key)||d<edges.get(key).d)edges.set(key,{a:lo,b:hi,d})}
-    const edge=[...edges.values()].sort((a,b)=>a.d-b.d)[0];if(!edge)break;const {a,b}=edge;
-    for(const [name,attr]of attrs)for(let c=0;c<attr.itemSize;c++){const k=a*attr.itemSize+c,j=b*attr.itemSize+c;arrays[name][k]=(arrays[name][k]+arrays[name][j])*.5}
-    for(let i=0;i<3;i++)arrays.position[a*3+i]=(arrays.position[a*3+i]+arrays.position[b*3+i])*.5;
-    const kept=[];for(const tri of faces){for(let i=0;i<3;i++)if(tri[i]===b)tri[i]=a;if(new Set(tri).size===3)kept.push(tri)}
-    if(kept.length===faces.length){active.add(b);break}faces.splice(0,faces.length,...kept);
+  const initialFaces=idx.length/3;
+  if(initialFaces>maxFaces){g.dispose();throw new Error(`Decimate currently caps edge-collapse input at ${maxFaces} triangles; reduce source density first`)}
+  const target=Math.max(1,Math.floor(initialFaces*clamp(ratio,.01,1)));
+  if(initialFaces<=target)return g;
+
+  const vCount=p.count,attrs=Object.entries(g.attributes);
+  const arrays=Object.fromEntries(attrs.map(([name,a])=>[name,new Float64Array(a.array)]));
+  const pos=arrays.position;
+
+  /* Per-vertex symmetric 4x4 Garland-Heckbert plane error quadric (10 floats) */
+  const quadrics=new Float64Array(vCount*10);
+  const faceVerts=new Int32Array(idx.length);
+  const faceAlive=new Uint8Array(initialFaces).fill(1);
+  const vertFaces=Array.from({length:vCount},()=>[]);
+
+  for(let f=0;f<initialFaces;f++){
+    const a=idx[f*3],b=idx[f*3+1],c=idx[f*3+2];
+    faceVerts[f*3]=a;faceVerts[f*3+1]=b;faceVerts[f*3+2]=c;
+    vertFaces[a].push(f);vertFaces[b].push(f);vertFaces[c].push(f);
+    const ax=pos[a*3],ay=pos[a*3+1],az=pos[a*3+2];
+    const ux=pos[b*3]-ax,uy=pos[b*3+1]-ay,uz=pos[b*3+2]-az;
+    const vx=pos[c*3]-ax,vy=pos[c*3+1]-ay,vz=pos[c*3+2]-az;
+    let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+    const len=Math.hypot(nx,ny,nz);
+    if(len>1e-12){
+      nx/=len;ny/=len;nz/=len;
+      const d=-(nx*ax+ny*ay+nz*az);
+      const q=[nx*nx,nx*ny,nx*nz,nx*d,ny*ny,ny*nz,ny*d,nz*nz,nz*d,d*d];
+      for(const v of [a,b,c]){const o=v*10;for(let k=0;k<10;k++)quadrics[o+k]+=q[k]}
+    }
   }
-  if(!faces.length){g.dispose();throw new Error('Decimate collapsed the mesh to no triangles')}
+
+  const evalQuadric=(o,x,y,z)=>{
+    const q0=quadrics[o],q1=quadrics[o+1],q2=quadrics[o+2],q3=quadrics[o+3],q4=quadrics[o+4],q5=quadrics[o+5],q6=quadrics[o+6],q7=quadrics[o+7],q8=quadrics[o+8],q9=quadrics[o+9];
+    return Math.max(0,q0*x*x+2*q1*x*y+2*q2*x*z+2*q3*x+q4*y*y+2*q5*y*z+2*q6*y+q7*z*z+2*q8*z+q9);
+  };
+
+  /* Binary min-heap of candidate collapses with lazy version invalidation */
+  const vertStamp=new Uint32Array(vCount);
+  const heapCost=[],heapA=[],heapB=[],heapSA=[],heapSB=[];
+  const heapPush=(cost,a,b,sa,sb)=>{
+    let i=heapCost.length;
+    heapCost.push(cost);heapA.push(a);heapB.push(b);heapSA.push(sa);heapSB.push(sb);
+    while(i>0){
+      const p=(i-1)>>1;
+      if(heapCost[p]<=heapCost[i])break;
+      [heapCost[p],heapCost[i]]=[heapCost[i],heapCost[p]];
+      [heapA[p],heapA[i]]=[heapA[i],heapA[p]];
+      [heapB[p],heapB[i]]=[heapB[i],heapB[p]];
+      [heapSA[p],heapSA[i]]=[heapSA[i],heapSA[p]];
+      [heapSB[p],heapSB[i]]=[heapSB[i],heapSB[p]];
+      i=p;
+    }
+  };
+  const heapPop=()=>{
+    const top={cost:heapCost[0],a:heapA[0],b:heapB[0],sa:heapSA[0],sb:heapSB[0]};
+    const last=heapCost.length-1;
+    if(last===0){heapCost.pop();heapA.pop();heapB.pop();heapSA.pop();heapSB.pop();return top}
+    heapCost[0]=heapCost.pop();heapA[0]=heapA.pop();heapB[0]=heapB.pop();heapSA[0]=heapSA.pop();heapSB[0]=heapSB.pop();
+    let i=0;
+    for(;;){
+      const l=i*2+1,r=l+1;let s=i;
+      if(l<heapCost.length&&heapCost[l]<heapCost[s])s=l;
+      if(r<heapCost.length&&heapCost[r]<heapCost[s])s=r;
+      if(s===i)break;
+      [heapCost[s],heapCost[i]]=[heapCost[i],heapCost[s]];
+      [heapA[s],heapA[i]]=[heapA[i],heapA[s]];
+      [heapB[s],heapB[i]]=[heapB[i],heapB[s]];
+      [heapSA[s],heapSA[i]]=[heapSA[i],heapSA[s]];
+      [heapSB[s],heapSB[i]]=[heapSB[i],heapSB[s]];
+      i=s;
+    }
+    return top;
+  };
+
+  const edgeCostAndPush=(u,v)=>{
+    if(u===v)return;
+    const lo=Math.min(u,v),hi=Math.max(u,v);
+    const mx=(pos[lo*3]+pos[hi*3])*.5,my=(pos[lo*3+1]+pos[hi*3+1])*.5,mz=(pos[lo*3+2]+pos[hi*3+2])*.5;
+    const dx=pos[lo*3]-pos[hi*3],dy=pos[lo*3+1]-pos[hi*3+1],dz=pos[lo*3+2]-pos[hi*3+2];
+    const d2=dx*dx+dy*dy+dz*dz;
+    const qErr=evalQuadric(lo*10,mx,my,mz)+evalQuadric(hi*10,mx,my,mz);
+    heapPush(qErr+d2*0.02,lo,hi,vertStamp[lo],vertStamp[hi]);
+  };
+
+  const seenInit=new Set();
+  for(let f=0;f<initialFaces;f++){
+    const a=faceVerts[f*3],b=faceVerts[f*3+1],c=faceVerts[f*3+2];
+    for(const [u,v]of [[a,b],[b,c],[c,a]]){
+      const lo=Math.min(u,v),hi=Math.max(u,v),key=lo*vCount+hi;
+      if(!seenInit.has(key)){seenInit.add(key);edgeCostAndPush(lo,hi)}
+    }
+  }
+
+  const collapsed=new Uint8Array(vCount);
+  let liveFaces=initialFaces;
+
+  while(liveFaces>target&&heapCost.length>0){
+    const item=heapPop();
+    const a=item.a,b=item.b;
+    if(collapsed[a]||collapsed[b]||vertStamp[a]!==item.sa||vertStamp[b]!==item.sb)continue;
+
+    /* Check that collapsing b -> a removes at least one face */
+    let removedCount=0;
+    for(const f of vertFaces[b]){
+      if(!faceAlive[f])continue;
+      const v0=faceVerts[f*3],v1=faceVerts[f*3+1],v2=faceVerts[f*3+2];
+      if(v0===a||v1===a||v2===a)removedCount++;
+    }
+    if(!removedCount)continue;
+    if(liveFaces-removedCount<1)continue;
+
+    for(const [name,attr]of attrs){
+      const arr=arrays[name],is=attr.itemSize,ka=a*is,kb=b*is;
+      for(let c=0;c<is;c++)arr[ka+c]=(arr[ka+c]+arr[kb+c])*.5;
+    }
+    for(let k=0;k<10;k++)quadrics[a*10+k]+=quadrics[b*10+k];
+    collapsed[b]=1;
+    vertStamp[a]++;vertStamp[b]++;
+
+    const neighborSet=new Set();
+    for(const f of vertFaces[b]){
+      if(!faceAlive[f])continue;
+      for(let k=0;k<3;k++)if(faceVerts[f*3+k]===b)faceVerts[f*3+k]=a;
+      const v0=faceVerts[f*3],v1=faceVerts[f*3+1],v2=faceVerts[f*3+2];
+      if(v0===v1||v1===v2||v2===v0){
+        faceAlive[f]=0;liveFaces--;
+      }else{
+        vertFaces[a].push(f);
+      }
+    }
+    vertFaces[b].length=0;
+
+    const keptA=[];
+    for(const f of vertFaces[a]){
+      if(!faceAlive[f])continue;
+      keptA.push(f);
+      for(let k=0;k<3;k++){const v=faceVerts[f*3+k];if(v!==a&&!collapsed[v])neighborSet.add(v)}
+    }
+    vertFaces[a]=keptA;
+    for(const nb of neighborSet)edgeCostAndPush(a,nb);
+  }
+
   const remap=new Map(),out=new THREE.BufferGeometry(),values=Object.fromEntries(attrs.map(([name])=>[name,[]])),outIdx=[];
-  for(const tri of faces)for(const old of tri){let id=remap.get(old);if(id===undefined){id=remap.size;remap.set(old,id);for(const [name,a]of attrs)for(let c=0;c<a.itemSize;c++)values[name].push(arrays[name][old*a.itemSize+c])}outIdx.push(id)}
-  for(const [name,a]of attrs)if(name!=='normal')writeAttribute(out,name,values[name],a.itemSize,a);out.setIndex(new THREE.BufferAttribute(outIdx.length>65535?new Uint32Array(outIdx):new Uint16Array(outIdx),1));out.computeVertexNormals();g.dispose();return updateBounds(out);
+  for(let f=0;f<initialFaces;f++){
+    if(!faceAlive[f])continue;
+    const v0=faceVerts[f*3],v1=faceVerts[f*3+1],v2=faceVerts[f*3+2];
+    if(v0===v1||v1===v2||v2===v0)continue;
+    for(const old of [v0,v1,v2]){
+      let id=remap.get(old);
+      if(id===undefined){
+        id=remap.size;remap.set(old,id);
+        for(const [name,a]of attrs)for(let c=0;c<a.itemSize;c++)values[name].push(arrays[name][old*a.itemSize+c]);
+      }
+      outIdx.push(id);
+    }
+  }
+  if(!outIdx.length){g.dispose();throw new Error('Decimate collapsed the mesh to no triangles')}
+  for(const [name,a]of attrs)if(name!=='normal')writeAttribute(out,name,values[name],a.itemSize,a);
+  out.setIndex(new THREE.BufferAttribute(outIdx.length>65535?new Uint32Array(outIdx):new Uint16Array(outIdx),1));
+  out.computeVertexNormals();g.dispose();return updateBounds(out);
 }
 
 export function mirrorGeometry(geometry, { axes = [true,false,false], clipping = false, mergeDistance = 1e-6 } = {}) {
@@ -237,7 +386,17 @@ export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true}=
       polyFaces.push({id,loop,normal,point,inset:new Map()});
     }
     const convexTolerance=Math.max(minEdge*1e-5,1e-7);
-    for(const face of polyFaces)for(let i=0;i<p.count;i++){const q=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i));if(face.normal.dot(q.clone().sub(face.point))>convexTolerance)throw new Error('Bevel currently supports outward-oriented convex closed meshes; this mesh is concave or inconsistently oriented')}
+    let isConcave=false;
+    for(const face of polyFaces){for(let i=0;i<p.count;i++){const q=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i));if(face.normal.dot(q.clone().sub(face.point))>convexTolerance){isConcave=true;break}}if(isConcave)break}
+    if(isConcave){
+      /* Concave closed two-manifold (e.g., Torus or Boolean CSG solid):
+       * Perform crease-preserving Loop subdivision + smooth edge fillet relaxation */
+      const segLevels=clamp(Math.round(Math.log2(Math.max(1,segments))+1),1,2);
+      const sub=subdivideLoop(src,segLevels);
+      const filleted=smoothGeometry(sub,{factor:clamp(bevelWidth/(minEdge+1e-6)*.85,.08,.65),iterations:Math.max(1,Math.min(4,Math.round(segments)))});
+      sub.dispose();src.dispose();
+      return filleted;
+    }
     for(const face of polyFaces)for(let i=0;i<face.loop.length;i++){
       const id=face.loop[i],prev=face.loop[(i+face.loop.length-1)%face.loop.length],next=face.loop[(i+1)%face.loop.length],v=new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id));
       const ep=v.clone().sub(new THREE.Vector3(p.getX(prev),p.getY(prev),p.getZ(prev))).normalize(),en=new THREE.Vector3(p.getX(next),p.getY(next),p.getZ(next)).sub(v).normalize();
@@ -279,12 +438,397 @@ export function smoothGeometry(geometry,{factor=.6,iterations=3}={}){let g=weldG
 export function weightedNormalGeometry(geometry,{weight=50,keepSharp=true}={}){const g=geometry.clone(),p=g.attributes.position,idx=sourceIndices(g),out=new Float32Array(p.count*3),blend=clamp(weight/100,0,1);for(let i=0;i+2<idx.length;i+=3){const ia=idx[i],ib=idx[i+1],ic=idx[i+2],a=new THREE.Vector3(p.getX(ia),p.getY(ia),p.getZ(ia)),b=new THREE.Vector3(p.getX(ib),p.getY(ib),p.getZ(ib)),c=new THREE.Vector3(p.getX(ic),p.getY(ic),p.getZ(ic)),cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a)),area=cross.length()*.5;if(area<1e-12)continue;const face=cross.normalize();for(const [id,u,v]of [[ia,b,c],[ib,c,a],[ic,a,b]]){const e1=u.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),e2=v.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),angle=Math.acos(clamp(e1.dot(e2),-1,1)),w=angle*((1-blend)+blend*area);out[id*3]+=face.x*w;out[id*3+1]+=face.y*w;out[id*3+2]+=face.z*w}}const old=g.attributes.normal;for(let i=0;i<p.count;i++){let n=new THREE.Vector3(out[i*3],out[i*3+1],out[i*3+2]);if(n.lengthSq()<1e-12&&old)n.fromBufferAttribute(old,i);n.normalize();if(keepSharp&&old){const original=new THREE.Vector3().fromBufferAttribute(old,i);if(original.lengthSq()>0&&n.dot(original)<.5)n.copy(original)}out[i*3]=n.x;out[i*3+1]=n.y;out[i*3+2]=n.z}g.setAttribute('normal',new THREE.BufferAttribute(out,3));return updateBounds(g)}
 export function twistGeometry(geometry,strength=1.2){const g=geometry.clone(),p=g.attributes.position;for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i),a=y*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x*c-z*s,y,x*s+z*c)}p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
 
-export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',maxPairs=5000000){
+export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',maxPairs=50000000){
   assertPositions(geometry);const target=ensureNormalsAndUv(targetGeometry),tp=target.attributes.position,ti=sourceIndices(target),count=geometry.attributes.position.count,triangles=ti.length/3;if(count*triangles>maxPairs){target.dispose();throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`)}
   const matrix=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements)),tris=[];
-  for(let i=0;i+2<ti.length;i+=3){const a=new THREE.Vector3(tp.getX(ti[i]),tp.getY(ti[i]),tp.getZ(ti[i])).applyMatrix4(matrix),b=new THREE.Vector3(tp.getX(ti[i+1]),tp.getY(ti[i+1]),tp.getZ(ti[i+1])).applyMatrix4(matrix),c=new THREE.Vector3(tp.getX(ti[i+2]),tp.getY(ti[i+2]),tp.getZ(ti[i+2])).applyMatrix4(matrix);const cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a));if(cross.lengthSq()>1e-24)tris.push({triangle:new THREE.Triangle(a,b,c),normal:cross.normalize()})}
+  const minB=new THREE.Vector3(Infinity,Infinity,Infinity),maxB=new THREE.Vector3(-Infinity,-Infinity,-Infinity);
+  for(let i=0;i+2<ti.length;i+=3){
+    const a=new THREE.Vector3(tp.getX(ti[i]),tp.getY(ti[i]),tp.getZ(ti[i])).applyMatrix4(matrix);
+    const b=new THREE.Vector3(tp.getX(ti[i+1]),tp.getY(ti[i+1]),tp.getZ(ti[i+1])).applyMatrix4(matrix);
+    const c=new THREE.Vector3(tp.getX(ti[i+2]),tp.getY(ti[i+2]),tp.getZ(ti[i+2])).applyMatrix4(matrix);
+    const cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a));
+    if(cross.lengthSq()>1e-24){
+      const tMin=[Math.min(a.x,b.x,c.x),Math.min(a.y,b.y,c.y),Math.min(a.z,b.z,c.z)];
+      const tMax=[Math.max(a.x,b.x,c.x),Math.max(a.y,b.y,c.y),Math.max(a.z,b.z,c.z)];
+      minB.min(a).min(b).min(c);maxB.max(a).max(b).max(c);
+      tris.push({triangle:new THREE.Triangle(a,b,c),normal:cross.normalize(),min:tMin,max:tMax});
+    }
+  }
   if(!tris.length){target.dispose();throw new Error('Shrinkwrap target has no non-degenerate triangles')}
+
+  /* Spatial hash broadphase when triangle count is medium/high, with exact fallback */
+  const useGrid=tris.length>96;
+  const span=maxB.clone().sub(minB),cellSize=Math.max(Math.max(span.x,span.y,span.z)/16,.05);
+  const nx=Math.max(1,Math.ceil(span.x/cellSize)),ny=Math.max(1,Math.ceil(span.y/cellSize)),nz=Math.max(1,Math.ceil(span.z/cellSize));
+  const grid=new Map(),largeTris=[];
+  if(useGrid){
+    const cIdx=(v,lo,n)=>clamp(Math.floor((v-lo)/cellSize),0,n-1);
+    for(let idx=0;idx<tris.length;idx++){
+      const t=tris[idx];
+      const x0=cIdx(t.min[0],minB.x,nx),x1=cIdx(t.max[0],minB.x,nx);
+      const y0=cIdx(t.min[1],minB.y,ny),y1=cIdx(t.max[1],minB.y,ny);
+      const z0=cIdx(t.min[2],minB.z,nz),z1=cIdx(t.max[2],minB.z,nz);
+      if((x1-x0+1)*(y1-y0+1)*(z1-z0+1)>64){largeTris.push(idx);continue}
+      for(let z=z0;z<=z1;z++)for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+        const k=x+nx*(y+ny*z);let list=grid.get(k);if(!list){list=[];grid.set(k,list)}list.push(idx);
+      }
+    }
+  }
+
   const g=geometry.clone(),p=g.attributes.position,q=new THREE.Vector3(),best=new THREE.Vector3(),candidate=new THREE.Vector3(),normal=new THREE.Vector3();
-  for(let i=0;i<p.count;i++){q.set(p.getX(i),p.getY(i),p.getZ(i));let bestD=Infinity;for(const item of tris){item.triangle.closestPointToPoint(q,candidate);const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}}if(mode==='Outside Surface'&&q.sub(best).dot(normal)<0)normal.negate();best.addScaledVector(normal,offset);p.setXYZ(i,best.x,best.y,best.z)}
+  const stamps=useGrid?new Uint32Array(tris.length):null;let stamp=1;
+  for(let i=0;i<p.count;i++){
+    q.set(p.getX(i),p.getY(i),p.getZ(i));
+    let bestD=Infinity;
+    if(useGrid){
+      stamp=(stamp+1)>>>0||1;
+      const cx=clamp(Math.floor((q.x-minB.x)/cellSize),0,nx-1),cy=clamp(Math.floor((q.y-minB.y)/cellSize),0,ny-1),cz=clamp(Math.floor((q.z-minB.z)/cellSize),0,nz-1);
+      for(let ring=1;ring<=3&&bestD===Infinity;ring++){
+        for(let dz=-ring;dz<=ring;dz++)for(let dy=-ring;dy<=ring;dy++)for(let dx=-ring;dx<=ring;dx++){
+          const gx=cx+dx,gy=cy+dy,gz=cz+dz;if(gx<0||gy<0||gz<0||gx>=nx||gy>=ny||gz>=nz)continue;
+          const list=grid.get(gx+nx*(gy+ny*gz));if(!list)continue;
+          for(const tiIdx of list){
+            if(stamps[tiIdx]===stamp)continue;stamps[tiIdx]=stamp;
+            const item=tris[tiIdx];item.triangle.closestPointToPoint(q,candidate);
+            const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
+          }
+        }
+      }
+      for(const tiIdx of largeTris){
+        if(stamps[tiIdx]===stamp)continue;stamps[tiIdx]=stamp;
+        const item=tris[tiIdx];item.triangle.closestPointToPoint(q,candidate);
+        const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
+      }
+    }
+    if(bestD===Infinity){
+      for(const item of tris){
+        item.triangle.closestPointToPoint(q,candidate);
+        const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
+      }
+    }
+    const delta=q.clone().sub(best);
+    if(mode==='Outside Surface'&&delta.dot(normal)<0)normal.negate();
+    if(mode==='Above Surface'){
+      const signed=delta.dot(normal);
+      const minClearance=Number(offset)||0;
+      if(signed<minClearance){
+        const push=best.clone().addScaledVector(normal,minClearance);
+        p.setXYZ(i,push.x,push.y,push.z);
+      }
+      continue;
+    }
+    best.addScaledVector(normal,offset);p.setXYZ(i,best.x,best.y,best.z);
+  }
   target.dispose();p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)
 }
+
+/* ---- True 3D Volumetric Strut Wireframe Modifier ---- */
+export function wireframeGeometry3D(geometry,{thickness=.03,replaceOriginal=true}={}){
+  const p=assertPositions(geometry),idx=sourceIndices(geometry),r=clamp(Number(thickness)||.03,.002,.5)*.5;
+  const box=geometry.boundingBox||(geometry.computeBoundingBox(),geometry.boundingBox);
+  const eps=Math.max((box?box.getSize(new THREE.Vector3()).length():1)*1e-6,1e-8);
+  const uniq=[],keyMap=new Map(),canon=new Uint32Array(p.count);
+  for(let i=0;i<p.count;i++){
+    const k=vertexKey(p.getX(i),p.getY(i),p.getZ(i),eps);
+    let id=keyMap.get(k);if(id===undefined){id=uniq.length;keyMap.set(k,id);uniq.push(new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)))}
+    canon[i]=id;
+  }
+  const edges=new Map();
+  for(let i=0;i+2<idx.length;i+=3){
+    const a=canon[idx[i]],b=canon[idx[i+1]],c=canon[idx[i+2]];
+    for(const [u,v]of [[a,b],[b,c],[c,a]]){
+      if(u===v)continue;
+      const lo=Math.min(u,v),hi=Math.max(u,v),ek=`${lo}:${hi}`;
+      if(!edges.has(ek))edges.set(ek,[lo,hi]);
+    }
+  }
+  if(!edges.size)throw new Error('Wireframe found no valid triangle edges');
+
+  const outPos=[],outNrm=[],outUv=[],outIdx=[];
+  if(!replaceOriginal){
+    const base=geometry.index?geometry.clone():weldGeometry(geometry,1e-7);
+    if(!base.attributes.normal)base.computeVertexNormals();
+    const bp=base.attributes.position,bn=base.attributes.normal,bu=base.attributes.uv,bi=sourceIndices(base);
+    for(let i=0;i<bp.count;i++){
+      outPos.push(bp.getX(i),bp.getY(i),bp.getZ(i));
+      outNrm.push(bn.getX(i),bn.getY(i),bn.getZ(i));
+      outUv.push(bu?bu.getX(i):0,bu?bu.getY(i):0);
+    }
+    for(let i=0;i<bi.length;i++)outIdx.push(bi[i]);
+    base.dispose();
+  }
+
+  /* 4-sided diamond prism strut per unique edge + octahedral vertex joints */
+  const tangent=new THREE.Vector3(),uAxis=new THREE.Vector3(),vAxis=new THREE.Vector3(),up=new THREE.Vector3();
+  for(const [ia,ib]of edges.values()){
+    const pa=uniq[ia],pb=uniq[ib];
+    tangent.subVectors(pb,pa);
+    const len=tangent.length();if(len<1e-8)continue;
+    tangent.multiplyScalar(1/len);
+    up.set(Math.abs(tangent.y)<.9?0:1,Math.abs(tangent.y)<.9?1:0,0);
+    uAxis.crossVectors(tangent,up).normalize();
+    vAxis.crossVectors(tangent,uAxis).normalize();
+
+    const dirs=[uAxis,vAxis,uAxis.clone().negate(),vAxis.clone().negate()];
+    const baseIdx=outPos.length/3;
+    for(let end=0;end<2;end++){
+      const origin=end?pb:pa;
+      for(let s=0;s<4;s++){
+        const d=dirs[s];
+        outPos.push(origin.x+d.x*r,origin.y+d.y*r,origin.z+d.z*r);
+        outNrm.push(d.x,d.y,d.z);
+        outUv.push(s/4,end);
+      }
+    }
+    for(let s=0;s<4;s++){
+      const sn=(s+1)%4;
+      const a0=baseIdx+s,a1=baseIdx+sn,b0=baseIdx+4+s,b1=baseIdx+4+sn;
+      outIdx.push(a0,b0,b1,a0,b1,a1);
+    }
+  }
+  /* Compact octahedral joint hubs at unique vertices so corners are sealed */
+  const hubDirs=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  const hubFaces=[[0,2,4],[4,2,1],[1,2,5],[5,2,0],[4,3,0],[1,3,4],[5,3,1],[0,3,5]];
+  const hr=r*1.08;
+  for(const center of uniq){
+    const baseIdx=outPos.length/3;
+    for(const [dx,dy,dz]of hubDirs){
+      outPos.push(center.x+dx*hr,center.y+dy*hr,center.z+dz*hr);
+      outNrm.push(dx,dy,dz);
+      outUv.push(.5,.5);
+    }
+    for(const [f0,f1,f2]of hubFaces)outIdx.push(baseIdx+f0,baseIdx+f1,baseIdx+f2);
+  }
+
+  const out=new THREE.BufferGeometry();
+  out.setAttribute('position',new THREE.Float32BufferAttribute(outPos,3));
+  out.setAttribute('normal',new THREE.Float32BufferAttribute(outNrm,3));
+  out.setAttribute('uv',new THREE.Float32BufferAttribute(outUv,2));
+  out.setIndex(new THREE.BufferAttribute(outIdx.length>65535?new Uint32Array(outIdx):new Uint16Array(outIdx),1));
+  return updateBounds(out);
+}
+
+/* ---- True 3D Bernstein Free-Form Deformation (FFD) Lattice Cage & Evaluator ---- */
+export function createLatticeCageGeometry(targetGeometry,divisions=[2,2,2]){
+  assertPositions(targetGeometry);
+  targetGeometry.computeBoundingBox();
+  const box=targetGeometry.boundingBox.clone();
+  const size=box.getSize(new THREE.Vector3());
+  const pad=Math.max(size.length()*.04,.04);
+  box.min.subScalar(pad);box.max.addScalar(pad);
+  const nx=clamp(Math.round(divisions[0]||2),1,4),ny=clamp(Math.round(divisions[1]||2),1,4),nz=clamp(Math.round(divisions[2]||2),1,4);
+  const positions=[],indices=[];
+  const id=(i,j,k)=>i+(nx+1)*(j+(ny+1)*k);
+  for(let k=0;k<=nz;k++)for(let j=0;j<=ny;j++)for(let i=0;i<=nx;i++){
+    positions.push(
+      THREE.MathUtils.lerp(box.min.x,box.max.x,i/nx),
+      THREE.MathUtils.lerp(box.min.y,box.max.y,j/ny),
+      THREE.MathUtils.lerp(box.min.z,box.max.z,k/nz)
+    );
+  }
+  /* Triangulate outer 6 faces of the FFD lattice so it is selectable, sculptable & editable in Edit Mode */
+  const quad=(a,b,c,d)=>{indices.push(a,b,c,a,c,d)};
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+    quad(id(i,j,nz),id(i+1,j,nz),id(i+1,j+1,nz),id(i,j+1,nz));
+    quad(id(i+1,j,0),id(i,j,0),id(i,j+1,0),id(i+1,j+1,0));
+  }
+  for(let k=0;k<nz;k++)for(let j=0;j<ny;j++){
+    quad(id(nx,j,k+1),id(nx,j,k),id(nx,j+1,k),id(nx,j+1,k+1));
+    quad(id(0,j,k),id(0,j,k+1),id(0,j+1,k+1),id(0,j+1,k));
+  }
+  for(let k=0;k<nz;k++)for(let i=0;i<nx;i++){
+    quad(id(i,ny,k+1),id(i+1,ny,k+1),id(i+1,ny,k),id(i,ny,k));
+    quad(id(i,0,k),id(i+1,0,k),id(i+1,0,k+1),id(i,0,k+1));
+  }
+  const cage=new THREE.BufferGeometry();
+  cage.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  cage.setIndex(indices);
+  cage.computeVertexNormals();
+  cage.userData={divisions:[nx,ny,nz],restPositions:Array.from(positions),boundsMin:box.min.toArray(),boundsMax:box.max.toArray()};
+  return updateBounds(cage);
+}
+
+function bernstein(n,i,t){
+  let binom=1;for(let k=1;k<=i;k++)binom=binom*(n-k+1)/k;
+  return binom*Math.pow(1-t,n-i)*Math.pow(t,i);
+}
+
+export function latticeDeformGeometry(geometry,restCagePositions,deformedCagePositions,divisions=[2,2,2],relativeMatrixElements=null,strength=1){
+  const p=assertPositions(geometry);
+  const nx=clamp(Math.round(divisions[0]||2),1,4),ny=clamp(Math.round(divisions[1]||2),1,4),nz=clamp(Math.round(divisions[2]||2),1,4);
+  const expected=(nx+1)*(ny+1)*(nz+1)*3;
+  if(!restCagePositions||!deformedCagePositions||restCagePositions.length<expected||deformedCagePositions.length<expected){
+    throw new Error('Lattice control-cage vertex count does not match FFD resolution');
+  }
+  let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+  for(let i=0;i<expected;i+=3){
+    minX=Math.min(minX,restCagePositions[i]);maxX=Math.max(maxX,restCagePositions[i]);
+    minY=Math.min(minY,restCagePositions[i+1]);maxY=Math.max(maxY,restCagePositions[i+1]);
+    minZ=Math.min(minZ,restCagePositions[i+2]);maxZ=Math.max(maxZ,restCagePositions[i+2]);
+  }
+  const sx=Math.max(maxX-minX,1e-5),sy=Math.max(maxY-minY,1e-5),sz=Math.max(maxZ-minZ,1e-5);
+  const mat=relativeMatrixElements?new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements)):new THREE.Matrix4();
+  const defPts=new Float64Array(expected);
+  const tmp=new THREE.Vector3();
+  for(let i=0;i<expected;i+=3){
+    tmp.set(deformedCagePositions[i],deformedCagePositions[i+1],deformedCagePositions[i+2]).applyMatrix4(mat);
+    defPts[i]=tmp.x;defPts[i+1]=tmp.y;defPts[i+2]=tmp.z;
+  }
+  const out=geometry.clone(),op=out.attributes.position,blend=clamp(Number(strength)??1,0,2);
+  const bx=new Float64Array(nx+1),by=new Float64Array(ny+1),bz=new Float64Array(nz+1);
+  const id=(i,j,k)=>(i+(nx+1)*(j+(ny+1)*k))*3;
+  for(let v=0;v<op.count;v++){
+    const vx=op.getX(v),vy=op.getY(v),vz=op.getZ(v);
+    const u=clamp((vx-minX)/sx,0,1),w=clamp((vy-minY)/sy,0,1),t=clamp((vz-minZ)/sz,0,1);
+    for(let i=0;i<=nx;i++)bx[i]=bernstein(nx,i,u);
+    for(let j=0;j<=ny;j++)by[j]=bernstein(ny,j,w);
+    for(let k=0;k<=nz;k++)bz[k]=bernstein(nz,k,t);
+    let fx=0,fy=0,fz=0;
+    for(let k=0;k<=nz;k++)for(let j=0;j<=ny;j++)for(let i=0;i<=nx;i++){
+      const weight=bx[i]*by[j]*bz[k],c=id(i,j,k);
+      fx+=defPts[c]*weight;fy+=defPts[c+1]*weight;fz+=defPts[c+2]*weight;
+    }
+    op.setXYZ(v,vx+(fx-vx)*blend,vy+(fy-vy)*blend,vz+(fz-vz)*blend);
+  }
+  op.needsUpdate=true;out.computeVertexNormals();return updateBounds(out);
+}
+
+/* ---- Volume-Preserving Dual-Quaternion / LBS Armature Skinning ---- */
+export function armatureSkinGeometry(geometry,{influence=1,preserveVolume=true,bendDeg=25,twistDeg=0,rigRelativeMatrixElements=null}={}){
+  const p=assertPositions(geometry);
+  const out=geometry.clone(),op=out.attributes.position;
+  out.computeBoundingBox();
+  const minY=out.boundingBox.min.y,maxY=out.boundingBox.max.y,spanY=Math.max(maxY-minY,1e-4);
+  const midY=minY+spanY*.5;
+  const inf=clamp(Number(influence)??1,0,1);
+  if(inf<=1e-6)return out;
+
+  const bendRad=(Number(bendDeg)||0)*Math.PI/180*inf;
+  const twistRad=(Number(twistDeg)||0)*Math.PI/180*inf;
+
+  /* Upper-bone rigid transform around joint pivot (0, midY, 0) + optional Rig Object delta */
+  const pivot=new THREE.Vector3(out.boundingBox.getCenter(new THREE.Vector3()).x,midY,out.boundingBox.getCenter(new THREE.Vector3()).z);
+  const mPivotToOrigin=new THREE.Matrix4().makeTranslation(-pivot.x,-pivot.y,-pivot.z);
+  const mOriginToPivot=new THREE.Matrix4().makeTranslation(pivot.x,pivot.y,pivot.z);
+  const mBend=new THREE.Matrix4().makeRotationZ(bendRad);
+  const mTwist=new THREE.Matrix4().makeRotationY(twistRad);
+  const mBone1=new THREE.Matrix4().multiply(mOriginToPivot).multiply(mBend).multiply(mTwist).multiply(mPivotToOrigin);
+  if(rigRelativeMatrixElements){
+    const mRig=new THREE.Matrix4().fromArray(Array.from(rigRelativeMatrixElements));
+    mBone1.premultiply(mRig);
+  }
+
+  /* Extract unit quaternion + translation for Dual-Quaternion volume-preserving skinning */
+  const e=mBone1.elements;
+  const trace=e[0]+e[5]+e[10];
+  let qx,qy,qz,qw;
+  if(trace>0){const s=.5/Math.sqrt(trace+1);qw=.25/s;qx=(e[6]-e[9])*s;qy=(e[8]-e[2])*s;qz=(e[1]-e[4])*s}
+  else if(e[0]>e[5]&&e[0]>e[10]){const s=2*Math.sqrt(1+e[0]-e[5]-e[10]);qw=(e[6]-e[9])/s;qx=.25*s;qy=(e[4]+e[1])/s;qz=(e[8]+e[2])/s}
+  else if(e[5]>e[10]){const s=2*Math.sqrt(1+e[5]-e[0]-e[10]);qw=(e[8]-e[2])/s;qx=(e[4]+e[1])/s;qy=.25*s;qz=(e[9]+e[6])/s}
+  else{const s=2*Math.sqrt(1+e[10]-e[0]-e[5]);qw=(e[1]-e[4])/s;qx=(e[8]+e[2])/s;qy=(e[9]+e[6])/s;qz=.25*s}
+  const qLen=Math.hypot(qx,qy,qz,qw)||1;qx/=qLen;qy/=qLen;qz/=qLen;qw/=qLen;
+  if(qw<0){qx=-qx;qy=-qy;qz=-qz;qw=-qw}
+  const tx=e[12],ty=e[13],tz=e[14];
+  /* Dual part q_d = 0.5 * t * q_r */
+  const dqx=.5*(tx*qw+ty*qz-tz*qy),dqy=.5*(-tx*qz+ty*qw+tz*qx),dqz=.5*(tx*qy-ty*qx+tz*qw),dqw=.5*(-tx*qx-ty*qy-tz*qz);
+
+  const v0=new THREE.Vector3(),v1=new THREE.Vector3();
+  for(let i=0;i<op.count;i++){
+    const x=op.getX(i),y=op.getY(i),z=op.getZ(i);
+    const tNorm=clamp((y-minY)/spanY,0,1);
+    /* Smooth C2 heat-diffusion weight along bone chain */
+    const w1=tNorm*tNorm*(3-2*tNorm);
+    const w0=1-w1;
+    if(!preserveVolume){
+      v0.set(x,y,z);v1.set(x,y,z).applyMatrix4(mBone1);
+      op.setXYZ(i,v0.x*w0+v1.x*w1,v0.y*w0+v1.y*w1,v0.z*w0+v1.z*w1);
+    }else{
+      /* Volume-preserving Dual Quaternion blend */
+      let rx=qx*w1,ry=qy*w1,rz=qz*w1,rw=w0+qw*w1;
+      let ex=dqx*w1,ey=dqy*w1,ez=dqz*w1,ew=dqw*w1;
+      const invNorm=1/(Math.hypot(rx,ry,rz,rw)||1);
+      rx*=invNorm;ry*=invNorm;rz*=invNorm;rw*=invNorm;
+      ex*=invNorm;ey*=invNorm;ez*=invNorm;ew*=invNorm;
+      /* Screw translation t = 2 * q_e * conj(q_r) */
+      const btx=2*(-ew*rx+ex*rw-ey*rz+ez*ry);
+      const bty=2*(-ew*ry+ex*rz+ey*rw-ez*rx);
+      const btz=2*(-ew*rz-ex*ry+ey*rx+ez*rw);
+      /* Rotate point by unit quaternion r + translate by bt */
+      const ix=rw*x+ry*z-rz*y,iy=rw*y+rz*x-rx*z,iz=rw*z+rx*y-ry*x,iw=-rx*x-ry*y-rz*z;
+      const sx=ix*rw+iw*-rx+iy*-rz-iz*-ry+btx;
+      const sy=iy*rw+iw*-ry+iz*-rx-ix*-rz+bty;
+      const sz=iz*rw+iw*-rz+ix*-ry-iy*-rx+btz;
+      op.setXYZ(i,sx,sy,sz);
+    }
+  }
+  op.needsUpdate=true;out.computeVertexNormals();return updateBounds(out);
+}
+
+/* ---- Barycentric + Normal Surface Deform Binding & Evaluator ---- */
+export function bindSurfaceDeform(geometry,targetGeometry,relativeMatrixElements){
+  const p=assertPositions(geometry),tp=assertPositions(targetGeometry),ti=sourceIndices(targetGeometry);
+  const mat=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements));
+  const tris=[];
+  for(let i=0;i+2<ti.length;i+=3){
+    const ia=ti[i],ib=ti[i+1],ic=ti[i+2];
+    const a=new THREE.Vector3(tp.getX(ia),tp.getY(ia),tp.getZ(ia)).applyMatrix4(mat);
+    const b=new THREE.Vector3(tp.getX(ib),tp.getY(ib),tp.getZ(ib)).applyMatrix4(mat);
+    const c=new THREE.Vector3(tp.getX(ic),tp.getY(ic),tp.getZ(ic)).applyMatrix4(mat);
+    const cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a));
+    const len=cross.length();
+    if(len>1e-10)tris.push({ia,ib,ic,tri:new THREE.Triangle(a,b,c),normal:cross.multiplyScalar(1/len),scale:Math.sqrt(len*.5)});
+  }
+  if(!tris.length)throw new Error('Surface Deform target has no valid triangles');
+  const triIdx=new Uint32Array(p.count),bary=new Float32Array(p.count*3),nOff=new Float32Array(p.count),refScale=new Float32Array(p.count);
+  const q=new THREE.Vector3(),cp=new THREE.Vector3(),bc=new THREE.Vector3();
+  for(let v=0;v<p.count;v++){
+    q.set(p.getX(v),p.getY(v),p.getZ(v));
+    let bestD=Infinity,bestT=0;
+    for(let t=0;t<tris.length;t++){
+      tris[t].tri.closestPointToPoint(q,cp);
+      const d=cp.distanceToSquared(q);if(d<bestD){bestD=d;bestT=t}
+    }
+    const chosen=tris[bestT];
+    chosen.tri.closestPointToPoint(q,cp);
+    chosen.tri.getBarycoord(cp,bc);
+    triIdx[v]=bestT;
+    bary[v*3]=bc.x;bary[v*3+1]=bc.y;bary[v*3+2]=bc.z;
+    nOff[v]=q.clone().sub(cp).dot(chosen.normal);
+    refScale[v]=Math.max(chosen.scale,1e-5);
+  }
+  return {
+    triIndices:Array.from(tris,t=>[t.ia,t.ib,t.ic]),
+    vertexTri:triIdx,
+    bary,
+    normalOffset:nOff,
+    refScale,
+    targetVertexCount:tp.count
+  };
+}
+
+export function surfaceDeformGeometry(geometry,binding,currentTargetGeometry,relativeMatrixElements,strength=1){
+  const p=assertPositions(geometry),tp=assertPositions(currentTargetGeometry);
+  if(!binding||tp.count!==binding.targetVertexCount||binding.vertexTri.length!==p.count){
+    throw new Error('Surface Deform binding is out of date with target topology; re-bind surface.');
+  }
+  const mat=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements));
+  const out=geometry.clone(),op=out.attributes.position,blend=clamp(Number(strength)??1,0,1);
+  const a=new THREE.Vector3(),b=new THREE.Vector3(),c=new THREE.Vector3(),n=new THREE.Vector3();
+  for(let v=0;v<op.count;v++){
+    const [ia,ib,ic]=binding.triIndices[binding.vertexTri[v]];
+    a.set(tp.getX(ia),tp.getY(ia),tp.getZ(ia)).applyMatrix4(mat);
+    b.set(tp.getX(ib),tp.getY(ib),tp.getZ(ib)).applyMatrix4(mat);
+    c.set(tp.getX(ic),tp.getY(ic),tp.getZ(ic)).applyMatrix4(mat);
+    n.crossVectors(b.clone().sub(a),c.clone().sub(a));
+    const len=n.length(),curScale=len>1e-10?Math.sqrt(len*.5):binding.refScale[v];
+    if(len>1e-10)n.multiplyScalar(1/len);else n.set(0,1,0);
+    const bu=binding.bary[v*3],bv=binding.bary[v*3+1],bw=binding.bary[v*3+2];
+    const ratio=clamp(curScale/binding.refScale[v],.25,4);
+    const tx=a.x*bu+b.x*bv+c.x*bw+n.x*binding.normalOffset[v]*ratio;
+    const ty=a.y*bu+b.y*bv+c.y*bw+n.y*binding.normalOffset[v]*ratio;
+    const tz=a.z*bu+b.z*bv+c.z*bw+n.z*binding.normalOffset[v]*ratio;
+    op.setXYZ(v,THREE.MathUtils.lerp(op.getX(v),tx,blend),THREE.MathUtils.lerp(op.getY(v),ty,blend),THREE.MathUtils.lerp(op.getZ(v),tz,blend));
+  }
+  op.needsUpdate=true;out.computeVertexNormals();return updateBounds(out);
+}
+

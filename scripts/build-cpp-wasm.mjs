@@ -5,7 +5,9 @@ const CPP_SOURCES = [
   'cpp/src/fe_wasm_exports.cpp',
   'cpp/src/fe_animation.cpp',
   'cpp/src/fe_renderer.cpp',
-  'cpp/src/fe_sculpt_touch.cpp'
+  'cpp/src/fe_sculpt_touch.cpp',
+  'cpp/src/fe_simulation.cpp',
+  'cpp/src/fe_landscape.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -31,7 +33,20 @@ const REQUIRED_EXPORTS = [
   'fe_vertex_paint_apply',
   'fe_touch_update',
   'fe_perf_push_frame_ms',
-  'fe_perf_query_metrics'
+  'fe_perf_query_metrics',
+  'fe_sim_backend_magic',
+  'sim_solver_abi_version',
+  'sim_solver_deformable_step',
+  'sim_solver_sph_step',
+  'sim_solver_buoyant_tracer_step',
+  'fe_sim_xpbd_deformable_step',
+  'fe_sim_scatter_mesh_and_normals',
+  'fe_sim_liquid_pbf_step',
+  'fe_sim_reconstruct_liquid_mesh',
+  'fe_sim_pyro_step',
+  'fe_forest_input_ptr',
+  'fe_forest_output_ptr',
+  'fe_forest_classify'
 ];
 
 function findZigCompiler() {

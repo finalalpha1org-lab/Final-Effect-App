@@ -54,7 +54,11 @@ window.addEventListener('touchstart',e=>{if(e.target===cv&&brushTab()&&!nav&&!mo
 addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();resizeWaterReflectionTarget();applyPreviewPixelRatio(true)});
 /* loop */
 let pt=performance.now(),fc=0,ft=0;
-function loop(){requestAnimationFrame(loop);const n=performance.now(),realDt=Math.max(0,(n-pt)/1000),dt=Math.min(.1,realDt);pt=n;U.t.value+=dt*wspd;WU.value+=dt;try{wxStep(dt,realDt)}catch(er){if((wxFail=(window.wxFail||0)+1)<3)showErr('Weather: '+er.message);window.wxFail=wxFail}U.wy.value=water.position.y;syncWaterPhysical();updateTessendorfOcean(n);fr++;updateWaterReflection();updateShoreSpray(dt);if(fr%90==20&&fr<1500)checkShaders();
+let landscapeActive=true,landscapeRaf=0;
+function scheduleLandscapeFrame(){if(landscapeActive&&!document.hidden&&!landscapeRaf)landscapeRaf=requestAnimationFrame(loop)}
+window.addEventListener('message',e=>{if(e.source!==window.parent||e.data?.type!=='FE_STUDIO_ACTIVE')return;landscapeActive=!!e.data.active;if(!landscapeActive){cancelAnimationFrame(landscapeRaf);landscapeRaf=0}else{pt=performance.now();scheduleLandscapeFrame()}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(landscapeRaf);landscapeRaf=0}else{pt=performance.now();scheduleLandscapeFrame()}});
+function loop(){landscapeRaf=0;if(!landscapeActive||document.hidden)return;scheduleLandscapeFrame();const n=performance.now(),realDt=Math.max(0,(n-pt)/1000),dt=Math.min(.1,realDt);pt=n;U.t.value+=dt*wspd;WU.value+=dt;try{wxStep(dt,realDt)}catch(er){if((wxFail=(window.wxFail||0)+1)<3)showErr('Weather: '+er.message);window.wxFail=wxFail}U.wy.value=water.position.y;syncWaterPhysical();updateTessendorfOcean(n);fr++;updateWaterReflection();updateShoreSpray(dt);if(fr%90==20&&fr<1500)checkShaders();
 clouds.forEach(g=>{g.position.x+=dt*2;if(g.position.x>260)g.position.x=-260});
 updateExplore(dt);if(!exploreMode)oc.update();if(OW?.active)owRefresh();updateDirectionalShadowFocus(n);if(sel)sbx.setFromObject(sel);nfs.forEach(f=>f());navg();ren.render(scene,cam);fc++;ft+=dt;if(ft>.5){const measuredFps=fc/ft;$('#fps').textContent=Math.round(measuredFps)+' fps';updateSmoothPreview(measuredFps,n);fc=ft=0}}
 [()=>gen(),()=>scatter(),()=>updSky(),()=>setTab('terrain'),()=>showPanel(false),()=>{nav=true;setNav()}].forEach(f=>{try{f()}catch(e){showErr('Init: '+e.message)}});loop();

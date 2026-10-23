@@ -2,8 +2,8 @@
 
 namespace {
 
-/* Dedicated 12 MB scratch arena inside C++ linear memory for JS <-> C++ mesh/frame marshaling */
-constexpr uint32_t kScratchArenaSize = 12u * 1024u * 1024u;
+/* Dedicated 24 MB scratch arena inside C++ linear memory for JS <-> C++ mesh/frame marshaling */
+constexpr uint32_t kScratchArenaSize = 24u * 1024u * 1024u;
 alignas(16) static uint8_t g_scratch_arena[kScratchArenaSize];
 static uint32_t g_arena_offset = 0;
 

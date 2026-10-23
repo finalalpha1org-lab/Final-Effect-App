@@ -1759,6 +1759,19 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .render-row{display:grid;grid-template-columns:108px 1fr;align-items:center;gap:8px;font-size:11px;color:#cbd5e1}
 .render-row select,.render-row input[type=range]{width:100%}
 .render-actions-bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;background:#161a27;border-top:1px solid #272d42}
+/* Render and diagnostics follow the studio bottom-sheet interaction model. */
+.render-modal-backdrop{align-items:flex-end;justify-content:stretch;padding:0;background:rgba(0,0,0,.28);backdrop-filter:none;-webkit-backdrop-filter:none}
+.render-modal-window{width:100%;max-width:none!important;height:62dvh;max-height:72dvh;border-radius:16px 16px 0 0;box-sizing:border-box}
+.render-modal-head{flex:none;padding:10px 14px}
+.render-modal-head>div{min-width:0}
+.render-modal-grid{display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+.render-controls-pane{overflow:visible;flex:none}
+.render-preview-pane{min-height:0;flex:none}
+.render-canvas-stage{flex:none;min-height:120px;max-height:25dvh}
+#render-preview-canvas{max-height:24dvh}
+.render-actions-bar{flex:none;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}
+#cpp-diagnostics-modal .diagnostics-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
+#cpp-diag-list>div{flex-wrap:wrap}
 #cpp-sculpt-paint-bar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:128;display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(16,19,28,0.92);border:1px solid #353d58;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.65);backdrop-filter:blur(8px);max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none}
 #cpp-sculpt-paint-bar[hidden]{display:none !important}
 #mobile-quick-hud{position:absolute;right:10px;bottom:10px;z-index:124;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
@@ -1767,7 +1780,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 @media(max-width:760px){
   .render-modal-grid{grid-template-columns:1fr;padding:10px}
   .render-modal-backdrop{padding:0;align-items:flex-end}
-  .render-modal-window{max-height:95dvh;border-radius:18px 18px 0 0}
+  .render-modal-window{height:62dvh;max-height:72dvh;border-radius:16px 16px 0 0}
   .tool{min-height:40px;padding:8px 13px}
   .tb-btn{min-width:32px;min-height:32px}
 }
@@ -1798,7 +1811,6 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       </div>
       <div class="home-actions-group">
         <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Run Live On-Device C++20 Engine Self-Test & Ray-Trace Benchmark">🧪 Test C++</button>
-        <button class="install-app-btn pwa-install-btn" type="button" onclick="installFinalEffectPWA()" title="Install Final Effect 3D on Phone or Desktop">📲 Install App</button>
         <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -3072,7 +3084,7 @@ HOME_WORKSPACES.forEach((item)=>{
   const vp=$('.viewport',el); vp.id='viewport-'+id; $('canvas',el).id='canvas-'+id;
   $('.layer-bar',el).id='layers-'+id; $('.toolbar',el).id='toolbar-'+id;
 
-  if(s.embed){el.classList.add('embed');vp.innerHTML=`<iframe id="frame-${id}" data-src="${s.embed}" src="${s.embed}" title="${s.title} engine" allow="fullscreen; accelerometer; gyroscope" style="position:absolute;inset:0;width:100%;height:100%;border:none;z-index:100;pointer-events:auto;display:block;"></iframe>`;}
+  if(s.embed){el.classList.add('embed');vp.innerHTML=`<iframe id="frame-${id}" data-src="${s.embed}" title="${s.title} engine" allow="fullscreen; accelerometer; gyroscope" style="position:absolute;inset:0;width:100%;height:100%;border:none;z-index:100;pointer-events:auto;display:block;"></iframe>`;}
   else $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
   $('.toolbar',el).innerHTML=s.tools.map(([k,i,l])=>`<button class="tool" id="tool-${id}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
   
@@ -3142,9 +3154,9 @@ window.addEventListener('click', (e) => {
 /* switching */
 function enter(id){
   const e=FE.engines[id],vp=$('#viewport-'+id),fr=$('iframe',vp);
-  if(fr&&!fr.dataset.feGlobalSettingsBound){fr.dataset.feGlobalSettingsBound='1';fr.addEventListener('load',()=>{syncSettingsToFrame(fr);if(FE.current===id)restoreAutosaveForStudio(id)})}
+  if(fr&&!fr.dataset.feGlobalSettingsBound){fr.dataset.feGlobalSettingsBound='1';fr.addEventListener('load',()=>{syncSettingsToFrame(fr);fr.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:FE.current===id},location.origin);if(FE.current===id)restoreAutosaveForStudio(id)})}
   if(fr&&!fr.getAttribute('src'))fr.src=fr.dataset.src;
-  if(fr){syncSettingsToFrame(fr);try{if(fr.contentDocument?.readyState==='complete'&&FE.current===id)restoreAutosaveForStudio(id)}catch(error){}}
+  if(fr){fr.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:true},location.origin);syncSettingsToFrame(fr);try{if(fr.contentDocument?.readyState==='complete'&&FE.current===id)restoreAutosaveForStudio(id)}catch(error){}}
   if(!e)return;
   if(!mounted.has(id)){mounted.add(id);e.mount?.({id,canvas:$('#canvas-'+id),viewport:vp});vp.classList.add('live')}
   e.resume?.();
@@ -3154,6 +3166,8 @@ function show(id){
   const prev=FE.current; if(prev===id) return;
   if(prev&&prev!=='home'&&GLOBAL_SETTINGS.autoSave)runGlobalAutosave({silent:true});
   if(prev) FE.engines[prev]?.pause?.();
+  const previousFrame=document.getElementById('frame-'+prev);
+  previousFrame?.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:false},location.origin);
   FE.current=id; closeDrawer();
   $$('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
   if(id!=='home') {
@@ -7216,13 +7230,24 @@ FE.register('core',{
   },
 
   resume(){
+    if(this._viewportRunning)return;
+    this._viewportRunning=true;
     const t=()=>{
+      if(!this._viewportRunning)return;
       this.raf=requestAnimationFrame(t);
+      if(document.hidden)return;
+      const frameStart=performance.now();
+      const previous=this._lastViewportFrame||frameStart;
+      this._lastViewportFrame=frameStart;
+      const frameInterval=frameStart-previous;
+
 
       // Real-time physics simulation update
       if (typeof stepPhysicsSimulations === 'function') {
         stepPhysicsSimulations(1/60);
       }
+
+      const physicsEnd=performance.now();
 
       // Step timeline if playing
       if (typeof timelineConfig !== 'undefined' && timelineConfig.isPlaying) {
@@ -7306,16 +7331,23 @@ FE.register('core',{
       }
 
       const activeCam = isCameraView ? this.sceneCamera : this.viewportCamera;
+      const renderStart=performance.now();
       this.r.render(this.sc, activeCam);
 
       if (!isCameraView && this.viewHelper) {
         this.viewHelper.update();
         this.viewHelper.render();
       }
+      const frameEnd=performance.now();
+      this.viewportMetrics={frameIntervalMs:frameInterval,physicsMs:physicsEnd-frameStart,
+        sceneUpdateMs:renderStart-physicsEnd,renderSubmitMs:frameEnd-renderStart,
+        cpuMs:frameEnd-frameStart,drawCalls:this.r.info.render.calls,triangles:this.r.info.render.triangles,
+        pixelRatio:this.r.getPixelRatio()};
+      window.FECppEngine?.tickPerformanceGovernor();
     };
     t();
   },
-  pause(){cancelAnimationFrame(this.raf)}
+  pause(){this._viewportRunning=false;this._lastViewportFrame=0;cancelAnimationFrame(this.raf)}
 });
 
 /* =========================================================
@@ -8479,7 +8511,12 @@ function applyShadingMode(shading) {
     // 2. SOLID (Blender Workbench): Clean diffuse / matcap preview for ALL models in scene
     allMeshes.forEach(mesh => {
       if(!mesh?.material)return;
-      const preservesSurfaceColor=!!(mesh.userData?.landscapeWater||mesh.userData?.isLandscape||mesh.parent?.name==='ImportedLandscape'||mesh.geometry?.attributes?.color||mesh.isInstancedMesh);
+      const isUltraSim=!!(mesh.userData?.solverSurface||mesh.userData?.ultraSimShader||mesh.material?.userData?.ultraSimShader||mesh.userData?.clothSim||mesh.userData?.softBodySim);
+      const preservesSurfaceColor=!!(isUltraSim||mesh.userData?.landscapeWater||mesh.userData?.isLandscape||mesh.parent?.name==='ImportedLandscape'||mesh.geometry?.attributes?.color||mesh.isInstancedMesh||mesh.userData?.isModifierHelperMesh);
+      if (isUltraSim) {
+        applyShadingMaterialToMesh(mesh,{wireframe:false,side:THREE.DoubleSide});
+        return;
+      }
       const patch={wireframe:false,side:THREE.DoubleSide,emissive:0x000000,roughness:preservesSurfaceColor ? .85 : .65,metalness:0};
       if(!preservesSurfaceColor)patch.color=0x82899d;
       applyShadingMaterialToMesh(mesh,patch);
@@ -8968,13 +9005,13 @@ const modifiersData = {
     {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
   ],
   Deform: [
-    {name:"Armature", fields:[["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true]]},
+    {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
     {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1]]},
     {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1]]},
-    {name:"Lattice", fields:[["Strength","range",0,2,1,.01]]},
+    {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1]]},
-    {name:"Surface Deform", fields:[["Strength","range",0,1,1,.01]]},
+    {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01],["Falloff","range",1,8,2.5,.25]]},
     {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1]]},
     {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1]]}
   ],
@@ -8989,16 +9026,19 @@ const modifiersData = {
       ["Restitution","range",0,1,.08,.01],["Permeability","range",0,1,0,.01],["Kill Particles","check",false],["Single Sided","check",false]
     ]},
     {name:"Cloth", fields:[
-      ["Quality","range",1,20,5,1],["Mass","range",0.01,10,0.3,0.01],
-      ["Structural Stiffness","range",0,100,15,1],["Shear Stiffness","range",0,100,5,1],["Bend Stiffness","range",0,100,2,1],
-      ["Gravity","range",0,20,9.8,0.1],["Air Drag","range",0,1,0.05,0.01],["Damping","range",0,1,0.1,0.01],
-      ["Stretch Resistance","range",0,1,0.9,0.01],["Compression Resistance","range",0,1,0.9,0.01],["Bending Resistance","range",0,1,0.5,0.01],
-      ["Pinning Mode","select",["Auto Top Edge","Two Corners","Free"]],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.3,0.01]
+      ["Fabric Preset","select",["Silk Satin","Cotton","Velvet","Denim","Leather","Keep Mesh Material"]],
+      ["Quality","range",1,20,8,1],["Mass","range",0.01,10,0.3,0.01],
+      ["Structural Stiffness","range",0,100,18,1],["Shear Stiffness","range",0,100,8,1],["Bend Stiffness","range",0,100,3,1],
+      ["Gravity","range",0,20,9.8,0.1],["Wind Speed","range",-15,15,2.5,0.2],["Wind Turbulence","range",0,1.5,0.35,0.05],
+      ["Air Drag","range",0,1,0.05,0.01],["Damping","range",0,1,0.08,0.01],
+      ["Stretch Resistance","range",0,1,0.92,0.01],["Compression Resistance","range",0,1,0.9,0.01],["Bending Resistance","range",0,1,0.5,0.01],
+      ["Self Collision","check",true],["Pinning Mode","select",["Auto Top Edge","Two Corners","Free"]],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.3,0.01]
     ]},
     {name:"Soft Body", fields:[
-      ["Mass","range",0.1,10,0.5,0.1],["Stiffness","range",0,1,0.5,0.01],["Damping","range",0,1,0.1,0.01],
-      ["Goal Strength","range",0,1,0.5,0.01],["Goal Damping","range",0,1,0.1,0.01],["Volume Preservation","range",0,1,0.85,0.01],["Plasticity","range",0,1,0,0.01],
-      ["Gravity","range",0,20,9.8,0.1],["Collision Margin","range",0,0.5,0.02,0.001],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.25,0.01]
+      ["Soft Body Preset","select",["Translucent Jelly","Silicone Gel","Latex Rubber","Memory Foam","Keep Mesh Material"]],
+      ["Mass","range",0.1,10,0.5,0.1],["Stiffness","range",0,1,0.5,0.01],["Damping","range",0,1,0.08,0.01],
+      ["Goal Strength","range",0,1,0.35,0.01],["Goal Damping","range",0,1,0.1,0.01],["Volume Preservation","range",0,1,0.88,0.01],["Plasticity","range",0,1,0,0.01],
+      ["Bounce","range",0,1,0.22,0.02],["Gravity","range",0,20,9.8,0.1],["Collision Margin","range",0,0.5,0.02,0.001],["Ground Height","range",-10,10,0,0.1],["Ground Friction","range",0,1,0.25,0.01]
     ]},
     {name:"Fluid", fields:[
       ["Type","select",["Domain","Flow","Effector"]],
@@ -9606,8 +9646,9 @@ function applyBooleanModifier(targetObj, geometry, params) {
 function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz] }); }
 function applyMirrorModifier(geometry, x, y, z, clipping=false) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping }); }
 function applyDecimateModifier(geometry, ratio) { return modifierGeometryApi().decimateGeometry(geometry, ratio); }
-function applyTriangulateModifier(geometry) { return modifierGeometryApi().triangulateGeometry(geometry); }
+function applyTriangulateModifier(geometry, keepNormals=true) { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
+function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal }); }
 function applyDisplaceModifier(geometry, strength, midlevel, frequency=1) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency }); }
 function applyWaveModifier(geometry, speed, height, width, time=0) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time }); }
 function applyCastModifier(geometry, shape, factor, radius) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius }); }
@@ -9618,15 +9659,176 @@ function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode) {
   const relative = modifierRelativeMatrix(sourceObj, targetObj);
   return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode);
 }
+function applyLatticeFfdModifier(geometry, targetObj, mod) {
+  const p = mod.values || {};
+  const cageObj = getAllSceneMeshes().find(mesh => mesh.uuid === p['Cage Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+  if (!cageObj?.geometry) {
+    throw new Error('Lattice needs an editable control-cage object; click "Create & Bind Lattice Cage" or select a Cage Object.');
+  }
+  const relative = modifierRelativeMatrix(targetObj, cageObj);
+  const divisions = cageObj.userData?.divisions || [Math.max(1, parseInt(p['U Points'] ?? 2, 10) - 1), Math.max(1, parseInt(p['V Points'] ?? 2, 10) - 1), Math.max(1, parseInt(p['W Points'] ?? 2, 10) - 1)];
+  const deformedPositions = cageObj.geometry.attributes.position.array;
+  const restPositions = cageObj.userData?.restPositions || Array.from(deformedPositions);
+  return modifierGeometryApi().latticeDeformGeometry(
+    geometry,
+    restPositions,
+    deformedPositions,
+    divisions,
+    relative.elements,
+    parseFloat(p['Strength'] ?? 1)
+  );
+}
+function applyArmatureSkinModifier(geometry, targetObj, mod) {
+  const p = mod.values || {};
+  const rigObj = getAllSceneMeshes().find(mesh => mesh.uuid === p['Rig Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+  if (!rigObj?.geometry) {
+    throw new Error('Armature needs a rig/bone-weight or bind-target workflow; click "Create & Bind Armature Rig" or select a Rig Object.');
+  }
+  const relative = modifierRelativeMatrix(targetObj, rigObj);
+  const bendTotal = parseFloat(p['Root Bend'] ?? 0) * 0.4 + parseFloat(p['Mid Bend'] ?? 22) * 0.7 + parseFloat(p['Tip Bend'] ?? 32) * 0.5;
+  return modifierGeometryApi().armatureSkinGeometry(geometry, {
+    influence: parseFloat(p['Bone Influence'] ?? 1),
+    preserveVolume: p['Preserve Volume'] !== false,
+    bendDeg: bendTotal,
+    twistDeg: parseFloat(p['Twist'] ?? 0),
+    rigRelativeMatrixElements: relative.elements
+  });
+}
+function applySurfaceDeformModifier(geometry, targetObj, mod) {
+  const p = mod.values || {};
+  const surfTarget = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+  if (!surfTarget?.geometry || !mod.surfaceBinding) {
+    throw new Error('Surface Deform needs a rig/bone-weight or bind-target workflow; select a Target Object and click "Bind to Target Surface".');
+  }
+  const relative = modifierRelativeMatrix(targetObj, surfTarget);
+  return modifierGeometryApi().surfaceDeformGeometry(
+    geometry,
+    mod.surfaceBinding,
+    surfTarget.geometry,
+    relative.elements,
+    parseFloat(p['Strength'] ?? 1)
+  );
+}
+
+function registerHelperSceneMesh(mesh, baseName) {
+  const eng = FE.engines?.core;
+  if (!eng?.sc || !mesh) return null;
+  let idx = 1, name = baseName;
+  const existingNames = new Set(Object.values(eng.customObjects || {}).map(o => o?.name).filter(Boolean));
+  while (existingNames.has(name)) name = `${baseName}_${idx++}`;
+  mesh.name = name;
+  mesh.userData.baseScale = mesh.scale.clone();
+  mesh.userData.baseRotation = mesh.rotation.clone();
+  mesh.userData.modStack = [];
+  mesh.userData.isModifierHelperMesh = true;
+  eng.sc.add(mesh);
+  if (!eng.customObjects) eng.customObjects = {};
+  const id = mesh.uuid;
+  mesh.userData.objectId = id;
+  eng.customObjects[id] = mesh;
+  const chipContainer = document.querySelector('.object-chips');
+  if (chipContainer && !document.getElementById('chip-' + id)) {
+    const chip = document.createElement('button');
+    chip.className = 'chip';
+    chip.id = 'chip-' + id;
+    chip.textContent = name;
+    chip.onclick = () => selectObject(id);
+    chipContainer.appendChild(chip);
+  }
+  return mesh;
+}
+
+function spawnAndBindLatticeCage(targetObj, mod) {
+  if (!targetObj?.geometry) return;
+  const p = mod.values || {};
+  const divisions = [Math.max(1, parseInt(p['U Points'] ?? 2, 10)), Math.max(1, parseInt(p['V Points'] ?? 2, 10)), Math.max(1, parseInt(p['W Points'] ?? 2, 10))];
+  const baseGeo = targetObj.userData?.baseGeometry || targetObj.geometry;
+  const cageGeo = modifierGeometryApi().createLatticeCageGeometry(baseGeo, divisions, 0.06);
+  const cageMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.72 });
+  const cageMesh = new THREE.Mesh(cageGeo, cageMat);
+  cageMesh.position.copy(targetObj.position);
+  cageMesh.quaternion.copy(targetObj.quaternion);
+  cageMesh.scale.copy(targetObj.scale);
+  cageMesh.userData.divisions = cageGeo.userData.divisions;
+  cageMesh.userData.restPositions = cageGeo.userData.restPositions.slice();
+  /* Apply a gentle default top-flare on the control cage so the user sees live FFD immediately */
+  const pos = cageGeo.attributes.position;
+  const minY = cageGeo.userData.boundsMin[1], maxY = cageGeo.userData.boundsMax[1];
+  const sy = Math.max(maxY - minY, 1e-4);
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) - minY) / sy;
+    if (t > 0.55) {
+      const flare = 1 + (t - 0.55) * 0.45;
+      pos.setXYZ(i, pos.getX(i) * flare, pos.getY(i), pos.getZ(i) * flare);
+    }
+  }
+  pos.needsUpdate = true;
+  registerHelperSceneMesh(cageMesh, 'LatticeCage');
+  mod.values['Cage Object'] = cageMesh.uuid;
+  targetObj.userData.forceModUpdate = true;
+  renderModifierStack();
+  updateModifiersOnScene(targetObj);
+  FE.toast(`Created & bound ${cageMesh.name} — scale/sculpt/edit the cage to deform!`);
+}
+
+function spawnAndBindArmatureRig(targetObj, mod) {
+  if (!targetObj?.geometry) return;
+  const baseGeo = targetObj.userData?.baseGeometry || targetObj.geometry;
+  baseGeo.computeBoundingBox();
+  const bb = baseGeo.boundingBox || new THREE.Box3(new THREE.Vector3(-0.7, -0.7, -0.7), new THREE.Vector3(0.7, 0.7, 0.7));
+  const size = bb.getSize(new THREE.Vector3());
+  const h = Math.max(size.y, 0.8), r = Math.max(Math.min(size.x, size.z) * 0.14, 0.06);
+  /* Octahedral 3-bone visual rig mesh */
+  const rigGeo = new THREE.CylinderGeometry(r * 0.45, r, h, 6, 3);
+  const rigMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, wireframe: true, transparent: true, opacity: 0.82 });
+  const rigMesh = new THREE.Mesh(rigGeo, rigMat);
+  rigMesh.position.copy(targetObj.position);
+  rigMesh.quaternion.copy(targetObj.quaternion);
+  rigMesh.scale.copy(targetObj.scale);
+  targetObj.updateWorldMatrix?.(true, false);
+  rigMesh.userData.bindTargetMatrix = targetObj.matrixWorld.toArray();
+  registerHelperSceneMesh(rigMesh, 'ArmatureRig');
+  mod.values['Rig Object'] = rigMesh.uuid;
+  targetObj.userData.forceModUpdate = true;
+  renderModifierStack();
+  updateModifiersOnScene(targetObj);
+  FE.toast(`Created & bound ${rigMesh.name} — adjust Bone Bend/Twist or rotate the rig!`);
+}
+
+function bindSurfaceDeformTarget(targetObj, mod) {
+  const p = mod.values || {};
+  const surfTarget = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
+  if (!surfTarget?.geometry) {
+    FE.toast('Select a Target Object mesh first before binding Surface Deform.');
+    return;
+  }
+  const baseGeo = targetObj.userData?.baseGeometry || targetObj.geometry;
+  const relative = modifierRelativeMatrix(targetObj, surfTarget);
+  mod.surfaceBinding = modifierGeometryApi().bindSurfaceDeform(baseGeo, surfTarget.geometry, relative.elements, {
+    falloff: parseFloat(p['Falloff'] ?? 2.5)
+  });
+  targetObj.userData.forceModUpdate = true;
+  renderModifierStack();
+  updateModifiersOnScene(targetObj);
+  FE.toast(`Bound Surface Deform to ${surfTarget.name || 'target mesh'}!`);
+}
+
+function modifierDependencyRef(mod) {
+  if (mod.name === 'Boolean') return mod.values?.['Operand Object'];
+  if (mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') return mod.values?.['Target Object'];
+  if (mod.name === 'Lattice') return mod.values?.['Cage Object'];
+  if (mod.name === 'Armature') return mod.values?.['Rig Object'];
+  return null;
+}
 
 function modifierEvaluationHash(targetObj, mods) {
   targetObj.updateWorldMatrix?.(true, false);
   const deps = mods.map(mod => {
-    const ref = mod.name === 'Boolean' ? mod.values?.['Operand Object'] : mod.name === 'Shrinkwrap' ? mod.values?.['Target Object'] : null;
+    const ref = modifierDependencyRef(mod);
     const object = ref ? getAllSceneMeshes().find(mesh => mesh.uuid === ref) : null;
     object?.updateWorldMatrix?.(true, false);
     const pos = object?.geometry?.attributes?.position;
-    return { name:mod.name, values:mod.values, target:object ? {uuid:object.uuid,geometry:object.geometry?.uuid,positionVersion:pos?.version,matrix:object.matrixWorld?.elements} : ref || null };
+    return { name:mod.name, values:mod.values, bound:!!mod.surfaceBinding, target:object ? {uuid:object.uuid,geometry:object.geometry?.uuid,positionVersion:pos?.version,matrix:object.matrixWorld?.elements} : ref || null };
   });
   const base=targetObj.userData.baseGeometry,basePos=base?.attributes?.position;
   return JSON.stringify({base:base?.uuid,baseVersion:basePos?.version,transform:targetObj.matrixWorld?.elements,mods:deps});
@@ -9763,24 +9965,14 @@ function updateModifiersOnScene(targetOverride) {
       const ratio = parseFloat(p["Ratio"] || 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio));
     } else if (mod.name === "Triangulate") {
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false));
     } else if (mod.name === "Weld") {
       const dist = parseFloat(p["Distance"] || 0.02);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyWeldModifier(currentGeo, dist));
     } else if (mod.name === "Wireframe") {
-      const th = parseFloat(p["Thickness"] || 0.03);
-      if (p["Replace Original"]) {
-        if (targetObj.material) targetObj.material.wireframe = true;
-      } else {
-        const wireMat = new THREE.LineBasicMaterial({ color: 0x818cf8 });
-        const wireOverlay = new THREE.LineSegments(new THREE.WireframeGeometry(currentGeo), wireMat);
-        wireOverlay.name = 'ModifierHelper';
-        wireOverlay.userData.targetId = targetObj.uuid;
-        wireOverlay.position.copy(targetObj.position);
-        wireOverlay.rotation.copy(targetObj.rotation);
-        wireOverlay.scale.copy(targetObj.scale).multiplyScalar(1.01);
-        eng.sc.add(wireOverlay);
-      }
+      const th = parseFloat(p["Thickness"] ?? 0.03);
+      const replaceOriginal = p["Replace Original"] !== false;
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWireframeModifier(currentGeo, th, replaceOriginal));
     } else if (mod.name === "Displace") {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
@@ -9803,12 +9995,23 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] || 1.2);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyWarpModifier(currentGeo, str));
     } else if (mod.name === "Lattice") {
-      throw new Error('Lattice needs an editable control-cage object; the current project has no lattice data model, so no taper substitute is applied.');
+      if (!p['Cage Object']) {
+        throw new Error('Lattice needs an editable control-cage object; click "Create & Bind Lattice Cage" or select a Cage Object.');
+      }
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyLatticeFfdModifier(currentGeo, targetObj, mod));
     } else if (mod.name === "Shrinkwrap") {
       const target = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface'));
-    } else if (mod.name === "Armature" || mod.name === "Surface Deform") {
-      throw new Error(`${mod.name} needs a rig/bone-weight or bind-target workflow that this project does not yet provide; no lattice deformation is substituted.`);
+    } else if (mod.name === "Armature") {
+      if (!p['Rig Object']) {
+        throw new Error('Armature needs a rig/bone-weight or bind-target workflow; click "Create & Bind Armature Rig" or select a Rig Object.');
+      }
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArmatureSkinModifier(currentGeo, targetObj, mod));
+    } else if (mod.name === "Surface Deform") {
+      if (!p['Target Object'] || !mod.surfaceBinding) {
+        throw new Error('Surface Deform needs a rig/bone-weight or bind-target workflow; select a Target Object and click "Bind to Target Surface".');
+      }
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySurfaceDeformModifier(currentGeo, targetObj, mod));
     } else if (mod.name === "Weighted Normal") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => modifierGeometryApi().weightedNormalGeometry(currentGeo, { weight:parseFloat(p.Weight ?? 50), keepSharp:p['Keep Sharp'] !== false }));
     } else if (mod.name === "Cloth") {
@@ -9892,13 +10095,14 @@ function refreshModifierDependents(changedObj) {
       for(const candidate of all){
         if(candidate===source||seen.has(candidate.uuid))continue;
         const stack=candidate.userData?.modStack||[];
-        const depends=stack.some(mod=>mod.enabled&&((mod.name==='Boolean'&&mod.values?.['Operand Object']===source.uuid)||(mod.name==='Shrinkwrap'&&mod.values?.['Target Object']===source.uuid)));
+        const depends=stack.some(mod=>mod.enabled&&modifierDependencyRef(mod)===source.uuid);
         if(!depends)continue;
         candidate.userData.forceModUpdate=true;updateModifiersOnScene(candidate);seen.add(candidate.uuid);queue.push(candidate);
       }
     }
   } finally { refreshingModifierDependents = false; }
 }
+window.refreshModifierDependents = refreshModifierDependents;
 window.updateModifiersOnScene = updateModifiersOnScene;
 
 const FLUID_PRESETS = {
@@ -9963,7 +10167,9 @@ function addModifierToStack(category, definition) {
     applyFluidPreset({ values }, "Water");
   }
   if (definition.name === 'Boolean') values['Operand Object'] = '';
-  if (definition.name === 'Shrinkwrap') values['Target Object'] = ''; 
+  if (definition.name === 'Shrinkwrap' || definition.name === 'Surface Deform') values['Target Object'] = '';
+  if (definition.name === 'Lattice') values['Cage Object'] = '';
+  if (definition.name === 'Armature') values['Rig Object'] = ''; 
 
   const mod = {
     id: Date.now() + Math.random(),
@@ -10082,7 +10288,10 @@ function createModifierField(mod, index, field) {
   } else if (type === "select") {
     labelEl.textContent = label;
     const select = document.createElement("select");
-    const isObjectTarget = (mod.name === 'Boolean' && label === 'Operand Object') || (mod.name === 'Shrinkwrap' && label === 'Target Object');
+    const isObjectTarget = (mod.name === 'Boolean' && label === 'Operand Object')
+      || ((mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') && label === 'Target Object')
+      || (mod.name === 'Lattice' && label === 'Cage Object')
+      || (mod.name === 'Armature' && label === 'Rig Object');
     const targetObj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
     const options = isObjectTarget ? [{ value:'', label:'(Select a mesh)' }, ...modifierTargetOptions(targetObj)] : values[0].map(value => ({ value, label: value }));
     if (isObjectTarget && options.length === 1) options[0].label='(Add another mesh first)';
@@ -10095,9 +10304,11 @@ function createModifierField(mod, index, field) {
     });
     select.onchange = () => {
       mod.values[label] = select.value;
+      if (mod.name === 'Surface Deform' && label === 'Target Object') mod.surfaceBinding = null;
       const targetObj = getActiveObjectMesh ? getActiveObjectMesh() : null;
       if (targetObj) targetObj.userData.forceModUpdate = true;
       updateModifiersOnScene();
+      if (isObjectTarget) renderModifierStack();
     };
     wrapper.append(labelEl, select);
   }
@@ -10118,13 +10329,17 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0)));
       else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true));
       else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5)));
-      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g));
+      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false));
       else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
+      else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false));
       else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1)));
       else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0)));
       else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1)));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3)));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2)));
+      else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));
+      else if(mod.name==='Armature')stage(g=>applyArmatureSkinModifier(g,targetObj,mod));
+      else if(mod.name==='Surface Deform')stage(g=>applySurfaceDeformModifier(g,targetObj,mod));
       else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface'))}
       else if(mod.name==='Weighted Normal')stage(g=>modifierGeometryApi().weightedNormalGeometry(g,{weight:Number(p.Weight??50),keepSharp:p['Keep Sharp']!==false}));
       else throw new Error(`${mod.name} cannot be applied as a static mesh modifier in this runtime.`);
@@ -10215,33 +10430,33 @@ function renderModifierStack() {
           if (hideForDomain.includes(label)) return;
 
           if (domainType === "Liquid") {
-            const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Vorticity Confinement", "Resolution", "Surface Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!liquidOnly.includes(label)) return;
           } else if (domainType === "Fire") {
-            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Turbulence", "Fuel", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireOnly.includes(label)) return;
           } else if (domainType === "Smoke") {
-            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Turbulence", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!smokeOnly.includes(label)) return;
           } else if (domainType === "Fire + Smoke") {
-            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Turbulence", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Flow") {
-          const hideForFlow = ["Domain Type", "Resolution", "Time Scale", "Internal Inflow", "Inflow Rate", "Effector Type", "Surface Thickness", "Bounce", "Gravity"];
+          const hideForFlow = ["Domain Type", "Resolution", "Surface Resolution", "Time Scale", "Internal Inflow", "Inflow Rate", "Effector Type", "Surface Thickness", "Bounce", "Gravity"];
           if (hideForFlow.includes(label)) return;
 
           if (flowType === "Liquid") {
             const flowLiquidOnly = ["Type", "Flow Type", "Liquid Preset", "Flow Behavior", "Use Flow", "Viscosity", "Surface Tension", "Flow Rate", "Flow Speed", "Velocity X", "Velocity Y", "Velocity Z"];
             if (!flowLiquidOnly.includes(label)) return;
           } else if (flowType === "Fire") {
-            const flowFireOnly = ["Type", "Flow Type", "Fire Preset", "Flow Behavior", "Use Flow", "Flame Height", "Heat Emission", "Turbulence", "Fuel", "Flow Rate", "Flow Speed"];
+            const flowFireOnly = ["Type", "Flow Type", "Fire Preset", "Flow Behavior", "Use Flow", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Flow Rate", "Flow Speed"];
             if (!flowFireOnly.includes(label)) return;
           } else if (flowType === "Smoke") {
-            const flowSmokeOnly = ["Type", "Flow Type", "Smoke Preset", "Flow Behavior", "Use Flow", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Turbulence", "Flow Rate", "Flow Speed"];
+            const flowSmokeOnly = ["Type", "Flow Type", "Smoke Preset", "Flow Behavior", "Use Flow", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Flow Rate", "Flow Speed"];
             if (!flowSmokeOnly.includes(label)) return;
           } else if (flowType === "Fire + Smoke") {
-            const flowFireSmokeOnly = ["Type", "Flow Type", "Fire & Smoke Preset", "Flow Behavior", "Use Flow", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Turbulence", "Flow Rate", "Flow Speed"];
+            const flowFireSmokeOnly = ["Type", "Flow Type", "Fire & Smoke Preset", "Flow Behavior", "Use Flow", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Flow Rate", "Flow Speed"];
             if (!flowFireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Effector") {
@@ -10330,7 +10545,29 @@ function renderModifierStack() {
       
       body.appendChild(fieldEl);
     });
-    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the Rust/WASM solver loads. Flow emits from the selected mesh surface. Current browser solver budget: up to 768 SPH particles and 96 surface cells; higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
+    if (mod.name === "Lattice") {
+      const cageBtn = document.createElement('button');
+      cageBtn.className = 'small-btn';
+      cageBtn.style.cssText = 'width:100%;margin:8px 0 4px;background:rgba(56,189,248,.16);border:1px solid rgba(56,189,248,.42);color:#bae6fd;font-weight:600';
+      cageBtn.textContent = mod.values['Cage Object'] ? '↻ Rebuild & Bind Lattice Cage' : '＋ Create & Bind Lattice Cage';
+      cageBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) spawnAndBindLatticeCage(t, mod); };
+      body.appendChild(cageBtn);
+    } else if (mod.name === "Armature") {
+      const rigBtn = document.createElement('button');
+      rigBtn.className = 'small-btn';
+      rigBtn.style.cssText = 'width:100%;margin:8px 0 4px;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.42);color:#fde68a;font-weight:600';
+      rigBtn.textContent = mod.values['Rig Object'] ? '↻ Rebuild & Bind Armature Rig' : '＋ Create & Bind Armature Rig';
+      rigBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) spawnAndBindArmatureRig(t, mod); };
+      body.appendChild(rigBtn);
+    } else if (mod.name === "Surface Deform") {
+      const bindBtn = document.createElement('button');
+      bindBtn.className = 'small-btn';
+      bindBtn.style.cssText = 'width:100%;margin:8px 0 4px;background:rgba(168,85,247,.16);border:1px solid rgba(168,85,247,.42);color:#e9d5ff;font-weight:600';
+      bindBtn.textContent = mod.surfaceBinding ? '✓ Re-Bind to Target Surface' : '🔗 Bind to Target Surface';
+      bindBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) bindSurfaceDeformTarget(t, mod); };
+      body.appendChild(bindBtn);
+    }
+    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the C++20/WASM solver loads. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with C++20 spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
 
     const buttons = document.createElement("div");
     buttons.className = "buttons";

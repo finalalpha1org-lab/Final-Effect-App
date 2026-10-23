@@ -1,3 +1,143 @@
+/* Forest impostors: GPU bridge only; atlas baking is limited to one species per frame.
+   Four azimuths share one 1024x256 RGBA target. No source geometry is owned here. */
+(function(root){
+'use strict';
+root.FEForestImpostors=function(THREE){
+ const cache=new Map(),queue=[],failed=new WeakSet(),MAX_ATLASES=24;
+ const stats={atlases:0,pending:0,instances:0,triangles:0};
+ let clock=0;
+ // Heavy bulk distance/azimuth selection runs in a worker using the unified C++ WASM.
+ // Rendering can proceed with mesh/JS selection while WASM starts or if workers fail.
+ let worker=null,workerReady=false,inFlight=false,epoch=0,lastJob='',lastItems=[],selection=new WeakMap();
+ const workerCode=function(){
+  let ex;
+  self.onmessage=async({data:d})=>{try{
+   if(d.type==='init'){
+    const response=await fetch(d.url);if(!response.ok)throw Error('Forest WASM HTTP '+response.status);
+    const result=await WebAssembly.instantiate(await response.arrayBuffer(),{});ex=result.instance.exports;ex.__wasm_call_ctors?.();
+    if(!ex.fe_forest_classify)throw Error('Forest C++ exports unavailable');self.postMessage({type:'ready'});return;
+   }
+   if(d.type==='classify'&&ex){
+    const output=new Int32Array(d.records.length/3);
+    for(let base=0;base<output.length;base+=32768){const n=Math.min(32768,output.length-base);
+     new Float32Array(ex.memory.buffer,ex.fe_forest_input_ptr(),n*3).set(d.records.subarray(base*3,(base+n)*3));
+     if(ex.fe_forest_classify(n,d.x,d.z,d.near,d.far)!==n)throw Error('Invalid forest classification input');
+     output.set(new Int32Array(ex.memory.buffer,ex.fe_forest_output_ptr(),n),base);
+    }
+    self.postMessage({type:'result',epoch:d.epoch,output},[output.buffer]);
+   }
+  }catch(error){self.postMessage({type:'error',message:String(error)})}};
+ };
+ function startWorker(){
+  if(worker||typeof Worker==='undefined')return;
+  let url;
+  try{url=URL.createObjectURL(new Blob(['('+workerCode.toString()+')()'],{type:'text/javascript'}));worker=new Worker(url);
+   worker.onmessage=({data:d})=>{
+    if(d.type==='ready'){workerReady=true;stats.cppWorker=true;stats.selectionUpdated=true}
+    if(d.type==='error'){console.warn('Forest worker fallback:',d.message);worker.terminate();workerReady=false;inFlight=false;stats.cppWorker=false;return}
+    if(d.type==='result'){inFlight=false;if(d.epoch!==epoch)return;const next=new WeakMap();for(let i=0;i<lastItems.length;i++)next.set(lastItems[i],d.output[i]);selection=next;stats.selectionUpdated=true}
+   };
+   worker.onerror=()=>{worker.terminate();workerReady=false;inFlight=false;stats.cppWorker=false};
+   worker.postMessage({type:'init',url:new URL('./fe_core_engine.wasm',document.baseURI).href});
+  }catch(error){workerReady=false}finally{if(url)URL.revokeObjectURL(url)}
+ }
+ function classify(items,cp,near,far){
+  startWorker();if(!workerReady||inFlight)return;
+  const signature=[cp.x.toFixed(1),cp.z.toFixed(1),near,far,items.length,epoch].join(':');if(signature===lastJob&&items.every((o,i)=>o===lastItems[i]))return;lastJob=signature;
+  const records=new Float32Array(items.length*3);for(let i=0;i<items.length;i++){const o=items[i];records.set([o.x,o.z,o.r||0],i*3)}
+  lastItems=items;inFlight=true;worker.postMessage({type:'classify',epoch,records,x:cp.x,z:cp.z,near,far},[records.buffer]);
+ }
+
+ // GPU-side distance fade updates every rendered frame, not only on streaming ticks.
+ const lodUniforms={start:{value:440},end:{value:560},camera:{value:new THREE.Vector2()}};
+ let residency=new WeakMap();
+ function resident(item,d,center){let state=residency.get(item);if(!state){state={card:d>center-100,mesh:d<center+100};residency.set(item,state)}
+ if(d>center-100)state.card=true;else if(d<center-140)state.card=false;
+ if(d<center+100)state.mesh=true;else if(d>center+140)state.mesh=false;
+ return state;}
+ function ditherMaterial(source,card){
+  if(Array.isArray(source))return source.map(m=>ditherMaterial(m,card));
+  const material=source.clone(),previous=source.onBeforeCompile,oldKey=source.customProgramCacheKey.bind(source);
+  material.onBeforeCompile=function(shader,renderer){
+   previous.call(this,shader,renderer);
+   shader.uniforms.forestCameraXZ=lodUniforms.camera;shader.uniforms.forestLodStart=lodUniforms.start;shader.uniforms.forestLodEnd=lodUniforms.end;
+   shader.vertexShader='uniform vec2 forestCameraXZ;\nvarying float vForestDistance;\n'+shader.vertexShader;
+   shader.vertexShader=shader.vertexShader.replace('#include <project_vertex>',`#include <project_vertex>
+    vec4 forestOrigin = vec4(0.0,0.0,0.0,1.0);
+    #ifdef USE_INSTANCING
+    forestOrigin = instanceMatrix * forestOrigin;
+    #endif
+    forestOrigin = modelMatrix * forestOrigin;
+    vForestDistance = length(forestOrigin.xz-forestCameraXZ);`);
+   shader.fragmentShader='uniform float forestLodStart;\nuniform float forestLodEnd;\nvarying float vForestDistance;\n'+shader.fragmentShader;
+   shader.fragmentShader=shader.fragmentShader.replace('#include <alphatest_fragment>',`#include <alphatest_fragment>
+    float forestFade = smoothstep(forestLodStart,forestLodEnd,vForestDistance);
+    // Stable complementary screen-door coverage; no transparency sorting/depth-write changes.
+    vec2 forestPixel = floor(gl_FragCoord.xy);
+    float forestNoise = fract(52.9829189 * fract(dot(forestPixel,vec2(0.06711056,0.00583715))));
+    ${card?'if(forestNoise >= forestFade) discard;':'if(forestNoise < forestFade) discard;'}
+   `);
+  };
+  material.customProgramCacheKey=()=>oldKey()+':forest-dither-v1:'+Number(card);
+  return material;
+ }
+ function disposeMaterial(material){for(const m of Array.isArray(material)?material:[material])m?.dispose()}
+ function setLodDistance(distance,cp){if(cp)lodUniforms.camera.value.set(cp.x,cp.z);lodUniforms.start.value=distance-60;lodUniforms.end.value=distance+60}
+
+ function request(key,K){
+  const old=cache.get(key);if(old){old.used=++clock;return old.ready?old:null}
+  if(failed.has(K)||!K?.meshes?.length)return null;
+  // Bounded residency: never allocate an unbounded atlas for every procedural variant.
+  if(cache.size>=MAX_ATLASES)return null;
+  const entry={key,K,used:++clock,ready:false};cache.set(key,entry);queue.push(entry);stats.pending=queue.length;return null;
+ }
+ function bake(renderer){
+  const e=queue.shift();stats.pending=queue.length;if(!e)return false;
+  const scene=new THREE.Scene(),box=new THREE.Box3(),identity=new THREE.Matrix4(),white=new THREE.Color(1,1,1);
+  let target;
+  const previous={target:renderer.getRenderTarget(),viewport:renderer.getViewport(new THREE.Vector4()),scissor:renderer.getScissor(new THREE.Vector4()),test:renderer.getScissorTest(),color:renderer.getClearColor(new THREE.Color()).clone(),alpha:renderer.getClearAlpha(),auto:renderer.autoClear,xr:renderer.xr.enabled,tone:renderer.toneMapping};
+  try{
+   for(const src of e.K.meshes){
+    if(!src.geometry||!src.material||(src.userData.vn&&src.userData.vi!==0))continue;
+    const g=src.geometry;if(!g.boundingBox)g.computeBoundingBox();box.union(g.boundingBox);
+    const mesh=new THREE.InstancedMesh(g,src.material,1);mesh.setMatrixAt(0,identity);const pal=src.userData.pal;mesh.setColorAt(0,pal?.length?new THREE.Color(...pal[0]):white);mesh.frustumCulled=false;scene.add(mesh);
+   }
+   if(box.isEmpty())throw Error('Empty foliage bounds');
+   const center=box.getCenter(new THREE.Vector3()),extent=box.getSize(new THREE.Vector3());
+   // Square orthographic views keep the same silhouette scale at every azimuth.
+   const span=Math.max(Math.hypot(extent.x,extent.z),extent.y,.1)*1.12;
+   target=new THREE.WebGLRenderTarget(1024,256,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,depthBuffer:true,stencilBuffer:false});
+   target.texture.generateMipmaps=false;target.texture.encoding=renderer.outputEncoding;
+   scene.add(new THREE.HemisphereLight(0xffffff,0x606050,1));
+   const sun=new THREE.DirectionalLight(0xffffff,.8);sun.position.set(3,8,5);scene.add(sun);
+   const camera=new THREE.OrthographicCamera(-span/2,span/2,span/2,-span/2,.01,span*5);
+   renderer.xr.enabled=false;renderer.toneMapping=THREE.NoToneMapping;renderer.autoClear=false;
+   renderer.setRenderTarget(target);renderer.setClearColor(0x000000,0);renderer.setScissorTest(false);renderer.clear();renderer.setScissorTest(true);
+   for(let view=0;view<4;view++){
+    const a=view*Math.PI/2;camera.position.set(center.x+Math.sin(a)*span*2,center.y,center.z+Math.cos(a)*span*2);camera.lookAt(center);
+    renderer.setViewport(view*256,0,256,256);renderer.setScissor(view*256,0,256,256);renderer.render(scene,camera);
+   }
+   e.target=target;e.center=center;e.span=span;e.geometries=[];
+   for(let view=0;view<4;view++){
+    const g=new THREE.PlaneGeometry(span,span),uv=g.attributes.uv;
+    // Half-texel inset prevents adjacent atlas view bleeding.
+    for(let i=0;i<uv.count;i++)uv.setX(i,(view+(uv.getX(i)*255+.5)/256)/4);
+    e.geometries.push(g);
+   }
+   e.material=new THREE.MeshBasicMaterial({map:target.texture,alphaTest:.45,side:THREE.DoubleSide,fog:true});
+   e.ready=true;stats.atlases++;return true;
+  }catch(error){target?.dispose();cache.delete(e.key);failed.add(e.K);console.warn('Forest impostor kept mesh fallback:',error);return false}
+  finally{
+   // Dispose only temporary instance buffers; source geometry/materials remain shared.
+   for(const o of scene.children)if(o.isInstancedMesh)o.dispose?.();
+   renderer.setRenderTarget(previous.target);renderer.setViewport(previous.viewport);renderer.setScissor(previous.scissor);renderer.setScissorTest(previous.test);renderer.setClearColor(previous.color,previous.alpha);renderer.autoClear=previous.auto;renderer.xr.enabled=previous.xr;renderer.toneMapping=previous.tone;
+  }
+ }
+ function clear(){residency=new WeakMap();epoch++;lastJob="";selection=new WeakMap();lastItems=[];for(const e of cache.values()){e.target?.dispose();e.material?.dispose();for(const g of e.geometries||[])g.dispose()}cache.clear();queue.length=0;stats.atlases=stats.pending=stats.instances=stats.triangles=0}
+ return{request,bake,clear,stats,classify,ditherMaterial,disposeMaterial,setLodDistance,resident,view:item=>selection.get(item)};
+};
+})(globalThis);
+/* END FOREST IMPOSTOR BRIDGE */
 /* Final Effect — Open World add-on (open-world.js)
    Load after the main inline script and before the closing body tag.
    Adds: Generate Open World Map → huge procedural world (streamed terrain LOD, biomes, rivers, lakes, ponds, waterfalls, foliage),
@@ -215,7 +355,7 @@ const OWIDX=(()=>{const a=[];for(let j=0;j<TG;j++)for(let i=0;i<TG;i++){const A=
  return new THREE.BufferAttribute(new Uint16Array(a),1)})();
 const OWZA=new THREE.BufferAttribute(new Float32Array(TVT*4),4),OWZB=new THREE.BufferAttribute(new Float32Array(TVT*2),2),OW_TOPOLOGY=new Map([[TG,{seg:TG,tn:TN,tv:TV,tvt:TVT,h3:H3,index:OWIDX,weightsA:OWZA,weightsB:OWZB}]]);
 function owTileSegments(n){return n.size>=512?32:64}
-function owTileTopology(seg){let t=OW_TOPOLOGY.get(seg);if(t)return t;const tn=seg+1,tv=tn*tn,tvt=tv+4*tn,h3=seg+3,ix=[];for(let j=0;j<seg;j++)for(let i=0;i<seg;i++){const a=j*tn+i,b=(j+1)*tn+i,c=a+1,d=b+1;ix.push(a,b,c,b,d,c)}const edge=(e,k)=>e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg;for(let e=0;e<4;e++)for(let k=0;k<seg;k++){const a=edge(e,k),b=edge(e,k+1),c=tv+e*tn+k,d=c+1;ix.push(a,c,b,b,c,d)}t={seg,tn,tv,tvt,h3,index:new THREE.BufferAttribute(new Uint16Array(ix),1),weightsA:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsB:new THREE.BufferAttribute(new Float32Array(tvt*2),2)};OW_TOPOLOGY.set(seg,t);return t}
+function owTileTopology(seg){let t=OW_TOPOLOGY.get(seg);if(t)return t;const tn=seg+1,tv=tn*tn,tvt=tv+4*tn,h3=seg+3,ix=[];for(let j=0;j<seg;j++)for(let i=0;i<seg;i++){const a=j*tn+i,b=(j+1)*tn+i,c=a+1,d=b+1;ix.push(a,b,c,b,d,c)}const edge=(e,k)=>e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg;for(let e=0;e<4;e++)for(let k=0;k<seg;k++){const a=edge(e,k),b=edge(e,k+1),c=tv+e*tn+k,d=c+1;ix.push(a,c,b,b,c,d)}t={seg,tn,tv,tvt,h3,index:new THREE.BufferAttribute(new Uint16Array(ix),1),weightsA:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsB:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsC:new THREE.BufferAttribute(new Float32Array(tvt*4),4)};OW_TOPOLOGY.set(seg,t);return t}
 let owTerrainMat=null;
 function owMakeTerrainMat(){const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:tm.normalMap,normalScale:new THREE.Vector2(.08,.08),side:THREE.DoubleSide});m.color.setScalar(.9);m.envMapIntensity=.5;
  injectDetail(m,false);const f=m.onBeforeCompile;m.onBeforeCompile=function(s,r){f.call(this,s,r);s.fragmentShader=s.fragmentShader.replace('uLit*(grm','0.*(grm')};m.customProgramCacheKey=()=>'ow-terrain-v1';return m}
@@ -236,7 +376,7 @@ function owBuildNode(n){const top=owTileTopology(owTileSegments(n)),seg=top.seg,
  for(let j=0;j<tn;j++)for(let i=0;i<tn;i++){const k=j*tn+i,x=n.x0+i*sp,z=n.z0+j*sp,c=(j+1)*h3+i+1,h=hg[c],dx=(hg[c+1]-hg[c-1])/(2*sp),dz=(hg[c+h3]-hg[c-h3])/(2*sp),nl=Math.hypot(dx,1,dz);
   pos[k*3]=x;pos[k*3+1]=h;pos[k*3+2]=z;nor[k*3]=-dx/nl;nor[k*3+1]=1/nl;nor[k*3+2]=-dz/nl;owColor(x,z,h,Math.hypot(dx,dz),TMP3);col[k*3]=TMP3[0];col[k*3+1]=TMP3[1];col[k*3+2]=TMP3[2];uv[k*2]=x*.01;uv[k*2+1]=z*.01;if(h<mn)mn=h;if(h>mx)mx=h}
  for(let e=0;e<4;e++)for(let k=0;k<tn;k++){const src=e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg,d=tv+e*tn+k;pos[d*3]=pos[src*3];pos[d*3+1]=pos[src*3+1]-skd;pos[d*3+2]=pos[src*3+2];nor.copyWithin(d*3,src*3,src*3+3);col.copyWithin(d*3,src*3,src*3+3);uv[d*2]=uv[src*2];uv[d*2+1]=uv[src*2+1]}
- const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.setAttribute('surfaceWeightsA',top.weightsA);g.setAttribute('surfaceWeightsB',top.weightsB);g.setIndex(top.index);
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.setAttribute('surfaceWeightsA',top.weightsA);g.setAttribute('surfaceWeightsB',top.weightsB);g.setAttribute('surfaceWeightsC',top.weightsC);g.setIndex(top.index);
  g.boundingSphere=new THREE.Sphere(new THREE.Vector3(n.cx,(mn+mx)/2,n.cz),Math.hypot(n.size*.5*1.42,(mx-mn)/2+skd)+1);
  if(!owTerrainMat)owTerrainMat=owMakeTerrainMat();const m=new THREE.Mesh(g,owTerrainMat);m.receiveShadow=true;m.castShadow=false;m.visible=false;m.matrixAutoUpdate=false;m.name='OW tile L'+n.l;OW.root.add(m);n.mesh=m;n.segments=seg;n.cy=(mn+mx)/2;n.built=true;if(mode=='wire')owTerrainMat.wireframe=true}
 function owDisposeNode(n){if(n.mesh){OW.root.remove(n.mesh);n.mesh.geometry.dispose();n.mesh=null}n.built=false}
@@ -385,15 +525,43 @@ function owClearFar(){for(const p of fol.farPools.values()){p.mesh.count=0;p.mes
 function owAdoptKMeshes(){if(!OW.def)return;for(const k in KIND){const K=KIND[k];for(const m of [...(K.meshes||[]),...(K.shadowMeshes||[])]){if(!m||m.parent===OW.root)continue;const parent=m.parent||scene;if(!OW.def.meshParents.some(v=>v.m===m))OW.def.meshParents.push({kind:k,m,parent});OW.root.attach(m)}}}
 function owEnsureSpecies(k){const before=KIND[k]?.meshes,K=ensure(k);if(OW.active&&K&&K.meshes!==before)owAdoptKMeshes();return K}
 function owRestoreKMeshes(d){for(const v of d?.meshParents||[]){const K=KIND[v.kind];if(!K||![...(K.meshes||[]),...(K.shadowMeshes||[])].includes(v.m)||!v.parent||v.m.parent===v.parent)continue;v.parent.attach(v.m)}}
+const forestImpostors=window.FEForestImpostors(THREE);
 const dmy=new THREE.Object3D(),tc3=new THREE.Color();
-function rebuildFar(){const group=fol.farMesh;if(!group)return;owUpdateViewFrustum();const Q=QS[OW.Q],cp=owCam,batches=new Map(),models=new Map();let trees=0;
+function forestView(item,cp){const a=Math.atan2(cp.x-item.x,cp.z-item.z)-(item.r||0);return ((Math.round(a/(Math.PI/2))%4)+4)%4}
+function syncForestCards(batches,group){
+ const active=new Set();let count=0;
+ for(const[key,b]of batches){active.add(key);let pool=fol.farPools.get(key);const n=b.items.length;
+  if(!pool||pool.capacity<n){if(pool){group.remove(pool.mesh);pool.mesh.dispose?.();if(pool.ownedMaterial)forestImpostors.disposeMaterial(pool.mesh.material)}const capacity=Math.max(n,pool?Math.ceil(pool.capacity*1.25):1),mesh=new THREE.InstancedMesh(b.atlas.geometries[b.view],forestImpostors.ditherMaterial(b.atlas.material,true),capacity);mesh.frustumCulled=false;mesh.castShadow=false;mesh.name='Forest impostors '+key;mesh.userData={farLod:true,impostor:true,chunk:b.chunk};pool={mesh,capacity,ownedMaterial:true};fol.farPools.set(key,pool);group.add(mesh)}
+  const mesh=pool.mesh;
+  for(let i=0;i<n;i++){const o=b.items[i],s=cl(o.s*b.K.size,TREE_SIZE_MIN[o.k]||0,TREE_SIZE_MAX[o.k]||Infinity),a=o.a||1;
+   dmy.rotation.set(0,Math.atan2(owCam.x-o.x,owCam.z-o.z),0);dmy.scale.set(s*a,s,s*a);
+   // Atlas is centered on the source bounds, including any asymmetric crown.
+   const offset=b.atlas.center.clone().multiply(new THREE.Vector3(s*a,s,s*a));offset.applyAxisAngle(GROUND_UP,o.r||0);
+   dmy.position.set(o.x+offset.x,owHeightAt(o.x,o.z)+offset.y,o.z+offset.z);dmy.updateMatrix();mesh.setMatrixAt(i,dmy.matrix);
+   const tint=b.K.tint||[1,1,1],v=o.v??1;mesh.setColorAt(i,tc3.setRGB(tint[0]*v,tint[1]*v,tint[2]*v));
+  }
+  mesh.count=n;mesh.visible=n>0;mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;count+=n;
+ }
+ forestImpostors.stats.instances=count;forestImpostors.stats.triangles=count*2;return active;
+}
+function rebuildFar(){forestImpostors.setLodDistance(Math.max(QS[OW.Q].Rt+160,500),owCam);const group=fol.farMesh;if(!group)return;owUpdateViewFrustum();const Q=QS[OW.Q],cp=owCam,batches=new Map(),cards=new Map(),models=new Map();let trees=0;
  const cells=[...fol.far.values()].filter(c=>c.done).map(c=>({c,d:Math.hypot(c.fx*128+64-cp.x,c.fz*128+64-cp.z)})).filter(o=>o.d>Math.min(Q.Rc,Q.Rs,Q.Rr,Q.Rt)+32&&o.d<=Q.Rf);
- for(const{c}of cells)for(const item of c.list){let K=models.get(item.k);if(!models.has(item.k)){K=owEnsureSpecies(item.k);models.set(item.k,K)}const cat=CATK(item.k),inner=(cat==='c'?Q.Rc:cat==='s'?Q.Rs:cat==='r'?Q.Rr:Q.Rt)+45,dItem=Math.hypot(item.x-cp.x,item.z-cp.z);if(!K||!K.meshes?.length||dItem<inner||dItem>Q.Rf||!owInstanceInView(item,item.k,K,true))continue;const h2=owHash(item.x*1.7,item.z*2.3),h3=owHash(item.x,item.z);let used=false;for(let si=0;si<K.meshes.length;si++){const src=K.meshes[si];if(!src?.geometry||!src.material||!src.userData)continue;const nv=Number(src.userData.vn)||0;if(nv>0&&((h2*997)|0)%nv!==src.userData.vi)continue;const key=item.k+':'+si;let batch=batches.get(key);if(!batch)batches.set(key,batch={src,K,items:[]});batch.items.push({item,h2,h3});used=true}if(used)trees++}
- const active=new Set();for(const[key,batch]of batches){active.add(key);const{src,K,items}=batch;let pool=fol.farPools.get(key),need=items.length;if(!pool||pool.src!==src||pool.capacity<need){if(pool)group.remove(pool.mesh);const capacity=Math.max(need,pool?Math.ceil(pool.capacity*1.25):1),mesh=new THREE.InstancedMesh(src.geometry,src.material,capacity);mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);mesh.instanceColor=new THREE.BufferAttribute(new Float32Array(capacity*3).fill(1),3);mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);mesh.count=0;mesh.frustumCulled=false;mesh.castShadow=false;mesh.receiveShadow=false;mesh.layers.mask=src.layers.mask;mesh.name='Open World far '+key;mesh.userData={kind:key.split(':')[0],farLod:true};pool={src,mesh,capacity};fol.farPools.set(key,pool);group.add(mesh)}
-  const mesh=pool.mesh;for(let i=0;i<items.length;i++){const{item,h2,h3}=items[i],kind=item.k,gy=owHeightAt(item.x,item.z),s=cl(item.s*K.size,TREE_SIZE_MIN[kind]||0,TREE_SIZE_MAX[kind]||Infinity),span=(ROOT_SPAN[kind]||0)*s;let sink=0;if(span){let low=gy;for(let q=0;q<4;q++){const a=q*Math.PI*.5;low=Math.min(low,owHeightAt(item.x+Math.cos(a)*span,item.z+Math.sin(a)*span))}sink=Math.min(Math.max(0,gy-low-.08),Math.min(.28*s,.16*span))}dmy.position.set(item.x,gy-sink,item.z);if(!BLD[kind]){const align=RK[kind] ? .7 : ROOT_SPAN[kind] ? .28+h2*.24 : NT[kind] ? .28 : 1;dmy.quaternion.setFromUnitVectors(GROUND_UP,owNormalAt(item.x,item.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,item.r||0);dmy.quaternion.multiply(GROUND_Q);const bend=kind==='palm' ? .28 : (kind==='acacia'||kind==='joshua') ? .22 : (ROOT_SPAN[kind]||NT[kind]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dmy.quaternion.multiply(GROUND_Q)}dmy.scale.set(s*(item.a||1),s,s*(item.a||1));dmy.updateMatrix();mesh.setMatrixAt(i,dmy.matrix);const pal=src.userData.pal,col=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2],tint=pal||src.userData.nt?[1,1,1]:K.tint,v=item.v??1;mesh.setColorAt(i,tc3.setRGB(col[0]*v*tint[0],col[1]*v*tint[1],col[2]*v*tint[2]))}mesh.count=items.length;mesh.visible=items.length>0;mesh.instanceMatrix.needsUpdate=true;mesh.instanceColor.needsUpdate=true}
- for(const[key,pool]of fol.farPools)if(!active.has(key)){pool.mesh.count=0;pool.mesh.visible=false}fol.farSig=String(trees)}
+ forestImpostors.classify(cells.flatMap(({c})=>c.list),cp,Math.max(Q.Rt+160,500),Q.Rf);
+ for(const{c}of cells)for(const item of c.list){let K=models.get(item.k);if(!models.has(item.k)){K=owEnsureSpecies(item.k);models.set(item.k,K)}const cat=CATK(item.k),inner=(cat==='c'?Q.Rc:cat==='s'?Q.Rs:cat==='r'?Q.Rr:Q.Rt)+45,dItem=Math.hypot(item.x-cp.x,item.z-cp.z);if(!K||!K.meshes?.length||dItem<inner||dItem>Q.Rf||!owInstanceInView(item,item.k,K,true))continue;const lodDistance=Math.max(Q.Rt+160,500);let fadeMesh=false;
+ // Warm the atlas before entering the overlap; meshes themselves already reside in KIND.
+ if(cat==='t'&&dItem>lodDistance-220){
+ const atlas=forestImpostors.request(item.k,K);
+ if(atlas){fadeMesh=true;const residency=forestImpostors.resident(item,dItem,lodDistance);
+  if(residency.card){const selected=forestImpostors.view(item),view=selected>=0?selected:forestView(item,cp),key='impostor:'+item.k+':'+view+':'+c.fx+','+c.fz;let b=cards.get(key);if(!b)cards.set(key,b={atlas,view,K,chunk:[c.fx,c.fz],items:[]});b.items.push(item);}
+  // Residency margin beyond the visible fade avoids churn at the transition endpoints.
+  if(!residency.mesh){trees++;continue}
+ }
+ }const h2=owHash(item.x*1.7,item.z*2.3),h3=owHash(item.x,item.z);let used=false;for(let si=0;si<K.meshes.length;si++){const src=K.meshes[si];if(!src?.geometry||!src.material||!src.userData)continue;const nv=Number(src.userData.vn)||0;if(nv>0&&((h2*997)|0)%nv!==src.userData.vi)continue;const key=item.k+':'+si+(fadeMesh?':fade':'');let batch=batches.get(key);if(!batch)batches.set(key,batch={src,K,fadeMesh,items:[]});batch.items.push({item,h2,h3});used=true}if(used)trees++}
+ const active=syncForestCards(cards,group);for(const[key,batch]of batches){active.add(key);const{src,K,items,fadeMesh}=batch;let pool=fol.farPools.get(key),need=items.length;if(!pool||pool.src!==src||pool.capacity<need){if(pool){group.remove(pool.mesh);pool.mesh.dispose?.();if(pool.ownedMaterial)forestImpostors.disposeMaterial(pool.mesh.material)}const capacity=Math.max(need,pool?Math.ceil(pool.capacity*1.25):1),mesh=new THREE.InstancedMesh(src.geometry,fadeMesh?forestImpostors.ditherMaterial(src.material,false):src.material,capacity);mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);mesh.instanceColor=new THREE.BufferAttribute(new Float32Array(capacity*3).fill(1),3);mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);mesh.count=0;mesh.frustumCulled=false;mesh.castShadow=false;mesh.receiveShadow=false;mesh.layers.mask=src.layers.mask;mesh.name='Open World far '+key;mesh.userData={kind:key.split(':')[0],farLod:true};pool={src,mesh,capacity,ownedMaterial:fadeMesh};fol.farPools.set(key,pool);group.add(mesh)}
+  const mesh=pool.mesh;for(let i=0;i<items.length;i++){const{item,h2,h3}=items[i],kind=item.k,gy=owHeightAt(item.x,item.z),s=cl(item.s*K.size,TREE_SIZE_MIN[kind]||0,TREE_SIZE_MAX[kind]||Infinity),span=(ROOT_SPAN[kind]||0)*s;let sink=0;if(span){let low=gy;for(let q=0;q<4;q++){const a=q*Math.PI*.5;low=Math.min(low,owHeightAt(item.x+Math.cos(a)*span,item.z+Math.sin(a)*span))}sink=Math.min(Math.max(0,gy-low-.08),Math.min(.28*s,.16*span))}dmy.position.set(item.x,gy-sink,item.z);if(!BLD[kind]){const align=RK[kind] ? .7 : ROOT_SPAN[kind] ? .28+h2*.24 : NT[kind] ? .28 : 1;dmy.quaternion.setFromUnitVectors(GROUND_UP,owNormalAt(item.x,item.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,item.r||0);dmy.quaternion.multiply(GROUND_Q);const bend=kind==='palm' ? .28 : (kind==='acacia'||kind==='joshua') ? .22 : (ROOT_SPAN[kind]||NT[kind]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dmy.quaternion.multiply(GROUND_Q)}dmy.scale.set(s*(item.a||1),s,s*(item.a||1));dmy.updateMatrix();mesh.setMatrixAt(i,dmy.matrix);const pal=src.userData.pal,col=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2],tint=pal||src.userData.nt?[1,1,1]:K.tint,v=item.v??1;mesh.setColorAt(i,tc3.setRGB(col[0]*v*tint[0],col[1]*v*tint[1],col[2]*v*tint[2]))}mesh.count=items.length;mesh.visible=items.length>0;mesh.instanceMatrix.needsUpdate=true;mesh.instanceColor.needsUpdate=true;}
+ for(const[key,pool]of fol.farPools)if(!active.has(key)){group.remove(pool.mesh);pool.mesh.dispose?.();if(pool.ownedMaterial)forestImpostors.disposeMaterial(pool.mesh.material);fol.farPools.delete(key)}fol.farSig=String(trees)}
 /* streaming controller */
-function folClear(){fol.cells.clear();fol.far.clear();owClearFar();fol.q.length=0;fol.fq.length=0;cand.clear();fol.sig={};fol.lastX=fol.lastZ=1e9;fol.dirty=fol.farDirty=true;fol.syncQ.length=0;for(const k in KIND){KIND[k].list=[];}}
+function folClear(){for(const p of fol.farPools.values()){fol.farMesh?.remove(p.mesh);p.mesh.dispose?.();if(p.ownedMaterial)forestImpostors.disposeMaterial(p.mesh.material)}fol.farPools.clear();forestImpostors.clear();fol.cells.clear();fol.far.clear();owClearFar();fol.q.length=0;fol.fq.length=0;cand.clear();fol.sig={};fol.lastX=fol.lastZ=1e9;fol.dirty=fol.farDirty=true;fol.syncQ.length=0;for(const k in KIND){KIND[k].list=[];}}
 function folPlan(){owUpdateViewFrustum();fol.lastViewDir.copy(owViewDir);fol.viewReady=true;fol.viewPending=true;fol.lastBuild=0;fol.sig={};const c=owCam,Q=QS[OW.Q],Rg=Math.max(Q.Rc,Q.Rs,Q.Rr),Rn=Math.max(Rg,Q.Rt)+70,r=Math.ceil(Rn/64),cx=Math.floor(c.x/64),cz=Math.floor(c.z/64);fol.q.length=0;
  for(let j=cz-r;j<=cz+r;j++)for(let i=cx-r;i<=cx+r;i++){const d=Math.hypot(i*64+32-c.x,j*64+32-c.z);if(d>Rn)continue;const key=ckey(i,j);let cell=fol.cells.get(key);if(!cell){cell={ix:i,iz:j,k:{},gDone:false,tDone:false};fol.cells.set(key,cell)}
   const nG=d<=Rg+70&&!cell.gDone,nT=d<=Q.Rt+70&&!cell.tDone;if(nG||nT)fol.q.push([d,cell,nG,nT])}
@@ -460,8 +628,8 @@ async function owExit(){if(!OW.active||OW.busy)return;OW.busy=true;const d=OW.de
  catch(e){console.error(e);showErr('Open World exit: '+(e.stack||e.message))}OW.busy=false}
 /* ---------- per-frame work ---------- */
 function owFrame(){if(!OW.active||!OW.root)return;owCamUpdate();owUpdateViewFrustum();const c=owCam;sky.position.copy(c);rU.uCenter.value.copy(c);sU.uCenter.value.copy(c);
- if(OW.ready){owUpdateViewFrustum();const b=OW.busy,P=OW.prof||(OW.prof={}),t0=performance.now();owTiles(b?34:4);const t1=performance.now();folTick(b?30:3);const t2=performance.now();owSeaStep(b?60:10);const t3=performance.now();P.tiles=t1-t0;P.fol=t2-t1;P.sea=t3-t2}
- if((owFrameNo&7)===0&&OW.ready){const g=owHgt(c.x,c.z);owEls.hud.textContent='X '+Math.round(c.x)+'  Z '+Math.round(c.z)+'  ·  alt '+Math.round(c.y-g)+' m above ground  ·  '+Math.round(g)+' m elevation  ·  '+drawn.length+' tiles'}}
+ if(OW.ready){forestImpostors.setLodDistance(Math.max(QS[OW.Q].Rt+160,500),owCam);if(forestImpostors.bake(ren)||forestImpostors.stats.selectionUpdated){fol.farDirty=true;forestImpostors.stats.selectionUpdated=false;}owUpdateViewFrustum();const b=OW.busy,P=OW.prof||(OW.prof={}),t0=performance.now();owTiles(b?34:4);const t1=performance.now();folTick(b?30:3);const t2=performance.now();owSeaStep(b?60:10);const t3=performance.now();P.tiles=t1-t0;P.fol=t2-t1;P.sea=t3-t2}
+ if((owFrameNo&7)===0&&OW.ready){const g=owHgt(c.x,c.z);owEls.hud.textContent='X '+Math.round(c.x)+'  Z '+Math.round(c.z)+'  ·  alt '+Math.round(c.y-g)+' m above ground  ·  '+Math.round(g)+' m elevation  ·  '+drawn.length+' tiles · '+forestImpostors.stats.instances+' tree cards'+(forestImpostors.stats.cppWorker?' · C++ worker':'' )}}
 {const r=ren.render;ren.render=function(s,c,...a){if(s===scene&&c===cam&&OW.active){try{owFrame()}catch(e){if(!OW.err){OW.err=1;showErr('Open World: '+(e.stack||e.message))}}}return r.call(this,s,c,...a)}}
 /* ---------- shadows, helpers, weather limits ---------- */
 {const f=window.updateDirectionalShadowFocus;window.updateDirectionalShadowFocus=function(now=performance.now()){if(!(OW.active&&OW.ready))return f(now);if(now-shadowFocusAt<220)return;shadowFocusAt=now;const c=exploreMode?owCamUpdate():oc.target,fx=c.x,fz=c.z,fy=owHgt(fx,fz),radius=90;
@@ -518,6 +686,6 @@ PN.openworld=()=>{const o=[],act=OW.active,P=OW.P;
  if(typeof OWM==='undefined')throw new Error('world model missing');
  OW.root=new THREE.Group();OW.root.name='Open World';OW.root.visible=false;scene.add(OW.root);owUI();owPatchWater();owBuildTabs();owTabs();
  OW.Q=cl(detail,0,3);owQ=QS[OW.Q];
- window.OW_API={owWaterMat,genGround,genTrees,genFarCell,owBuildNode,folRebuild,folPlan,owMkNode,owColor,candsOf,treeAcc,owEnter,owExit,owRegen,owFrame,QS,fol,OWM,OW,owHgt,owTiles,drawn,ownodes,refreshFar:()=>{if(OW.active){owAdoptKMeshes();fol.farDirty=true;fol.lastBuild=0;rebuildFar()}},owTerrainMat:()=>owTerrainMat,owWMeshes,PNopen:()=>PN.openworld()};if(tab==='openworld')build();console.log('Open World add-on ready')}catch(e){console.error(e);showErr('Open World add-on failed to start: '+(e.stack||e.message))}})();
+ window.OW_API={forestImpostors,owWaterMat,genGround,genTrees,genFarCell,owBuildNode,folRebuild,folPlan,owMkNode,owColor,candsOf,treeAcc,owEnter,owExit,owRegen,owFrame,QS,fol,OWM,OW,owHgt,owTiles,drawn,ownodes,refreshFar:()=>{if(OW.active){owAdoptKMeshes();fol.farDirty=true;fol.lastBuild=0;rebuildFar()}},owTerrainMat:()=>owTerrainMat,owWMeshes,PNopen:()=>PN.openworld()};if(tab==='openworld')build();console.log('Open World add-on ready')}catch(e){console.error(e);showErr('Open World add-on failed to start: '+(e.stack||e.message))}})();
 
 })();
