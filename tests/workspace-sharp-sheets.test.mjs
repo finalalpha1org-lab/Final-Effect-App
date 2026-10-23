@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const html=readFileSync('index.html','utf8'),bridge=readFileSync('fe-cpp-engine.js','utf8');
 test('viewport governor preserves stable native pixel density',()=>{
- const start=bridge.indexOf('tickPerformanceGovernor() {'),end=bridge.indexOf("const fpsBadge",start),code=bridge.slice(start,end);
+ const start=bridge.indexOf('tickPerformanceGovernor() {'),end=bridge.indexOf('const perfStats',start),code=bridge.slice(start,end);
  assert.ok(code.includes('eng.r.setPixelRatio(sharpDpr)'));
  assert.ok(!code.includes('eng.r.setPixelRatio(recDpr)'));
  assert.ok(code.includes('Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)'));

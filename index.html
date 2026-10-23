@@ -73,6 +73,15 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .mode{color:#818cf8;font-weight:600;max-width:120px}
 .shading-select{color:#e2e8f0;font-weight:500;cursor:pointer}
 .hdri-toggle-btn{background:#1f222e;border:1px solid var(--line2);border-radius:6px;padding:6px 10px;cursor:pointer}
+.ws-perf-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.ws-stat{display:flex;flex-direction:column;gap:2px;align-items:center;justify-content:center;padding:9px 6px;background:#0d1018;border:1px solid #262c40;border-radius:10px}
+.ws-stat span{font-size:15px;font-weight:800;color:#e2e8f0;font-variant-numeric:tabular-nums}
+.ws-stat small{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em}
+.ws-hdri-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.ws-hdri-opt{background:#161a27;border:1px solid #2f364f;border-radius:9px;padding:9px 6px;color:#e2e8f0;font-size:12px;font-weight:600;cursor:pointer}
+.ws-hdri-opt:active{background:#1d2436}
+#workspace-settings-sheet .diagnostics-body{overscroll-behavior:contain;touch-action:pan-y}
+@media(max-width:420px){.ws-perf-row,.ws-hdri-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 [data-act=export],.btn-export{color:#38bdf8;border-color:#0284c7;background:rgba(2,132,199,0.18);margin-left:auto;font-weight:600;display:inline-flex;align-items:center;gap:4px;transition:all .18s ease}
 [data-act=export]:hover,.btn-export:hover{background:rgba(2,132,199,0.32);border-color:#38bdf8;color:#fff;transform:scale(1.02)}
 [data-act=import]{color:#34d399;border-color:#10b981;margin-left:auto}
@@ -1721,7 +1730,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .autosave-status{font-size:11px;color:#86efac;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.17);border-radius:8px;padding:8px 10px}
 @media(max-width:640px){.global-settings-modal{align-items:flex-end;padding:0}.global-settings-card{width:100%;height:min(88dvh,850px);min-height:0;max-height:92dvh;border-radius:20px 20px 0 0;border-bottom:0;animation:slideUpSettings .22s ease-out}.global-settings-body{grid-template-columns:1fr;padding:14px 14px calc(22px + env(safe-area-inset-bottom,0px));gap:10px}.global-settings-header{padding:14px 16px}.setting-item{gap:8px}.setting-label small{max-width:240px}.setting-select{min-width:136px}}
 /* =========================================================
-   C++20 ENGINE UI: KEYFRAME STUDIO, RENDER STUDIO, SCULPT & MOBILE HUD
+   WORKSPACE UI: KEYFRAME STUDIO, RENDER STUDIO, SCULPT & MOBILE HUD
    ========================================================= */
 .cpp-badge-pill{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(99,102,241,0.16);border:1px solid rgba(129,140,248,0.4);color:#a5b4fc;letter-spacing:.03em}
 .home-actions-group{display:flex;align-items:center;gap:8px}
@@ -1805,12 +1814,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <h1>Final Effect 3D</h1>
-          <span class="cpp-badge-pill">⚡ C++20 / WASM Core</span>
+          
         </div>
         <p>All-Platform Mobile & Desktop Creation Suite — Choose a studio to start.</p>
       </div>
       <div class="home-actions-group">
-        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Run Live On-Device C++20 Engine Self-Test & Ray-Trace Benchmark">🧪 Test C++</button>
+        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Measure animation, sculpt, touch and path-tracing speed on this device">🧪 Run Benchmark</button>
         <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -1936,21 +1945,21 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
             <span>Touch Gestures</span>
             <small>1 finger orbits, 2 fingers pinch-zoom & pan, double-tap focuses object</small>
           </div>
-          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">C++ Touch Filter</span>
+          <span style="font-size:11px; color:#34d399; font-weight:600; background:rgba(52,211,153,0.12); padding:3px 8px; border-radius:6px;">Touch Input</span>
         </div>
         <div class="setting-item">
           <div class="setting-label">
             <span>Mobile / Desktop GPU Performance Tier</span>
-            <small>C++ frame-time governor adapts pixel ratio & shadow maps for smooth FPS</small>
+            <small>Adapts resolution and shadow quality to keep the viewport smooth</small>
           </div>
           <select class="setting-select" id="set-gpu-tier">
-            <option value="0">Auto (C++ Adaptive)</option>
+            <option value="0">Auto (Adaptive)</option>
             <option value="1">Low (Mobile 60fps / Battery)</option>
             <option value="2">Medium (Balanced Mobile)</option>
             <option value="3">High (Flagship / Desktop Pro)</option>
           </select>
         </div>
-        <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">C++20 Core Engine · Adaptive Governor Ready</div>
+        <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">Adaptive performance ready</div>
         <div class="setting-item">
           <div class="setting-label">
             <span>All-Platform Standalone App</span>
@@ -2313,6 +2322,84 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
+     VIEWPORT SETTINGS: SCROLLABLE BOTTOM SHEET (workspace gear)
+========================================================= -->
+<div id="workspace-settings-sheet" class="render-modal-backdrop" onclick="if(event.target===this)closeWorkspaceSettings()" hidden>
+  <div class="render-modal-window" role="dialog" aria-modal="true" aria-labelledby="workspace-settings-title">
+    <header class="render-modal-head">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">⚙️</span>
+        <div style="min-width:0;">
+          <strong id="workspace-settings-title" style="font-size:15px;color:#f8fafc;display:block;">Viewport Settings</strong>
+          <div style="font-size:11px;color:#94a3b8;">Performance, camera and display options for the 3D workspace</div>
+        </div>
+      </div>
+      <button class="export-modal-close" type="button" onclick="closeWorkspaceSettings()" aria-label="Close viewport settings">✕</button>
+    </header>
+    <div class="diagnostics-body" style="padding:14px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;flex:1;min-height:0;">
+      <div class="settings-section">
+        <div class="settings-section-title"><span>📊</span> Performance</div>
+        <div class="ws-perf-row">
+          <div class="ws-stat"><span id="ws-perf-fps">--</span><small>FPS</small></div>
+          <div class="ws-stat"><span id="ws-perf-ms">--</span><small>Frame time</small></div>
+          <div class="ws-stat"><span id="ws-perf-tier">Auto</span><small>Quality</small></div>
+          <div class="ws-stat"><span id="ws-perf-dpr">--</span><small>Resolution</small></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Quality tier</span><small>Adjusts resolution and shadows to hold a steady frame rate</small></div>
+          <select class="setting-select" id="ws-quality">
+            <option value="0">Auto</option>
+            <option value="1">Low</option>
+            <option value="2">Medium</option>
+            <option value="3">High</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🧊</span> Viewport</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Floor Grid</span><small>Coordinate grid on the ground plane</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-grid"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Shadows</span><small>Directional shadows in the viewport</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-shadows"><span class="setting-toggle-slider"></span></label>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Navigation Gizmo</span><small>Axis widget and view buttons</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-gizmo"><span class="setting-toggle-slider"></span></label>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🎛️</span> Camera &amp; Light</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Exposure</span><small>Viewport brightness</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-exposure" min="0.4" max="2.4" step="0.05" value="1.25"><span class="setting-range-val" id="ws-exposure-val">1.25</span></div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Orbit Speed</span><small>Viewport navigation sensitivity</small></div>
+          <div class="setting-range-wrap"><input type="range" id="ws-sensitivity" min="0.5" max="2.5" step="0.1" value="1"><span class="setting-range-val" id="ws-sensitivity-val">1.0x</span></div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>🌅</span> Environment</div>
+        <div class="ws-hdri-row">
+          <button type="button" class="ws-hdri-opt" data-hdri="studio">☀️ Studio</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="city">🏙️ City</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="forest">🌲 Forest</button>
+          <button type="button" class="ws-hdri-opt" data-hdri="night">🌃 Night</button>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Custom HDRI</span><small>Load a .hdr or .exr environment</small></div>
+          <button class="settings-action-btn" type="button" id="ws-hdr-import">📂 Import</button>
+        </div>
+        <input type="file" id="ws-hdr-file" accept=".hdr,.exr" style="display:none">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
      MODIFIERS TOOL: SCROLLABLE BOTTOM SHEET FLOATING PANEL
 ========================================================= -->
 <aside id="modifiers-sheet" aria-label="Modifiers Tool" style="display:none;">
@@ -2345,14 +2432,14 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
-     ANIMATION STUDIO: C++20 KEYFRAME & DOPE SHEET PANEL
+     ANIMATION STUDIO: KEYFRAME & DOPE SHEET PANEL
 ========================================================= -->
 <aside id="animation-sheet" aria-label="Animation Studio" style="display:none;">
   <header class="animation-sheet-head">
     <div class="animation-sheet-title">
       <span>🎬</span>
       <strong>Animation Studio</strong>
-      <small>C++20 Keyframes & Curves</small>
+      <small>Keyframes &amp; Curves</small>
     </div>
     <div class="animation-header-actions" style="display:flex;align-items:center;gap:6px;">
       <button class="anim-btn" id="btn-anim-autokey" type="button" onclick="FECppEngine.autoKey=!FECppEngine.autoKey;refreshAnimationStudioUI();FE.toast(FECppEngine.autoKey?'⏺ Auto-Key Enabled':'Auto-Key Disabled')">⏺ Auto-Key</button>
@@ -2373,7 +2460,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('scale')">+ Scale</button>
         <button class="anim-btn danger" type="button" onclick="FECppEngine.deleteKeyframeAtCurrentFrame()" title="Delete Keyframe at Current Frame">🗑 Del Key</button>
         <button class="anim-btn" type="button" onclick="FECppEngine.clearActiveObjectAnimation()" title="Clear All Keyframes on Selected Object">🧹 Clear</button>
-        <select class="anim-select" id="anim-interp-select" title="C++ Curve Interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
+        <select class="anim-select" id="anim-interp-select" title="Curve interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
           <option value="0">Curve: Bezier Smooth</option>
           <option value="1">Curve: Linear</option>
           <option value="2">Curve: Step / Hold</option>
@@ -2387,11 +2474,11 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <option value="2">Mode: Ping-Pong</option>
         </select>
       </div>
-      <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames & inspect C++ animation curves">
+      <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
         <canvas id="anim-dopesheet-canvas"></canvas>
       </div>
       <div class="anim-presets-bar">
-        <span style="font-size:11px;font-weight:700;color:#818cf8;flex:none;margin-right:2px;">⚡ C++ Motion Clips:</span>
+        <span style="font-size:11px;font-weight:700;color:#818cf8;flex:none;margin-right:2px;">⚡ Motion clips:</span>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(0)">🔄 Turntable 360°</button>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(1)">☁️ Float Hover</button>
         <button class="anim-preset-chip" type="button" onclick="FECppEngine.applyMotionPreset(2)">🏀 Squash & Bounce</button>
@@ -2407,7 +2494,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 </aside>
 
 <!-- =========================================================
-     C++20 RENDER ENGINE & VIDEO SEQUENCE EXPORT STUDIO
+     RENDER ENGINE & VIDEO SEQUENCE EXPORT STUDIO
 ========================================================= -->
 <div id="render-engine-modal" class="render-modal-backdrop" onclick="if(event.target===this)closeRenderEngineModal()" hidden>
   <div class="render-modal-window" role="dialog" aria-modal="true" aria-labelledby="render-studio-title">
@@ -2415,8 +2502,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <div style="display:flex;align-items:center;gap:10px;">
         <span style="font-size:20px;">⚡</span>
         <div>
-          <strong id="render-studio-title" style="font-size:15px;color:#f8fafc;">C++20 Render Engine & Video Exporter</strong>
-          <div style="font-size:11px;color:#94a3b8;">Progressive BVH Path Tracer (FE Cycles) · WebGL + C++ Post-FX (FE Eevee) · Mobile 9:16 & 16:9</div>
+          <strong id="render-studio-title" style="font-size:15px;color:#f8fafc;">Render Engine &amp; Video Exporter</strong>
+          <div style="font-size:11px;color:#94a3b8;">Progressive path tracer (FE Cycles) · WebGL + GPU post-processing (FE Eevee) · Mobile 9:16 &amp; 16:9</div>
         </div>
       </div>
       <button class="export-modal-close" type="button" onclick="closeRenderEngineModal()" aria-label="Close Render Engine">✕</button>
@@ -2427,7 +2514,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <canvas id="render-preview-canvas" width="450" height="800"></canvas>
         </div>
         <div class="render-progress-track"><div id="render-progress-fill"></div></div>
-        <div id="render-progress-text" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">Ready to render with C++20 Core Engine</div>
+        <div id="render-progress-text" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">Ready to render</div>
       </div>
       <div class="render-controls-pane">
         <div class="render-group">
@@ -2435,8 +2522,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <div class="render-row">
             <label for="render-engine-select">Render Engine</label>
             <select class="anim-select" id="render-engine-select" onchange="FECppEngine.startStillRender()">
-              <option value="cycles_cpp">⚡ FE Cycles (C++ BVH Path Tracer)</option>
-              <option value="eevee_cpp">🚀 FE Eevee (WebGL + C++ Post-FX)</option>
+              <option value="cycles_cpp">⚡ FE Cycles (Path Tracer)</option>
+              <option value="eevee_cpp">🚀 FE Eevee (WebGL + Post-FX)</option>
             </select>
           </div>
           <div class="render-row">
@@ -2499,7 +2586,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           </label>
         </div>
         <div class="render-group">
-          <div class="render-group-title">3. C++ Color Grading & Post-FX</div>
+          <div class="render-group-title">3. Color Grading &amp; Post-FX</div>
           <div class="render-row">
             <label for="render-tonemap-select">Tone Mapper</label>
             <select class="anim-select" id="render-tonemap-select" onchange="FECppEngine.renderState.tonemap=parseInt(this.value)||0;FECppEngine.reResolveToneMapInstant()">
@@ -2514,7 +2601,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <div class="render-row"><label>Contrast</label><input type="range" id="render-contrast-range" min="0.7" max="1.6" step="0.05" value="1.05" oninput="FECppEngine.renderState.contrast=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Saturation</label><input type="range" id="render-sat-range" min="0.0" max="1.8" step="0.05" value="1.08" oninput="FECppEngine.renderState.saturation=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Temperature</label><input type="range" id="render-temp-range" min="-0.8" max="0.8" step="0.05" value="0.0" oninput="FECppEngine.renderState.temperature=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
-          <div class="render-row"><label>C++ Bloom</label><input type="range" id="render-bloom-range" min="0.0" max="1.0" step="0.05" value="0.22" oninput="FECppEngine.renderState.bloom=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
+          <div class="render-row"><label>Bloom</label><input type="range" id="render-bloom-range" min="0.0" max="1.0" step="0.05" value="0.22" oninput="FECppEngine.renderState.bloom=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Vignette</label><input type="range" id="render-vig-range" min="0.0" max="0.9" step="0.05" value="0.18" oninput="FECppEngine.renderState.vignette=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Chromatic Ab.</label><input type="range" id="render-ca-range" min="0.0" max="1.0" step="0.05" value="0.0" oninput="FECppEngine.renderState.chromatic=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
           <div class="render-row"><label>Film Grain</label><input type="range" id="render-grain-range" min="0.0" max="0.8" step="0.05" value="0.02" oninput="FECppEngine.renderState.grain=+this.value;FECppEngine.reResolveToneMapInstant()"></div>
@@ -2522,9 +2609,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       </div>
     </div>
     <footer class="render-actions-bar">
-      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Re-Render Frame</button>
-      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG Image</button>
-      <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Timeline Video (Start → End)</button>
+      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Render Frame</button>
+      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG</button>
+      <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Video</button>
       <button class="btn btn-secondary" type="button" onclick="FECppEngine.stopActiveRender()">⏹ Stop</button>
       <button class="btn btn-secondary" type="button" style="margin-left:auto;" onclick="closeRenderEngineModal()">Close</button>
     </footer>
@@ -2630,23 +2717,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <option value="rendered">🎬 Rendered</option>
       </select>
 
-      <!-- HDRI Popover Toggle Button -->
-      <button class="btn hdri-toggle-btn" title="HDRI Environment Settings">⚙️</button>
+      <!-- Viewport Settings -->
+      <button class="btn hdri-toggle-btn" type="button" onclick="openWorkspaceSettings()" title="Viewport settings" aria-label="Viewport settings">⚙️</button>
 
-      <button class="btn btn-export" type="button" onclick="openRenderEngineModal()" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:#818cf8;" title="Open C++20 Render Engine & Video Exporter">Render ⚡</button>
+      <button class="btn btn-export" type="button" onclick="openRenderEngineModal()" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);border-color:#818cf8;" title="Open the render engine &amp; video exporter">Render ⚡</button>
       <button class="btn btn-export" data-act="export" onclick="openExportModal()" title="Export 3D Project & Assets">Export 📤</button>
 
-      <!-- Material Preview HDRI Settings Popover Menu -->
-      <div class="hdri-popover hdri-menu">
-        <div class="preset-title">HDRI Presets</div>
-        <button class="hdri-opt" data-preset="studio">☀️ Studio</button>
-        <button class="hdri-opt" data-preset="city">🏙️ City</button>
-        <button class="hdri-opt" data-preset="forest">🌲 Forest</button>
-        <button class="hdri-opt" data-preset="night">🌃 Night</button>
-        <div class="divider"></div>
-        <button class="import-hdr-btn">📂 Import Custom HDR...</button>
-        <input type="file" class="hdr-file-input" accept=".hdr,.exr" style="display: none;" />
-      </div>
     </header>
 
     <div class="viewport">
@@ -2871,10 +2947,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         </div>
       </div>
 
-      <!-- C++20 Sculpt & Vertex/Weight Paint Brush Toolbar -->
+      <!-- Sculpt & Vertex/Weight Paint Brush Toolbar -->
       <div id="cpp-sculpt-paint-bar" hidden>
         <span id="cpp-sculpt-brush-wrap" style="display:inline-flex;align-items:center;gap:4px;">
-          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="C++ Sculpt Brush">
+          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="Sculpt brush">
             <option value="0">🗿 Draw / Clay</option>
             <option value="1">🌊 Smooth</option>
             <option value="2">🎈 Inflate</option>
@@ -2896,8 +2972,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
       <!-- Pro Mobile Touch Quick Action Pill -->
       <div id="mobile-quick-hud" aria-label="Mobile Quick Controls">
         <button class="mob-hud-btn" type="button" onclick="focusActiveObjectInViewport()" title="Focus Selected Object (or Double-Tap Mesh)">🎯</button>
-        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert Keyframe at Current Frame (C++)">◆ Key</button>
-        <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open C++ Render Engine & Video Exporter">⚡</button>
+        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert keyframe at the current frame">◆ Key</button>
+        <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open the render engine &amp; video exporter">⚡</button>
         <button class="mob-hud-btn" type="button" onclick="toggleMobileFullscreen()" title="Full-Screen Mobile Studio">⛶</button>
       </div>
     </div>
@@ -2912,7 +2988,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" onclick="stepTimelineFrame(-1)">◀</button>
           <button class="tb-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" onclick="stepTimelineFrame(1)">▶</button>
           <button class="tb-btn" id="tb-last-btn" title="Jump to End Frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)">⏭</button>
-          <button class="tb-btn" id="tb-insert-key-btn" title="Insert C++ Keyframe on Active Object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
+          <button class="tb-btn" id="tb-insert-key-btn" title="Insert keyframe on the active object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
           
           <div class="tb-field">
             <label>Frame</label>
@@ -2938,8 +3014,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
         </div>
         <div class="timeline-right-info">
-          <span id="tb-cpp-badge" style="color:#a5b4fc;font-weight:700;margin-right:8px;">C++20 WASM · Loading…</span>
-          <span id="tb-status-badge">Physics: Loading Rust/WASM…</span>
+          
+          <span id="tb-status-badge">Physics: starting…</span>
         </div>
       </div>
       <div class="timeline-tracks-wrapper" id="timeline-tracks-wrapper">
@@ -3096,38 +3172,31 @@ HOME_WORKSPACES.forEach((item)=>{
   };
 
   // Wire HDRI Popover Menu & Import
+  /* The gear opens the viewport settings sheet; environment presets live there. */
   const hdriBtn = $('.hdri-toggle-btn', el);
+  if (hdriBtn) hdriBtn.onclick = (e) => { e.stopPropagation(); openWorkspaceSettings(); };
   const hdriPopover = $('.hdri-popover', el);
-  const importHdrBtn = $('.import-hdr-btn', el);
-  const hdrFileInput = $('.hdr-file-input', el);
-
-  hdriBtn.onclick = (e) => {
-    e.stopPropagation();
-    $$('.hdri-menu').forEach(m => { if(m !== hdriPopover) m.classList.remove('open'); });
-    hdriPopover.classList.toggle('open');
-  };
-
-  $$('.hdri-opt', hdriPopover).forEach(btn => {
-    btn.onclick = () => {
-      const preset = btn.dataset.preset;
-      emit('hdriPreset', { studio: id, preset });
-      hdriPopover.classList.remove('open');
-      FE.toast('HDR Preset: ' + btn.textContent);
-    };
-  });
-
-  importHdrBtn.onclick = () => {
-    hdrFileInput.click();
-  };
-
-  hdrFileInput.onchange = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    emit('hdriFile', { studio: id, url, name: file.name });
-    hdriPopover.classList.remove('open');
-    FE.toast(`Loaded custom HDR: ${file.name}`);
-  };
+  if (hdriPopover) {
+    const importHdrBtn = $('.import-hdr-btn', el);
+    const hdrFileInput = $('.hdr-file-input', el);
+    $$('.hdri-opt', hdriPopover).forEach(btn => {
+      btn.onclick = () => {
+        emit('hdriPreset', { studio: id, preset: btn.dataset.preset });
+        hdriPopover.classList.remove('open');
+        FE.toast('HDR Preset: ' + btn.textContent);
+      };
+    });
+    if (importHdrBtn && hdrFileInput) {
+      importHdrBtn.onclick = () => hdrFileInput.click();
+      hdrFileInput.onchange = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        emit('hdriFile', { studio: id, url: URL.createObjectURL(file), name: file.name });
+        hdriPopover.classList.remove('open');
+        FE.toast(`Loaded custom HDR: ${file.name}`);
+      };
+    }
+  }
 
   // Safe ResizeObserver
   new ResizeObserver(([e])=>{
@@ -3382,6 +3451,105 @@ function syncGlobalSettingsUI() {
   if(status)status.textContent=localStorage.getItem('fe_last_autosave_status')||(GLOBAL_SETTINGS.autoSave?`Auto-save is on · interval: ${GLOBAL_SETTINGS.autoSaveMinutes===60?'1 hour':GLOBAL_SETTINGS.autoSaveMinutes+' minutes'}`:'Auto-save is off');
 }
 window.syncGlobalSettingsUI = syncGlobalSettingsUI;
+/* ---------------- Viewport settings sheet (workspace gear) ---------------- */
+const WS_TIERS = ['Low', 'Medium', 'High'];
+function renderWorkspacePerf(stats) {
+  if (!stats) return;
+  const put = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+  put('ws-perf-fps', String(Math.max(0, Math.round(stats.fps || 0))));
+  put('ws-perf-ms', (stats.avgMs || 0).toFixed(1) + ' ms');
+  put('ws-perf-tier', stats.tierLabel || WS_TIERS[stats.tier] || 'Auto');
+  put('ws-perf-dpr', (stats.dpr || 1).toFixed(2) + 'x');
+}
+function syncWorkspaceSettingsUI() {
+  const mirror = (dstId, srcId, prop) => {
+    const dst = document.getElementById(dstId), src = document.getElementById(srcId);
+    if (!dst || !src) return;
+    if (dst.type === 'checkbox') dst.checked = !!src.checked;
+    else dst.value = prop === 'value' ? src.value : src.checked;
+  };
+  mirror('ws-grid', 'set-grid');
+  mirror('ws-shadows', 'set-shadows');
+  mirror('ws-gizmo', 'set-gizmo');
+  const quality = document.getElementById('ws-quality'), tier = document.getElementById('set-gpu-tier');
+  if (quality && tier) quality.value = tier.value;
+  const exposure = document.getElementById('ws-exposure');
+  if (exposure) {
+    if (window.renderer && typeof window.renderer.toneMappingExposure === 'number') exposure.value = window.renderer.toneMappingExposure;
+    const out = document.getElementById('ws-exposure-val');
+    if (out) out.textContent = (+exposure.value).toFixed(2);
+  }
+  const sensitivity = document.getElementById('ws-sensitivity');
+  if (sensitivity) {
+    const eng = FE.engines?.core;
+    if (eng?.oc?.rotateSpeed) sensitivity.value = eng.oc.rotateSpeed;
+    const out = document.getElementById('ws-sensitivity-val');
+    if (out) out.textContent = (+sensitivity.value).toFixed(1) + 'x';
+  }
+  renderWorkspacePerf(window.FEWorkspacePerf);
+}
+function openWorkspaceSettings() {
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (!sheet) return;
+  try { syncGlobalSettingsUI(); } catch (_) {}
+  syncWorkspaceSettingsUI();
+  sheet.hidden = false;
+}
+function closeWorkspaceSettings() {
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (sheet) sheet.hidden = true;
+}
+window.openWorkspaceSettings = openWorkspaceSettings;
+window.closeWorkspaceSettings = closeWorkspaceSettings;
+window.fepdateWorkspacePerf = function (stats) {
+  window.FEWorkspacePerf = stats;
+  const sheet = document.getElementById('workspace-settings-sheet');
+  if (sheet && !sheet.hidden) renderWorkspacePerf(stats);
+};
+function initWorkspaceSettingsEvents() {
+  if (window.__feWorkspaceSettingsBound) return;
+  window.__feWorkspaceSettingsBound = true;
+  const forward = (dstId, srcId, eventName) => {
+    const dst = document.getElementById(dstId), src = document.getElementById(srcId);
+    if (!dst || !src) return;
+    dst.addEventListener(eventName, () => {
+      if (dst.type === 'checkbox') src.checked = dst.checked;
+      else src.value = dst.value;
+      src.dispatchEvent(new Event(eventName === 'input' ? 'input' : 'change', { bubbles: true }));
+    });
+  };
+  forward('ws-grid', 'set-grid', 'change');
+  forward('ws-shadows', 'set-shadows', 'change');
+  forward('ws-gizmo', 'set-gizmo', 'change');
+  forward('ws-quality', 'set-gpu-tier', 'change');
+  forward('ws-exposure', 'set-exposure', 'input');
+  forward('ws-sensitivity', 'set-sensitivity', 'input');
+  const exposure = document.getElementById('ws-exposure');
+  if (exposure) exposure.addEventListener('input', () => { const out = document.getElementById('ws-exposure-val'); if (out) out.textContent = (+exposure.value).toFixed(2); });
+  const sensitivity = document.getElementById('ws-sensitivity');
+  if (sensitivity) sensitivity.addEventListener('input', () => { const out = document.getElementById('ws-sensitivity-val'); if (out) out.textContent = (+sensitivity.value).toFixed(1) + 'x'; });
+  document.querySelectorAll('.ws-hdri-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.hdri;
+      if (typeof applyHdriPreset === 'function') applyHdriPreset(preset, true);
+      FE.toast('Environment: ' + btn.textContent.trim());
+    });
+  });
+  const importBtn = document.getElementById('ws-hdr-import'), fileInput = document.getElementById('ws-hdr-file');
+  if (importBtn && fileInput) {
+    importBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      document.dispatchEvent(new CustomEvent('fe:hdriFile', { detail: { studio: 'core', url: URL.createObjectURL(file), name: file.name } }));
+      FE.toast('Loaded custom HDR: ' + file.name);
+    });
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeWorkspaceSettings(); });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initWorkspaceSettingsEvents);
+else setTimeout(initWorkspaceSettingsEvents, 0);
+
 
 let globalSettingsInitialized = false;
 function initGlobalSettingsEvents() {
@@ -10567,7 +10735,7 @@ function renderModifierStack() {
       bindBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) bindSurfaceDeformTarget(t, mod); };
       body.appendChild(bindBtn);
     }
-    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically after the C++20/WASM solver loads. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with C++20 spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
+    if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically when the physics solver is ready. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with a spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
 
     const buttons = document.createElement("div");
     buttons.className = "buttons";

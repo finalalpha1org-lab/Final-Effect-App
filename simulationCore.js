@@ -690,7 +690,7 @@
       this.ready = this.loadWasm().then(() => { this.updateStatusBadge(); return true; }).catch((error) => {
         this.loadError = error;
         console.error('[SimulationEngine] C++20/WASM solver could not be loaded; simulations are stopped rather than replaced with fake motion.', error);
-        global.FE?.toast?.(`WASM physics unavailable: ${error?.message || error}`);
+        global.FE?.toast?.(`Physics unavailable: ${error?.message || error}`);
         this.updateStatusBadge();
         return false;
       });
@@ -710,17 +710,18 @@
     updateStatusBadge() {
       const badge = global.document?.getElementById('tb-status-badge');
       if (!badge) return;
-      if (this.loadError) { badge.textContent = 'Physics: WASM unavailable'; return; }
-      if (!this.wasm) { badge.textContent = 'Physics: Loading C++20/WASM…'; return; }
+      if (this.loadError) { badge.textContent = 'Physics unavailable'; return; }
+      if (!this.wasm) { badge.textContent = 'Physics: starting…'; return; }
       const records = [...this.simMeshes.values()];
       const failed = records.find(record => record.status === 'error');
       const active = records.filter(record => record.status === 'running').length;
-      const tag = this.isCppBackend ? 'C++20/WASM v3' : `WASM v${this.abiVersion}`;
+      /* The viewport shows a plain readiness state; solver details stay in
+         getSolverDiagnostics() for debugging. */
       badge.textContent = failed
         ? `Physics error · ${failed.type}`
         : active
-          ? `Physics: ${tag} · ${active} active`
-          : `Physics: ${tag} ready`;
+          ? `Physics · ${active} active`
+          : 'Physics: ready';
     }
 
     getSimKey(type) {

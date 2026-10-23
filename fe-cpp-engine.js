@@ -92,7 +92,7 @@
         const inst = await WebAssembly.instantiate(mod, {});
         const exp = inst.exports;
         if (typeof exp.fe_core_abi_version !== 'function' || exp.fe_core_abi_version() !== 1) {
-          throw new Error('Unexpected C++ Core Engine ABI version');
+          throw new Error('Unexpected engine ABI version');
         }
         this.wasm = inst;
         this.exports = exp;
@@ -211,7 +211,7 @@
     /* ---- Keyframe Operations (C++ Backed) ---- */
     insertKeyframeForActive(group = 'locrotscale', silent = false) {
       if (!this.ready) {
-        window.FE?.toast?.('C++ Engine still initializing…');
+        window.FE?.toast?.('Engine still starting…');
         return 0;
       }
       const objId = window.FE?.getActiveObjectId?.() || 'cube';
@@ -247,7 +247,7 @@
       if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
       if (!silent) {
         const name = window.getActiveObjectDisplayName?.() || objId;
-        window.FE?.toast?.(`◆ Keyframed ${name} at Frame ${frame} (C++)`);
+        window.FE?.toast?.(`◆ Keyframed ${name} at frame ${frame}`);
       }
       return channelsToKey.length;
     },
@@ -295,7 +295,7 @@
       refreshAnimationStudioUI();
       if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
       const presetNames = ['Turntable 360°', 'Float Hover', 'Squash & Bounce', 'Pendulum', 'Camera Orbit', 'Pulse Scale'];
-      window.FE?.toast?.(`Applied C++ Motion Preset: ${presetNames[presetId] || 'Motion'}`);
+      window.FE?.toast?.(`Applied motion preset: ${presetNames[presetId] || 'Motion'}`);
     },
 
     evaluateSceneAtFrame(frame) {
@@ -680,7 +680,7 @@
         const t0 = performance.now();
         this.renderSingleWebGLPostFXFrame(canvas, width, height, 1);
         const dt = (performance.now() - t0).toFixed(1);
-        if (statusEl) statusEl.textContent = `FE Eevee + C++ Post-FX · ${width}×${height} · ${dt} ms`;
+        if (statusEl) statusEl.textContent = `FE Eevee + Post-FX · ${width}×${height} · ${dt} ms`;
         if (barEl) barEl.style.width = '100%';
         return;
       }
@@ -721,19 +721,19 @@
           if (barEl) barEl.style.width = pct + '%';
           const elapsed = ((performance.now() - tStart) / 1000).toFixed(1);
           if (statusEl) {
-            statusEl.textContent = `C++ Cycles Path Tracer · ${doneSpp}/${targetSpp} SPP · ${triCount} tris · ${width}×${height} (${elapsed}s)`;
+            statusEl.textContent = `Path tracer · ${doneSpp}/${targetSpp} SPP · ${triCount} tris · ${width}×${height} (${elapsed}s)`;
           }
 
           if (doneSpp >= targetSpp) {
             this.renderState.isRendering = false;
-            window.FE?.toast?.(`⚡ C++ Path Trace complete (${doneSpp} SPP)`);
+            window.FE?.toast?.(`⚡ Path trace complete (${doneSpp} SPP)`);
             return;
           }
         }
         this.renderState.rafId = requestAnimationFrame(stepProgressive);
       };
 
-      if (statusEl) statusEl.textContent = `Building C++ BVH (${triCount} triangles) & tracing ${width}×${height}…`;
+      if (statusEl) statusEl.textContent = `Building BVH (${triCount} triangles) & tracing ${width}×${height}…`;
       if (barEl) barEl.style.width = '4%';
       this.renderState.rafId = requestAnimationFrame(stepProgressive);
     },
@@ -1085,15 +1085,20 @@
         }
       }
 
-      const fpsBadge = document.getElementById('tb-cpp-badge');
-      if (fpsBadge) {
-        const tierLabel = tier === 0 ? 'LOW' : tier === 1 ? 'MED' : 'HIGH';
-        fpsBadge.textContent = `C++ Engine · ${Math.min(120, Math.round(fps))} FPS · ${tierLabel}`;
-      }
+      const perfStats = {
+        fps: Math.min(120, Math.round(fps)),
+        avgMs,
+        tier,
+        tierLabel: tier === 0 ? 'Low' : tier === 1 ? 'Medium' : 'High',
+        dpr: recDpr,
+        shadowRes
+      };
+      window.FEWorkspacePerf = perfStats;
+      window.fepdateWorkspacePerf?.(perfStats);
       const settingsPerfLabel = document.getElementById('cpp-perf-live-readout');
       if (settingsPerfLabel) {
         const tierNames = ['Low (Mobile 60fps)', 'Medium (Balanced)', 'High (Pro Quality)'];
-        settingsPerfLabel.textContent = `C++ Governor: ${avgMs.toFixed(1)} ms (${Math.round(fps)} FPS) · Active Tier: ${tierNames[tier] || 'High'} · DPR ${recDpr.toFixed(2)}x`;
+        settingsPerfLabel.textContent = `${avgMs.toFixed(1)} ms · ${Math.round(fps)} FPS · ${tierNames[tier] || 'High'} quality · ${recDpr.toFixed(2)}x`;
       }
     }
   };
@@ -1104,11 +1109,11 @@
    * UI Wiring Helpers (Animation Dope Sheet, Render Studio, Sculpt & Mobile)
    * ----------------------------------------------------------------------- */
   function updateCppStatusBadges() {
-    const badge = document.getElementById('tb-cpp-badge');
-    if (badge) {
-      badge.textContent = FECppEngine.ready
-        ? 'C++20 WASM · Active'
-        : (FECppEngine.loadError ? 'C++ WASM Fallback' : 'C++ Loading…');
+    /* Engine state stays available to the app, but the viewport chrome does not
+       advertise the implementation. */
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.dataset.engineReady = FECppEngine.ready ? '1' : '0';
+      document.body.dataset.engineFallback = FECppEngine.loadError ? '1' : '0';
     }
   }
 
@@ -1478,7 +1483,7 @@
         if (brushSelWrap) brushSelWrap.style.display = mode === 'sculpt' ? 'inline-flex' : 'none';
       }
       if (isBrushMode) {
-        const labels = { sculpt: '🗿 C++ Sculpt Brush Ready', vpaint: '🎨 C++ Vertex Paint Ready', wpaint: '⚖️ C++ Weight Paint Ready', tpaint: '🖌️ C++ Surface Paint Ready' };
+        const labels = { sculpt: '🗿 Sculpt Brush Ready', vpaint: '🎨 Vertex Paint Ready', wpaint: '⚖️ Weight Paint Ready', tpaint: '🖌️ Surface Paint Ready' };
         window.FE?.toast?.(labels[mode] || 'Brush Mode Active');
       } else {
         const mesh = window.getActiveObjectMesh?.();
@@ -1654,7 +1659,7 @@
         FECppEngine.gpuModeOverride = v;
         try { localStorage.setItem('fe_cpp_gpu_tier', String(v)); } catch (_) {}
         FECppEngine.lastPerfUpdate = 0;
-        const names = ['Auto (C++ Adaptive)', 'Low (Mobile 60fps)', 'Medium (Balanced)', 'High (Pro Ultra)'];
+        const names = ['Auto (Adaptive)', 'Low (High battery life)', 'Medium (Balanced)', 'High (Best quality)'];
         window.FE?.toast?.(`GPU Performance: ${names[v] || 'Auto'}`);
       });
     }
@@ -1692,7 +1697,7 @@
     await this.init();
 
     if (!this.ready || !this.exports) {
-      results.push({ name: 'C++20 WASM Core Initialization', ok: false, detail: String(this.loadError || 'WASM unavailable') });
+      results.push({ name: 'Engine initialization', ok: false, detail: String(this.loadError || 'engine unavailable') });
       return { ok: false, results, totalMs: +(performance.now() - tTotal0).toFixed(1) };
     }
     const exp = this.exports;
@@ -1707,7 +1712,7 @@
     const probe = this.allocF32(64);
     probe.view[0] = 42.5;
     results.push({
-      name: 'C++20 Freestanding WASM Core (ABI v1)',
+      name: 'Core Engine (ABI v1)',
       ok: abi === 1 && probe.ptr > 0 && probe.view[0] === 42.5,
       detail: `ABI v${abi} · Heap ${(exp.fe_heap_used_bytes() / 1024).toFixed(1)} KB · ${(performance.now() - t0).toFixed(2)} ms`
     });
@@ -1724,7 +1729,7 @@
     exp.fe_anim_reset();
     if (savedAnim) this.deserializeAnimation(savedAnim);
     results.push({
-      name: 'C++20 Keyframe Curves & Motion Clips',
+      name: 'Keyframe Curves & Motion Clips',
       ok: Math.abs(midVal - 5.0) < 0.05 && presetKeys >= 6,
       detail: `Bezier f=30 → ${midVal.toFixed(2)} · Bounce Preset (${presetKeys} keys) · ${(performance.now() - t0).toFixed(2)} ms`
     });
@@ -1739,7 +1744,7 @@
     const moved = exp.fe_sculpt_apply_brush(vPos.ptr, vNrm.ptr, 2, 0, 0.4, 0.2, 0.0, 0, 1, 0, 0, 0, 0, 0.5, 0.6, 1);
     const symMatch = Math.abs(vPos.view[1] - vPos.view[4]) < 1e-4 && vPos.view[1] > 0.2;
     results.push({
-      name: 'C++20 Sculpt Brush & Mirror-X Symmetry',
+      name: 'Sculpt Brush & Mirror-X Symmetry',
       ok: moved === 2 && symMatch,
       detail: `Moved ${moved} symmetric verts (Y=${vPos.view[1].toFixed(3)}) · ${(performance.now() - t0).toFixed(2)} ms`
     });
@@ -1755,7 +1760,7 @@
     exp.fe_perf_push_frame_ms(16.2);
     exp.fe_perf_query_metrics(0, 2.0, perfOut.ptr);
     results.push({
-      name: 'C++20 Multi-Touch & Mobile GPU Governor',
+      name: 'Multi-Touch & GPU Governor',
       ok: perfOut.view[1] > 30 && perfOut.view[3] >= 512,
       detail: `${Math.round(perfOut.view[1])} FPS est · Shadow ${perfOut.view[3]}px · DPR ${perfOut.view[2].toFixed(2)}x`
     });
@@ -1836,12 +1841,12 @@
     }
     const rtMs = (performance.now() - t0).toFixed(1);
     results.push({
-      name: 'C++20 SAH BVH Builder & PBR Path Tracer',
+      name: 'SAH BVH Builder & PBR Path Tracer',
       ok: bvhOk >= 1 && tris > 500 && spp === 3 && litPx > rw * rh * 0.7,
       detail: `${tris} tris · ${spp} SPP @ ${rw}×${rh} · ${rtMs} ms`
     });
     results.push({
-      name: 'C++20 ACES Filmic Tone-Map & HDR Bloom',
+      name: 'ACES Filmic Tone-Map & HDR Bloom',
       ok: litPx > rw * rh * 0.7,
       detail: `${((litPx / (rw * rh)) * 100).toFixed(1)}% lit pixels · Golden Sunset HDRI`
     });
@@ -1863,8 +1868,8 @@
             '<div style="display:flex;align-items:center;gap:10px;">' +
               '<span style="font-size:20px;">🧪</span>' +
               '<div>' +
-                '<strong style="font-size:15px;color:#f8fafc;">C++20 / WASM Core Engine — Live Self-Test</strong>' +
-                '<div style="font-size:11px;color:#94a3b8;">Runs real C++ animation, sculpt, touch & BVH ray-tracing benchmarks on your device</div>' +
+                '<strong style="font-size:15px;color:#f8fafc;">Performance Benchmark</strong>' +
+                '<div style="font-size:11px;color:#94a3b8;">Measures animation, sculpt, touch and path-tracing speed on this device</div>' +
               '</div>' +
             '</div>' +
             '<button class="export-modal-close" type="button" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true">✕</button>' +
@@ -1872,7 +1877,7 @@
           '<div class="diagnostics-body" style="padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">' +
             '<div style="background:#090b10;border:1px solid #262c40;border-radius:12px;padding:10px;text-align:center;">' +
               '<canvas id="cpp-diag-canvas" width="320" height="180" style="width:100%;max-width:460px;height:auto;border-radius:8px;"></canvas>' +
-              '<div id="cpp-diag-summary" style="margin-top:8px;font-size:12px;font-weight:700;color:#34d399;">Running C++20 WASM benchmarks…</div>' +
+              '<div id="cpp-diag-summary" style="margin-top:8px;font-size:12px;font-weight:700;color:#34d399;">Running benchmark…</div>' +
             '</div>' +
             '<div id="cpp-diag-list" style="display:flex;flex-direction:column;gap:7px;"></div>' +
           '</div>' +
@@ -1888,7 +1893,7 @@
     const summaryEl = document.getElementById('cpp-diag-summary');
     const listEl = document.getElementById('cpp-diag-list');
     const cv = document.getElementById('cpp-diag-canvas');
-    if (summaryEl) summaryEl.textContent = 'Running C++20 WASM Core Engine self-test…';
+    if (summaryEl) summaryEl.textContent = 'Running performance benchmark…';
     if (listEl) listEl.innerHTML = '';
 
     let report;
@@ -1905,7 +1910,7 @@
     if (summaryEl) {
       summaryEl.style.color = report.ok ? '#34d399' : '#f87171';
       summaryEl.textContent = report.ok
-        ? `✅ ${report.results.length}/${report.results.length} C++ CORE SELF-TESTS PASSED (${report.totalMs} ms total)`
+        ? `✅ ${report.results.length}/${report.results.length} CHECKS PASSED (${report.totalMs} ms total)`
         : `⚠️ Failed: ${report.results.filter(r => !r.ok).map(r => r.name).join(' · ')}. See details below.`;
     }
     if (listEl) {
