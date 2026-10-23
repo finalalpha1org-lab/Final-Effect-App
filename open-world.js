@@ -266,6 +266,10 @@ function* generate(){ // generator: yields progress 0..1
   /* Native hydrology: priority-flood drainage and downhill river tracing run in
      the C++ core; the JS solver below stays as the fallback. */
   let traces=null;
+  /* One RNG for everything that follows the height grid. Defining it before the
+     hydrology branch keeps the lakes/ponds pass identical on both paths: the
+     native solver and the JS fallback must not change what `place` sees. */
+  const rn=rng(P.seed*31+7);
   const hydroCpp=root.FELandscapeCore&&root.FELandscapeCore.ready&&typeof root.FELandscapeCore.owHydroSet==='function'?root.FELandscapeCore:null;
   if(hydroCpp){
     try{
@@ -292,7 +296,6 @@ function* generate(){ // generator: yields progress 0..1
   while(hs>0){const c=pop(),ci=c%n,cj=(c/n)|0;for(let dj=-1;dj<=1;dj++)for(let di=-1;di<=1;di++){if(!di&&!dj)continue;const ni=ci+di,nj=cj+dj;if(ni<0||nj<0||ni>=n||nj>=n)continue;const k=nj*n+ni;if(closed[k])continue;closed[k]=1;par[k]=c;if(F[k]<=F[c]+eps)F[k]=F[c]+eps;push(k)}
     if((++it&16383)==0)yield .36+.1*it/N2}
   S.F=F;yield .48;
-  const rn=rng(P.seed*31+7);
   /* river sources: high land, well spread, long enough drainage */
   const cand=[];for(let i=0;i<1400;i++){const x=(rn()-.5)*P.size*.84,z=(rn()-.5)*P.size*.84,h=gsAt(x,z);if(h>sea+40)cand.push({x,z,h})}
   cand.sort((a,b)=>b.h-a.h);

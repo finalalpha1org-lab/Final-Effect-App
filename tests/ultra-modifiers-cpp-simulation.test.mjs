@@ -209,8 +209,7 @@ test('SimulationEngine loads freestanding C++20 fe_core_engine.wasm and steps Cl
   const ok = await engine.ready;
   assert.equal(ok, true);
   assert.equal(engine.isCppBackend, true, 'SimulationEngine must detect C++20 backend magic 0x43505033');
-  assert.doesNotMatch(badge.textContent, /C\+\+20|WASM/, 'the viewport badge must not advertise the implementation');
-  assert.match(badge.textContent, /^Physics/);
+  assert.equal(badge.textContent, '', 'the engine writes no text into viewport chrome; readiness pills are gone');
   assert.match(engine.getSolverDiagnostics().backendLabel, /C\+\+20\/WASM/, 'solver backend details stay available for diagnostics');
 
   /* 1. Cloth with C++20 XPBD + aerodynamic curl wind + zero-copy normal/strain scatter */

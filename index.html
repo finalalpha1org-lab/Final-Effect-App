@@ -754,23 +754,6 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   outline: none;
   cursor: pointer;
 }
-.timeline-right-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-  color: var(--mute);
-  white-space: nowrap;
-}
-#tb-status-badge {
-  background: rgba(52, 211, 153, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  color: #34d399;
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-weight: 600;
-  font-size: 10px;
-}
 
 .timeline-tracks-wrapper {
   flex: 1;
@@ -886,6 +869,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .animation-close:hover { color: #ffffff; }
 #animation-sheet-body {
   flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch;
   padding: 16px;
@@ -1749,7 +1735,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .anim-btn.danger{background:rgba(239,68,68,0.14);border-color:rgba(239,68,68,0.45);color:#fca5a5}
 .anim-btn.active-autokey{background:rgba(239,68,68,0.28);border-color:#ef4444;color:#fff;box-shadow:0 0 12px rgba(239,68,68,0.4)}
 .anim-select{min-height:36px;padding:0 9px;border-radius:8px;background:#10131d;border:1px solid #333b54;color:#e2e8f0;font-size:11px;font-weight:600}
-#anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:none}
+#anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:pan-y}
+.anim-range-field{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#64748b}
+.anim-range-input{width:58px;height:30px;border-radius:8px;background:#10131d;border:1px solid #333b54;color:#e2e8f0;font:600 12px ui-monospace,monospace;text-align:center;padding:0 4px}
+.anim-range-input:focus{outline:2px solid #6366f1;outline-offset:1px}
 #anim-dopesheet-canvas{width:100%;height:100%;display:block;cursor:ew-resize}
 .anim-presets-bar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .anim-tools-strip{background:#121623;padding:7px 9px}
@@ -2287,14 +2276,14 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <button class="add-3d-close" onclick="closeAdd3DModal()" aria-label="Close Add 3D Panel">✕</button>
   </header>
   <div id="add-3d-body">
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cube')"><i>🧊</i><span>Cube</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('sphere')"><i>🔮</i><span>Sphere</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cylinder')"><i>🛢️</i><span>Cylinder</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cone')"><i>📐</i><span>Cone</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('torus')"><i>🍩</i><span>Torus</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('plane')"><i>⬜</i><span>Plane</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('camera')"><i>🎥</i><span>Camera</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('light')"><i>💡</i><span>Light</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cube')"><i data-ico="cube"></i><span>Cube</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('sphere')"><i data-ico="sphere"></i><span>Sphere</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cylinder')"><i data-ico="cylinder"></i><span>Cylinder</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cone')"><i data-ico="cone"></i><span>Cone</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('torus')"><i data-ico="torus"></i><span>Torus</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('plane')"><i data-ico="plane"></i><span>Plane</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('camera')"><i data-ico="camera"></i><span>Camera</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('light')"><i data-ico="bulb"></i><span>Light</span></button>
   </div>
 </aside>
 
@@ -2773,6 +2762,21 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <button class="anim-btn" id="anim-trail-toggle" type="button" onclick="FECppEngine.toggleMotionTrail()" aria-pressed="false" title="Draw the motion path of the selected object"><i class="ico" data-ico="wave"></i>Motion Trail</button>
         <button class="anim-btn" id="anim-camera-path-btn" type="button" onclick="FECppEngine.buildCameraPath()" title="Bake a smooth camera orbit around the selected object"><i class="ico" data-ico="camera"></i>Camera Path</button>
         <button class="anim-btn primary" id="anim-export-gltf-btn" type="button" onclick="FECppEngine.exportAnimatedGLTF()" title="Export the scene with its animation tracks as glTF"><i class="ico" data-ico="download"></i>Export glTF</button>
+      </div>
+      <div class="anim-top-strip anim-tools-strip" id="anim-range-strip">
+        <span class="anim-strip-label">Timeline</span>
+        <label class="anim-range-field">Start
+          <input class="anim-range-input" id="anim-range-start" type="number" min="0" step="1" value="0"
+                 onchange="applyTimelineRange(this.value, document.getElementById('anim-range-end').value)">
+        </label>
+        <label class="anim-range-field">End
+          <input class="anim-range-input" id="anim-range-end" type="number" min="1" step="1" value="250"
+                 onchange="applyTimelineRange(document.getElementById('anim-range-start').value, this.value)">
+        </label>
+        <button class="anim-btn" id="anim-range-extend" type="button" onclick="extendTimelineRange(50)" title="Add 50 frames to the end of the timeline">+50</button>
+        <button class="anim-btn" id="anim-range-fit" type="button" onclick="fitTimelineRangeToKeys()" title="Size the timeline to the last keyframe">Fit to keys</button>
+        <button class="anim-btn" id="anim-loop-btn" type="button" onclick="toggleTimelineLoop()" aria-pressed="false" title="Off: playback keeps extending the timeline. On: playback loops inside the range.">Loop: off</button>
+        <span class="anim-status-chip" id="anim-range-status">0 – 250</span>
       </div>
       <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
         <canvas id="anim-dopesheet-canvas"></canvas>
@@ -3295,7 +3299,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           
           <div class="tb-field">
             <label>Frame</label>
-            <input type="number" id="tb-current-frame-input" value="0" min="0" max="10000" onchange="setTimelineCurrentFrame(parseInt(this.value)||0)" />
+            <input type="number" id="tb-current-frame-input" value="0" min="0" step="1" onchange="setTimelineCurrentFrame(parseInt(this.value)||0)" />
           </div>
           <div class="tb-field">
             <label>Start</label>
@@ -3317,10 +3321,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
             </select>
           </div>
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
-        </div>
-        <div class="timeline-right-info">
-          
-          <span id="tb-status-badge">Physics: starting…</span>
         </div>
       </div>
       <div class="timeline-tracks-wrapper" id="timeline-tracks-wrapper">
@@ -7883,8 +7883,13 @@ FE.register('core',{
           let nextFrame = timelineConfig.currentFrame + steps;
           let wrapped = false;
           if (nextFrame > timelineConfig.endFrame) {
-            nextFrame = firstFrame + ((nextFrame - firstFrame) % span);
-            wrapped = true;
+            if (timelineConfig.loopRange) {
+              nextFrame = firstFrame + ((nextFrame - firstFrame) % span);
+              wrapped = true;
+            } else {
+              /* Unlimited playback: the axis keeps growing, nothing is cut off. */
+              growTimelineForFrame(nextFrame);
+            }
           }
           if (wrapped && typeof resetAllPhysicsSimulations === 'function') resetAllPhysicsSimulations();
           if (typeof setTimelineCurrentFrame === 'function') {
@@ -9350,11 +9355,147 @@ const timelineConfig = window.timelineConfig = {
   isPlaying: false,
   isMinimized: false,
   snapToKeys: true,
+  loopRange: false,
   isScrubbing: false,
   playAccumulator: 0,
   _physicsDirty: false,
   lastFrameTime: performance.now()
 };
+
+/* The timeline is unlimited. There is no ceiling on the end frame: the visible
+   range grows to keep every keyframe, baked simulation and the playhead inside
+   it, the end frame can be typed or dragged to any length, and playback keeps
+   extending it instead of stopping. The only guard is that a frame is a finite
+   non-negative integer, so a typo such as `1e999` cannot poison the axis math. */
+const TIMELINE_FRAME_LIMIT = Number.MAX_SAFE_INTEGER;
+
+function normaliseTimelineFrame(value, fallback){
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(TIMELINE_FRAME_LIMIT, Math.max(0, n));
+}
+
+function timelineRangeInputs(){
+  return [
+    ['tb-start-frame-input', 'tb-end-frame-input'],
+    ['anim-range-start', 'anim-range-end']
+  ];
+}
+
+function syncTimelineRangeInputs(){
+  for (const [startId, endId] of timelineRangeInputs()) {
+    const startEl = document.getElementById(startId);
+    const endEl = document.getElementById(endId);
+    if (startEl && document.activeElement !== startEl) startEl.value = String(timelineConfig.startFrame);
+    if (endEl && document.activeElement !== endEl) endEl.value = String(timelineConfig.endFrame);
+  }
+  const statusEl = document.getElementById('anim-range-status');
+  if (statusEl) statusEl.textContent = `${timelineConfig.startFrame} – ${timelineConfig.endFrame}`;
+  const loopBtn = document.getElementById('anim-loop-btn');
+  if (loopBtn) {
+    loopBtn.textContent = timelineConfig.loopRange ? 'Loop: on' : 'Loop: off';
+    loopBtn.classList.toggle('is-on', !!timelineConfig.loopRange);
+    loopBtn.setAttribute('aria-pressed', timelineConfig.loopRange ? 'true' : 'false');
+  }
+}
+
+function applyTimelineRange(start, end){
+  const s = normaliseTimelineFrame(start, timelineConfig.startFrame);
+  const e = Math.max(s + 1, normaliseTimelineFrame(end, Math.max(s + 1, timelineConfig.endFrame)));
+  const changed = s !== timelineConfig.startFrame || e !== timelineConfig.endFrame;
+  timelineConfig.startFrame = s;
+  timelineConfig.endFrame = e;
+  if (timelineConfig.currentFrame < s) timelineConfig.currentFrame = s;
+  if (timelineConfig.currentFrame > e) timelineConfig.currentFrame = e;
+  syncTimelineRangeInputs();
+  renderTimelineRulerCanvas();
+  return changed;
+}
+window.applyTimelineRange = applyTimelineRange;
+
+function setTimelineEndFrame(frame){ return applyTimelineRange(timelineConfig.startFrame, frame); }
+window.setTimelineEndFrame = setTimelineEndFrame;
+
+function setTimelineStartFrame(frame){ return applyTimelineRange(frame, Math.max(Number(frame) + 1, timelineConfig.endFrame)); }
+window.setTimelineStartFrame = setTimelineStartFrame;
+
+function extendTimelineRange(step = 50){
+  const delta = Math.max(1, Math.round(Number(step) || 50));
+  return setTimelineEndFrame(timelineConfig.endFrame + delta);
+}
+window.extendTimelineRange = extendTimelineRange;
+
+function timelineContentEndFrame(){
+  let need = Number(timelineConfig.currentFrame) || 0;
+  try {
+    const keys = timelineKeyFrames();
+    if (keys.length) need = Math.max(need, Number(keys[keys.length - 1]) || 0);
+  } catch (_) {}
+  try {
+    if (typeof getActiveObjectMesh === 'function') {
+      const bakeEnd = Number(getActiveObjectMesh()?.userData?.simBake?.frameEnd) || 0;
+      if (bakeEnd) need = Math.max(need, bakeEnd);
+    }
+  } catch (_) {}
+  return need;
+}
+
+function fitTimelineRangeToKeys(){
+  const last = timelineContentEndFrame();
+  return setTimelineEndFrame(Math.max(50, Math.ceil((last + 12) / 50) * 50));
+}
+window.fitTimelineRangeToKeys = fitTimelineRangeToKeys;
+
+/* Called by the ruler renderer: content that lands beyond the visible range
+   widens it instead of being drawn off the edge. Never shrinks - only the
+   explicit range controls do that. */
+function timelineAutoFitRange(){
+  const need = timelineContentEndFrame();
+  if (need <= timelineConfig.endFrame) return false;
+  timelineConfig.endFrame = Math.ceil((need + 1) / 50) * 50;
+  syncTimelineRangeInputs();
+  return true;
+}
+window.timelineAutoFitRange = timelineAutoFitRange;
+
+/* The viewport carries no solver/engine badge at all. Simulation state is
+   reported in ⚙ → Run Benchmark diagnostics only. A shell cached by an older
+   install can still contain the old pill, so any node with that id is removed
+   on boot and cannot come back. */
+function removePhysicsBadgeFromDom(){
+  const stale = document.getElementById('tb-status-badge');
+  if (!stale) return false;
+  const host = stale.closest ? stale.closest('.timeline-right-info') : null;
+  (host && host.childElementCount === 1 ? host : stale).remove();
+  return true;
+}
+window.removePhysicsBadgeFromDom = removePhysicsBadgeFromDom;
+removePhysicsBadgeFromDom();
+try { syncTimelineRangeInputs(); } catch (_) {}
+
+window.timelineEnsureRange = function timelineEnsureRange(frame){
+  const need = normaliseTimelineFrame(frame, 0);
+  if (need <= timelineConfig.endFrame) return false;
+  return setTimelineEndFrame(Math.ceil((need + 1) / 50) * 50);
+};
+
+/* Playing past the end extends the axis instead of stopping or wrapping, unless
+   the user explicitly turns looping on. */
+function toggleTimelineLoop(){
+  timelineConfig.loopRange = !timelineConfig.loopRange;
+  syncTimelineRangeInputs();
+  window.FE?.toast?.(timelineConfig.loopRange ? 'Timeline will loop inside the range' : 'Timeline extends as it plays');
+  return timelineConfig.loopRange;
+}
+window.toggleTimelineLoop = toggleTimelineLoop;
+
+function growTimelineForFrame(frame){
+  if (frame <= timelineConfig.endFrame) return false;
+  timelineConfig.endFrame = Math.ceil((frame + 1) / 50) * 50;
+  syncTimelineRangeInputs();
+  return true;
+}
+window.growTimelineForFrame = growTimelineForFrame;
 
 function toggleTimelineMinimize() {
   const bar = document.getElementById('studio-timeline-bar');
@@ -9423,7 +9564,7 @@ function setTimelineCurrentFrame(frame, options = {}) {
   const oldFrame = timelineConfig.currentFrame;
   const target = Math.round(Number(frame) || 0);
   const low = options.clampRange ? timelineConfig.startFrame : 0;
-  const high = options.clampRange ? timelineConfig.endFrame : 10000;
+  const high = options.clampRange ? timelineConfig.endFrame : TIMELINE_FRAME_LIMIT;
   timelineConfig.currentFrame = Math.max(low, Math.min(high, target));
 
   const frameInput = document.getElementById('tb-current-frame-input');
@@ -9456,9 +9597,9 @@ window.setTimelineCurrentFrame = setTimelineCurrentFrame;
 function updateTimelineRange() {
   const startEl = document.getElementById('tb-start-frame-input');
   const endEl = document.getElementById('tb-end-frame-input');
-  if (startEl) timelineConfig.startFrame = Math.max(0, parseInt(startEl.value) || 0);
-  if (endEl) timelineConfig.endFrame = Math.max(1, parseInt(endEl.value) || 250);
-  renderTimelineRulerCanvas();
+  const start = startEl ? parseInt(startEl.value) || 0 : timelineConfig.startFrame;
+  const end = endEl ? parseInt(endEl.value) || timelineConfig.endFrame : timelineConfig.endFrame;
+  applyTimelineRange(start, end);
 }
 window.updateTimelineRange = updateTimelineRange;
 
@@ -9539,6 +9680,9 @@ function renderTimelineRulerCanvas() {
   const container = canvas.parentElement;
   if (!container) return;
 
+  /* Grow the axis before measuring it so new keys can never fall off the end. */
+  timelineAutoFitRange();
+
   const w = Math.max(1, container.clientWidth || 600);
   const h = Math.max(1, container.clientHeight || 52);
   if (canvas.width !== w || canvas.height !== h) {
@@ -9616,6 +9760,23 @@ function applyTimelineScrub(clientX) {
   /* Absolute mapping: the pointer position always means the same frame, so the
      old "currentFrame + delta" feedback loop (which made the ruler jump back
      and forth) can no longer happen. */
+  const container = document.getElementById('timeline-ruler-container');
+  if (container) {
+    const rect = container.getBoundingClientRect();
+    const m = timelineFrameMetrics(rect.width || 600);
+    const localX = clientX - rect.left;
+    const edge = m.pad + m.plotW;
+    /* Dragging past the right edge adds time instead of stopping: that is what
+       makes the timeline unlimited on a phone, where there is no zoom control. */
+    if (localX > edge + 4) {
+      const overshoot = Math.min(localX - edge, 320);
+      const framesPerPx = (m.endFrame - m.startFrame) / m.plotW;
+      const grow = Math.max(1, Math.round(overshoot * framesPerPx * 1.6));
+      if (growTimelineForFrame(timelineConfig.endFrame + grow)) {
+        renderTimelineRulerCanvas();
+      }
+    }
+  }
   const frame = snapTimelineFrame(timelineFrameAtClientX(clientX));
   setTimelineCurrentFrame(frame, { scrub: true, clampRange: true });
 }

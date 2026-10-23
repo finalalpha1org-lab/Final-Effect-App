@@ -39,6 +39,7 @@ function harness({ keys = [], startFrame = 0, endFrame = 250, width = 600 } = {}
   };
   const ctx = vm.createContext({
     window, document, console, Math, Number, String, Array, performance,
+    renderTimelineRulerCanvas() {},
     timelineConfig: {
       currentFrame: 0, startFrame, endFrame, fps: 30, isPlaying: false,
       snapToKeys: true, isScrubbing: false, playAccumulator: 0, _physicsDirty: false,
@@ -49,9 +50,10 @@ function harness({ keys = [], startFrame = 0, endFrame = 250, width = 600 } = {}
     },
   });
 
+  const range = slice('const TIMELINE_FRAME_LIMIT', 'function toggleTimelineMinimize');
   const metrics = slice('const TIMELINE_RULER_PAD', 'function positionTimelinePlayhead');
   const scrub = slice('function timelineFrameAtClientX', 'window.handleRulerPointer = handleRulerPointer;');
-  vm.runInContext(metrics + '\n' + scrub, ctx);
+  vm.runInContext(range + '\n' + metrics + '\n' + scrub, ctx);
   return { ctx, applied, container };
 }
 
@@ -79,12 +81,15 @@ test('a pointer position always resolves to the same frame (no drift)', () => {
   assert.equal(applied[0].options.clampRange, true, 'scrubbing must clamp to the timeline range');
 });
 
-test('dragging outside the ruler clamps to the configured range', () => {
+test('dragging left clamps to the start, dragging right adds time', () => {
   const { ctx, applied } = harness({ startFrame: 10, endFrame: 90, width: 600 });
   ctx.applyTimelineScrub(-400);
+  assert.equal(applied[0].frame, 10, 'nothing exists before the start frame');
+
+  const before = ctx.timelineConfig.endFrame;
   ctx.applyTimelineScrub(5000);
-  assert.equal(applied[0].frame, 10);
-  assert.equal(applied[1].frame, 90);
+  assert.ok(ctx.timelineConfig.endFrame > before, 'pulling past the right edge extends the timeline');
+  assert.equal(applied[1].frame, ctx.timelineConfig.endFrame, 'the playhead lands on the new end');
 });
 
 test('scrubbing snaps onto a nearby keyframe and holds it exactly', () => {
