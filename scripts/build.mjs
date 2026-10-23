@@ -29,7 +29,6 @@ if (hasPublicDir) {
     "Terrain_system_.html",
     "celestial-math.js",
     "scatter-spacing.js",
-    "real-world-terrain.js",
     "tessendorf-ocean.js",
     "open-world-generator.js",
     "open-world.js",
@@ -57,7 +56,6 @@ const terrainMainFiles=Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).
 const minifiableJs = [
   "celestial-math.js",
   "scatter-spacing.js",
-  "real-world-terrain.js",
   "tessendorf-ocean.js",
   "open-world-generator.js",
   ...terrainMainFiles,
@@ -113,7 +111,6 @@ if (!optimizedTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
 const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {
   celestialMath: readFileSync("build/client/celestial-math.js", "utf8"),
   scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
-  realWorldTerrain: readFileSync("build/client/real-world-terrain.js", "utf8"),
   tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
   openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
   terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),

@@ -103,25 +103,6 @@ function importHeightmap(f){const rd=new FileReader();rd.onload=()=>{const im=ne
 for(let k=0;k<W*W;k++)H[k]=(d[k*4]*.3+d[k*4+1]*.59+d[k*4+2]*.11)/255*dem-dem*.3;
 for(let p=0;p<2;p++){const s=H.slice();for(let j=1;j<N;j++)for(let i=1;i<N;i++){const k=j*W+i;H[k]=(s[k]*4+s[k-1]+s[k+1]+s[k-W]+s[k+W])/8}}
 for(let j=0;j<W;j++)for(let i=0;i<W;i++){const e2=Math.max(Math.abs(i*D-S/2),Math.abs(j*D-S/2))/(S/2),fd=sm(.62,.93,e2);H[j*W+i]=H[j*W+i]*(1-fd)-14*fd}MI.fill(255);upd();scatter();msg('Heightmap imported')};im.src=rd.result};rd.readAsDataURL(f)}
-/* Real-world DEM -> resident heightfield. C++ resamples when the core is
-   available; the JS twin in real-world-terrain.js keeps the fallback identical. */
-function applyRealWorldDem(dem,demW,demH,opts){
- const o=opts||{};
- push();
- const core=window.FELandscapeCore;
- let native=false;
- if(core&&typeof core.applyDem==='function'&&core.ready){
-  native=core.applyDem({n:N,size:S,heights:H,dem,demW,demH,spanM:o.spanM,refM:o.referenceM||0,exaggeration:o.exaggeration||1,offset:o.offset||0})===true;
- }
- if(!native){
-  if(!window.RealWorldTerrain)throw Error('Real-world terrain module is not loaded');
-  H.set(window.RealWorldTerrain.resampleToTerrain({dem,demW,demH,n:N,size:S,spanM:o.spanM,referenceM:o.referenceM||0,exaggeration:o.exaggeration||1,offset:o.offset||0}));
- }
- MI.fill(255);upd();scatter();
- /* Metric reference for model sizing and scatter scale after a real import. */
- window.__feMetersPerUnit=(Number(o.spanM)||0)/S;
- return native;
-}
 function flattenUnder(){if(!mapRoot)return;push();const bb=new THREE.Box3().setFromObject(mapRoot),c=bb.getCenter(new THREE.Vector3()),r=Math.max(bb.max.x-bb.min.x,bb.max.z-bb.min.z)/2*.9;level(c.x,c.z,r,mapRoot.position.y);for(const k in KIND){const K=KIND[k];K.list=K.list.filter(o=>Math.hypot(o.x-c.x,o.z-c.z)>r*1.05)}resnap()}
 function rmMap(){if(mapRoot)scene.remove(mapRoot);mapRoot=null;build()}
 function fileBtn(l,acc,cb){const d=el(`<label class="chip" style="text-align:center">${l}<input type="file" hidden${acc?' accept="'+acc+'"':''}></label>`);d.querySelector('input').onchange=e=>{const f=e.target.files[0];if(f)cb(f);e.target.value=''};return d}

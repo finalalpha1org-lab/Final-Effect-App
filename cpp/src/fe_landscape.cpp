@@ -120,38 +120,6 @@ int32_t fe_terrain_scatter_batch(uint32_t count,float spread,uint32_t seed){
  }
  return int32_t(count);
 }
-/* Resample a real-world DEM (row 0 = north, column 0 = west, metres above the
-   reference datum) onto the resident heightfield. Horizontal scale is kept
-   metric: size world units span real_span_m metres, so the vertical world
-   scale is size/real_span_m * vertical_exaggeration. */
-int32_t fe_terrain_apply_dem(const float* dem,uint32_t dem_w,uint32_t dem_h,
-                             float real_span_m,float reference_m,
-                             float vertical_exaggeration,float base_offset){
- if(!dem)return -1;
- if(dem_w<2||dem_h<2||dem_w>4096||dem_h>4096)return -1;
- if(!finite(real_span_m)||real_span_m<10||real_span_m>2000000)return -1;
- if(!finite(reference_m)||reference_m<-12000||reference_m>12000)return -1;
- if(!finite(vertical_exaggeration)||vertical_exaggeration<.02f||vertical_exaggeration>20)return -1;
- if(!finite(base_offset)||base_offset<-2000||base_offset>2000)return -1;
- const float scale=(size/real_span_m)*vertical_exaggeration;
- const float fu=float(dem_w-1)/float(N),fv=float(dem_h-1)/float(N);
- for(uint32_t j=0;j<W;j++){
-  const float v=float(j)*fv;
-  const uint32_t y0=uint32_t(v),y1=y0+1<dem_h?y0+1:y0;
-  const float fy=v-float(y0);
-  for(uint32_t i=0;i<W;i++){
-   const float u=float(i)*fu;
-   const uint32_t x0=uint32_t(u),x1=x0+1<dem_w?x0+1:x0;
-   const float fx=u-float(x0);
-   const float a=lerpf(dem[y0*dem_w+x0],dem[y0*dem_w+x1],fx);
-   const float b=lerpf(dem[y1*dem_w+x0],dem[y1*dem_w+x1],fx);
-   float e=lerpf(a,b,fy);
-   if(!finite(e))e=reference_m;
-   H[j*W+i]=(e-reference_m)*scale+base_offset;
-  }
- }
- return 0;
-}
 int32_t fe_terrain_apply_strata(float strata_height,float strata_strength,float tilt_x,float tilt_z,float warp_amp){
  if(!finite(strata_height)||strata_height<.05f||strata_height>500)return -1;
  if(!finite(strata_strength)||strata_strength<=0||strata_strength>1)return -1;
