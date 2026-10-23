@@ -154,11 +154,20 @@ Open World sheet — **Apply Climate Biomes** — which:
    writes *one fully weighted surface* per vertex;
 4. pushes a single undo step before the first write, so the press is reversible.
 
-Two modes make the choice explicit: **Apply to all ground** replaces the painted
-weights everywhere, while **Fill unpainted ground only** skips every vertex that
-already carries a painted weight, so a hand-painted island keeps its own biomes
-and the climate only fills the rest. The sheet reports the biome coverage and,
-in fill mode, how much of the map was kept from the artist.
+Two modes make the choice explicit:
+
+* **Apply to all ground** replaces the painted weights everywhere.
+* **Fill unpainted ground only** never touches work you have done. On the
+  default island the test is per vertex — any vertex that already carries a
+  painted weight is skipped, so a stroked region keeps its own biome. Over a
+  streamed open world the test is **per 256 m chunk**: if one vertex of a tile is
+  painted, the whole tile keeps its surface weave and is not even re-uploaded.
+  A fill can therefore never speckle a chunk you have worked on, which is what a
+  per-vertex test would do at the edge of a brush stroke.
+
+The sheet reports the biome coverage and, in fill mode, how much was kept from
+the artist: a percentage for the island, `N of M chunks kept from your painting`
+for a streamed world.
 
 It never runs on its own, so hand-painted biome layers survive every reload,
 every weather tick and every seed change.
@@ -213,7 +222,7 @@ weather comes back with that switch still on.
 
 ```bash
 node --test tests/landscape-climate.test.mjs   # 19 tests
-npm test                                       # 358 tests
+npm test                                       # 367 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn

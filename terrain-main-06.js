@@ -159,7 +159,7 @@ FXU.s0.value=SH.s0;FXU.t0.value=SH.t0;FXU.sr.value=SH.r;FXU.se.value=SH.e;FXU.cl
 WX.rain=e(WX.rain,Math.max(WX.rainT,WX.tor.on?.55:0),1.2);WX.snowfall=e(WX.snowfall,WX.snowfallT,1.5);WX.storm=e(WX.storm,WX.stormT,.8);WX.over=e(WX.over,Math.max(WX.overT,WX.rainT*.9,WX.snowfallT*.75,WX.stormT,WX.tor.on?.92:0),.6);
 {const d=WX.coverT-WX.cover,up=(.1+.3*WX.snowfall)*dt,dn=WX.melt/(WX.cycle*.1)*dt;WX.cover+=d>0?Math.min(d,up):-Math.min(-d,dn)}
 const melting=WX.cover>WX.coverT+.02?.7:0;FXU.wet.value=e(FXU.wet.value,Math.max(WX.rain,melting),WX.rain>FXU.wet.value?.8:.08);FXU.snowK.value=WX.cover;
-U.rain.value=WX.rain;U.ov.value=WX.over;WW.value=windUser*(1+WX.storm*1.2+(WX.tor.on?.8:0));U.uWindSpeed.value=exClamp(waterWindSpeed*windUser*(1+WX.storm*.5+(WX.tor.on?.5:0)),0,40);U.amp.value=ampUser*(1+WX.storm*1.1+WX.rain*.25);
+U.rain.value=WX.rain;FXU.rain.value=WX.rain;U.ov.value=WX.over;WW.value=windUser*(1+WX.storm*1.2+(WX.tor.on?.8:0));U.uWindSpeed.value=exClamp(waterWindSpeed*windUser*(1+WX.storm*.5+(WX.tor.on?.5:0)),0,40);U.amp.value=ampUser*(1+WX.storm*1.1+WX.rain*.25);
 if(WX.storm>.5&&now>WX.nextFlash){WX.fT=0;WX.nextFlash=now+3500+R()*7500;newBolt()}
 WX.fT+=dt;WX.flash=WX.fT<.5?(1-WX.fT/.5)*(.6+.4*Math.sin(WX.fT*70))*WX.storm:0;U.flash.value=WX.flash;bolt.visible=WX.fT<.16;
 const skk=WX.over*1000+WX.rain*700;if(Math.abs(skk-lastSkyK)>.5&&now-lastSky>140){lastSky=now;lastSkyK=skk;updSky()}

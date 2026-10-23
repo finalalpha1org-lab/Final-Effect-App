@@ -308,22 +308,43 @@ let grownTries=0;
    requested kinds are dropped and applyGrown fills them again. Rocks keep their
    cached meshes, and instances keep their matrices, so a slider move only
    replaces geometry. */
+/* A slider is debounced by the caller and lands here. Only the resident chunks
+   hold instances of a species, so this is the whole rebuild: the placements and
+   their matrices are never touched, only the shared grown geometry, and the
+   species are rebuilt a few at a time so a 120 Hz frame is not dropped. */
+let grownQueue=null,grownQueueAt=0;
+function stepGrownRebuild(){
+ if(!grownQueue)return;
+ const list=grownQueue,start=nowMs();
+ while(grownQueueAt<list.length){
+  applyGrown([list[grownQueueAt++]]);
+  if(nowMs()-start>3)break;
+ }
+ grownQueue=grownQueueAt<list.length?list:null;
+ if(grownQueue&&typeof requestAnimationFrame==='function')requestAnimationFrame(stepGrownRebuild);
+}
+function nowMs(){return typeof performance!=='undefined'&&performance.now?performance.now():Date.now()}
+function queueGrownRebuild(jobs){
+ grownQueue=jobs.slice();grownQueueAt=0;
+ if(typeof requestAnimationFrame==='function')requestAnimationFrame(stepGrownRebuild);
+ else{applyGrown();grownQueue=null}
+}
 function regrowFlora(kinds){
- const list=Array.isArray(kinds)?kinds:null;
- let touched=0;
+ const list=Array.isArray(kinds)?kinds:null,touched=[];
  for(const job of GROWN_JOBS){
   if(job.rock)continue;
   if(list&&!list.includes(job.kind))continue;
-  job.parts=[];touched++;
+  job.parts=[];touched.push(job);
  }
- if(touched)applyGrown();
- return touched;
+ if(touched.length)queueGrownRebuild(touched);
+ return touched.length;
 }
 window.__feRegrowFlora=regrowFlora;
-function applyGrown(){
+function applyGrown(jobs){
  if(!GROWN_JOBS.length)return;
+ const list=jobs&&jobs.length?jobs:GROWN_JOBS;
  let pending=0;
- for(const job of GROWN_JOBS){
+ for(const job of list){
   const K=KIND[job.kind];if(!K||!K.meshes||!K.meshes.length)continue;
   if(job.rock){
    for(let v=0;v<3;v++){

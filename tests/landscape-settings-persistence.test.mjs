@@ -180,7 +180,7 @@ test('the studio boots from the saved document before it generates the world', (
     'the sheet exposes both actions');
   assert.ok(panel.includes('localStorage.setItem(STUDIO_CONFIG_KEY'), 'the web build persists to localStorage');
   assert.ok(panel.includes('pagehide'), 'an unload flushes a pending save');
-  assert.ok(sw.includes("'final-effect-cpp-v25'"), 'the cache is bumped whenever the shipped shell changes');
+  assert.ok(sw.includes("'final-effect-cpp-v26'"), 'the cache is bumped whenever the shipped shell changes');
 });
 
 test('a partial biome mix is merged, and the grown-flora settings survive the trip', () => {
@@ -201,11 +201,15 @@ test('a partial biome mix is merged, and the grown-flora settings survive the tr
   assert.equal(calls.restored[0].floraRules, 'X -> F[+X]F[-X]+X', 'so does the grammar text');
   assert.equal(calls.restored[0].waveAuto, true, 'and the sea-follows-the-weather switch');
 
-  /* The live capture and restore in the studio carry the same three fields. */
+  /* The live capture and restore in the studio carry the same fields, and the
+     restore actually switches the mode back on instead of dropping it. */
   const capture = readFileSync('terrain-main-04.js', 'utf8');
   for (const key of ['floraHeight', 'floraDensity', 'floraRules', 'waveAuto']) {
     assert.ok(capture.includes(key), `${key} is captured and restored by the studio itself`);
   }
+  assert.ok(capture.includes("waveAuto=a.waveAuto;waveAutoApplied=-1;"), 'the saved switch is applied, not just carried');
+  assert.ok(capture.includes('if(waveAuto&&typeof stepWaveClimate===\'function\')stepWaveClimate()'),
+    'and restoring an on switch re-derives the sea from the current wind immediately');
 });
 
 /* ------------------------------------------------------------------ */

@@ -73,8 +73,17 @@ test('geometry is uploaded once and frames only rewrite preallocated buffers', (
   assert.equal((syncBody.match(/new Float32Array/g) || []).length, 1, 'and that is the only allocation in a refresh');
 });
 
-test('instances the core classifies as past the far plane never reach the GPU', () => {
-  assert.match(SYNC, /if\(lodTiers&&lodTiers\[sourceIndex\]<0\)return;/, 'the cull tier is honoured');
-  assert.match(SYNC, /useLow=lodTiers\[sourceIndex\]===1/, 'and the low tier still picks the decimated mesh');
-  assert.match(TERRAIN, /core\.lodClassify=function\(state\)/, 'the classification is a core call');
+test('the instance list written to the GPU is the compacted list the core returns', () => {
+  /* The core returns dense slots, not a per-instance flag: the bridge walks
+     `visN` entries, not every stored placement. */
+  assert.match(SYNC, /const total=visOrder\?visN:K\.list\.length;/, 'a refresh only visits visible slots');
+  assert.match(SYNC, /const sourceIndex=visOrder\?visOrder\[q\]:q;/, 'and maps each slot back to its placement');
+  assert.match(SYNC, /if\(visOrder===null&&lodTiers&&lodTiers\[sourceIndex\]<0\)continue;/, 'the legacy tier -1 still culls');
+  assert.match(SYNC, /useLow=lodTiers\[tierIndex\]===1/, 'the low tier still picks the decimated mesh');
+  assert.match(SYNC, /m\.count=ci;/, 'the draw count is the compacted count');
+  assert.match(TERRAIN, /core\.lodVisible=function\(state\)\{/, 'the compacted list is a core call');
+  assert.match(TERRAIN, /const got=ex\.fe_lod_visible\(count,visPtr,visVpPtr,/, 'the view-projection matrix is passed by pointer, not by value');
+  assert.match(TERRAIN, /if\(!visVpPtr\)\{visVpPtr=ex\.fe_malloc\(64\);/, 'the matrix buffer is allocated once');
+  assert.match(TERRAIN, /indices:new Uint32Array\(ex\.memory\.buffer,ex\.fe_lod_visible_index_ptr\(\),got\)/, 'indices are a view over the core buffer');
+  assert.equal((TERRAIN.match(/ex\.fe_lod_visible\(/g) || []).length, 1, 'one call per refresh');
 });

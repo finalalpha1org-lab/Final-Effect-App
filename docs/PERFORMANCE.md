@@ -30,8 +30,47 @@ this repository or explicitly marked as not done.
 | Index loops for clouds and per-frame callbacks | no closure allocated per frame |
 | Cached LoD kind list (`foliageLodKinds`) | the list used to be rebuilt with `[...Set].filter()` every frame |
 | One reused `lodScratch` buffer | a camera settle no longer allocates an `n×3` float array |
-| The `-1` tier from `fe_lod_classify` is honoured | instances past the far plane no longer reach the GPU at all |
 | Tsunami ↔ wind-sea blend (`uTsF`) | the two wave systems are mixed by one factor instead of being added together |
+| `fe_lod_visible` in the core | the CPU no longer walks instances it will not draw |
+| Ground-cover density falloff in the core | grass stops at the horizon instead of overdrawing it |
+| Rain → PBR roughness + puddle ripples | wet surfaces are a shader uniform, not a particle system |
+| Chunk-level *Fill unpainted ground only* | a painted 256 m tile is never speckled by a fill |
+
+## The compacted visible-instance list
+
+`fe_lod_visible(count, xyz, vp, camX, camY, camZ, fullDistance, cullRadius,
+margin, options)` takes the placement positions (already in the core's memory),
+a **pointer** to the 16-float column-major view-projection matrix three.js
+already keeps, and returns the number of visible instances. The visible slots
+are left in `fe_lod_visible_index_ptr()` as `Uint32` and the tier per slot in
+`fe_lod_visible_tier_ptr()` as `Uint8`, both ascending and both valid until the
+next call.
+
+* Frustum planes come from the Gribb-Hartmann rows; an instance is dropped when
+  any plane test is below `-margin`.
+* `margin` is not padding for its own sake: a caster just outside the view still
+  lands in the 60 m shadow box, so `sync()` passes at least the shadow radius
+  for a species whose meshes cast shadows.
+* `options` bit 0 adds the ground-cover falloff: full density inside 55 % of the
+  radius, then `keep = 1 − t²(3−2t)` hashed per instance against `owHash` of the
+  world position. The same blade is always on the same side of the threshold, so
+  nothing flickers as the camera moves.
+* `options` bit 1 skips the frustum (used when the caller has already culled).
+* Out-of-range arguments (`count > 65536`, `fullDistance ∉ [10, 20000]`,
+  `cullRadius ∉ [10, 40000]`, `margin ∉ [0, 96]`, a non-finite camera) return a
+  negative code instead of writing garbage.
+
+Measured in this repository (Node, one 65 536-instance list, 60° frustum):
+
+| Case | Result | Time |
+| --- | --- | --- |
+| 20 000 ground-cover blades, 190 m radius, falloff on | 887 kept (4.4 %) | 1.8 ms |
+| 65 536 mixed instances, 20 km radius, frustum only | 38 299 kept | 2.5 ms |
+| Same call twice | identical list | — |
+
+`sync()` then sets `InstancedMesh.count = visibleCount` and writes the matrices
+of those slots only; the geometry and the instance buffers are never
+re-allocated.
 
 ## What is *not* done, and why
 
@@ -44,21 +83,21 @@ but each one cullable. Neither is implemented; the current design (one mesh per
 kind and part) is the intermediate point that keeps the studio working on
 WebGL2.
 
-**Per-instance frustum culling.** `fe_lod_classify` already returns a tier per
-instance, and `sync()` now skips the `-1` tier. But `sync()` runs on a camera
-settle, not every frame: re-packing every instance each frame costs more CPU
-than it saves on a mid-range phone. A proper version is a compacted visible-index
-buffer written by the core and uploaded as a small `Uint32` index attribute —
-planned, not built.
+**A visible list every frame.** The compacted list above is rebuilt on a camera
+settle (240 ms after the camera stops moving), not per frame: re-packing every
+instance each frame costs more CPU than it saves on a mid-range phone, and a
+list computed for a moving camera is stale before the draw. A per-frame version
+needs a GPU-drawn indirect buffer, not a JS loop.
 
 **Quadtree foliage LoD.** The terrain already streams 256 m chunks with a 3×3
 resident ring, and foliage has distance tiers (`fe_lod_classify`, 750 m full
 detail by default). There is no quadtree over the foliage itself.
 
 **Erosion off the main thread.** Hydraulic and thermal erosion run in the core
-(measured on a 257² field in Node: 2 000 droplets 15 ms, 10 000 43 ms,
-50 000 202 ms, thermal ×20 12.5 ms). Those numbers are why the panel applies
-erosion as a discrete action rather than per frame. Moving it to a worker is
+(measured here on the shipped artifact: 256² field, 2 000 droplets 10 ms,
+10 000 34 ms, 50 000 174 ms; 512² field 10 000 40 ms, 50 000 201 ms; thermal
+×20 8 ms / 27 ms — about 0.29 M droplets/s). Those numbers are why the panel
+applies erosion as a discrete action rather than per frame. Moving it to a worker is
 possible, but a `WebAssembly` instance cannot be shared with the main thread and
 `SharedArrayBuffer` needs COOP/COEP headers that a static host does not send, so
 a worker would need its own instance and a copied heightmap back. Not done.
@@ -77,10 +116,9 @@ GPU, no device). The in-page frame timings are the only measurements taken, so
 ## The order that would actually help a phone
 
 1. **Fill rate first.** On a 390×844 screen at DPR 2, a million instanced grass
-   fragments cost more than their vertex data ever will. Cheaper: tighter
-   density falloff, smaller cards, fewer overdraw layers.
-2. **Compacted visible instances** (core-written index buffer) — removes the
-   work for everything behind the camera without giving up culling.
-3. **WebGPU path** for indirect draws and compute erosion, kept behind a feature
+   fragments cost more than their vertex data ever will. The density falloff is
+   now in the core; smaller cards and fewer overdraw layers would go further.
+2. **WebGPU path** for indirect draws and compute erosion, kept behind a feature
    flag next to the WebGL2 renderer.
-4. **Worker erosion** with a copied heightmap, once 2 and 3 exist.
+3. **Worker erosion** with a copied heightmap, once 2 exists.
+4. **Quadtree foliage LoD** over the resident chunks.

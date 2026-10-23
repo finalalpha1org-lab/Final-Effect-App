@@ -165,19 +165,31 @@ belonged to: every vertex bent by `y²`, so a trunk and a twig at the same heigh
 moved identically. The kernel now bakes two channels per vertex:
 
 * **compliance** — `0` at the trunk collar, `1` at a terminal twig, accumulated
-  along the branch path (`(len − trunkTop/2) / (treeHeight · 0.55)`, clamped).
+  along the branch path and thinned by the local radius:
+
+  ```
+  path = clamp((len − trunkTop·0.5) / (treeHeight·0.55), 0, 1)
+  thin = clamp(1 − radius / (0.60 · trunkRadius), 0, 1)
+  sway = clamp(path · (0.55 + 0.45·thin), 0, 1)          // swayOf() in fe_flora.cpp
+  ```
+
   Because it follows the *path*, not the height, a low side limb can be more
-  compliant than the stiff upper trunk — a height law can never produce that.
+  compliant than the stiff upper trunk — a height law can never produce that —
+  and because a limb as thick as the trunk keeps only 55 % of its path
+  compliance, a whip swings further than a bough of the same length.
 * **phase** — accumulated down the path (`Σ 1.6 · segmentLength`), so two limbs
   of the same length still swing out of step.
 
 The shader bends by
 
 ```glsl
-float skA = aSway * aSway * clamp(position.y * 0.34, 0.12, 1.0);
+float skH = max(position.y, 0.0);
+float skA = aSway * aSway * clamp(skH * 0.34, 0.12, 1.0);
 float skW = 0.55 + 1.25 * aSway;          // stiff limbs are slow, tips are fast
-float skB = sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + 1.6 * aPhase + 1.1);
-transformed.xz += wd * skA * uW * 0.55 * skB * gust;
+float skB = (sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + aPhase * 1.6 + 1.1))
+          * (0.35 + 0.65 * gust);
+transformed.xz += wd * (skA * uW * 0.550) * skB;
+transformed.y  -= skA * skA * abs(skB) * uW * 0.05;   // the tip dips as it swings
 ```
 
 Compliance therefore drives three things at once: how far a limb moves
@@ -265,7 +277,7 @@ These are recorded as incomplete rather than finished.
 
 ```bash
 node --test tests/landscape-flora.test.mjs    # 21 tests
-npm test                                      # 358 tests
+npm test                                      # 367 tests
 ```
 
 The tests grow all eight species and all three rocks from the shipped artifact,

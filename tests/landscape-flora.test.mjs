@@ -581,3 +581,50 @@ test('the sheet validates grammar text before anything reaches the kernel', () =
   assert.match(panel, /sl\('Branch density ×'/, 'so is branch density');
   assert.match(panel, /__feRegrowFlora/, 'applying a control rebuilds the grown species');
 });
+
+test('a shape change rebuilds the grown species a few at a time, never all at once', () => {
+  const start = models.indexOf('let grownQueue=null'), end = models.indexOf('function applyGrown(jobs)');
+  assert.ok(start > 0 && end > start, 'the sliced rebuild lives in terrain-main-02.js');
+  const frames = [];
+  let rebuilt = 0;
+  const context = {
+    Math, Date, Array, console, window: {},
+    performance: { now: () => Date.now() },
+    requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
+    /* Each species takes ~2 ms, so a 3 ms budget cannot finish six of them. */
+    applyGrown: (jobs) => { rebuilt += jobs.length; const t = Date.now(); while (Date.now() - t < 2) {} },
+    GROWN_JOBS: [{ kind: 'oak' }]
+  };
+  vm.createContext(context);
+  vm.runInContext(models.slice(start, end) + ';this.queue=queueGrownRebuild;this.frames=()=>grownQueue;this.pending=()=>grownQueueAt;', context);
+  context.queue([1, 2, 3, 4, 5, 6]);
+  assert.equal(rebuilt, 0, 'queueing never blocks the frame that moved the slider');
+  assert.equal(frames.length, 1, 'it schedules the rebuild on the next frame');
+  frames.shift()();
+  assert.ok(rebuilt > 0 && rebuilt < 6, 'the first frame rebuilds some species, not all six');
+  assert.equal(frames.length, 1, 'and schedules the rest on the frame after that');
+  let guard = 0;
+  while (frames.length && rebuilt < 6 && guard++ < 20) frames.shift()();
+  assert.equal(rebuilt, 6, 'every species is rebuilt across the following frames');
+  assert.equal(context.frames(), null, 'the queue drains instead of leaking');
+});
+
+test('the rebuild never frees or re-allocates an instance buffer', () => {
+  const block = models.slice(models.indexOf('function regrowFlora'), models.indexOf('function applyGrown(jobs)'));
+  assert.match(block, /job\.parts=\[\];touched\.push\(job\);/, 'only the grown geometry cache is dropped');
+  assert.equal(/new Float32Array|new THREE\.|dispose\(/.test(block), false, 'the placements, matrices and instance buffers are untouched');
+  const apply = models.slice(models.indexOf('function applyGrown(jobs)'), models.indexOf('/* terrain-main-01 builds lazy species'));
+  assert.match(apply, /const list=jobs&&jobs\.length\?jobs:GROWN_JOBS;/, 'a slice can rebuild a single species');
+  assert.equal(/new THREE\.InstancedMesh/.test(apply), false, 'and it adopts geometry into the existing meshes');
+});
+
+test('the documented sway law is the one the kernel compiles', () => {
+  const flora = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  const doc = readFileSync('docs/FLORA.md', 'utf8');
+  assert.match(flora, /const float path = clampf\(\(len - s\.trunkTop \* 0\.5f\) \/ \(treeH \* 0\.55f\)/, 'compliance follows the branch path');
+  assert.match(flora, /const float thin = clampf\(1\.0f - radius \/ maxf\(0\.02f, s\.trunkRadius \* 0\.60f\)/, 'and is thinned by the local radius');
+  assert.match(flora, /return clampf\(path \* \(0\.55f \+ 0\.45f \* thin\)/, 'thick limbs keep 55 % of the path compliance');
+  assert.ok(doc.includes('thin = clamp(1 − radius / (0.60 · trunkRadius), 0, 1)'), 'the doc states that radius term');
+  assert.ok(doc.includes('sway = clamp(path · (0.55 + 0.45·thin), 0, 1)'), 'and the combined law');
+  assert.ok(doc.includes('float skB = (sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + aPhase * 1.6 + 1.1))'), 'the doc shader is the shipped shader');
+});

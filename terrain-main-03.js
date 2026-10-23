@@ -181,28 +181,52 @@ function lowMeshesFor(k){
  });
  return K.lowMeshes;
 }
-/* One scratch buffer for the LoD classification, grown once and then reused, so
-a camera settle never allocates. */
+/* One scratch buffer for the visibility call, grown once and then reused, so a
+   camera settle never allocates. */
 let lodScratch=new Float32Array(0);
+let vpMat=null;
+/* How far an instance of a kind is worth submitting. Ground cover also thins
+   out inside its radius (the core does that), which is the overdraw budget. */
+const VIEW_RADIUS={grass:190,tallgrass:210,flower:120,daisy:120,tulip:120,lavender:150,clover:130,shrub:600,ashbush:600,joshua:900,cactus:700,saguaro:700,barrel:520,rock:900,sandrock:900,basalt:900,pine:2400,oak:2400,birch:2400,palm:2000,acacia:2000,deadtree:2200,house:4200,block:4200,mid:4200,tower:5200};
+/* A caster just outside the view still lands in the 60 m shadow box, so it is
+   kept; a caster 100 m behind the camera cannot shadow anything on screen. */
+function shadowPadFor(K){if(!K.meshes||!K.meshes.length)return 0;for(let i=0;i<K.meshes.length;i++)if(K.meshes[i].castShadow)return 60;return 0}
 function sync(k,allInstances=false){
  const K=KIND[k],gr=['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k),tl=gr ? .4 : RK[k] ? .5 : (BLD[k]||NT[k]) ? 0 : .07,T=K.tint;
  const lowAll=LOD_KINDS.has(k)?lowMeshesFor(k):null;
- let lodTiers=null;
- if(lowAll&&!allInstances&&LOD_BOTANICAL.has(k)&&window.FELandscapeCore?.lodClassify&&K.list.length){
-  const n=K.list.length;
+ /* The core answers with a compacted list of instance indices plus their tier;
+   the bridge never walks the invisible ones. */
+ const core=window.FELandscapeCore,n=K.list.length;
+ let lodTiers=null,visOrder=null,visN=0;
+ if(n&&!allInstances&&core&&core.ready){
   if(lodScratch.length<n*3)lodScratch=new Float32Array(n*3);
   const xyz=lodScratch;
   for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z}
-  lodTiers=window.FELandscapeCore.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  if(typeof core.lodVisible==='function'){
+   if(!vpMat)vpMat=new THREE.Matrix4();
+   cam.updateMatrixWorld();
+   vpMat.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);
+   const vis=core.lodVisible({count:n,xyz,vp:vpMat.elements,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,radius:VIEW_RADIUS[k]||2600,margin:Math.min(90,Math.max(6,(K.size||1)*2+shadowPadFor(K))),options:LOD_GROUND.has(k)?1:0});
+   /* A degenerate matrix must never empty the world: if the core reports
+      nothing while the kind clearly has instances, fall back to no culling. */
+   if(vis&&vis.count>0){visOrder=vis.indices;lodTiers=vis.tiers;visN=vis.count}
+   else if(core.lodClassify)lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  }else if(lowAll&&LOD_BOTANICAL.has(k)&&core.lodClassify){
+   lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  }
  }
  K.meshes.forEach((m,mi)=>{
   const pal=m.userData.pal,low=lowAll?.[mi]||null;
   let ci=0,li=0;
   const sourceListIndices=[],lowSourceListIndices=[];
-  K.list.forEach((o,sourceIndex)=>{
-   /* The core already classifies every instance; -1 means it is past the far
-      plane for this kind, so it must not reach the GPU at all. */
-   if(lodTiers&&lodTiers[sourceIndex]<0)return;
+  /* Dense list: matrix index i is the visible slot, and sourceIndex is only
+     used to look the instance up (and to map a tap back to its plant). */
+  const total=visOrder?visN:K.list.length;
+  for(let q=0;q<total;q++){
+   const sourceIndex=visOrder?visOrder[q]:q;
+   const tierIndex=visOrder?q:sourceIndex;
+   if(visOrder===null&&lodTiers&&lodTiers[sourceIndex]<0)continue;
+   const o=K.list[sourceIndex];
    const nv=m.userData.vn;
    if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
    const h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
@@ -217,7 +241,7 @@ function sync(k,allInstances=false){
    dm.updateMatrix();
    let useLow=false;
    if(!allInstances&&LOD_BOTANICAL.has(k)){
-    if(low){if(lodTiers){useLow=lodTiers[sourceIndex]===1}
+    if(low){if(lodTiers){useLow=lodTiers[tierIndex]===1}
      else{const cx=cam.position.x,cz=cam.position.z,d=Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz);
       useLow=plantLodTier(k,d,o.x,o.z,lodFullDistance)===1}}
    }
@@ -229,7 +253,7 @@ function sync(k,allInstances=false){
    if(gr&&!pal){const d=vn(o.x*.03+50,o.z*.03+20);c=[c[0]*(.85+d*.5),c[1]*(1-d*.15),c[2]*(1-d*.4)]}
    const v=o.v,t=pal||m.userData.nt?[1,1,1]:T,dmgTint=BLD[k]?1-(o.damage||0)*.14:1;
    target.setColorAt(i,tcol.setRGB(c[0]*v*t[0]*dmgTint,c[1]*v*t[1]*dmgTint,c[2]*v*t[2]*dmgTint));
-  });
+  }
   m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;
   if(low){low.count=li;low.visible=li>0;low.userData.sourceListIndices=lowSourceListIndices;low.instanceMatrix.needsUpdate=true;low.instanceColor.needsUpdate=true}
   const shadow=K.shadowMeshes?.[mi];
@@ -240,7 +264,7 @@ function sync(k,allInstances=false){
 
 const LOD_KINDS=new Set([...LOD_GROUND,...LOD_BOTANICAL,...LOD_TREES]);
 const lodCameraAnchor=cam.position.clone();
-let lodMotionAt=0,lodSettled=false,lodCursor=0;
+let lodMotionAt=0,lodSettled=false;
 /* The render loop must not allocate. The kind list and its camera anchor are
    built once, and the per-frame work is a distance compare plus, at most, one
    matrix rebuild. */
@@ -254,15 +278,30 @@ function foliageLodKinds(){
  }
  return lodKindList;
 }
+/* Culling is only valid for the view it was computed for, so a settled camera
+   re-builds every kind once, time-sliced across frames. Moving or rotating
+   restarts the settle timer; nothing is queued while the camera is in motion,
+   because a stale visible list is a missing plant. */
+const lodQuat=typeof THREE!=='undefined'&&THREE.Quaternion?new THREE.Quaternion():null;
+let lodSweep=0,lodSweeping=false;
 function updateFoliageLOD(now){
- if(cam.position.distanceToSquared(lodCameraAnchor)>.0025){lodCameraAnchor.copy(cam.position);lodMotionAt=now;lodSettled=false;return}
- if(lodSettled||now-lodMotionAt<240)return;
+ const moved=cam.position.distanceToSquared(lodCameraAnchor)>.0025;
+ const turned=!!(lodQuat&&cam.quaternion)&&cam.quaternion.angleTo(lodQuat)>0.09;
+ if(moved||turned){lodCameraAnchor.copy(cam.position);if(lodQuat&&cam.quaternion)lodQuat.copy(cam.quaternion);lodMotionAt=now;lodSettled=false;lodSweeping=false;return}
+ if(!lodSettled){
+  if(now-lodMotionAt<240)return;
+  lodSettled=true;lodSweeping=true;lodSweep=0;
+ }
+ if(!lodSweeping)return;
  const kinds=foliageLodKinds();
- if(!kinds.length)return;
- lodSettled=true;
- const k=kinds[lodCursor++%kinds.length];
- if(!KIND[k]||!KIND[k].list||!KIND[k].list.length)return;
- sync(k);
+ if(!kinds.length){lodSweeping=false;return}
+ const start=(typeof performance!=='undefined'?performance:Date).now();
+ while(lodSweep<kinds.length){
+  const k=kinds[lodSweep++];
+  if(KIND[k]&&Array.isArray(KIND[k].list)&&KIND[k].list.length)sync(k);
+  if((typeof performance!=='undefined'?performance:Date).now()-start>3)return;
+ }
+ lodSweeping=false;
 }
 let season='summer';
 const SEAS={spring:{},summer:{},autumn:{},winter:{}};

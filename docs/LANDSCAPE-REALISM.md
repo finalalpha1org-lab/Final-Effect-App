@@ -111,6 +111,26 @@ procedural look.
   roughness is scaled by how much rougher the profile's wind is than a 6 m/s
   reference sea (Cox–Munk) instead of being replaced by the absolute value.
 
+## Rain without particles
+
+Rain is one float, not a particle system. `WX.rain` (0–1, the resolved intensity
+of the weather preset) is copied into `FXU.rain` once per weather tick, and every
+surface shader reads that single uniform:
+
+* **Ground** (`terrain-main-04.js`, the triplanar surface injection) —
+  `roughnessFactor *= mix(1, 0.62, uRainK)` for soil and stone, and the puddle
+  mask drives it further down to `0.045`. Where a puddle forms, the normal is
+  perturbed by two sine ripples in world space (`sin(vW.x*7.1 + uT*3.3)` and
+  friends, amplitude `0.055`) so the water surface moves without geometry.
+* **Bark, needles and rock** (`wind()` in `terrain-main-01.js`) —
+  `roughnessFactor *= mix(1, 0.55, uRainK)`, then `mix(roughness, roughness*0.35,
+  uRainK*vSn*1.3)` so only upward-facing faces glaze. Wet foliage also keeps the
+  existing `diffuseColor *= 1 - uWet*0.2` darkening.
+
+The falling streaks are a 7 000-segment instanced batch in `terrain-main-06.js`
+(`NR = 7000`), hidden entirely when `WX.rain < 0.02`. Nothing in the rain path
+allocates per frame and nothing loops over a million particles.
+
 ## Fail behaviour
 
 `upgrade()` refuses to run when `fe_surface_pbr` is absent: the scene keeps its
@@ -132,5 +152,5 @@ across a reload.
 ```bash
 node --test tests/landscape-realism.test.mjs   # 14 tests
 node --test tests/landscape-flora.test.mjs     # 18 tests
-npm test                                       # 358 tests
+npm test                                       # 367 tests
 ```

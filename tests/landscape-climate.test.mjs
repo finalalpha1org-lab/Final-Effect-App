@@ -300,7 +300,7 @@ test('the page, the panel and the build all carry the climate layer', () => {
   assert.match(buildScript, /"landscape-weather\.js"/, 'the build ships the module');
   assert.match(cppBuild, /'cpp\/src\/fe_climate\.cpp'/, 'the wasm build compiles the climate kernel');
   assert.match(cppBuild, /'fe_climate_at',\s*'fe_climate_weather'/, 'the wasm build requires the climate exports');
-  assert.ok(sw.includes("'final-effect-cpp-v25'"), 'the service worker cache is bumped for the new module');
+  assert.ok(sw.includes("'final-effect-cpp-v26'"), 'the service worker cache is bumped for the new module');
   assert.ok(sw.includes("'./landscape-weather.js'"), 'and precaches it');
 });
 
@@ -392,6 +392,29 @@ test('applying over an open world writes the twelve chunk weights, not the islan
     assert.equal(sum, 1, `chunk vertex ${k} is fully weighted`);
     assert.equal(ones, 1, `chunk vertex ${k} has exactly one surface`);
   }
+});
+
+test('fill-only mode keeps a hand-painted chunk whole instead of speckling it', async () => {
+  const env = await bootBiomeAction({ ow: true });
+  const { context, chunk, W } = env;
+  /* The artist worked this whole tile: every vertex carries a two-way blend. */
+  for (let k = 0; k < W * W; k++) { chunk.surfaceWeights[k * 12] = 0.6; chunk.surfaceWeights[k * 12 + 5] = 0.4; }
+  const before = chunk.surfaceWeights.slice();
+  /* A neighbouring tile that was never painted. */
+  const second = { segments: W - 1, size: env.S, originX: -256, originZ: -256, dirty: false,
+    heights: chunk.heights.slice(), surfaceWeights: new Float32Array(W * W * 12) };
+  context.OW.chunks.set('1,0', second);
+  vm.runInContext("climateApplyMode='free'", context);
+  const out = vm.runInContext('applyClimateBiomes()', context);
+  assert.equal(out.chunks, 2, 'both resident chunks are considered');
+  assert.equal(out.keptChunks, 1, 'the painted tile is kept as a whole');
+  assert.deepEqual(chunk.surfaceWeights, before, 'not one vertex of the painted chunk changed');
+  assert.equal(chunk.dirty, false, 'and it is not even re-uploaded');
+  let ones = 0, sum = 0;
+  for (let k = 0; k < W * W * 12; k++) { if (second.surfaceWeights[k] === 1) ones++; sum += second.surfaceWeights[k]; }
+  assert.equal(ones, W * W, 'every vertex of the unpainted tile gets a climate surface');
+  assert.equal(sum, W * W, 'exactly one surface per vertex');
+  assert.match(env.status.textContent, /1 of 2 chunks kept from your painting/, 'the sheet reports chunks, not a vague percentage');
 });
 
 test('the climate never replaces painted biomes on its own', async () => {

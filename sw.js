@@ -1,6 +1,6 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v25';
+const CACHE_NAME = 'final-effect-cpp-v26';
 const CORE_ASSETS = [
   './',
   './index.html',

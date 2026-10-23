@@ -403,3 +403,32 @@ test('the shipped landscape page loads the module and exposes the controls', () 
   assert.ok(realismBlock.length > 400, 'the realism controls are found in the shipped panel');
   assert.doesNotMatch(realismBlock, /C\+\+|WASM|kernel/i, 'the controls must not advertise the engine');
 });
+
+test('rain wets the PBR surfaces through one uniform, with no rain particles', () => {
+  const terrain = readFileSync('terrain-main-01.js', 'utf8');
+  const ground = readFileSync('terrain-main-04.js', 'utf8');
+  const weather = readFileSync('terrain-main-06.js', 'utf8');
+
+  assert.ok(terrain.includes('const FXU={rain:{value:0},'), 'the rain uniform is declared with the other weather uniforms');
+  assert.ok(weather.includes('FXU.rain.value=WX.rain;'), 'the weather tick feeds it the resolved rain intensity');
+
+  /* Bark, needles and rock: glossier while it is raining, glazed on top faces. */
+  assert.ok(terrain.includes('u.uRainK=FXU.rain;'), 'the foliage material receives the uniform');
+  assert.ok(terrain.includes('uniform float uShed,uShedF,uAut,uSnowK,uBloom,uWet,uRainK;'), 'and declares it in the fragment shader');
+  assert.ok(terrain.includes('roughnessFactor*=mix(1.,.55,clamp(uRainK,0.,1.));'), 'rain lowers bark and stone roughness');
+  assert.ok(terrain.includes('roughnessFactor=mix(roughnessFactor,roughnessFactor*.35,clamp(uRainK*vSn*1.3,0.,1.));'),
+    'upward faces glaze first, because vSn is the up-facing weight');
+
+  /* Ground: soil and stone lose roughness, and puddles get sine ripples. */
+  assert.ok(ground.includes('uniform float uDet,uWy,uT,uWetG,uRainK,uSnowG,uAutG,uLit,uSurfacePaintEnabled;'), 'the ground shader declares the uniform');
+  assert.ok(ground.includes('s.uniforms.uRainK=U.rain;'), 'and it is the same rain intensity the weather already resolves');
+  assert.ok(ground.includes('roughnessFactor*=mix(1.,.62,clamp(uRainK,0.,1.));'), 'rain drops ground roughness');
+  assert.ok(ground.includes('roughnessFactor=mix(roughnessFactor,.045,clamp(pud*uRainK,0.,1.));'), 'and a puddle in the rain is near mirror-smooth');
+  assert.ok(ground.includes('vec2 rip=vec2(sin(vW.x*7.1+uT*3.3)+.6*sin(vW.x*13.7-uT*4.1)'), 'the ripple is two sines, not geometry');
+  assert.ok(ground.includes('rip*.055*clamp(pud*uRainK,0.,1.)'), 'and it is displaced only inside a puddle while raining');
+
+  /* The falling water itself stays a small instanced batch. */
+  assert.ok(weather.includes('const NR=7000'), 'the streak batch is 7 000 segments');
+  assert.ok(weather.includes('rainMesh.visible=WX.rain>.02'), 'and it disappears when the rain stops');
+  assert.equal(/for\s*\(.*NR.*\]\s*\{\s*new /.test(weather), false, 'no per-particle allocation');
+});

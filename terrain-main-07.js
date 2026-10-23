@@ -238,12 +238,19 @@ function applyClimateBiomes(){
   const {batch,ids,biomes}=plan;
   const tally=new Array(biomes.length).fill(0);
   push();
-  let kept=0;
+  let kept=0,keptChunks=0,chunks=0;
   for(const {grid,chunk} of batch){
     if(chunk){
+      chunks++;
+      /* A painted open-world chunk is one tile of the artist's map: it keeps its
+         surface weave as a whole, so a fill can never speckle a chunk he has
+         worked on. The island below stays per-vertex, because there a stroke is
+         a region, not a tile. */
+      let painted=false;
       if(climateApplyMode==='free'){
+        for(let k=0;k<grid.length&&!painted;k++)if(paintedWeightAt(chunk.surfaceWeights,k*12,12)>.001)painted=true;
+        if(painted){kept+=grid.length;keptChunks++;for(let k=0;k<grid.length;k++)tally[grid[k]]++;continue}
         for(let k=0;k<grid.length;k++){
-          if(paintedWeightAt(chunk.surfaceWeights,k*12,12)>.001){kept++;continue}
           const id=ids[grid[k]];
           if(id<0)continue;
           chunk.surfaceWeights.fill(0,k*12,k*12+12);
@@ -283,9 +290,11 @@ function applyClimateBiomes(){
   const total=tally.reduce((a,b)=>a+b,0)||1;
   const top=tally.map((n,i)=>({n,i})).filter(x=>x.n).sort((a,b)=>b.n-a.n).slice(0,3)
     .map(x=>`${(window.FELandscapeWeather.BIOME_LABELS||{})[biomes[x.i]]||biomes[x.i]} ${Math.round(x.n/total*100)}%`);
-  const suffix=climateApplyMode==='free'?` · ${Math.round(kept/Math.max(1,kept+total)*100)}% kept from your painting`:'';
+  const suffix=climateApplyMode!=='free'?'':chunks
+    ?` · ${keptChunks} of ${chunks} chunks kept from your painting`
+    :` · ${Math.round(kept/Math.max(1,kept+total)*100)}% kept from your painting`;
   setOwStatus('Climate biomes applied · '+top.join(' · ')+suffix);
-  return {cells:total,tally,kept};
+  return {cells:total,tally,kept,keptChunks,chunks};
 }
 
 PN.openworld=()=>{const c=OW.config;return[el('<div class="hint">Separate seeded terrain streamed as 256 m chunks around the camera. Only a 3×3 neighborhood is active; deterministic chunks and edited terrain are retained independently of the normal island. Hills, Alpine, Desert and Volcano biomes blend naturally. Existing sky, weather, water, quality and foliage tools remain shared.</div>'),G(sl('World size (km)',1,50,1,c.sizeKm,v=>{if(typeof owSetWorldSize==='function')owSetWorldSize(v);else c.sizeKm=v}),sl('Seed',1,999999,1,c.seed,v=>c.seed=v)),el('<div class="hint">Only the chunks around you are held in memory, so a larger world streams further instead of using more memory.</div>'),G(sl('Hills influence ×',0,2,.05,c.biomeMix.hills,v=>c.biomeMix.hills=v),sl('Alpine influence ×',0,2,.05,c.biomeMix.alpine,v=>c.biomeMix.alpine=v),sl('Desert influence ×',0,2,.05,c.biomeMix.desert,v=>c.biomeMix.desert=v),sl('Volcano influence ×',0,2,.05,c.biomeMix.volc,v=>c.biomeMix.volc=v)),G(sl('Natural biome blend',0,1,.05,c.blend,v=>c.blend=v),sl('Mountain height',0,100,1,c.mountainHeight,v=>c.mountainHeight=v),sl('Water coverage',0,100,1,c.waterCoverage,v=>c.waterCoverage=v),sl('Sea level (m)',-100,0,1,c.waterLevel,v=>c.waterLevel=v),sl('Vegetation density ×',0,2.5,.05,c.vegetationDensity,v=>c.vegetationDensity=v)),el('<div class="hint">World presets · all four biome systems remain available</div>'),chips([['temperate','Temperate'],['desert','Desert'],['alpine','Alpine'],['island','Island']],'',v=>{if(v==='temperate')Object.assign(c,{blend:.68,biomeMix:{hills:1.4,alpine:.9,desert:.55,volc:.4},mountainHeight:42,waterCoverage:28,waterLevel:-24,vegetationDensity:.95});else if(v==='desert')Object.assign(c,{blend:.42,biomeMix:{hills:.5,alpine:.2,desert:1.9,volc:.55},mountainHeight:35,waterCoverage:18,waterLevel:-26,vegetationDensity:.75});else if(v==='alpine')Object.assign(c,{blend:.35,biomeMix:{hills:.55,alpine:1.9,desert:.2,volc:.8},mountainHeight:82,waterCoverage:32,waterLevel:-28,vegetationDensity:.8});else Object.assign(c,{blend:.58,biomeMix:{hills:1.2,alpine:.55,desert:1.2,volc:.55},mountainHeight:48,waterCoverage:56,waterLevel:-32,vegetationDensity:.9})}),el('<div class="hint">Climate biomes · your painted layers stay exactly as they are until you apply the climate map. The action is undoable.</div>'),chips([['all','Apply to all ground'],['free','Fill unpainted ground only']],climateApplyMode,v=>{climateApplyMode=v}),btn('<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" style="vertical-align:-2px"><path d="M2 13c2-1 4-1.6 6-1.6S12.2 12 14 13"/><path d="M2.6 9.2c1.9-.9 3.9-1.4 5.4-1.4s3.5.5 5.4 1.4"/><path d="M4.6 5.6C5.6 4.2 7 3.4 8 3.4s2.4.8 3.4 2.2"/></svg> Apply Climate Biomes',()=>applyClimateBiomes()),el(`<div class="hint" id="owstatus">${OW.active?(OW.generating?'Streaming chunks…':OW.chunks.size+' chunks loaded'):OW.generated?'World generated · press Enter to resume':'Ready to generate'}</div>`),...(OW.active?[btn('🌿 Foliage & scatter settings',()=>setTab('plants'))]:[]),btn(OW.active?'Regenerate Open World Map':OW.generated?'Enter Open World':'Generate Open World Map',()=>OW.start()),btn('Return to default terrain',()=>{OW.deactivate();setTab('terrain')})]};

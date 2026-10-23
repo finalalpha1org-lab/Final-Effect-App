@@ -77,6 +77,9 @@ const REQUIRED_EXPORTS = [
   'fe_ow_hydro_set_grid',
   'fe_ow_hydro_trace',
   'fe_lod_classify',
+  'fe_lod_visible',
+  'fe_lod_visible_index_ptr',
+  'fe_lod_visible_tier_ptr',
   'fe_lod_out_ptr',
   'fe_ocean_field_ptr',
   'fe_ocean_configure',
@@ -116,7 +119,8 @@ const REQUIRED_EXPORTS = [
   'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
   'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
   'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
-  'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami'
+  'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami',
+  'fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_ow_visible_count'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
@@ -153,6 +157,12 @@ if (zig) {
     '-Wl,--export-memory',
     '-Wl,--export=__heap_base',
     '-Wl,--export=__wasm_call_ctors',
+    /* New kernels are named explicitly so the linker keeps them even when
+       nothing else references them inside the module. */
+    '-Wl,--export=fe_lod_visible',
+    '-Wl,--export=fe_ow_visible_count',
+    '-Wl,--export=fe_lod_visible_index_ptr',
+    '-Wl,--export=fe_lod_visible_tier_ptr',
     ...CPP_SOURCES,
     '-o', 'wasm/fe_core_engine.wasm'
   ], { stdio: 'inherit' });
