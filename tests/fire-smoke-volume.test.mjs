@@ -7,7 +7,7 @@ import vm from 'node:vm';
    simulationCore.js is loaded in a VM with a minimal THREE stub, and the real
    fe_core_engine.wasm drives the grid. No GPU is involved - the raymarch
    material is checked structurally, the field/atlas plumbing numerically. */
-class Vec3{constructor(x=0,y=0,z=0){this.x=x;this.y=y;this.z=z;}set(x,y,z){this.x=x;this.y=y;this.z=z;return this;}}
+class Vec3{constructor(x=0,y=0,z=0){this.x=x;this.y=y;this.z=z;}set(x,y,z){this.x=x;this.y=y;this.z=z;return this;}normalize(){const l=Math.hypot(this.x,this.y,this.z)||1;this.x/=l;this.y/=l;this.z/=l;return this;}}
 class Vec2{constructor(x=0,y=0){this.x=x;this.y=y;}}
 class Obj{
   constructor(){this.parent=null;this.children=[];}
@@ -28,12 +28,14 @@ const THREE={
   AdditiveBlending:6,DynamicDrawUsage:7,DoubleSide:8
 };
 
-function boot(cppExports){
+function boot(cppExports,device={}){
   const scene=new Obj();
   const sandbox={console,performance,THREE,setTimeout,clearTimeout,requestAnimationFrame:()=>0,
     Uint8Array,Float32Array,Uint32Array,Uint8ClampedArray,ArrayBuffer,DataView,Map,Set,Promise,Math,Number,String,Array,Object,JSON,Error,RegExp,parseInt,parseFloat,isNaN,isFinite};
   sandbox.window=sandbox;sandbox.self=sandbox;sandbox.globalThis=sandbox;
   sandbox.document={addEventListener(){},getElementById(){return null;},createElement(){return {getContext(){return {};},style:{}};}};
+  sandbox.navigator={hardwareConcurrency:device.cores??8};
+  if(device.coarse)sandbox.matchMedia=()=>({matches:true});
   sandbox.FE={engines:{core:{sc:scene}},toast(){}};
   const atlasCtx={};vm.createContext(atlasCtx);vm.runInContext(readFileSync('volume-atlas.js','utf8'),atlasCtx);
   sandbox.FEVolumeAtlas=atlasCtx.FEVolumeAtlas;
@@ -52,9 +54,10 @@ test('a fire/smoke domain becomes a voxel volume backed by the C++ solver',()=>{
   const rec=record();
   assert.equal(engine.createVolumeSimulation(null,params,rec),true,'the volume path must accept the domain');
   assert.equal(rec.kind,'volume');
-  assert.equal(rec.volume.grid,24,'default Resolution 80 maps to a 24³ grid');
-  assert.equal(rec.volume.texture.width,120,'24 slices tile into a 120px atlas');
-  assert.equal(rec.volume.data.length,120*120*4);
+  assert.equal(rec.volume.grid,28,'a desktop tier maps Resolution 80 to 28³');
+  const tilesX=Math.ceil(Math.sqrt(rec.volume.grid));
+  assert.equal(rec.volume.texture.width,rec.volume.grid*tilesX,'the atlas tiles every slice');
+  assert.equal(rec.volume.data.length,rec.volume.texture.width*rec.volume.texture.height*4);
   assert.equal(rec.visual.name,'Smoke & Fire Volume');
   assert.equal(rec.visual.material.transparent,true);
   assert.equal(rec.visual.material.depthWrite,false);
@@ -64,7 +67,11 @@ test('a fire/smoke domain becomes a voxel volume backed by the C++ solver',()=>{
   assert.ok(gl.fragmentShader.includes('uAtlas')&&gl.fragmentShader.includes('atlasUv'),'the shader samples the slice atlas');
   assert.ok(gl.fragmentShader.includes('cameraPosition')&&gl.fragmentShader.includes('uBoxMin'),'the shader ray-marches the world box');
   assert.ok(gl.fragmentShader.includes('uFireGain')&&gl.fragmentShader.includes('uSmokeGain'));
-  assert.equal(gl.uniforms.uTiles.value.x*gl.uniforms.uTiles.value.y>=24,true,'every slice has a tile');
+  assert.equal(gl.uniforms.uTiles.value.x*gl.uniforms.uTiles.value.y>=rec.volume.grid,true,'every slice has a tile');
+  assert.ok(gl.fragmentShader.includes('blackbody'),'fire uses a Planckian ramp');
+  assert.ok(gl.fragmentShader.includes('Catmull-Rom'),'slice sampling is cubic, not linear');
+  assert.ok(gl.fragmentShader.includes('densityAt(uvw + uSunDir'),'the shader marches toward the sun for self-shadowing');
+  assert.ok(gl.uniforms.uSunDir.value.y>0,'the light direction points up');
 });
 
 test('stepping the volume runs the solver and refreshes the texture from the real fields',()=>{
@@ -74,7 +81,7 @@ test('stepping the volume runs the solver and refreshes the texture from the rea
   rec.volume.texture.needsUpdate=false;
   engine.stepVolumeSimulation(rec,0.2);
   assert.equal(rec.volume.texture.needsUpdate,true,'the GPU texture is marked dirty');
-  const cells=24**3;
+  const grid=rec.volume.grid,cells=grid**3;
   const density=new Float32Array(cpp.memory.buffer,cpp.fe_vol_density_ptr(),cells);
   const temperature=new Float32Array(cpp.memory.buffer,cpp.fe_vol_temperature_ptr(),cells);
   let maxDensity=0,maxTemp=0,hotIdx=0;
@@ -85,10 +92,11 @@ test('stepping the volume runs the solver and refreshes the texture from the rea
   assert.ok(maxDensity>0,'density reached the grid');
   assert.ok(maxTemp>0,'temperature reached the grid');
   /* The atlas is the byte view of the same grid, tile by tile. */
-  const g=24;
+  const g=grid;
   const tilesX=Math.ceil(Math.sqrt(g));
+  const width=rec.volume.texture.width;
   const x=hotIdx%g,y=Math.floor(hotIdx/g)%g,z=Math.floor(hotIdx/(g*g));
-  const texel=(((Math.floor(z/tilesX)*g+y)*120)+((z%tilesX)*g+x))*4;
+  const texel=(((Math.floor(z/tilesX)*g+y)*width)+((z%tilesX)*g+x))*4;
   assert.equal(rec.volume.data[texel],Math.round(Math.min(1,density[hotIdx]/0.8)*255),'density byte matches the field');
   assert.equal(rec.volume.data[texel+1],Math.round(Math.min(1,temperature[hotIdx]/2.2)*255),'temperature byte matches the field');
   assert.equal(rec.volume.data[texel+3],255);
@@ -134,4 +142,15 @@ test('the Fluid modifier exposes the volume solver for fire and smoke domains',(
   const liquidStart=html.indexOf('const liquidOnly = [');
   assert.ok(!html.slice(liquidStart,html.indexOf('];',liquidStart)).includes('"Volume Solver"'),'liquid domains do not show it');
   assert.ok(readFileSync('sw.js','utf8').includes("'./volume-atlas.js'"),'the atlas ships in the offline cache');
+});
+
+test('coarse-pointer devices keep the smaller volume grid',()=>{
+  const {engine}=boot(cpp,{coarse:true,cores:8});
+  const rec=record();
+  assert.equal(engine.createVolumeSimulation(null,params,rec),true);
+  assert.equal(rec.volume.grid,24,'phones stay on the 24³ budget');
+  const low=boot(cpp,{cores:2});
+  const lowRec=record();
+  assert.equal(low.engine.createVolumeSimulation(null,params,lowRec),true);
+  assert.equal(lowRec.volume.grid,24,'four-core machines stay on the smaller grid too');
 });

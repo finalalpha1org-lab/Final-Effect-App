@@ -277,8 +277,13 @@ raymarch pass; the particle tracers stay as the fallback.
   (accumulated from the fixed simulation step), repacks the atlas and marks the
   texture dirty.
 - The raymarch shader intersects the domain box from `cameraPosition`, samples
-  two neighbouring slices per step, and composites emissive fire (temperature
-  ramp) plus absorbing smoke (Beer–Lambert) with a per-pixel dither offset.
+  four neighbouring slices with Catmull–Rom and composites emissive fire plus
+  absorbing smoke (Beer–Lambert) with a per-pixel dither offset.
+- Fire colour comes from a Planckian ramp (dull ember → orange → white-hot) and
+  a two-tap march toward `uSunDir` shadows it: smoke in front of the flame
+  darkens it and the flame lights the smoke around it.
+- The grid target is device-tiered: 24³ on coarse-pointer or ≤4-core devices,
+  28³ on larger desktops, scaled by the modifier's `Resolution` field.
 - Mapping: `Heat Emission`/`Fuel` → source heat, `Smoke Density` → source
   density, `Buoyancy` → y acceleration, `Dissipation Rate` → density decay and
   cooling, `Vorticity Confinement` → confinement, `Time Scale` → step rate.
@@ -302,6 +307,32 @@ default presets) and still need a device check before this is called
 photorealistic. Browser volume rendering also costs fill rate: the 24³ grid at
 30 Hz is roughly 5 ms of CPU on the sandbox and the raymarch is 48–64 samples per
 pixel.
+
+### Sparse volumes (VDB) — what is realistic here
+
+OpenVDB's value is a sparse hierarchical grid (root → internal nodes → 8³ leaf
+tiles) with narrow-band level sets, multiresolution sampling and fast filters.
+That is what lets Houdini hold a 1024³-looking plume while touching only the
+band of cells that contains smoke. Two things follow for this project:
+
+1. **The library itself cannot be linked into this build.** OpenVDB needs TBB,
+   Blosc, Boost/IMath and threads; the wasm core is freestanding C++20 with no
+   OS, no threads and no external dependencies. Vendoring and porting it is a
+   project of its own, not a change. A VDB-*style* tiled grid written in this
+   codebase is feasible; OpenVDB is not.
+2. **A sparse grid alone does not make the image photoreal.** The visible
+   difference between "voxel smoke" and "Houdini smoke" is mostly resolution
+   *where smoke exists*, filtering, lighting and renderer quality (multiple
+   scattering, self-shadowing, motion blur, path-traced offline renders). The
+   current pass attacks the cheap half of that (cubic filtering, Planckian
+   emission, sun shadowing, tiered resolution); the expensive half is the next
+   milestone.
+
+A real sparse solver would need active-tile tracking for advection, a sparse
+pressure solve with correct boundary conditions and tile-aware meshing, plus
+tests that compare sparse and dense results where the fields overlap. That is a
+multi-step change, not a shader tweak, and it should land behind the same
+particle fallback.
 
 The kernel is deliberately absent from `FELandscapeCore.missing` because the
 landscape bridge does not consume it.

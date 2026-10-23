@@ -1390,7 +1390,7 @@ void main(){
         fragmentShader: `
 precision highp float;
 uniform sampler2D uAtlas;
-uniform vec3 uBoxMin, uBoxMax;
+uniform vec3 uBoxMin, uBoxMax, uSunDir;
 uniform vec2 uTiles, uAtlasSize;
 uniform float uGrid, uDensityScale, uTempScale, uSigma, uFireGain, uSmokeGain, uSteps;
 varying vec3 vWorld;
@@ -1400,14 +1400,31 @@ vec2 atlasUv(vec2 xy, float slice){
   vec2 texel = xy * (uGrid - 1.0) + 0.5;
   return (vec2(tx, ty) * uGrid + texel) / uAtlasSize;
 }
+/* Catmull-Rom across four neighbouring slices: linear blending leaves visible
+   steps when the grid is only 24-28 cells tall, the cubic keeps the falloff
+   smooth without another texture. */
 vec2 sampleField(vec3 uvw){
   float s = clamp(uvw.z, 0.0, 1.0) * (uGrid - 1.0);
   float s0 = floor(s);
-  float s1 = min(uGrid - 1.0, s0 + 1.0);
+  float t = s - s0;
+  float last = uGrid - 1.0;
   vec2 xy = clamp(uvw.xy, 0.0, 1.0);
-  vec2 a = texture2D(uAtlas, atlasUv(xy, s0)).rg;
-  vec2 b = texture2D(uAtlas, atlasUv(xy, s1)).rg;
-  return mix(a, b, s - s0) * vec2(uDensityScale, uTempScale);
+  vec2 p0 = texture2D(uAtlas, atlasUv(xy, max(s0 - 1.0, 0.0))).rg;
+  vec2 p1 = texture2D(uAtlas, atlasUv(xy, s0)).rg;
+  vec2 p2 = texture2D(uAtlas, atlasUv(xy, min(s0 + 1.0, last))).rg;
+  vec2 p3 = texture2D(uAtlas, atlasUv(xy, min(s0 + 2.0, last))).rg;
+  vec2 v = 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t);
+  return max(v, vec2(0.0)) * vec2(uDensityScale, uTempScale);
+}
+/* Planckian ramp: dull ember -> orange flame -> white-hot core. */
+vec3 blackbody(float heat){
+  vec3 c = mix(vec3(0.55, 0.05, 0.01), vec3(1.0, 0.26, 0.03), smoothstep(0.0, 0.32, heat));
+  c = mix(c, vec3(1.0, 0.62, 0.15), smoothstep(0.32, 0.64, heat));
+  return mix(c, vec3(1.0, 0.95, 0.78), smoothstep(0.64, 1.0, heat));
+}
+float densityAt(vec3 uvw){
+  if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.z < 0.0 || uvw.x > 1.0 || uvw.y > 1.0 || uvw.z > 1.0) return 0.0;
+  return max(sampleField(uvw).x, 0.0);
 }
 void main(){
   vec3 ro = cameraPosition;
@@ -1432,14 +1449,20 @@ void main(){
     vec2 field = sampleField(uvw);
     float dens = max(field.x, 0.0);
     float temp = max(field.y, 0.0);
-    float fire = smoothstep(0.25, 1.7, temp) * uFireGain;
+    float heat = smoothstep(0.18, 1.6, temp);
+    float fire = heat * uFireGain;
     float smoke = dens * uSmokeGain;
-    float sigma = (smoke * 0.9 + fire * 1.5) * uSigma;
+    float sigma = (smoke * 0.85 + fire * 1.35) * uSigma;
     if (sigma <= 0.0) continue;
+    /* Two-tap sun march: smoke in front of the flame darkens it, the flame
+       lights the smoke around it. */
+    float shade = densityAt(uvw + uSunDir * 0.045) + densityAt(uvw + uSunDir * 0.09) * 0.6;
+    float light = exp(-shade * uDensityScale * 1.7);
+    vec3 fireCol = blackbody(heat);
+    vec3 smokeCol = mix(vec3(0.26, 0.28, 0.32), vec3(0.64, 0.66, 0.7), clamp(dens * uDensityScale, 0.0, 1.0));
+    vec3 emission = fireCol * fire * (1.3 + 1.1 * light) + smokeCol * smoke * (0.10 + 0.55 * light);
     float a = 1.0 - exp(-sigma * stepLen);
-    vec3 fireCol = mix(vec3(1.0, 0.16, 0.02), vec3(1.0, 0.86, 0.42), smoothstep(0.4, 1.9, temp));
-    vec3 smokeCol = vec3(0.52, 0.55, 0.6) * (0.35 + 0.65 * (1.0 - exp(-dens)));
-    col += trans * (fireCol * fire * 2.1 + smokeCol * smoke * 0.42) * a;
+    col += trans * emission * a;
     trans *= 1.0 - a;
     if (trans < 0.02) break;
   }
@@ -1458,6 +1481,7 @@ void main(){
           uAtlas: { value: v.texture },
           uBoxMin: { value: new THREE.Vector3(box[0], box[1], box[2]) },
           uBoxMax: { value: new THREE.Vector3(box[3], box[4], box[5]) },
+          uSunDir: { value: new THREE.Vector3(0.35, 1, 0.25).normalize() },
           uTiles: { value: new THREE.Vector2(v.layout.tilesX, v.layout.tilesY) },
           uAtlasSize: { value: new THREE.Vector2(v.layout.width, v.layout.height) },
           uGrid: { value: v.grid },
@@ -1503,7 +1527,12 @@ void main(){
       const atlas = global.FEVolumeAtlas;
       if (!atlas || typeof atlas.pack !== 'function' || typeof atlas.layout !== 'function') return false;
       if (volumeLocks > 0) return false;
-      const grid = Math.max(16, Math.round(clamp(number(params, 'Resolution', 80) * 0.3, 16, 28)));
+      /* Mobile keeps the 24³ budget; larger desktop GPUs get 28³ with the same
+         per-step cost envelope. Resolution 32..96 scales this target. */
+      const coarse = !!(global.matchMedia && global.matchMedia('(pointer:coarse)').matches);
+      const cores = Number(global.navigator?.hardwareConcurrency) || 8;
+      const ceiling = coarse || cores <= 4 ? 24 : 28;
+      const grid = Math.max(16, Math.round(clamp(number(params, 'Resolution', 80) / 80 * ceiling, 16, ceiling)));
       if (exports.fe_vol_init(grid, grid, grid) !== 0) return false;
       const box = record.bounds;
       const sizeX = Math.max(box[3] - box[0], 1e-3), sizeY = Math.max(box[4] - box[1], 1e-3), sizeZ = Math.max(box[5] - box[2], 1e-3);
