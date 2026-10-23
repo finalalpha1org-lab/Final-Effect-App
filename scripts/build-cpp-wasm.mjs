@@ -88,7 +88,12 @@ const REQUIRED_EXPORTS = [
   'fe_mod_begin','fe_mod_counts_ptr','fe_mod_in_pos_ptr','fe_mod_in_uv_ptr','fe_mod_in_idx_ptr',
   'fe_mod_normals_ptr','fe_mod_set_counts','fe_mod_weld','fe_mod_smooth','fe_mod_mirror',
   'fe_mod_solidify','fe_mod_displace','fe_mod_wave','fe_mod_cast','fe_mod_twist','fe_mod_array',
-  'fe_mod_subdivide','fe_mod_decimate'
+  'fe_mod_subdivide','fe_mod_decimate',
+  'fe_mod_matrix_ptr','fe_mod_target_begin','fe_mod_target_counts_ptr','fe_mod_target_pos_ptr',
+  'fe_mod_target_idx_ptr','fe_mod_sd_bind','fe_mod_sd_upload','fe_mod_sd_apply',
+  'fe_mod_sd_ordinal_ptr','fe_mod_sd_bary_ptr','fe_mod_sd_scalars_ptr','fe_mod_sd_tris_ptr',
+  'fe_mod_sd_tri_count','fe_mod_lattice_cage','fe_mod_lattice_alloc','fe_mod_lattice_rest_ptr',
+  'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap'
 ];
 
 function findZigCompiler() {

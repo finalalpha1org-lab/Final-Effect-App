@@ -44,7 +44,34 @@ function kernelCapacities(geometry) {
   if (!v || !t || (src && src.length % 3)) return null;
   return { v, t };
 }
-function runCppKernel(geometry, capsFn, call) {
+const MATRIX_IDENTITY = Object.freeze([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+
+function writeSessionMatrix(exp, elements) {
+  const ptr = exp.fe_mod_matrix_ptr();
+  if (!ptr) return false;
+  const view = new Float32Array(exp.memory.buffer, ptr, 16);
+  if (elements && elements.length >= 16) view.set(elements);
+  else view.set(MATRIX_IDENTITY);
+  return true;
+}
+
+function uploadTargetMesh(exp, targetGeometry, matrixElements) {
+  const tp = targetGeometry?.attributes?.position;
+  if (!tp || tp.itemSize < 3 || typeof exp.fe_mod_target_begin !== 'function') return false;
+  const src = targetGeometry.index?.array;
+  const verts = tp.count;
+  const tris = src ? Math.floor(src.length / 3) : Math.floor(verts / 3);
+  if (!verts || !tris) return false;
+  if (exp.fe_mod_target_begin(verts, tris) !== 0) return false;
+  const buf = exp.memory.buffer;
+  new Float32Array(buf, exp.fe_mod_target_pos_ptr(), verts * 3).set(tp.array.subarray(0, verts * 3));
+  const idx = new Uint32Array(buf, exp.fe_mod_target_idx_ptr(), tris * 3);
+  if (targetGeometry.index) idx.set(src.subarray(0, tris * 3));
+  else for (let i = 0; i < tris * 3; i++) idx[i] = i;
+  return writeSessionMatrix(exp, matrixElements);
+}
+
+function runCppKernel(geometry, capsFn, call, prepare) {
   const exp = cppExports();
   if (!exp) return null;
   const base = kernelCapacities(geometry);
@@ -67,6 +94,7 @@ function runCppKernel(geometry, capsFn, call) {
     else for (let i = 0; i < base.t * 3; i++) idxView[i] = i;
     if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
     exp.fe_mod_set_counts(base.v, base.t);
+    if (prepare && prepare(exp) === false) return null;
     if (call(exp) !== 0) return null;
     const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
     const outV = counts[0], outT = counts[1];
@@ -582,72 +610,37 @@ export function twistGeometry(geometry,strength=1.2,axis='Y'){
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
 
 export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',maxPairs=50000000){
-  assertPositions(geometry);const target=ensureNormalsAndUv(targetGeometry),tp=target.attributes.position,ti=sourceIndices(target),count=geometry.attributes.position.count,triangles=ti.length/3;if(count*triangles>maxPairs){target.dispose();throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`)}
+  assertPositions(geometry);assertPositions(targetGeometry);
+  const count=geometry.attributes.position.count,triangles=sourceIndices(targetGeometry).length/3;
+  if(count*triangles>maxPairs)throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`);
+  const modeIndex=mode==='Above Surface'?1:(mode==='Outside Surface'?2:0);
+  const viaCpp=runCppKernel(geometry,null,
+    exp=>exp.fe_mod_shrinkwrap(modeIndex,Number(offset)||0),
+    exp=>uploadTargetMesh(exp,targetGeometry,relativeMatrixElements));
+  if(viaCpp)return viaCpp;
+  const target=ensureNormalsAndUv(targetGeometry),tp=target.attributes.position,ti=sourceIndices(target);
   const matrix=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements)),tris=[];
-  const minB=new THREE.Vector3(Infinity,Infinity,Infinity),maxB=new THREE.Vector3(-Infinity,-Infinity,-Infinity);
   for(let i=0;i+2<ti.length;i+=3){
     const a=new THREE.Vector3(tp.getX(ti[i]),tp.getY(ti[i]),tp.getZ(ti[i])).applyMatrix4(matrix);
     const b=new THREE.Vector3(tp.getX(ti[i+1]),tp.getY(ti[i+1]),tp.getZ(ti[i+1])).applyMatrix4(matrix);
     const c=new THREE.Vector3(tp.getX(ti[i+2]),tp.getY(ti[i+2]),tp.getZ(ti[i+2])).applyMatrix4(matrix);
     const cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a));
     if(cross.lengthSq()>1e-24){
-      const tMin=[Math.min(a.x,b.x,c.x),Math.min(a.y,b.y,c.y),Math.min(a.z,b.z,c.z)];
-      const tMax=[Math.max(a.x,b.x,c.x),Math.max(a.y,b.y,c.y),Math.max(a.z,b.z,c.z)];
-      minB.min(a).min(b).min(c);maxB.max(a).max(b).max(c);
-      tris.push({triangle:new THREE.Triangle(a,b,c),normal:cross.normalize(),min:tMin,max:tMax});
+      tris.push({triangle:new THREE.Triangle(a,b,c),normal:cross.normalize()});
     }
   }
   if(!tris.length){target.dispose();throw new Error('Shrinkwrap target has no non-degenerate triangles')}
 
-  /* Spatial hash broadphase when triangle count is medium/high, with exact fallback */
-  const useGrid=tris.length>96;
-  const span=maxB.clone().sub(minB),cellSize=Math.max(Math.max(span.x,span.y,span.z)/16,.05);
-  const nx=Math.max(1,Math.ceil(span.x/cellSize)),ny=Math.max(1,Math.ceil(span.y/cellSize)),nz=Math.max(1,Math.ceil(span.z/cellSize));
-  const grid=new Map(),largeTris=[];
-  if(useGrid){
-    const cIdx=(v,lo,n)=>clamp(Math.floor((v-lo)/cellSize),0,n-1);
-    for(let idx=0;idx<tris.length;idx++){
-      const t=tris[idx];
-      const x0=cIdx(t.min[0],minB.x,nx),x1=cIdx(t.max[0],minB.x,nx);
-      const y0=cIdx(t.min[1],minB.y,ny),y1=cIdx(t.max[1],minB.y,ny);
-      const z0=cIdx(t.min[2],minB.z,nz),z1=cIdx(t.max[2],minB.z,nz);
-      if((x1-x0+1)*(y1-y0+1)*(z1-z0+1)>64){largeTris.push(idx);continue}
-      for(let z=z0;z<=z1;z++)for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
-        const k=x+nx*(y+ny*z);let list=grid.get(k);if(!list){list=[];grid.set(k,list)}list.push(idx);
-      }
-    }
-  }
-
   const g=geometry.clone(),p=g.attributes.position,q=new THREE.Vector3(),best=new THREE.Vector3(),candidate=new THREE.Vector3(),normal=new THREE.Vector3();
-  const stamps=useGrid?new Uint32Array(tris.length):null;let stamp=1;
   for(let i=0;i<p.count;i++){
     q.set(p.getX(i),p.getY(i),p.getZ(i));
+    /* Exact nearest-triangle scan. The old spatial hash could miss the closest
+       face when the query sat more than three cells away from the surface, so
+       the reference path is exhaustive and deterministic. */
     let bestD=Infinity;
-    if(useGrid){
-      stamp=(stamp+1)>>>0||1;
-      const cx=clamp(Math.floor((q.x-minB.x)/cellSize),0,nx-1),cy=clamp(Math.floor((q.y-minB.y)/cellSize),0,ny-1),cz=clamp(Math.floor((q.z-minB.z)/cellSize),0,nz-1);
-      for(let ring=1;ring<=3&&bestD===Infinity;ring++){
-        for(let dz=-ring;dz<=ring;dz++)for(let dy=-ring;dy<=ring;dy++)for(let dx=-ring;dx<=ring;dx++){
-          const gx=cx+dx,gy=cy+dy,gz=cz+dz;if(gx<0||gy<0||gz<0||gx>=nx||gy>=ny||gz>=nz)continue;
-          const list=grid.get(gx+nx*(gy+ny*gz));if(!list)continue;
-          for(const tiIdx of list){
-            if(stamps[tiIdx]===stamp)continue;stamps[tiIdx]=stamp;
-            const item=tris[tiIdx];item.triangle.closestPointToPoint(q,candidate);
-            const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
-          }
-        }
-      }
-      for(const tiIdx of largeTris){
-        if(stamps[tiIdx]===stamp)continue;stamps[tiIdx]=stamp;
-        const item=tris[tiIdx];item.triangle.closestPointToPoint(q,candidate);
-        const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
-      }
-    }
-    if(bestD===Infinity){
-      for(const item of tris){
-        item.triangle.closestPointToPoint(q,candidate);
-        const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
-      }
+    for(const item of tris){
+      item.triangle.closestPointToPoint(q,candidate);
+      const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
     }
     const delta=q.clone().sub(best);
     if(mode==='Outside Surface'&&delta.dot(normal)<0)normal.negate();
@@ -752,24 +745,53 @@ export function wireframeGeometry3D(geometry,{thickness=.03,replaceOriginal=true
 }
 
 /* ---- True 3D Bernstein Free-Form Deformation (FFD) Lattice Cage & Evaluator ---- */
-export function createLatticeCageGeometry(targetGeometry,divisions=[2,2,2]){
+function cppLatticeCagePositions(targetGeometry, nx, ny, nz, padRatio) {
+  const exp = cppExports();
+  if (!exp || typeof exp.fe_mod_lattice_cage !== 'function') return null;
+  const base = kernelCapacities(targetGeometry);
+  if (!base) return null;
+  for (const name of Object.keys(targetGeometry.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') return null;
+  try {
+    if (exp.fe_mod_begin(base.v, base.t, 0) !== 0) return null;
+    const buf = exp.memory.buffer;
+    new Float32Array(buf, exp.fe_mod_in_pos_ptr(), base.v * 3).set(targetGeometry.attributes.position.array.subarray(0, base.v * 3));
+    const idx = new Uint32Array(buf, exp.fe_mod_in_idx_ptr(), base.t * 3);
+    if (targetGeometry.index) idx.set(targetGeometry.index.array.subarray(0, base.t * 3));
+    else for (let i = 0; i < base.t * 3; i++) idx[i] = i;
+    exp.fe_mod_set_counts(base.v, base.t);
+    const points = exp.fe_mod_lattice_cage(nx, ny, nz, padRatio);
+    if (points <= 0) return null;
+    return Array.from(new Float32Array(exp.memory.buffer, exp.fe_mod_lattice_rest_ptr(), points * 3));
+  } catch { return null; }
+}
+
+export function createLatticeCageGeometry(targetGeometry,divisions=[2,2,2],padRatio=0.04){
   assertPositions(targetGeometry);
-  targetGeometry.computeBoundingBox();
-  const box=targetGeometry.boundingBox.clone();
-  const size=box.getSize(new THREE.Vector3());
-  const pad=Math.max(size.length()*.04,.04);
-  box.min.subScalar(pad);box.max.addScalar(pad);
   const nx=clamp(Math.round(divisions[0]||2),1,4),ny=clamp(Math.round(divisions[1]||2),1,4),nz=clamp(Math.round(divisions[2]||2),1,4);
-  const positions=[],indices=[];
   const id=(i,j,k)=>i+(nx+1)*(j+(ny+1)*k);
-  for(let k=0;k<=nz;k++)for(let j=0;j<=ny;j++)for(let i=0;i<=nx;i++){
-    positions.push(
-      THREE.MathUtils.lerp(box.min.x,box.max.x,i/nx),
-      THREE.MathUtils.lerp(box.min.y,box.max.y,j/ny),
-      THREE.MathUtils.lerp(box.min.z,box.max.z,k/nz)
-    );
+  let positions=cppLatticeCagePositions(targetGeometry,nx,ny,nz,padRatio);
+  let boundsMin,boundsMax;
+  if(positions){
+    boundsMin=[Infinity,Infinity,Infinity];boundsMax=[-Infinity,-Infinity,-Infinity];
+    for(let i=0;i<positions.length;i+=3)for(let a=0;a<3;a++){boundsMin[a]=Math.min(boundsMin[a],positions[i+a]);boundsMax[a]=Math.max(boundsMax[a],positions[i+a]);}
+  }else{
+    targetGeometry.computeBoundingBox();
+    const box=targetGeometry.boundingBox.clone();
+    const size=box.getSize(new THREE.Vector3());
+    const pad=Math.max(size.length()*(padRatio>0?padRatio:.04),.04);
+    box.min.subScalar(pad);box.max.addScalar(pad);
+    positions=[];
+    for(let k=0;k<=nz;k++)for(let j=0;j<=ny;j++)for(let i=0;i<=nx;i++){
+      positions.push(
+        THREE.MathUtils.lerp(box.min.x,box.max.x,i/nx),
+        THREE.MathUtils.lerp(box.min.y,box.max.y,j/ny),
+        THREE.MathUtils.lerp(box.min.z,box.max.z,k/nz)
+      );
+    }
+    boundsMin=box.min.toArray();boundsMax=box.max.toArray();
   }
   /* Triangulate outer 6 faces of the FFD lattice so it is selectable, sculptable & editable in Edit Mode */
+  const indices=[];
   const quad=(a,b,c,d)=>{indices.push(a,b,c,a,c,d)};
   for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
     quad(id(i,j,nz),id(i+1,j,nz),id(i+1,j+1,nz),id(i,j+1,nz));
@@ -787,7 +809,7 @@ export function createLatticeCageGeometry(targetGeometry,divisions=[2,2,2]){
   cage.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
   cage.setIndex(indices);
   cage.computeVertexNormals();
-  cage.userData={divisions:[nx,ny,nz],restPositions:Array.from(positions),boundsMin:box.min.toArray(),boundsMax:box.max.toArray()};
+  cage.userData={divisions:[nx,ny,nz],restPositions:Array.from(positions),boundsMin,boundsMax};
   return updateBounds(cage);
 }
 
@@ -803,6 +825,17 @@ export function latticeDeformGeometry(geometry,restCagePositions,deformedCagePos
   if(!restCagePositions||!deformedCagePositions||restCagePositions.length<expected||deformedCagePositions.length<expected){
     throw new Error('Lattice control-cage vertex count does not match FFD resolution');
   }
+  const viaCpp=runCppKernel(geometry,null,
+    exp=>exp.fe_mod_lattice_apply(nx,ny,nz,clamp(Number(strength)??1,0,2)),
+    exp=>{
+      const points=(nx+1)*(ny+1)*(nz+1);
+      if(exp.fe_mod_lattice_alloc(points)!==0)return false;
+      const buf=exp.memory.buffer;
+      new Float32Array(buf,exp.fe_mod_lattice_rest_ptr(),points*3).set(Float32Array.from(restCagePositions).subarray(0,points*3));
+      new Float32Array(buf,exp.fe_mod_lattice_deform_ptr(),points*3).set(Float32Array.from(deformedCagePositions).subarray(0,points*3));
+      return writeSessionMatrix(exp,relativeMatrixElements);
+    });
+  if(viaCpp)return viaCpp;
   let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
   for(let i=0;i<expected;i+=3){
     minX=Math.min(minX,restCagePositions[i]);maxX=Math.max(maxX,restCagePositions[i]);
@@ -845,6 +878,10 @@ export function armatureSkinGeometry(geometry,{influence=1,preserveVolume=true,b
   const midY=minY+spanY*.5;
   const inf=clamp(Number(influence)??1,0,1);
   if(inf<=1e-6)return out;
+  const viaCpp=runCppKernel(geometry,null,
+    exp=>exp.fe_mod_armature(inf,preserveVolume?1:0,Number(bendDeg)||0,Number(twistDeg)||0),
+    exp=>writeSessionMatrix(exp,rigRelativeMatrixElements));
+  if(viaCpp){out.dispose();return viaCpp;}
 
   const bendRad=(Number(bendDeg)||0)*Math.PI/180*inf;
   const twistRad=(Number(twistDeg)||0)*Math.PI/180*inf;
@@ -908,8 +945,41 @@ export function armatureSkinGeometry(geometry,{influence=1,preserveVolume=true,b
 }
 
 /* ---- Barycentric + Normal Surface Deform Binding & Evaluator ---- */
+function cppBindSurfaceDeform(geometry, targetGeometry, matrixElements) {
+  const exp = cppExports();
+  if (!exp || typeof exp.fe_mod_sd_bind !== 'function') return null;
+  const base = kernelCapacities(geometry);
+  if (!base) return null;
+  for (const name of Object.keys(geometry.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') return null;
+  if (geometry.attributes.position.itemSize !== 3) return null;
+  try {
+    if (exp.fe_mod_begin(base.v, base.t, 0) !== 0) return null;
+    const buf = exp.memory.buffer;
+    new Float32Array(buf, exp.fe_mod_in_pos_ptr(), base.v * 3).set(geometry.attributes.position.array.subarray(0, base.v * 3));
+    const idx = new Uint32Array(buf, exp.fe_mod_in_idx_ptr(), base.t * 3);
+    if (geometry.index) idx.set(geometry.index.array.subarray(0, base.t * 3));
+    else for (let i = 0; i < base.t * 3; i++) idx[i] = i;
+    exp.fe_mod_set_counts(base.v, base.t);
+    if (!uploadTargetMesh(exp, targetGeometry, matrixElements)) return null;
+    if (exp.fe_mod_sd_bind() !== 0) return null;
+    const triCount = exp.fe_mod_sd_tri_count();
+    if (!triCount) return null;
+    const ord = new Uint32Array(exp.memory.buffer, exp.fe_mod_sd_ordinal_ptr(), base.v).slice();
+    const bary = new Float32Array(exp.memory.buffer, exp.fe_mod_sd_bary_ptr(), base.v * 3).slice();
+    const scal = new Float32Array(exp.memory.buffer, exp.fe_mod_sd_scalars_ptr(), base.v * 2).slice();
+    const tris = new Uint32Array(exp.memory.buffer, exp.fe_mod_sd_tris_ptr(), triCount * 3).slice();
+    const normalOffset = new Float32Array(base.v), refScale = new Float32Array(base.v);
+    for (let i = 0; i < base.v; i++) { normalOffset[i] = scal[i * 2]; refScale[i] = scal[i * 2 + 1]; }
+    const triIndices = new Array(triCount);
+    for (let t = 0; t < triCount; t++) triIndices[t] = [tris[t * 3], tris[t * 3 + 1], tris[t * 3 + 2]];
+    return { triIndices, vertexTri: ord, bary, normalOffset, refScale, targetVertexCount: targetGeometry.attributes.position.count };
+  } catch { return null; }
+}
+
 export function bindSurfaceDeform(geometry,targetGeometry,relativeMatrixElements){
   const p=assertPositions(geometry),tp=assertPositions(targetGeometry),ti=sourceIndices(targetGeometry);
+  const viaCpp=cppBindSurfaceDeform(geometry,targetGeometry,relativeMatrixElements);
+  if(viaCpp)return viaCpp;
   const mat=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements));
   const tris=[];
   for(let i=0;i+2<ti.length;i+=3){
@@ -953,6 +1023,24 @@ export function surfaceDeformGeometry(geometry,binding,currentTargetGeometry,rel
   const p=assertPositions(geometry),tp=assertPositions(currentTargetGeometry);
   if(!binding||tp.count!==binding.targetVertexCount||binding.vertexTri.length!==p.count){
     throw new Error('Surface Deform binding is out of date with target topology; re-bind surface.');
+  }
+  if(binding.triIndices){
+    const viaCpp=runCppKernel(geometry,null,
+      exp=>exp.fe_mod_sd_apply(clamp(Number(strength)??1,0,1)),
+      exp=>{
+        if(!uploadTargetMesh(exp,currentTargetGeometry,relativeMatrixElements))return false;
+        const verts=binding.vertexTri.length,triCount=binding.triIndices.length;
+        if(exp.fe_mod_sd_upload(verts,triCount)!==0)return false;
+        const buf=exp.memory.buffer;
+        new Uint32Array(buf,exp.fe_mod_sd_ordinal_ptr(),verts).set(binding.vertexTri);
+        new Float32Array(buf,exp.fe_mod_sd_bary_ptr(),verts*3).set(binding.bary);
+        const trisView=new Uint32Array(buf,exp.fe_mod_sd_tris_ptr(),triCount*3);
+        for(let t=0;t<triCount;t++){const tri=binding.triIndices[t];trisView[t*3]=tri[0];trisView[t*3+1]=tri[1];trisView[t*3+2]=tri[2];}
+        const scalView=new Float32Array(buf,exp.fe_mod_sd_scalars_ptr(),verts*2);
+        for(let i=0;i<verts;i++){scalView[i*2]=binding.normalOffset[i];scalView[i*2+1]=binding.refScale[i];}
+        return true;
+      });
+    if(viaCpp)return viaCpp;
   }
   const mat=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements));
   const out=geometry.clone(),op=out.attributes.position,blend=clamp(Number(strength)??1,0,1);
