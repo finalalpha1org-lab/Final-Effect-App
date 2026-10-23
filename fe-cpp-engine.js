@@ -34,6 +34,39 @@
   /* -----------------------------------------------------------------------
    * 1. C++20 WASM Loader & Linear Memory Marshal
    * ----------------------------------------------------------------------- */
+
+  /* Kernels the shell expects from fe_core_engine.wasm. A deployment that serves
+     an older artifact still boots (the ABI is forwards compatible), but the
+     benchmark has to say exactly which subsystem is missing instead of a vague
+     "unavailable". */
+  const REQUIRED_KERNELS = Object.freeze({
+    animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
+    ocean: ['fe_ocean_configure', 'fe_ocean_update', 'fe_ocean_resolution'],
+    terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic'],
+    volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
+    modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
+    simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']
+  });
+
+  function describeArtifact(exportsObject, byteLength = 0) {
+    const names = exportsObject ? Object.keys(exportsObject) : [];
+    const available = new Set(names);
+    const missing = [];
+    const modules = {};
+    for (const [module, kernels] of Object.entries(REQUIRED_KERNELS)) {
+      const absent = kernels.filter(kernel => !available.has(kernel));
+      modules[module] = absent.length === 0;
+      for (const kernel of absent) missing.push(kernel);
+    }
+    return {
+      bytes: byteLength,
+      exports: names.length,
+      missing,
+      modules,
+      complete: missing.length === 0
+    };
+  }
+
   const FECppEngine = {
     ready: false,
     wasm: null,
@@ -99,6 +132,11 @@
         this.memory = exp.memory;
         this.ready = true;
         this.loadError = null;
+        this.artifactBytes = typeof buf === 'object' && buf ? (buf.byteLength || buf.length || 0) : 0;
+        this.artifact = describeArtifact(exp, this.artifactBytes);
+        if (!this.artifact.complete) {
+          console.warn('[FECppEngine] Engine artifact is missing kernels:', this.artifact.missing.join(', '));
+        }
         exp.fe_anim_reset();
         exp.fe_touch_reset();
         exp.fe_perf_reset();
@@ -118,23 +156,102 @@
         }
       }
 
+      /* Both candidates are tried, and the one with the most kernels wins. The
+         repo ships the ABI-checked binary at ./wasm/fe_core_engine.wasm, while
+         ./fe_core_engine.wasm is an untracked copy written by the C++ build -
+         so a host that kept an old root copy from an earlier deploy must never
+         shadow the current artifact. */
       const urls = ['./fe_core_engine.wasm', './wasm/fe_core_engine.wasm'];
       let lastErr = null;
+      let best = null;
       for (const rel of urls) {
         try {
           const url = new URL(rel, document.baseURI || window.location.href).href;
           const res = await fetch(url, { cache: 'no-cache' });
           if (!res.ok) throw new Error(`HTTP ${res.status} for ${rel}`);
           const buf = await res.arrayBuffer();
-          return await mountWasmBuffer(buf);
+          await mountWasmBuffer(buf);
+          if (!best || this.artifact.exports > best.artifact.exports) best = { url, buf, artifact: this.artifact };
+          if (this.artifact.complete) { this.artifactSource = rel; return this.exports; }
         } catch (err) {
           lastErr = err;
         }
+      }
+      if (best) {
+        /* Keep the richest artifact found, even if no candidate is complete. */
+        if (this.artifact?.exports !== best.artifact.exports) await mountWasmBuffer(best.buf);
+        this.artifactUrl = best.url;
+        this.artifactSource = 'best of ' + urls.join(' + ');
+        /* An installed client can still hold an older binary in a browser or
+           proxy cache: retry once with a cache-busting query before giving up. */
+        await this.ensureFreshArtifact();
+        if (!this.artifact?.complete) this.warnStaleArtifact();
+        return this.exports;
       }
       this.loadError = lastErr;
       console.warn('[FECppEngine] Could not load fe_core_engine.wasm:', lastErr);
       updateCppStatusBadges();
       return null;
+    },
+
+    /* Re-fetch the artifact with a cache-busting query and swap it in when it
+       carries more kernels than the copy already in memory. Returns true when
+       the engine now has every kernel the shell needs. */
+    async ensureFreshArtifact({ force = false } = {}) {
+      if (!this.artifact || (this.artifact.complete && !force)) return this.artifact?.complete ?? false;
+      if (typeof fetch !== 'function') return false;
+      const base = this.artifactUrl || new URL('./fe_core_engine.wasm', document.baseURI || window.location.href).href;
+      const bust = `${base}${base.includes('?') ? '&' : '?'}v=${Date.now().toString(36)}`;
+      try {
+        const res = await fetch(bust, { cache: 'reload' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = await res.arrayBuffer();
+        const mod = await WebAssembly.compile(buf);
+        const inst = await WebAssembly.instantiate(mod, {});
+        const next = describeArtifact(inst.exports, buf.byteLength);
+        if (!force && next.exports <= (this.artifact?.exports || 0)) {
+          return this.artifact?.complete ?? false;
+        }
+        if (typeof inst.exports.fe_core_abi_version !== 'function' || inst.exports.fe_core_abi_version() !== 1) {
+          throw new Error('Unexpected engine ABI version');
+        }
+        this.wasm = inst;
+        this.exports = inst.exports;
+        this.memory = inst.exports.memory;
+        this.ready = true;
+        this.loadError = null;
+        this.artifact = next;
+        this.artifactSource = 'cache-busted refetch';
+        inst.exports.fe_anim_reset?.();
+        inst.exports.fe_touch_reset?.();
+        inst.exports.fe_perf_reset?.();
+        updateCppStatusBadges();
+        return next.complete;
+      } catch (error) {
+        console.warn('[FECppEngine] Artifact refresh failed:', error);
+        return this.artifact?.complete ?? false;
+      }
+    },
+
+    /* Human readable one-liner used by the benchmark and the diagnostics sheet. */
+    artifactSummary() {
+      const a = this.artifact;
+      if (!a) return 'Engine artifact not loaded';
+      const size = a.bytes ? `${(a.bytes / 1024).toFixed(0)} KB · ` : '';
+      return `${size}${a.exports} exports${a.complete ? '' : ` · missing ${a.missing.length} kernel${a.missing.length === 1 ? '' : 's'}`}`;
+    },
+
+    requiresDeploymentRefresh() {
+      return !!this.artifact && !this.artifact.complete;
+    },
+
+    /* Console only, on purpose: the shell shows no engine/version chrome, so the
+       stale-binary story is told where the user asked for it - the benchmark
+       sheet, which owns the banner and the Repair Engine button. */
+    warnStaleArtifact() {
+      if (this._staleWarned) return;
+      this._staleWarned = true;
+      console.warn('[FECppEngine] Outdated engine artifact:', this.artifactSummary());
     },
 
     allocF32(length) {
@@ -1144,7 +1261,6 @@
     }
   };
 
-  window.FECppEngine = FECppEngine;
 
   /* -----------------------------------------------------------------------
    * UI Wiring Helpers (Animation Dope Sheet, Render Studio, Sculpt & Mobile)
@@ -2741,7 +2857,7 @@
     results.push({
       name: 'Core Engine (ABI v1)',
       ok: abi === 1 && probe.ptr > 0 && probe.view[0] === 42.5,
-      detail: `ABI v${abi} · Heap ${(exp.fe_heap_used_bytes() / 1024).toFixed(1)} KB · ${(performance.now() - t0).toFixed(2)} ms`
+      detail: `ABI v${abi} · Heap ${(exp.fe_heap_used_bytes() / 1024).toFixed(1)} KB · ${this.artifactSummary()} · ${(performance.now() - t0).toFixed(2)} ms`
     });
 
     /* 2. Keyframe Bezier Curve & Motion Preset Engine */
@@ -2878,6 +2994,14 @@
       detail: `${((litPx / (rw * rh)) * 100).toFixed(1)}% lit pixels · Golden Sunset HDRI`
     });
 
+    /* A stale artifact is the usual reason a kernel row fails on a device that
+       was working yesterday: retry with a cache-busted fetch before judging. */
+    let activeExp = this.exports;
+    if (this.artifact && !this.artifact.complete) {
+      await this.ensureFreshArtifact();
+      activeExp = this.exports;
+    }
+
     /* 7. Landscape bridge + ocean kernel: reports every degraded subsystem
        instead of only the engine-side checks. */
     t0 = performance.now();
@@ -2886,16 +3010,28 @@
       const present = !!land;
       const bound = !!(land && land.ready);
       let oceanOk = false;
-      if (typeof exp.fe_ocean_configure === 'function' && typeof exp.fe_ocean_update === 'function') {
-        oceanOk = exp.fe_ocean_configure(32, 256, 1024, 4096, 12, 30, 7) === 0 &&
-          exp.fe_ocean_update(1.5, 1, 1, 3, 2) > 0 && exp.fe_ocean_resolution() === 32;
+      if (typeof activeExp.fe_ocean_configure === 'function' && typeof activeExp.fe_ocean_update === 'function') {
+        oceanOk = activeExp.fe_ocean_configure(32, 256, 1024, 4096, 12, 30, 7) === 0 &&
+          activeExp.fe_ocean_update(1.5, 1, 1, 3, 2) > 0 && activeExp.fe_ocean_resolution() === 32;
       }
       const degraded = bound && land.missing ? land.missing.length : 0;
+      /* "Where is the terrain bridge" is not a health signal: the bridge lives in
+         the Landscaping Studio frame, so on the home screen / workspace it is
+         legitimately absent and the ocean + terrain kernels below are the check. */
+      const bridgeNote = !present
+        ? 'terrain bridge runs in the Landscaping Studio frame'
+        : bound
+          ? (degraded ? `${degraded} kernel${degraded===1?'':'s'} on JS fallback: ${land.missing.join(', ')}` : 'Every terrain, Open World and ocean kernel bound')
+          : 'Terrain bridge did not bind — JS fallback active';
+      const artifactNote = this.artifact && !this.artifact.complete
+        ? `Engine artifact is stale: ${this.artifactBytes ? Math.round(this.artifactBytes / 1024) + ' KB · ' : ''}${activeExp && Object.keys(activeExp).length} exports · missing ${this.artifact.missing.slice(0, 4).join(', ')}${this.artifact.missing.length > 4 ? '…' : ''} — reload or redeploy fe_core_engine.wasm`
+        : '';
       results.push({
         name: 'Landscape & Ocean Kernels',
         ok: oceanOk && (present ? bound && degraded === 0 : true),
-        detail: (oceanOk ? `Wave field 32² · ${(performance.now() - t0).toFixed(2)} ms · ` : 'Ocean kernel unavailable · ') +
-          (present ? (bound ? (degraded ? `${degraded} kernel${degraded===1?'':'s'} on JS fallback: ${land.missing.join(', ')}` : 'Every terrain, Open World and ocean kernel bound') : 'Terrain bridge did not bind — JS fallback active') : 'Terrain bridge not part of this page')
+        detail: (oceanOk
+          ? `Wave field 32² · ${(performance.now() - t0).toFixed(2)} ms · `
+          : (artifactNote ? '' : 'Ocean kernel unavailable · ')) + (artifactNote || bridgeNote)
       });
     } catch (error) {
       results.push({ name: 'Landscape & Ocean Kernels', ok: false, detail: String(error.message || error) });
@@ -2908,13 +3044,18 @@
     t0 = performance.now();
     try {
       let smokeOk = false, smokeDetail = 'Smoke & fire solver unavailable';
-      if (typeof exp.fe_vol_init === 'function' && typeof exp.fe_vol_step === 'function' && typeof exp.fe_vol_surface === 'function') {
+      const smokeExports = activeExp;
+      if (typeof smokeExports.fe_vol_init !== 'function' || typeof smokeExports.fe_vol_step !== 'function' || typeof smokeExports.fe_vol_surface !== 'function') {
+        smokeDetail = this.artifact && !this.artifact.complete
+          ? `Engine artifact is stale: ${Object.keys(smokeExports).length} exports · no volume kernel (fe_vol_init) — reload or redeploy fe_core_engine.wasm`
+          : 'Smoke & fire solver unavailable in this build';
+      } else {
         const grid = 16, cells = grid * grid * grid;
-        exp.fe_vol_init(grid, grid, grid);
-        exp.fe_vol_source(0.5, 0.2, 0.5, 0.16, 1.2, 0.6, 0.8);
-        for (let step = 0; step < 4; step++) exp.fe_vol_step(1 / 60, 4, 1, 0.2, 0.3, 24);
-        const stats = new Float32Array(exp.memory.buffer, exp.fe_vol_stats_ptr(), 6);
-        const density = new Float32Array(exp.memory.buffer, exp.fe_vol_density_ptr(), cells);
+        smokeExports.fe_vol_init(grid, grid, grid);
+        smokeExports.fe_vol_source(0.5, 0.2, 0.5, 0.16, 1.2, 0.6, 0.8);
+        for (let step = 0; step < 4; step++) smokeExports.fe_vol_step(1 / 60, 4, 1, 0.2, 0.3, 24);
+        const stats = new Float32Array(smokeExports.memory.buffer, smokeExports.fe_vol_stats_ptr(), 6);
+        const density = new Float32Array(smokeExports.memory.buffer, smokeExports.fe_vol_density_ptr(), cells);
         let smokeMass = 0;
         for (let n = 0; n < cells; n++) smokeMass += density[n];
         for (let k = 0; k < grid; k++) {
@@ -2925,12 +3066,12 @@
             }
           }
         }
-        const verts = exp.fe_vol_surface(0, 1 << 16);
-        smokeOk = exp.fe_vol_grid_size() === grid && Number.isFinite(stats[1]) &&
+        const verts = smokeExports.fe_vol_surface(0, 1 << 16);
+        smokeOk = smokeExports.fe_vol_grid_size() === grid && Number.isFinite(stats[1]) &&
           stats[1] <= stats[0] && smokeMass > 0 && verts > 0 &&
-          exp.fe_vol_surface_index_count() > 0 && exp.fe_vol_surface_index_count() % 3 === 0;
+          smokeExports.fe_vol_surface_index_count() > 0 && smokeExports.fe_vol_surface_index_count() % 3 === 0;
         smokeDetail = `16³ MAC grid · div ${Number(stats[0]).toFixed(1)}→${Number(stats[1]).toFixed(2)} · ${verts} surface verts · ${(performance.now() - t0).toFixed(2)} ms`;
-        exp.fe_vol_init(grid, grid, grid);
+        smokeExports.fe_vol_init(grid, grid, grid);
       }
       results.push({ name: 'Smoke & Fire Volume Solver', ok: smokeOk, detail: smokeDetail });
     } catch (error) {
@@ -2938,7 +3079,13 @@
     }
 
     const allOk = results.every(r => r.ok);
-    return { ok: allOk, results, totalMs: +(performance.now() - tTotal0).toFixed(1) };
+    return {
+      ok: allOk,
+      results,
+      totalMs: +(performance.now() - tTotal0).toFixed(1),
+      artifact: this.artifact || null,
+      artifactSummary: this.artifactSummary()
+    };
   };
 
   async function openCppDiagnosticsModal() {
@@ -2952,13 +3099,13 @@
         '<div class="render-modal-window" style="max-width:680px;">' +
           '<header class="render-modal-head">' +
             '<div style="display:flex;align-items:center;gap:10px;">' +
-              '<span style="font-size:20px;">🧪</span>' +
+              '<i class="ico" data-ico="flask" data-size="22"></i>' +
               '<div>' +
                 '<strong style="font-size:15px;color:#f8fafc;">Performance Benchmark</strong>' +
                 '<div style="font-size:11px;color:#94a3b8;">Measures animation, sculpt, touch and path-tracing speed on this device</div>' +
               '</div>' +
             '</div>' +
-            '<button class="export-modal-close" type="button" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true">✕</button>' +
+            '<button class="export-modal-close" type="button" aria-label="Close" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true"><i class="ico" data-ico="close"></i></button>' +
           '</header>' +
           '<div class="diagnostics-body" style="padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">' +
             '<div style="background:#090b10;border:1px solid #262c40;border-radius:12px;padding:10px;text-align:center;">' +
@@ -2966,10 +3113,12 @@
               '<div id="cpp-diag-summary" style="margin-top:8px;font-size:12px;font-weight:700;color:#34d399;">Running benchmark…</div>' +
             '</div>' +
             '<div id="cpp-diag-list" style="display:flex;flex-direction:column;gap:7px;"></div>' +
+            '<div id="cpp-diag-artifact" hidden style="display:none;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.45);border-radius:10px;padding:10px 12px;gap:8px;flex-direction:column;"></div>' +
           '</div>' +
           '<footer class="render-actions-bar">' +
-            '<button class="export-action-btn" type="button" onclick="openCppDiagnosticsModal()">🔄 Re-Run Benchmark</button>' +
-            '<button class="export-action-btn" type="button" style="background:#4f46e5;border-color:#818cf8;" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true;FE.open(\'core\')">🧊 Open 3D Workspace</button>' +
+            '<button class="export-action-btn" type="button" id="cpp-diag-repair" onclick="repairEngineArtifact()"><i class="ico" data-ico="gear"></i> <span id="cpp-diag-repair-label">Repair Engine</span></button>' +
+            '<button class="export-action-btn" type="button" onclick="openCppDiagnosticsModal()"><i class="ico" data-ico="refresh"></i> Re-Run Benchmark</button>' +
+            '<button class="export-action-btn" type="button" style="background:#4f46e5;border-color:#818cf8;" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true;FE.open(\'core\')"><i class="ico" data-ico="cube3d"></i> Open 3D Workspace</button>' +
             '<button class="btn btn-secondary" type="button" style="margin-left:auto;" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true">Close</button>' +
           '</footer>' +
         '</div>';
@@ -2996,19 +3145,52 @@
     if (summaryEl) {
       summaryEl.style.color = report.ok ? '#34d399' : '#f87171';
       summaryEl.textContent = report.ok
-        ? `✅ ${report.results.length}/${report.results.length} CHECKS PASSED (${report.totalMs} ms total)`
-        : `⚠️ Failed: ${report.results.filter(r => !r.ok).map(r => r.name).join(' · ')}. See details below.`;
+        ? `All ${report.results.length} checks passed · ${report.totalMs} ms total`
+        : `Failed: ${report.results.filter(r => !r.ok).map(r => r.name).join(' · ')}`;
+    }
+    const artifactEl = document.getElementById('cpp-diag-artifact');
+    if (artifactEl) {
+      const stale = report.artifact && !report.artifact.complete;
+      artifactEl.hidden = !stale;
+      artifactEl.style.display = stale ? 'flex' : 'none';
+      artifactEl.innerHTML = stale
+        ? '<strong style="font-size:12px;color:#fca5a5;">Engine artifact is outdated</strong>' +
+          `<span style="font-size:11px;color:#fecaca;line-height:1.45;">This page is running ${report.artifact.exports} engine exports` +
+          `${report.artifact.bytes ? ` (${Math.round(report.artifact.bytes / 1024)} KB)` : ''}, so ${report.artifact.missing.length} kernel` +
+          `${report.artifact.missing.length === 1 ? '' : 's'} cannot run: ${report.artifact.missing.slice(0, 6).join(', ')}` +
+          `${report.artifact.missing.length > 6 ? '…' : ''}. Tap <b>Repair Engine</b> to fetch the current fe_core_engine.wasm; ` +
+          'if it stays outdated the deployed file itself is old (redeploy the 185-export build).</span>'
+        : '';
     }
     if (listEl) {
       listEl.innerHTML = report.results.map(r =>
         `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 11px;border-radius:9px;background:#161926;border:1px solid ${r.ok ? 'rgba(52,211,153,0.32)' : 'rgba(248,113,113,0.4)'};">` +
-          `<span style="font-size:12px;font-weight:700;color:#e2e8f0;">${r.ok ? '✅' : '❌'} ${r.name}</span>` +
+          `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#e2e8f0;"><i class="ico" data-ico="${r.ok ? 'check' : 'close'}" data-size="15"></i>${r.name}</span>` +
           `<span style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">${r.detail}</span>` +
         `</div>`
       ).join('');
     }
   }
   window.openCppDiagnosticsModal = openCppDiagnosticsModal;
+
+  /* One-tap recovery from a stale binary: swap in a cache-busted artifact and
+     re-run the benchmark so the user sees the result immediately. */
+  window.repairEngineArtifact = async function repairEngineArtifact() {
+    const btn = document.getElementById('cpp-diag-repair');
+    /* Only the label is swapped - rewriting textContent would delete the icon. */
+    const label = document.getElementById('cpp-diag-repair-label');
+    if (btn) btn.disabled = true;
+    if (label) label.textContent = 'Repairing…';
+    try {
+      await FECppEngine.ensureFreshArtifact({ force: true });
+      await openCppDiagnosticsModal();
+    } finally {
+      if (btn) btn.disabled = false;
+      const fresh = document.getElementById('cpp-diag-repair-label');
+      if (fresh) fresh.textContent = 'Repair Engine';
+    }
+  };
+  window.FECppEngine = FECppEngine;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', wireWorkspaceIntegration);
