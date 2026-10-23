@@ -36,6 +36,8 @@ jobs:
             cpp/src/fe_animation.cpp \
             cpp/src/fe_renderer.cpp \
             cpp/src/fe_sculpt_touch.cpp \
+            cpp/src/fe_simulation.cpp \
+            cpp/src/fe_landscape.cpp \
             -o wasm/fe_core_engine.wasm
           cp wasm/fe_core_engine.wasm ./fe_core_engine.wasm
           node scripts/build-cpp-wasm.mjs

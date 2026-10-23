@@ -1,8 +1,19 @@
-import { transform } from "esbuild";
+import { build as esbuildBundle, transform } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createStandaloneAppHtml, createStandaloneTerrainHtml } from "./standalone-html.mjs";
 import "./build-cpp-wasm.mjs";
+
+if (existsSync("src/modifier-entry.mjs")) {
+  await esbuildBundle({
+    entryPoints: ["src/modifier-entry.mjs"],
+    bundle: true,
+    format: "iife",
+    minify: true,
+    alias: { three: "./src/three-global-shim.mjs" },
+    outfile: "modifier-engine.js",
+  });
+}
 
 rmSync("build", { recursive: true, force: true });
 mkdirSync("build/client", { recursive: true });

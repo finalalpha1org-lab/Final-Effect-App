@@ -87,6 +87,72 @@ int main() {
   for (int i = 0; i < 40; ++i) fe_perf_push_frame_ms(12.0f);
   assert(fe_perf_recommend_tier(0) == 2);
 
+  /* 6. C++20 XPBD Cloth, Soft-Body Volume, PBF Liquid, Smooth Isosurface & Pyro */
+  assert(fe_sim_backend_magic() == FE_SIM_CPP_BACKEND_MAGIC);
+  assert(sim_solver_abi_version() == 2u);
+
+  /* 6a. XPBD Cloth with aerodynamic wind & pinned top edge */
+  float cloth_pos[12]  = {-1.0f, 1.0f, 0.0f,  1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f,  1.0f, 0.0f, 0.0f};
+  float cloth_prev[12] = {-1.0f, 1.0f, 0.0f,  1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f,  1.0f, 0.0f, 0.0f};
+  const float cloth_rest[12] = {-1.0f, 1.0f, 0.0f,  1.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f,  1.0f, 0.0f, 0.0f};
+  const uint8_t cloth_pins[4] = {1, 1, 0, 0};
+  const uint32_t cloth_edges[10] = {0, 1,  2, 3,  0, 2,  1, 3,  0, 3};
+  float cloth_lens[5] = {2.0f, 2.0f, 1.0f, 1.0f, 2.2360679f};
+  const float cloth_w[5] = {1.0f, 1.0f, 1.0f, 1.0f, 0.5f};
+  const uint32_t cloth_faces[6] = {0, 2, 1,  1, 2, 3};
+  const float cloth_bounds[6] = {-5.0f, -5.0f, -5.0f, 5.0f, 5.0f, 5.0f};
+
+  for (int step = 0; step < 20; ++step) {
+    assert(fe_sim_xpbd_deformable_step(
+      cloth_pos, cloth_prev, cloth_rest, cloth_pins,
+      cloth_edges, cloth_lens, cloth_w, 4, 5,
+      cloth_faces, 2, nullptr, nullptr, 0,
+      1.0f / 120.0f, 0.0f, -9.8f, 0.0f,
+      0.04f, 0.85f, 0.0f, 0.95f, 0.9f, 0.0f, 0.0f, 0.08f,
+      0.0f, 0.0f, 3.5f, 0.25f, step * 0.01f, 0.15f,
+      0.01f, 8, cloth_bounds, 0.05f, 0.3f
+    ) == 1);
+  }
+  /* Pinned vertices stay fixed; unpinned bottom billows forward (+Z) from wind */
+  assert(nearf(cloth_pos[1], 1.0f, 1e-5f));
+  assert(cloth_pos[8] > 0.002f && cloth_pos[11] > 0.002f);
+
+  /* Scatter + welded smooth normals + wrinkle strain */
+  const uint32_t vmap[4] = {0, 1, 2, 3};
+  float r_pos[12] = {}, r_nrm[12] = {}, r_strain[4] = {};
+  assert(fe_sim_scatter_mesh_and_normals(cloth_pos, cloth_rest, 4, vmap, 4, cloth_faces, 6, r_pos, r_nrm, r_strain) == 1);
+  assert(fe::isfinitef(r_nrm[0] + r_nrm[1] + r_nrm[2]));
+
+  /* 6b. PBF Liquid + Smooth Isosurface Reconstruction */
+  float liq_pos[24] = {
+    -0.12f, 0.0f, -0.12f,   0.12f, 0.0f, -0.12f,
+    -0.12f, 0.0f,  0.12f,   0.12f, 0.0f,  0.12f,
+    -0.12f, 0.22f,-0.12f,   0.12f, 0.22f,-0.12f,
+    -0.12f, 0.22f, 0.12f,   0.12f, 0.22f, 0.12f
+  };
+  float liq_vel[24] = {};
+  float liq_den[8] = {}, liq_prs[8] = {}, liq_foam[8] = {};
+  uint8_t liq_act[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+  const float liq_bounds[6] = {-1.0f, -0.5f, -1.0f, 1.0f, 1.5f, 1.0f};
+
+  assert(fe_sim_liquid_pbf_step(
+    liq_pos, liq_vel, liq_den, liq_prs, liq_foam, liq_act,
+    8, 1.0f / 60.0f, 0.08f, 1.0f, 0.45f, 1.8f, 0.02f, 0.25f, 0.15f, 2,
+    0.0f, -9.8f, 0.0f, liq_bounds, 0.3f, 0.03f, 0
+  ) == 1);
+
+  float surf_pos[4096 * 3] = {};
+  float surf_nrm[4096 * 3] = {};
+  float surf_foam[4096 * 2] = {};
+  uint32_t surf_idx[8192 * 3] = {};
+  uint32_t surf_counts[2] = {};
+  assert(fe_sim_reconstruct_liquid_mesh(
+    liq_pos, liq_vel, liq_foam, liq_act, 8, liq_bounds,
+    0.55f, 0.22f, 0.25f, 24, 2, 0,
+    surf_pos, surf_nrm, surf_foam, 4096, surf_idx, 8192 * 3, surf_counts
+  ) == 1);
+  assert(surf_counts[0] >= 12 && surf_counts[1] >= 12);
+
   printf("All Final Effect C++20 Core Engine tests passed!\n");
   return 0;
 }

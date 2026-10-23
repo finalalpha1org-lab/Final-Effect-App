@@ -43,6 +43,7 @@ test('native C++20 unit test suite compiles and passes under g++ when present', 
     'cpp/src/fe_animation.cpp',
     'cpp/src/fe_renderer.cpp',
     'cpp/src/fe_sculpt_touch.cpp',
+    'cpp/src/fe_simulation.cpp',
     'cpp/tests/fe_core_tests.cpp',
     '-o', '/tmp/fe_core_test_bin'
   ], { stdio: 'pipe' });

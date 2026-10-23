@@ -1,36 +1,157 @@
-/* Rust/WASM numerical solver bridge for cloth, soft-body, liquid and buoyant tracers. */
+/* Freestanding C++20/WASM numerical solver bridge for Houdini/LiquiGen-grade cloth, soft-body, FLIP/PBF liquid & turbulent pyro. */
 (function installSimulationEngine(global) {
   const MAX_PARTICLES = 768;
+  const CPP_ULTRA_MAX_PARTICLES = 960;
+  const MAX_SURFACE_VERTS = 49152;
+  const MAX_SURFACE_INDICES = 147456;
   const DEFORMABLE_FIXED_STEP = 1 / 120;
   const MAX_DEFORMABLE_SUBSTEPS = 8;
   const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  const cl = clamp;
   const number = (params, key, fallback) => {
     const value = Number.parseFloat(params?.[key]);
     return Number.isFinite(value) ? value : fallback;
   };
+
   const tracerPresets = (domainType, params = {}) => {
     const combined = params['Fire & Smoke Preset'] || 'Campfire & Smoke';
     if (domainType === 'Fire + Smoke') {
-      const presets = combined === 'Wildfire Blast' ? ['Wildfire', 'Heavy Fog'] : combined === 'Torch & Soot' ? ['Torch', 'Dark Soot'] : ['Campfire', 'Normal Smoke'];
+      const presets = combined === 'Wildfire Blast'
+        ? ['Wildfire', 'Heavy Fog']
+        : combined === 'Torch & Soot'
+          ? ['Torch', 'Dark Soot']
+          : ['Campfire', 'Normal Smoke'];
       return { fire: presets[0], smoke: presets[1] };
     }
     return { fire: params['Fire Preset'] || 'Campfire', smoke: params['Smoke Preset'] || 'Normal Smoke' };
   };
-  const tracerLifetime = (record) => clamp((record.count / Math.max(number(record.params, 'Flow Rate', 40), 1)) * (1.2 + number(record.params, 'Flame Height', 1.5) / 1.5), 1, 20);
+
+  const tracerLifetime = (record) => clamp(
+    (record.count / Math.max(number(record.params, 'Flow Rate', 40), 1)) * (1.2 + number(record.params, 'Flame Height', 1.5) / 1.5),
+    1,
+    20
+  );
   const align = (value, boundary) => Math.ceil(value / boundary) * boundary;
+
+  /* ---- Procedural Studio + Sky HDRI Reflection Texture (works offline & in all viewport modes) ---- */
+  let cachedStudioEnvMap = null;
+  function getStudioEnvMap() {
+    if (cachedStudioEnvMap) return cachedStudioEnvMap;
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
+    const canvas = document.createElement('canvas');
+    if (!canvas || typeof canvas.getContext !== 'function') return null;
+    canvas.width = 512;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    /* Crisp physical sky + studio softbox reflection dome */
+    const sky = ctx.createLinearGradient(0, 0, 0, 256);
+    sky.addColorStop(0.00, '#1e3a5f');
+    sky.addColorStop(0.32, '#4b83b8');
+    sky.addColorStop(0.49, '#cfe6f7');
+    sky.addColorStop(0.51, '#334155');
+    sky.addColorStop(0.75, '#161e29');
+    sky.addColorStop(1.00, '#090d14');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, 512, 256);
+
+    /* Key sun / studio softbox specular highlight */
+    const sun = ctx.createRadialGradient(168, 58, 2, 168, 58, 64);
+    sun.addColorStop(0.0, 'rgba(255,253,245,1.0)');
+    sun.addColorStop(0.22, 'rgba(255,244,214,0.88)');
+    sun.addColorStop(0.55, 'rgba(186,230,253,0.28)');
+    sun.addColorStop(1.0, 'rgba(186,230,253,0.0)');
+    ctx.fillStyle = sun;
+    ctx.fillRect(90, 0, 160, 130);
+
+    /* Cool rim softbox card for crisp Fresnel liquid & silk edges */
+    const rim = ctx.createRadialGradient(388, 76, 4, 388, 76, 58);
+    rim.addColorStop(0.0, 'rgba(224,242,254,0.92)');
+    rim.addColorStop(0.4, 'rgba(125,211,252,0.35)');
+    rim.addColorStop(1.0, 'rgba(56,189,248,0.0)');
+    ctx.fillStyle = rim;
+    ctx.fillRect(320, 12, 140, 130);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    if (THREE.EquirectangularReflectionMapping !== undefined) {
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+    }
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    cachedStudioEnvMap = tex;
+    return tex;
+  }
+
   const tracerSpriteCache = new Map();
   function tracerSpriteTexture(kind) {
     if (tracerSpriteCache.has(kind)) return tracerSpriteCache.get(kind);
-    const canvas=document.createElement('canvas');canvas.width=canvas.height=128;const ctx=canvas.getContext('2d');ctx.clearRect(0,0,128,128);
-    if(kind==='fire'){
-      ctx.save();ctx.beginPath();ctx.moveTo(64,7);ctx.bezierCurveTo(92,35,99,63,88,94);ctx.bezierCurveTo(81,116,44,124,31,99);ctx.bezierCurveTo(15,73,38,51,40,30);ctx.bezierCurveTo(48,44,50,52,52,60);ctx.bezierCurveTo(61,46,57,27,64,7);ctx.closePath();ctx.clip();
-      const g=ctx.createRadialGradient(62,76,2,64,70,62);g.addColorStop(0,'rgba(255,255,224,1)');g.addColorStop(.2,'rgba(255,219,78,.98)');g.addColorStop(.48,'rgba(255,119,22,.86)');g.addColorStop(.78,'rgba(202,38,4,.55)');g.addColorStop(1,'rgba(84,11,0,0)');ctx.fillStyle=g;ctx.fillRect(0,0,128,128);ctx.restore();
-    }else{
-      let state=0x8f31a5;const rand=()=>{state^=state<<13;state^=state>>>17;state^=state<<5;return(state>>>0)/4294967296};
-      for(let i=0;i<18;i++){const x=28+rand()*72,y=27+rand()*76,r=13+rand()*25,g=ctx.createRadialGradient(x,y,1,x,y,r);g.addColorStop(0,`rgba(245,248,250,${.28+rand()*.14})`);g.addColorStop(.55,`rgba(178,188,198,${.14+rand()*.08})`);g.addColorStop(1,'rgba(110,120,130,0)');ctx.fillStyle=g;ctx.fillRect(x-r,y-r,r*2,r*2)}
-      const g=ctx.createRadialGradient(64,66,8,64,64,65);g.addColorStop(0,'rgba(255,255,255,.10)');g.addColorStop(.45,'rgba(225,232,238,.10)');g.addColorStop(1,'rgba(150,160,170,0)');ctx.fillStyle=g;ctx.fillRect(0,0,128,128);
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    if (kind === 'fire') {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(128, 14);
+      ctx.bezierCurveTo(186, 68, 204, 126, 178, 190);
+      ctx.bezierCurveTo(162, 232, 90, 246, 62, 198);
+      ctx.bezierCurveTo(30, 146, 74, 100, 80, 58);
+      ctx.bezierCurveTo(96, 86, 102, 104, 106, 120);
+      ctx.bezierCurveTo(122, 92, 114, 52, 128, 14);
+      ctx.closePath();
+      ctx.clip();
+      const g = ctx.createRadialGradient(126, 154, 4, 128, 138, 124);
+      g.addColorStop(0.00, 'rgba(255,255,238,1)');
+      g.addColorStop(0.18, 'rgba(255,228,108,0.98)');
+      g.addColorStop(0.45, 'rgba(255,124,24,0.88)');
+      g.addColorStop(0.76, 'rgba(206,36,4,0.52)');
+      g.addColorStop(1.00, 'rgba(64,8,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.restore();
+    } else if (kind === 'foam') {
+      const g = ctx.createRadialGradient(128, 128, 4, 128, 128, 112);
+      g.addColorStop(0.00, 'rgba(255,255,255,0.96)');
+      g.addColorStop(0.32, 'rgba(238,250,255,0.72)');
+      g.addColorStop(0.68, 'rgba(196,232,250,0.22)');
+      g.addColorStop(1.00, 'rgba(180,224,248,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
+    } else {
+      let state = 0x8f31a5;
+      const rand = () => {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        return (state >>> 0) / 4294967296;
+      };
+      for (let i = 0; i < 28; i++) {
+        const x = 52 + rand() * 152, y = 50 + rand() * 156, r = 24 + rand() * 54;
+        const g = ctx.createRadialGradient(x, y, 2, x, y, r);
+        g.addColorStop(0.00, `rgba(248,250,252,${0.26 + rand() * 0.14})`);
+        g.addColorStop(0.55, `rgba(176,186,198,${0.13 + rand() * 0.08})`);
+        g.addColorStop(1.00, 'rgba(105,116,128,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      const g = ctx.createRadialGradient(128, 130, 14, 128, 128, 126);
+      g.addColorStop(0.00, 'rgba(255,255,255,0.12)');
+      g.addColorStop(0.45, 'rgba(225,232,238,0.10)');
+      g.addColorStop(1.00, 'rgba(145,156,168,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 256, 256);
     }
-    const tex=new THREE.CanvasTexture(canvas);tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping;tex.minFilter=THREE.LinearFilter;tex.magFilter=THREE.LinearFilter;if('colorSpace'in tex&&THREE.SRGBColorSpace!==undefined)tex.colorSpace=THREE.SRGBColorSpace;else if('encoding'in tex)tex.encoding=THREE.sRGBEncoding;tex.needsUpdate=true;tracerSpriteCache.set(kind,tex);return tex;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    if ('colorSpace' in tex && THREE.SRGBColorSpace !== undefined) tex.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in tex) tex.encoding = THREE.sRGBEncoding;
+    tex.needsUpdate = true;
+    tracerSpriteCache.set(kind, tex);
+    return tex;
   }
 
   class WasmArena {
@@ -38,7 +159,9 @@
       this.memory = exports.memory;
       const heap = exports.__heap_base;
       const start = Number(heap?.value ?? heap ?? 65536);
-      this.next = align(start + 256, 16);
+      /* Leave 16 MB headroom if sharing fe_core_engine.wasm scratch arena */
+      const minStart = exports.fe_core_abi_version ? Math.max(start + 256, this.memory.buffer.byteLength) : (start + 256);
+      this.next = align(minStart, 16);
     }
 
     alloc(byteLength, alignment = 4) {
@@ -54,15 +177,15 @@
       return pointer;
     }
 
-    allocF32(length) { return this.alloc(length * 4, 4); }
-    allocU32(length) { return this.alloc(length * 4, 4); }
-    allocU8(length) { return this.alloc(length, 1); }
+    allocF32(length) { return this.alloc(Math.max(1, length) * 4, 4); }
+    allocU32(length) { return this.alloc(Math.max(1, length) * 4, 4); }
+    allocU8(length)  { return this.alloc(Math.max(1, length), 1); }
     f32(pointer, length) { return new Float32Array(this.memory.buffer, pointer, length); }
     u32(pointer, length) { return new Uint32Array(this.memory.buffer, pointer, length); }
-    u8(pointer, length) { return new Uint8Array(this.memory.buffer, pointer, length); }
-    writeF32(pointer, values) { this.f32(pointer, values.length).set(values); }
-    writeU32(pointer, values) { this.u32(pointer, values.length).set(values); }
-    writeU8(pointer, values) { this.u8(pointer, values.length).set(values); }
+    u8(pointer, length)  { return new Uint8Array(this.memory.buffer, pointer, length); }
+    writeF32(pointer, values) { if (values.length) this.f32(pointer, values.length).set(values); }
+    writeU32(pointer, values) { if (values.length) this.u32(pointer, values.length).set(values); }
+    writeU8(pointer, values)  { if (values.length) this.u8(pointer, values.length).set(values); }
   }
 
   function meshTopology(geometry, type, params = {}) {
@@ -75,14 +198,23 @@
     const uniqueByPosition = new Map();
     for (let i = 0; i < originalCount; i++) {
       const x = attribute.getX(i), y = attribute.getY(i), z = attribute.getZ(i);
-      originalPositions.set([x, y, z], i * 3);
+      originalPositions[i * 3] = x;
+      originalPositions[i * 3 + 1] = y;
+      originalPositions[i * 3 + 2] = z;
       const key = `${Math.round(x * 100000)},${Math.round(y * 100000)},${Math.round(z * 100000)}`;
       let node = uniqueByPosition.get(key);
-      if (node === undefined) { node = unique.length / 3; uniqueByPosition.set(key, node); unique.push(x, y, z); }
+      if (node === undefined) {
+        node = unique.length / 3;
+        uniqueByPosition.set(key, node);
+        unique.push(x, y, z);
+      }
       vertexMap[i] = node;
     }
     const sourceIndices = geometry.index?.array;
     const indexCount = sourceIndices?.length ?? originalCount;
+    const renderIndices = new Uint32Array(indexCount);
+    for (let i = 0; i < indexCount; i++) renderIndices[i] = sourceIndices ? sourceIndices[i] : i;
+
     const edgeRecords = new Map(), faces = [];
     const registerEdge = (rawA, rawB, rawOpposite) => {
       const a = vertexMap[rawA], b = vertexMap[rawB], opposite = vertexMap[rawOpposite];
@@ -93,16 +225,19 @@
       if (!record.opposites.includes(opposite)) record.opposites.push(opposite);
     };
     for (let i = 0; i + 2 < indexCount; i += 3) {
-      const a = sourceIndices ? sourceIndices[i] : i;
-      const b = sourceIndices ? sourceIndices[i + 1] : i + 1;
-      const c = sourceIndices ? sourceIndices[i + 2] : i + 2;
+      const a = renderIndices[i], b = renderIndices[i + 1], c = renderIndices[i + 2];
       const fa = vertexMap[a], fb = vertexMap[b], fc = vertexMap[c];
       if (fa !== fb && fb !== fc && fc !== fa) faces.push(fa, fb, fc);
-      registerEdge(a, b, c); registerEdge(b, c, a); registerEdge(c, a, b);
+      registerEdge(a, b, c);
+      registerEdge(b, c, a);
+      registerEdge(c, a, b);
     }
     if (!edgeRecords.size) throw new Error('Simulation mesh has no triangle-edge constraints');
     const rest = new Float32Array(unique);
-    const distance = (a, b) => { const ia = a * 3, ib = b * 3; return Math.hypot(rest[ia] - rest[ib], rest[ia + 1] - rest[ib + 1], rest[ia + 2] - rest[ib + 2]); };
+    const distance = (a, b) => {
+      const ia = a * 3, ib = b * 3;
+      return Math.hypot(rest[ia] - rest[ib], rest[ia + 1] - rest[ib + 1], rest[ia + 2] - rest[ib + 2]);
+    };
     const baseEdges = [...edgeRecords.values()].map(edge => ({ ...edge, length: distance(edge.a, edge.b) }));
     const sortedLengths = baseEdges.map(edge => edge.length).filter(value => value > 1e-8).sort((a, b) => a - b);
     const medianLength = sortedLengths[Math.floor(sortedLengths.length / 2)] || 1;
@@ -114,19 +249,34 @@
       if (a === b) return;
       const lo = Math.min(a, b), hi = Math.max(a, b), key = `${lo}:${hi}`;
       if (seen.has(key)) return;
-      seen.add(key); constraints.push({ a: lo, b: hi, length: distance(lo, hi), weight: clamp(weight, 0, 1) });
+      seen.add(key);
+      constraints.push({ a: lo, b: hi, length: distance(lo, hi), weight: clamp(weight, 0, 1) });
     };
     for (const edge of baseEdges) {
       const isShearDiagonal = type === 'Cloth' && edge.length > medianLength * 1.35;
       addConstraint(edge.a, edge.b, isShearDiagonal ? shearWeight : 1);
-      if (type === 'Cloth' && edge.opposites.length === 2) addConstraint(edge.opposites[0], edge.opposites[1], bendWeight);
+      if (edge.opposites.length === 2) addConstraint(edge.opposites[0], edge.opposites[1], type === 'Cloth' ? bendWeight : 0.35);
     }
     const edgePairs = new Uint32Array(constraints.length * 2), edgeLengths = new Float32Array(constraints.length), edgeWeights = new Float32Array(constraints.length);
     for (let i = 0; i < constraints.length; i++) {
-      const edge = constraints[i]; edgePairs[i * 2] = edge.a; edgePairs[i * 2 + 1] = edge.b;
-      edgeLengths[i] = edge.length; edgeWeights[i] = edge.weight;
+      const edge = constraints[i];
+      edgePairs[i * 2] = edge.a;
+      edgePairs[i * 2 + 1] = edge.b;
+      edgeLengths[i] = edge.length;
+      edgeWeights[i] = edge.weight;
     }
-    return { attribute, vertexMap, originalPositions, rest, edgePairs, edgeLengths, edgeWeights, faces: new Uint32Array(faces) };
+    return {
+      attribute,
+      vertexMap,
+      renderIndices,
+      originalPositions,
+      rest,
+      edgePairs,
+      edgeLengths,
+      edgeWeights,
+      faces: new Uint32Array(faces),
+      medianEdgeLength: medianLength
+    };
   }
 
   function withSoftBodyVolume(topology) {
@@ -134,7 +284,11 @@
     const faces = topology.faces;
     if (surfaceNodes < 4 || !faces || faces.length < 12 || faces.length / 3 > 8192) return topology;
     let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < topology.rest.length; i += 3) { cx += topology.rest[i]; cy += topology.rest[i + 1]; cz += topology.rest[i + 2]; }
+    for (let i = 0; i < topology.rest.length; i += 3) {
+      cx += topology.rest[i];
+      cy += topology.rest[i + 1];
+      cz += topology.rest[i + 2];
+    }
     cx /= surfaceNodes; cy /= surfaceNodes; cz /= surfaceNodes;
     let signedTotal = 0;
     const tetrahedra = [], restVolumes = [];
@@ -146,21 +300,37 @@
       const volume = (ax * (by * dz - bz * dy) + ay * (bz * dx - bx * dz) + az * (bx * dy - by * dx)) / 6;
       if (!Number.isFinite(volume) || Math.abs(volume) < 1e-10) continue;
       tetrahedra.push(surfaceNodes, faces[i], faces[i + 1], faces[i + 2]);
-      restVolumes.push(volume); signedTotal += volume;
+      restVolumes.push(volume);
+      signedTotal += volume;
     }
     if (tetrahedra.length < 12 || Math.abs(signedTotal) < 1e-8) return topology;
     const orientation = Math.sign(signedTotal);
     if (restVolumes.some(volume => Math.sign(volume) !== orientation)) return topology;
     const rest = new Float32Array((surfaceNodes + 1) * 3);
-    rest.set(topology.rest); rest[surfaceNodes * 3] = cx; rest[surfaceNodes * 3 + 1] = cy; rest[surfaceNodes * 3 + 2] = cz;
+    rest.set(topology.rest);
+    rest[surfaceNodes * 3] = cx;
+    rest[surfaceNodes * 3 + 1] = cy;
+    rest[surfaceNodes * 3 + 2] = cz;
     const edgePairs = Array.from(topology.edgePairs), edgeLengths = Array.from(topology.edgeLengths), edgeWeights = Array.from(topology.edgeWeights);
     let edgeLengthTotal = 0;
     for (const length of edgeLengths) edgeLengthTotal += length;
     for (let node = 0; node < surfaceNodes; node++) {
       const i = node * 3, dx = rest[i] - cx, dy = rest[i + 1] - cy, dz = rest[i + 2] - cz;
-      edgePairs.push(surfaceNodes, node); edgeLengths.push(Math.hypot(dx, dy, dz)); edgeWeights.push(0.45);
+      edgePairs.push(surfaceNodes, node);
+      edgeLengths.push(Math.hypot(dx, dy, dz));
+      edgeWeights.push(0.55);
     }
-    return { ...topology, rest, edgePairs: new Uint32Array(edgePairs), edgeLengths: new Float32Array(edgeLengths), edgeWeights: new Float32Array(edgeWeights), volumeTets: new Uint32Array(tetrahedra), volumeRest: new Float32Array(restVolumes), surfaceNodeCount: surfaceNodes, averageEdgeLength: edgeLengthTotal / Math.max(topology.edgeLengths.length, 1) };
+    return {
+      ...topology,
+      rest,
+      edgePairs: new Uint32Array(edgePairs),
+      edgeLengths: new Float32Array(edgeLengths),
+      edgeWeights: new Float32Array(edgeWeights),
+      volumeTets: new Uint32Array(tetrahedra),
+      volumeRest: new Float32Array(restVolumes),
+      surfaceNodeCount: surfaceNodes,
+      averageEdgeLength: edgeLengthTotal / Math.max(topology.edgeLengths.length, 1)
+    };
   }
 
   function boundsFromPoints(points, padding = 0) {
@@ -170,7 +340,14 @@
       maxX = Math.max(maxX, points[i]); maxY = Math.max(maxY, points[i + 1]); maxZ = Math.max(maxZ, points[i + 2]);
     }
     const sx = Math.max(maxX - minX, 0.25), sy = Math.max(maxY - minY, 0.25), sz = Math.max(maxZ - minZ, 0.25);
-    return new Float32Array([minX - Math.max(sx * 0.5, padding), minY - Math.max(sy * 2, padding), minZ - Math.max(sz * 0.5, padding), maxX + Math.max(sx * 0.5, padding), maxY + Math.max(sy * 0.5, padding), maxZ + Math.max(sz * 0.5, padding)]);
+    return new Float32Array([
+      minX - Math.max(sx * 2.5, padding, 4),
+      minY - Math.max(sy * 4.0, padding, 6),
+      minZ - Math.max(sz * 2.5, padding, 4),
+      maxX + Math.max(sx * 2.5, padding, 4),
+      maxY + Math.max(sy * 2.5, padding, 4),
+      maxZ + Math.max(sz * 2.5, padding, 4)
+    ]);
   }
 
   function worldBounds(mesh, padding = 0) {
@@ -178,72 +355,325 @@
     mesh.updateMatrixWorld?.(true);
     const box = new THREE.Box3().setFromObject(mesh);
     if (box.isEmpty()) throw new Error('Fluid mesh has empty world bounds');
-    const sx = Math.max(box.max.x - box.min.x, 0.25), sy = Math.max(box.max.y - box.min.y, 0.25), sz = Math.max(box.max.z - box.min.z, 0.25);
     return new Float32Array([
       box.min.x - padding, box.min.y - padding, box.min.z - padding,
-      box.max.x + padding, box.max.y + padding, box.max.z + padding,
+      box.max.x + padding, box.max.y + padding, box.max.z + padding
     ]);
   }
 
-  function lattice(bounds, params, liquid) {
+  function lattice(bounds, params, liquid, useCppBudget = false) {
     const sx = bounds[3] - bounds[0], sy = bounds[4] - bounds[1], sz = bounds[5] - bounds[2];
     const maxDim = Math.max(sx, sy, sz, 0.25);
     const resolution = clamp(Math.round(number(params, 'Resolution', 80) / 8), 4, 12);
-    let nx = Math.max(3, Math.round(resolution * sx / maxDim));
-    let ny = Math.max(3, Math.round(resolution * sy / maxDim));
-    let nz = Math.max(3, Math.round(resolution * sz / maxDim));
-    while (nx * ny * nz > MAX_PARTICLES) {
+    const scaledRes = (liquid && useCppBudget) ? Math.round(resolution * 1.25) : resolution;
+    const cap = (liquid && useCppBudget) ? CPP_ULTRA_MAX_PARTICLES : MAX_PARTICLES;
+    let nx = Math.max(3, Math.round(scaledRes * sx / maxDim));
+    let ny = Math.max(3, Math.round(scaledRes * sy / maxDim));
+    let nz = Math.max(3, Math.round(scaledRes * sz / maxDim));
+    while (nx * ny * nz > cap) {
       if (nx >= ny && nx >= nz) nx--;
       else if (ny >= nz) ny--;
       else nz--;
     }
-    const fillBottom = liquid ? 0.58 : 0.18;
+    const fillBottom = liquid ? 0.56 : 0.18;
     const insetX = sx * 0.08, insetZ = sz * 0.08;
     const lowX = bounds[0] + insetX, highX = bounds[3] - insetX;
     const lowZ = bounds[2] + insetZ, highZ = bounds[5] - insetZ;
-    const lowY = bounds[1] + sy * 0.08, highY = bounds[1] + sy * fillBottom;
+    const lowY = bounds[1] + sy * 0.06, highY = bounds[1] + sy * fillBottom;
     const positions = [];
-    for (let iy = 0; iy < ny; iy++) for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
-      const x = lowX + (ix + 0.5) * (highX - lowX) / nx;
-      const y = lowY + (iy + 0.5) * (highY - lowY) / ny;
-      const z = lowZ + (iz + 0.5) * (highZ - lowZ) / nz;
-      if (liquid) {
-        const rx = (x - (lowX + highX) * 0.5) / Math.max((highX - lowX) * 0.5, 1e-4);
-        const rz = (z - (lowZ + highZ) * 0.5) / Math.max((highZ - lowZ) * 0.5, 1e-4);
-        if (rx * rx + rz * rz > 1.15) continue;
+    for (let iy = 0; iy < ny; iy++) {
+      for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+          /* Slight deterministic jitter breaks grid-aliasing staircases while keeping crystal symmetry */
+          const jx = (((ix * 73 + iy * 19 + iz * 37) % 11) - 5) * 0.008;
+          const jz = (((ix * 41 + iy * 53 + iz * 17) % 11) - 5) * 0.008;
+          const x = lowX + (ix + 0.5 + jx) * (highX - lowX) / nx;
+          const y = lowY + (iy + 0.5) * (highY - lowY) / ny;
+          const z = lowZ + (iz + 0.5 + jz) * (highZ - lowZ) / nz;
+          if (liquid) {
+            const rx = (x - (lowX + highX) * 0.5) / Math.max((highX - lowX) * 0.5, 1e-4);
+            const rz = (z - (lowZ + highZ) * 0.5) / Math.max((highZ - lowZ) * 0.5, 1e-4);
+            if (rx * rx + rz * rz > 1.15) continue;
+          }
+          positions.push(x, y, z);
+        }
       }
-      positions.push(x, y, z);
     }
     const particlePositions = new Float32Array(positions);
     const spacing = maxDim / Math.max(nx, ny, nz);
-    const h = Math.max(spacing * 1.9, 0.08);
+    const h = Math.max(spacing * 1.85, 0.08);
     const h2 = h * h, h3 = h2 * h, h6 = h3 * h3, h9 = h6 * h3, poly6 = 315 / (64 * Math.PI * Math.max(h9, 1e-12));
     let kernelTotal = 0;
-    for (let i = 0; i < particlePositions.length; i += 3) {
+    const sampleStride = Math.max(1, Math.floor((particlePositions.length / 3) / 192));
+    let sampled = 0;
+    for (let i = 0; i < particlePositions.length; i += 3 * sampleStride) {
       let rho = 0;
       for (let j = 0; j < particlePositions.length; j += 3) {
-        const dx = particlePositions[i] - particlePositions[j], dy = particlePositions[i + 1] - particlePositions[j + 1], dz = particlePositions[i + 2] - particlePositions[j + 2];
+        const dx = particlePositions[i] - particlePositions[j];
+        const dy = particlePositions[i + 1] - particlePositions[j + 1];
+        const dz = particlePositions[i + 2] - particlePositions[j + 2];
         const q = h2 - dx * dx - dy * dy - dz * dz;
         if (q > 0) rho += poly6 * q * q * q;
       }
       kernelTotal += rho;
+      sampled++;
     }
-    const averageKernel = kernelTotal / Math.max(particlePositions.length / 3, 1);
+    const averageKernel = kernelTotal / Math.max(sampled, 1);
     const mass = averageKernel > 1e-8 ? 1 / averageKernel : 1;
-    return { positions: particlePositions, spacing, smoothingLength: h, mass, radius: spacing * 0.56 };
+    return { positions: particlePositions, spacing, smoothingLength: h, mass, radius: spacing * 0.54 };
   }
 
-  function closestPointOnTriangle(px,py,pz,t,out){
-    const ax=t.a[0],ay=t.a[1],az=t.a[2],abx=t.b[0]-ax,aby=t.b[1]-ay,abz=t.b[2]-az,acx=t.c[0]-ax,acy=t.c[1]-ay,acz=t.c[2]-az,apx=px-ax,apy=py-ay,apz=pz-az,d1=abx*apx+aby*apy+abz*apz,d2=acx*apx+acy*apy+acz*apz;
-    if(d1<=0&&d2<=0){out[0]=ax;out[1]=ay;out[2]=az;return}
-    const bpx=px-t.b[0],bpy=py-t.b[1],bpz=pz-t.b[2],d3=abx*bpx+aby*bpy+abz*bpz,d4=acx*bpx+acy*bpy+acz*bpz;
-    if(d3>=0&&d4<=d3){out[0]=t.b[0];out[1]=t.b[1];out[2]=t.b[2];return}
-    const vc=d1*d4-d3*d2;if(vc<=0&&d1>=0&&d3<=0){const v=d1/(d1-d3);out[0]=ax+v*abx;out[1]=ay+v*aby;out[2]=az+v*abz;return}
-    const cpx=px-t.c[0],cpy=py-t.c[1],cpz=pz-t.c[2],d5=abx*cpx+aby*cpy+abz*cpz,d6=acx*cpx+acy*cpy+acz*cpz;
-    if(d6>=0&&d5<=d6){out[0]=t.c[0];out[1]=t.c[1];out[2]=t.c[2];return}
-    const vb=d5*d2-d1*d6;if(vb<=0&&d2>=0&&d6<=0){const w=d2/(d2-d6);out[0]=ax+w*acx;out[1]=ay+w*acy;out[2]=az+w*acz;return}
-    const va=d3*d6-d5*d4;if(va<=0&&(d4-d3)>=0&&(d5-d6)>=0){const w=(d4-d3)/((d4-d3)+(d5-d6));out[0]=t.b[0]+w*(t.c[0]-t.b[0]);out[1]=t.b[1]+w*(t.c[1]-t.b[1]);out[2]=t.b[2]+w*(t.c[2]-t.b[2]);return}
-    const inv=1/(va+vb+vc),v=vb*inv,w=vc*inv;out[0]=ax+abx*v+acx*w;out[1]=ay+aby*v+acy*w;out[2]=az+abz*v+acz*w;
+  function closestPointOnTriangle(px, py, pz, t, out) {
+    const ax = t.a[0], ay = t.a[1], az = t.a[2];
+    const abx = t.b[0] - ax, aby = t.b[1] - ay, abz = t.b[2] - az;
+    const acx = t.c[0] - ax, acy = t.c[1] - ay, acz = t.c[2] - az;
+    const apx = px - ax, apy = py - ay, apz = pz - az;
+    const d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz;
+    if (d1 <= 0 && d2 <= 0) { out[0] = ax; out[1] = ay; out[2] = az; return; }
+    const bpx = px - t.b[0], bpy = py - t.b[1], bpz = pz - t.b[2];
+    const d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz;
+    if (d3 >= 0 && d4 <= d3) { out[0] = t.b[0]; out[1] = t.b[1]; out[2] = t.b[2]; return; }
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); out[0] = ax + v * abx; out[1] = ay + v * aby; out[2] = az + v * abz; return; }
+    const cpx = px - t.c[0], cpy = py - t.c[1], cpz = pz - t.c[2];
+    const d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz;
+    if (d6 >= 0 && d5 <= d6) { out[0] = t.c[0]; out[1] = t.c[1]; out[2] = t.c[2]; return; }
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); out[0] = ax + w * acx; out[1] = ay + w * acy; out[2] = az + w * acz; return; }
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+      const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+      out[0] = t.b[0] + w * (t.c[0] - t.b[0]);
+      out[1] = t.b[1] + w * (t.c[1] - t.b[1]);
+      out[2] = t.b[2] + w * (t.c[2] - t.b[2]);
+      return;
+    }
+    const inv = 1 / (va + vb + vc), v = vb * inv, w = vc * inv;
+    out[0] = ax + abx * v + acx * w;
+    out[1] = ay + aby * v + acy * w;
+    out[2] = az + abz * v + acz * w;
+  }
+
+  /* ---- Photorealistic Custom Shader Injectors (Three.js r128 Compatible) ---- */
+  function enhanceLiquidPhysicalShader(material, preset) {
+    const uniforms = {
+      uSimTime: { value: 0 },
+      uEnvTex: { value: getStudioEnvMap() },
+      uHasEnvTex: { value: getStudioEnvMap() ? 1 : 0 },
+      uAbsorption: {
+        value: preset === 'Honey'
+          ? new THREE.Vector3(0.45, 1.65, 4.8)
+          : preset === 'Oil'
+            ? new THREE.Vector3(1.8, 2.9, 5.2)
+            : preset === 'Slime'
+              ? new THREE.Vector3(2.8, 0.55, 2.1)
+              : new THREE.Vector3(2.45, 0.42, 0.16)
+      },
+      uIor: { value: preset === 'Honey' ? 1.50 : preset === 'Oil' ? 1.48 : preset === 'Slime' ? 1.38 : 1.333 },
+      uFoamTint: {
+        value: preset === 'Honey'
+          ? new THREE.Vector3(1.0, 0.94, 0.76)
+          : preset === 'Slime'
+            ? new THREE.Vector3(0.84, 1.0, 0.92)
+            : new THREE.Vector3(0.95, 0.99, 1.0)
+      }
+    };
+    material.userData.liquidUniforms = uniforms;
+    material.userData.ultraSimShader = 'liquid-pbr';
+    material.customProgramCacheKey = () => `fe-ultra-liquid-${preset}-v3`;
+
+    material.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          attribute vec2 aFoam;
+          varying vec2 vFoamSpeed;
+          varying vec3 vWorldPosSim;
+          varying vec3 vWorldNrmSim;`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          vFoamSpeed = aFoam;
+          vec4 simWp = modelMatrix * vec4(transformed, 1.0);
+          vWorldPosSim = simWp.xyz;
+          vWorldNrmSim = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform float uSimTime;
+          uniform sampler2D uEnvTex;
+          uniform float uHasEnvTex;
+          uniform vec3 uAbsorption;
+          uniform float uIor;
+          uniform vec3 uFoamTint;
+          varying vec2 vFoamSpeed;
+          varying vec3 vWorldPosSim;
+          varying vec3 vWorldNrmSim;
+
+          vec2 feDirToEquirect(vec3 dir) {
+            vec3 d = normalize(dir);
+            float u = atan(d.z, d.x) * 0.15915494 + 0.5;
+            float v = asin(clamp(d.y, -1.0, 1.0)) * 0.31830988 + 0.5;
+            return vec2(u, v);
+          }`
+        )
+        .replace(
+          '#include <dithering_fragment>',
+          `if (uHasEnvTex > 0.5) {
+            vec3 Vw = normalize(cameraPosition - vWorldPosSim);
+            /* Subtle capillary micro-ripple normal detail */
+            float cap1 = sin(vWorldPosSim.x * 26.0 + uSimTime * 4.2) * cos(vWorldPosSim.z * 24.0 - uSimTime * 3.7);
+            float cap2 = sin((vWorldPosSim.x + vWorldPosSim.z) * 43.0 - uSimTime * 5.8);
+            vec3 Nw = normalize(vWorldNrmSim + vec3(cap1, 0.0, cap2) * 0.018);
+            if (!gl_FrontFacing) Nw = -Nw;
+
+            float ndotv = clamp(dot(Nw, Vw), 0.0, 1.0);
+            float f0 = pow((1.0 - uIor) / (1.0 + uIor), 2.0);
+            float fresnel = f0 + (1.0 - f0) * pow(1.0 - ndotv, 5.0);
+
+            vec3 reflDir = reflect(-Vw, Nw);
+            vec3 refrDirR = refract(-Vw, Nw, 1.0 / (uIor * 0.992));
+            vec3 refrDirG = refract(-Vw, Nw, 1.0 / uIor);
+            vec3 refrDirB = refract(-Vw, Nw, 1.0 / (uIor * 1.008));
+            if (length(refrDirG) < 0.001) refrDirG = reflDir;
+
+            vec3 envRefl = texture2D(uEnvTex, feDirToEquirect(reflDir)).rgb;
+            vec3 envRefr = vec3(
+              texture2D(uEnvTex, feDirToEquirect(refrDirR)).r,
+              texture2D(uEnvTex, feDirToEquirect(refrDirG)).g,
+              texture2D(uEnvTex, feDirToEquirect(refrDirB)).b
+            );
+
+            /* Beer-Lambert volumetric absorption + internal caustic shimmer */
+            float optDepth = mix(1.35, 0.22, ndotv);
+            vec3 transmittance = exp(-uAbsorption * optDepth);
+            float caustic = pow(max(0.0, sin(vWorldPosSim.x * 14.0 + uSimTime * 3.1) * sin(vWorldPosSim.z * 14.0 - uSimTime * 2.6)), 3.0) * 0.22;
+            vec3 bodyColor = envRefr * transmittance + transmittance * caustic * 0.45;
+
+            /* Subsurface wave-crest forward scatter */
+            vec3 sunDir = normalize(vec3(0.45, 0.82, 0.35));
+            float crestSss = pow(clamp(dot(-Vw, sunDir + Nw * 0.45), 0.0, 1.0), 3.0) * (1.0 - ndotv) * 0.42;
+            bodyColor += transmittance * crestSss;
+
+            /* Crisp GGX-like sun specular glint */
+            vec3 H = normalize(Vw + sunDir);
+            float sunGlint = pow(max(dot(Nw, H), 0.0), 220.0) * 1.85;
+
+            vec3 optical = mix(bodyColor, envRefl * 1.28, clamp(fresnel * 1.15, 0.04, 0.96)) + vec3(sunGlint);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, optical, 0.72);
+
+            /* Aerated whitewater crest & vortex foam from C++ solver */
+            float foamMask = clamp(vFoamSpeed.x * 1.15 + smoothstep(2.2, 5.5, vFoamSpeed.y) * 0.45, 0.0, 0.92);
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, uFoamTint, foamMask);
+            gl_FragColor.a = clamp(mix(0.84, 0.99, fresnel + foamMask * 0.65), 0.80, 1.0);
+          }
+          #include <dithering_fragment>`
+        );
+    };
+    return material;
+  }
+
+  function enhanceDeformableShader(mesh, type, params = {}) {
+    const preset = params[type === 'Cloth' ? 'Fabric Preset' : 'Soft Body Preset'] || (type === 'Cloth' ? 'Silk Satin' : 'Translucent Jelly');
+    if (preset === 'Keep Mesh Material') return;
+    if (!mesh.userData.savedSimBaseMaterial && mesh.material) {
+      mesh.userData.savedSimBaseMaterial = mesh.material;
+    }
+    const baseColor = mesh.userData.savedSimBaseMaterial?.color?.clone?.() || new THREE.Color(type === 'Cloth' ? 0x6366f1 : 0xec4899);
+
+    let color = baseColor.clone();
+    let roughness = 0.45, metalness = 0.02, sheenStrength = 0.55, sssStrength = 0.25, clearcoat = 0.0;
+    if (type === 'Cloth') {
+      if (preset === 'Silk Satin')   { roughness = 0.24; sheenStrength = 0.85; sssStrength = 0.28; clearcoat = 0.18; }
+      else if (preset === 'Velvet')  { roughness = 0.68; sheenStrength = 1.15; sssStrength = 0.16; }
+      else if (preset === 'Cotton')  { roughness = 0.78; sheenStrength = 0.35; sssStrength = 0.22; }
+      else if (preset === 'Denim')   { roughness = 0.84; sheenStrength = 0.28; sssStrength = 0.08; }
+      else if (preset === 'Leather') { roughness = 0.32; sheenStrength = 0.22; sssStrength = 0.06; clearcoat = 0.35; }
+    } else {
+      if (preset === 'Translucent Jelly') { roughness = 0.08; sheenStrength = 0.35; sssStrength = 0.85; clearcoat = 1.0; }
+      else if (preset === 'Silicone Gel') { roughness = 0.18; sheenStrength = 0.28; sssStrength = 0.58; clearcoat = 0.75; }
+      else if (preset === 'Latex Rubber') { roughness = 0.28; sheenStrength = 0.20; sssStrength = 0.22; clearcoat = 0.45; }
+      else if (preset === 'Memory Foam')  { roughness = 0.82; sheenStrength = 0.32; sssStrength = 0.14; clearcoat = 0.0; }
+    }
+
+    const mat = new THREE.MeshPhysicalMaterial({
+      color,
+      roughness,
+      metalness,
+      clearcoat,
+      clearcoatRoughness: 0.06,
+      envMap: getStudioEnvMap(),
+      envMapIntensity: type === 'SoftBody' ? 1.15 : 0.75,
+      side: THREE.DoubleSide
+    });
+    mat.userData.ultraSimShader = type === 'Cloth' ? 'cloth-vellum' : 'softbody-sss';
+    mat.customProgramCacheKey = () => `fe-ultra-${type}-${preset}-v3`;
+
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uSheenStrength = { value: sheenStrength };
+      shader.uniforms.uSssStrength = { value: sssStrength };
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          attribute float aStrain;
+          varying float vSimStrain;
+          varying vec3 vSimWorldPos;
+          varying vec3 vSimWorldNrm;`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          vSimStrain = aStrain;
+          vSimWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          vSimWorldNrm = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+          uniform float uSheenStrength;
+          uniform float uSssStrength;
+          varying float vSimStrain;
+          varying vec3 vSimWorldPos;
+          varying vec3 vSimWorldNrm;`
+        )
+        .replace(
+          '#include <dithering_fragment>',
+          `{
+            vec3 Vw = normalize(cameraPosition - vSimWorldPos);
+            vec3 Nw = normalize(vSimWorldNrm);
+            if (!gl_FrontFacing) Nw = -Nw;
+            float ndotv = clamp(dot(Nw, Vw), 0.0, 1.0);
+
+            /* Charlie microfiber grazing sheen + wrinkle fold cavity AO */
+            float sheen = pow(1.0 - ndotv, 3.2) * uSheenStrength;
+            float foldAo = clamp(1.0 + min(vSimStrain, 0.0) * 0.42, 0.58, 1.0);
+            float stretchSheen = max(vSimStrain, 0.0) * 0.18;
+
+            /* Subsurface translucent wrap illumination */
+            vec3 keyDir = normalize(vec3(0.48, 0.78, 0.40));
+            float wrap = clamp((dot(Nw, keyDir) + 0.55) / 1.55, 0.0, 1.0);
+            float backTrans = pow(clamp(dot(-Vw, keyDir + Nw * 0.35), 0.0, 1.0), 2.4) * uSssStrength;
+
+            gl_FragColor.rgb *= foldAo;
+            gl_FragColor.rgb += diffuseColor.rgb * (backTrans * 0.72 + wrap * uSssStrength * 0.18);
+            gl_FragColor.rgb += mix(diffuseColor.rgb, vec3(1.0), 0.55) * (sheen * 0.36 + stretchSheen);
+          }
+          #include <dithering_fragment>`
+        );
+    };
+
+    mesh.material = mat;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
   }
 
   class UltraSimEngine {
@@ -252,12 +682,14 @@
       this.effectors = new Map();
       this.collisionSurfaceCache = new Map();
       this.frameCount = 0;
+      this.simClock = 0;
       this.wasm = null;
       this.arena = null;
+      this.isCppBackend = false;
       this.loadError = null;
       this.ready = this.loadWasm().then(() => { this.updateStatusBadge(); return true; }).catch((error) => {
         this.loadError = error;
-        console.error('[SimulationEngine] Rust/WASM solver could not be loaded; simulations are stopped rather than replaced with fake motion.', error);
+        console.error('[SimulationEngine] C++20/WASM solver could not be loaded; simulations are stopped rather than replaced with fake motion.', error);
         global.FE?.toast?.(`WASM physics unavailable: ${error?.message || error}`);
         this.updateStatusBadge();
         return false;
@@ -265,15 +697,30 @@
       global.document?.addEventListener('DOMContentLoaded', () => this.updateStatusBadge(), { once: true });
     }
 
+    getSolverDiagnostics() {
+      return {
+        ready: !!this.wasm,
+        isCppBackend: !!this.isCppBackend,
+        backendLabel: this.isCppBackend ? 'C++20/WASM v3 (XPBD + PBF/FLIP + Smooth SDF)' : `WASM v${this.abiVersion || 0}`,
+        abiVersion: this.abiVersion || 0,
+        activeSimulations: [...this.simMeshes.values()].filter(r => r.status === 'running').length
+      };
+    }
+
     updateStatusBadge() {
       const badge = global.document?.getElementById('tb-status-badge');
       if (!badge) return;
       if (this.loadError) { badge.textContent = 'Physics: WASM unavailable'; return; }
-      if (!this.wasm) { badge.textContent = 'Physics: Loading Rust/WASM…'; return; }
+      if (!this.wasm) { badge.textContent = 'Physics: Loading C++20/WASM…'; return; }
       const records = [...this.simMeshes.values()];
       const failed = records.find(record => record.status === 'error');
       const active = records.filter(record => record.status === 'running').length;
-      badge.textContent = failed ? `Physics error · ${failed.type}` : active ? `Physics: Rust/WASM v${this.abiVersion} · ${active} active` : `Physics: Rust/WASM v${this.abiVersion} ready`;
+      const tag = this.isCppBackend ? 'C++20/WASM v3' : `WASM v${this.abiVersion}`;
+      badge.textContent = failed
+        ? `Physics error · ${failed.type}`
+        : active
+          ? `Physics: ${tag} · ${active} active`
+          : `Physics: ${tag} ready`;
     }
 
     getSimKey(type) {
@@ -285,21 +732,36 @@
 
     async loadWasm() {
       if (typeof WebAssembly === 'undefined') throw new Error('WebAssembly is not available in this browser');
-      const urls = ['./simulation_solver.wasm', './wasm/simulation_solver.wasm'];
-      let response = null;
-      for (const path of urls) {
-        const candidate = await fetch(new URL(path, document.baseURI), { cache: 'no-cache' });
-        if (candidate.ok) { response = candidate; break; }
+      let bytes = null;
+      if (global.__FE_CPP_WASM_BASE64__ && typeof atob === 'function') {
+        const bin = atob(global.__FE_CPP_WASM_BASE64__);
+        const u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        bytes = u8.buffer;
       }
-      if (!response) throw new Error('WASM request failed at the app root and ./wasm/ fallback paths');
-      const bytes = await response.arrayBuffer();
+      if (!bytes) {
+        const cppUrls = ['./fe_core_engine.wasm', './wasm/fe_core_engine.wasm'];
+        const urls = ['./simulation_solver.wasm', './wasm/simulation_solver.wasm'];
+        let response = null;
+        for (const path of [...cppUrls, ...urls]) {
+          try {
+            const targetUrl = document?.baseURI ? new URL(path, document.baseURI) : path;
+            const candidate = await fetch(targetUrl, { cache: 'no-cache' });
+            if (candidate && candidate.ok) { response = candidate; break; }
+          } catch (_) {}
+        }
+        if (!response) throw new Error('WASM request failed at the app root and ./wasm/ fallback paths');
+        bytes = await response.arrayBuffer();
+      }
       const { instance } = await WebAssembly.instantiate(bytes, {});
       const exports = instance.exports;
+      if (typeof exports.fe_core_abi_version === 'function') exports.fe_core_abi_version();
       const required = ['memory', '__heap_base', 'sim_solver_abi_version', 'sim_solver_deformable_step', 'sim_solver_sph_step', 'sim_solver_buoyant_tracer_step'];
       for (const name of required) if (!exports[name]) throw new Error(`WASM solver export missing: ${name}`);
       const abiVersion = exports.sim_solver_abi_version();
-      if (![1, 2].includes(abiVersion)) throw new Error(`Unsupported solver ABI version ${abiVersion}`);
+      if (![1, 2, 3].includes(abiVersion)) throw new Error(`Unsupported solver ABI version ${abiVersion}`);
       this.abiVersion = abiVersion;
+      this.isCppBackend = typeof exports.fe_sim_backend_magic === 'function' && exports.fe_sim_backend_magic() === 0x43505033;
       this.wasm = exports;
       this.arena = new WasmArena(exports);
     }
@@ -315,7 +777,12 @@
       this.updateStatusBadge();
       this.ready.then((ok) => {
         if (this.simMeshes.get(mesh.uuid) !== record) return;
-        if (!ok) { record.status = 'error'; record.error = this.loadError?.message || 'WASM unavailable'; this.updateStatusBadge(); return; }
+        if (!ok) {
+          record.status = 'error';
+          record.error = this.loadError?.message || 'WASM unavailable';
+          this.updateStatusBadge();
+          return;
+        }
         try {
           if (type === 'Fluid') this.initFluidSimulation(mesh, record.params, record);
           else this.initClothSoftBody(mesh, type, record.params, record);
@@ -341,20 +808,25 @@
     selectClothPins(mesh, topology, pinned, params = {}) {
       const mode = params['Pinning Mode'] || 'Auto Top Edge';
       if (mode === 'Free' || !pinned.length) return;
-      mesh.updateWorldMatrix?.(true, false); mesh.updateMatrixWorld?.(true);
+      mesh.updateWorldMatrix?.(true, false);
+      mesh.updateMatrixWorld?.(true);
       const matrix = mesh.matrixWorld || new THREE.Matrix4(), count = pinned.length, world = new Float64Array(count * 3), v = new THREE.Vector3();
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
       for (let node = 0; node < count; node++) {
-        const i = node * 3; v.set(topology.rest[i], topology.rest[i + 1], topology.rest[i + 2]).applyMatrix4(matrix);
+        const i = node * 3;
+        v.set(topology.rest[i], topology.rest[i + 1], topology.rest[i + 2]).applyMatrix4(matrix);
         world[i] = v.x; world[i + 1] = v.y; world[i + 2] = v.z;
-        minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x); minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y); minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
+        minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+        minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+        minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z);
       }
       const spanY = maxY - minY, spanX = maxX - minX, spanZ = maxZ - minZ;
       if (mode !== 'Two Corners') {
         const cutoff = maxY - Math.max(spanY * 0.025, Math.max(spanX, spanZ) * 0.002, 1e-4);
         for (let node = 0; node < count; node++) if (world[node * 3 + 1] >= cutoff) pinned[node] = 1;
       }
-      let pinnedCount = 0; for (const value of pinned) pinnedCount += value;
+      let pinnedCount = 0;
+      for (const value of pinned) pinnedCount += value;
       if (mode === 'Two Corners' || !pinnedCount || pinnedCount > count * 0.75) {
         pinned.fill(0);
         const axis = spanX >= spanZ ? 0 : 2;
@@ -378,6 +850,7 @@
       if (type === 'Cloth') this.selectClothPins(mesh, topology, pinned, params);
       const bounds = boundsFromPoints(topology.rest);
       const arena = this.arena;
+
       const positionPtr = arena.allocF32(topology.rest.length);
       const previousPtr = arena.allocF32(topology.rest.length);
       const restPtr = arena.allocF32(topology.rest.length);
@@ -386,6 +859,18 @@
       const lengthsPtr = arena.allocF32(topology.edgeLengths.length);
       const edgeWeightsPtr = arena.allocF32(topology.edgeWeights.length);
       const boundsPtr = arena.allocF32(6);
+
+      /* C++20 zero-copy surface faces, volume tetrahedra & render scatter buffers */
+      const renderVertCount = topology.attribute.count;
+      const facesPtr = topology.faces?.length ? arena.allocU32(topology.faces.length) : 0;
+      const volumeTetsPtr = topology.volumeTets?.length ? arena.allocU32(topology.volumeTets.length) : 0;
+      const volumeRestPtr = topology.volumeRest?.length ? arena.allocF32(topology.volumeRest.length) : 0;
+      const vertexMapPtr = arena.allocU32(topology.vertexMap.length);
+      const renderIndicesPtr = topology.renderIndices?.length ? arena.allocU32(topology.renderIndices.length) : 0;
+      const renderPosPtr = arena.allocF32(renderVertCount * 3);
+      const renderNrmPtr = arena.allocF32(renderVertCount * 3);
+      const renderStrainPtr = arena.allocF32(renderVertCount);
+
       arena.writeF32(positionPtr, topology.rest);
       arena.writeF32(previousPtr, topology.rest);
       arena.writeF32(restPtr, topology.rest);
@@ -394,7 +879,50 @@
       arena.writeF32(lengthsPtr, topology.edgeLengths);
       arena.writeF32(edgeWeightsPtr, topology.edgeWeights);
       arena.writeF32(boundsPtr, bounds);
-      record.solver = { ...topology, nodeCount, edgeCount, positionPtr, previousPtr, restPtr, pinsPtr, edgesPtr, lengthsPtr, edgeWeightsPtr, boundsPtr, bounds };
+      if (facesPtr) arena.writeU32(facesPtr, topology.faces);
+      if (volumeTetsPtr) arena.writeU32(volumeTetsPtr, topology.volumeTets);
+      if (volumeRestPtr) arena.writeF32(volumeRestPtr, topology.volumeRest);
+      arena.writeU32(vertexMapPtr, topology.vertexMap);
+      if (renderIndicesPtr) arena.writeU32(renderIndicesPtr, topology.renderIndices);
+
+      /* Prepare DynamicDrawUsage buffers & per-vertex wrinkle/strain attribute */
+      topology.attribute.setUsage?.(THREE.DynamicDrawUsage);
+      if (!mesh.geometry.attributes.normal || mesh.geometry.attributes.normal.count !== renderVertCount) {
+        mesh.geometry.computeVertexNormals();
+      }
+      mesh.geometry.attributes.normal?.setUsage?.(THREE.DynamicDrawUsage);
+      const strainAttr = new THREE.Float32BufferAttribute(new Float32Array(renderVertCount), 1);
+      strainAttr.setUsage?.(THREE.DynamicDrawUsage);
+      mesh.geometry.setAttribute('aStrain', strainAttr);
+
+      enhanceDeformableShader(mesh, type, params);
+
+      record.solver = {
+        ...topology,
+        nodeCount,
+        edgeCount,
+        renderVertCount,
+        surfaceTriCount: Math.floor((topology.faces?.length || 0) / 3),
+        tetCount: Math.floor((topology.volumeTets?.length || 0) / 4),
+        positionPtr,
+        previousPtr,
+        restPtr,
+        pinsPtr,
+        edgesPtr,
+        lengthsPtr,
+        edgeWeightsPtr,
+        boundsPtr,
+        facesPtr,
+        volumeTetsPtr,
+        volumeRestPtr,
+        vertexMapPtr,
+        renderIndicesPtr,
+        renderPosPtr,
+        renderNrmPtr,
+        renderStrainPtr,
+        strainAttr,
+        bounds
+      };
       record.originalPositions = topology.originalPositions.slice();
       mesh.userData.origPositions = record.originalPositions.slice();
       mesh.userData.prevPositions = record.originalPositions.slice();
@@ -421,7 +949,8 @@
       let best=null,bestD2=margin*margin;for(const ti of candidate){if(surface.stamps[ti]===stamp)continue;surface.stamps[ti]=stamp;const t=surface.triangles[ti];if(x<t.min[0]-margin||x>t.max[0]+margin||y<t.min[1]-margin||y>t.max[1]+margin||z<t.min[2]-margin||z>t.max[2]+margin)continue;closestPointOnTriangle(x,y,z,t,surface.point);const dx=x-surface.point[0],dy=y-surface.point[1],dz=z-surface.point[2],d2=dx*dx+dy*dy+dz*dz;if(d2>bestD2)continue;const signed=dx*t.n[0]+dy*t.n[1]+dz*t.n[2];if(settings['Single Sided']&&signed<0)continue;bestD2=d2;best={tri:t,q:[surface.point[0],surface.point[1],surface.point[2]],signed,distance:Math.sqrt(d2)}}return best;
     }
 
-    resolveMeshCollisions(mesh,state,params,type,dt) {
+    resolveMeshCollisions(mesh,state,params,type,stepDt) {
+      const dt=stepDt;
       if(!state?.nodeCount||dt<=0)return;const settingsList=this.collisionHits(mesh,false);if(!settingsList.length)return;const positions=this.arena.f32(state.positionPtr,state.nodeCount*3),previous=this.arena.f32(state.previousPtr,state.nodeCount*3),pinned=this.arena.u8(state.pinsPtr,state.nodeCount),matrix=mesh.matrixWorld,inverse=matrix.clone().invert(),cur=new THREE.Vector3(),prior=new THREE.Vector3(),wc=new THREE.Vector3(),wp=new THREE.Vector3(),v=new THREE.Vector3(),normal=new THREE.Vector3();
       for(let node=0;node<state.nodeCount;node++){if(pinned[node])continue;const i=node*3;cur.set(positions[i],positions[i+1],positions[i+2]).applyMatrix4(matrix);prior.set(previous[i],previous[i+1],previous[i+2]).applyMatrix4(matrix);let resolved=false;for(const item of settingsList){const s=item.settings,outer=clamp(number(s,'Outer Thickness',.02),0,1),inner=clamp(number(s,'Inner Thickness',.02),0,1),margin=Math.max(outer,inner);if(!margin)continue;const hit=this.nearestCollisionHit(item.surface,cur.x,cur.y,cur.z,margin,s,node);if(!hit)continue;const side=hit.signed<0?-1:1;normal.set(hit.tri.n[0]*side,hit.tri.n[1]*side,hit.tri.n[2]*side);const offset=hit.signed<0?inner:outer;if(hit.distance>offset)continue;const permeability=clamp(number(s,'Permeability',0),0,1),mix=(Math.sin(node*127.1+item.object.uuid.length*311.7)*43758.5453)%1;if(Math.abs(mix)<permeability)continue;const target=new THREE.Vector3(hit.q[0],hit.q[1],hit.q[2]).addScaledVector(normal,offset);v.subVectors(cur,prior).multiplyScalar(1/dt);const vn=v.dot(normal),friction=clamp(number(s,type==='Cloth'?'Cloth Friction':'Particle Friction',.3),0,1),damping=clamp(number(s,'Particle Damping',.1),0,1),restitution=clamp(number(s,'Restitution',.08),0,1);v.addScaledVector(normal,-vn);v.multiplyScalar(1-friction);v.addScaledVector(normal,vn<0?-vn*restitution:vn*(1-damping));wc.copy(target);wp.copy(target).addScaledVector(v,-dt).applyMatrix4(inverse);wc.applyMatrix4(inverse);positions[i]=wc.x;positions[i+1]=wc.y;positions[i+2]=wc.z;previous[i]=wp.x;previous[i+1]=wp.y;previous[i+2]=wp.z;cur.copy(target);resolved=true;break}if(resolved)continue}
     }
@@ -435,110 +964,140 @@
       const record = mesh?.userData?.[this.getSimKey(type)], state = record?.solver;
       if (!state || record.status !== 'running') return;
       const params = record.params, stepDt = clamp(dt, 1e-5, 1 / 30);
-      const iterations = clamp(Math.round(number(params, 'Quality', 5)), 1, 20);
+      const iterations = clamp(Math.round(number(params, 'Quality', 8)), 2, 24);
       const goalStrength = type === 'SoftBody' ? clamp(number(params, 'Goal Strength', 0.5), 0, 1) : 0;
-      const rawDamping = clamp(number(params, 'Damping', 0.1) + (type === 'SoftBody' ? number(params, 'Goal Damping', 0) * goalStrength * 0.25 : 0), 0, 0.95);
+      const rawDamping = clamp(number(params, 'Damping', 0.08) + (type === 'SoftBody' ? number(params, 'Goal Damping', 0) * goalStrength * 0.25 : 0), 0, 0.95);
       const damping = 1 - Math.pow(1 - rawDamping, stepDt * 60);
       const gravity = Math.max(0, number(params, 'Gravity', 9.8));
-      const rawStiffness = type === 'Cloth' ? number(params, 'Structural Stiffness', 15) / 100 : clamp(number(params, 'Stiffness', 0.5), 0, 1);
-      const stiffness = type === 'SoftBody' ? rawStiffness * rawStiffness * 0.35 : rawStiffness;
-      const goal = type === 'SoftBody' ? goalStrength * goalStrength * 0.12 : 0;
-      const stretch = type === 'Cloth' ? number(params, 'Stretch Resistance', 0.9) : 1;
-      const compression = type === 'Cloth' ? number(params, 'Compression Resistance', 0.9) : 1;
+      const rawStiffness = type === 'Cloth' ? clamp(number(params, 'Structural Stiffness', 15) / 45, 0.05, 1) : clamp(number(params, 'Stiffness', 0.5), 0.02, 1);
+      const stiffness = type === 'SoftBody' ? Math.max(rawStiffness * 0.72, 0.05) : rawStiffness;
+      const goal = type === 'SoftBody' ? goalStrength * goalStrength * 0.08 : 0;
+      const stretch = type === 'Cloth' ? number(params, 'Stretch Resistance', 0.9) : 0.96;
+      const compression = type === 'Cloth' ? number(params, 'Compression Resistance', 0.9) : 0.92;
+      const volumePreservation = type === 'SoftBody' ? number(params, 'Volume Preservation', 0.85) : 0;
       const plasticity = type === 'SoftBody' ? number(params, 'Plasticity', 0) : 0;
-      const margin = type === 'SoftBody' ? number(params, 'Collision Margin', 0.02) : 0;
+      const margin = type === 'SoftBody' ? number(params, 'Collision Margin', 0.02) : 0.005;
       const airDrag = clamp(number(params, 'Air Drag', 0.05), 0, 0.95);
       const friction = 1 - Math.pow(1 - airDrag, stepDt * 60 / (iterations + 1));
-      mesh.updateWorldMatrix?.(true, false); mesh.updateMatrixWorld?.(true);
+
+      mesh.updateWorldMatrix?.(true, false);
+      mesh.updateMatrixWorld?.(true);
       const inverseWorld = mesh.matrixWorld?.clone?.().invert?.();
+      const invRot = inverseWorld ? new THREE.Matrix3().setFromMatrix4(inverseWorld) : null;
       const localGravity = new THREE.Vector3(0, -gravity, 0);
       if (inverseWorld) localGravity.applyMatrix3(new THREE.Matrix3().setFromMatrix4(inverseWorld));
-      const rc = this.abiVersion >= 2
-        ? this.wasm.sim_solver_deformable_step(state.positionPtr, state.previousPtr, state.restPtr, state.pinsPtr,
+
+      const windSpeed = type === 'Cloth' ? number(params, 'Wind Speed', 0) : 0;
+      const windTurbulence = type === 'Cloth' ? clamp(number(params, 'Wind Turbulence', 0.25), 0, 1.5) : 0;
+      const localWind = new THREE.Vector3(windSpeed * 0.35, 0, windSpeed);
+      if (invRot && windSpeed !== 0) localWind.applyMatrix3(invRot);
+      const selfColRadius = (type === 'Cloth' && params['Self Collision'] !== false)
+        ? Math.min((state.medianEdgeLength || 0.08) * 0.42, 0.05)
+        : 0;
+
+      let rc = 0;
+      if (this.isCppBackend && typeof this.wasm.fe_sim_xpbd_deformable_step === 'function') {
+        rc = this.wasm.fe_sim_xpbd_deformable_step(
+          state.positionPtr, state.previousPtr, state.restPtr, state.pinsPtr,
+          state.edgesPtr, state.lengthsPtr, state.edgeWeightsPtr,
+          state.nodeCount, state.edgeCount,
+          state.facesPtr, state.surfaceTriCount,
+          state.volumeTetsPtr, state.volumeRestPtr, state.tetCount,
+          stepDt,
+          localGravity.x, localGravity.y, localGravity.z,
+          damping, stiffness, goal, stretch, compression,
+          volumePreservation, plasticity, selfColRadius,
+          localWind.x, localWind.y, localWind.z, windTurbulence, this.simClock, airDrag,
+          margin, iterations, state.boundsPtr,
+          number(params, 'Bounce', type === 'SoftBody' ? 0.18 : 0.02), friction
+        );
+      } else {
+        rc = this.wasm.sim_solver_deformable_step(
+          state.positionPtr, state.previousPtr, state.restPtr, state.pinsPtr,
           state.edgesPtr, state.lengthsPtr, state.edgeWeightsPtr, state.nodeCount, state.edgeCount,
           stepDt, 0, damping, stiffness, goal, stretch, compression, plasticity, margin, iterations,
-          state.boundsPtr, number(params, 'Bounce', type === 'SoftBody' ? 0.12 : 0.02), friction)
-        : this.wasm.sim_solver_deformable_step(state.positionPtr, state.previousPtr, state.restPtr, state.pinsPtr,
-          state.edgesPtr, state.lengthsPtr, state.nodeCount, state.edgeCount,
-          stepDt, 0, damping, type === 'Cloth' ? 0 : stiffness, goal, iterations,
-          state.boundsPtr, number(params, 'Bounce', type === 'SoftBody' ? 0.12 : 0.02), friction);
-      if (rc < 0) { this.fail(record, new Error(record.type + ' solver returned ' + rc)); return; }
-      const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3), pinned = this.arena.u8(state.pinsPtr, state.nodeCount), dt2 = stepDt * stepDt;
-      for (let node = 0; node < state.nodeCount; node++) if (!pinned[node]) { const i = node * 3; positions[i] += localGravity.x * dt2; positions[i + 1] += localGravity.y * dt2; positions[i + 2] += localGravity.z * dt2; }
-      if (this.abiVersion < 2 && type === 'Cloth') this.projectClothConstraints(state, stiffness, stretch, compression, iterations, margin);
-      if (this.abiVersion < 2 && type === 'SoftBody' && plasticity > 0) this.updatePlasticRestLengths(state, plasticity, stepDt);
-      if (type === 'SoftBody' && state.volumeTets?.length) this.projectSoftBodyVolume(state, number(params, 'Volume Preservation', 0.85), margin, iterations);
-      this.resolveGroundContact(mesh, state, params, type);
-      this.resolveMeshCollisions(mesh,state,params,type,stepDt);
-      for (let vertex = 0; vertex < state.vertexMap.length; vertex++) {
-        const source = state.vertexMap[vertex] * 3;
-        state.attribute.setXYZ(vertex, positions[source], positions[source + 1], positions[source + 2]);
+          state.boundsPtr, number(params, 'Bounce', type === 'SoftBody' ? 0.12 : 0.02), friction
+        );
+        const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3), pinned = this.arena.u8(state.pinsPtr, state.nodeCount), dt2 = stepDt * stepDt;
+        for (let node = 0; node < state.nodeCount; node++) if (!pinned[node]) {
+          const i = node * 3;
+          positions[i] += localGravity.x * dt2;
+          positions[i + 1] += localGravity.y * dt2;
+          positions[i + 2] += localGravity.z * dt2;
+        }
+        if (type === 'SoftBody' && state.volumeTets?.length) this.projectSoftBodyVolume(state, volumePreservation, margin, iterations);
       }
-      state.attribute.needsUpdate = true;
-      if ((this.frameCount++ & 1) === 0) mesh.geometry.computeVertexNormals();
-      mesh.geometry.computeBoundingSphere();
+
+      if (rc < 0) { this.fail(record, new Error(record.type + ' solver returned ' + rc)); return; }
+
+      this.resolveGroundContact(mesh, state, params, type);
+      this.resolveMeshCollisions(mesh, state, params, type, stepDt);
+
+      /* Zero-copy C++20 scatter + smooth welded vertex normals + wrinkle strain field */
+      if (this.isCppBackend && typeof this.wasm.fe_sim_scatter_mesh_and_normals === 'function') {
+        this.wasm.fe_sim_scatter_mesh_and_normals(
+          state.positionPtr, state.restPtr, state.nodeCount,
+          state.vertexMapPtr, state.renderVertCount,
+          state.renderIndicesPtr, state.renderIndices?.length || 0,
+          state.renderPosPtr, state.renderNrmPtr, state.renderStrainPtr
+        );
+        state.attribute.array.set(this.arena.f32(state.renderPosPtr, state.renderVertCount * 3));
+        state.attribute.needsUpdate = true;
+        const nrmAttr = mesh.geometry.attributes.normal;
+        if (nrmAttr && nrmAttr.array.length === state.renderVertCount * 3) {
+          nrmAttr.array.set(this.arena.f32(state.renderNrmPtr, state.renderVertCount * 3));
+          nrmAttr.needsUpdate = true;
+        }
+        if (state.strainAttr) {
+          state.strainAttr.array.set(this.arena.f32(state.renderStrainPtr, state.renderVertCount));
+          state.strainAttr.needsUpdate = true;
+        }
+      } else {
+        const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3);
+        for (let vertex = 0; vertex < state.vertexMap.length; vertex++) {
+          const source = state.vertexMap[vertex] * 3;
+          state.attribute.setXYZ(vertex, positions[source], positions[source + 1], positions[source + 2]);
+        }
+        state.attribute.needsUpdate = true;
+        if ((this.frameCount++ & 1) === 0) mesh.geometry.computeVertexNormals();
+      }
+      if ((this.frameCount++ & 3) === 0) mesh.geometry.computeBoundingSphere();
+
+      /* Notify any Surface Deform dependents bound to this simulating deformable! */
+      if (typeof global.refreshModifierDependents === 'function' && (this.frameCount & 1) === 0) {
+        global.refreshModifierDependents(mesh);
+      }
     }
 
     resolveGroundContact(mesh, state, params, type) {
-      const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3), previous = this.arena.f32(state.previousPtr, state.nodeCount * 3), pinned = this.arena.u8(state.pinsPtr, state.nodeCount);
-      const floor = number(params, 'Ground Height', 0) + (type === 'SoftBody' ? clamp(number(params, 'Collision Margin', 0.02), 0, 0.5) : 0);
-      const friction = clamp(number(params, 'Ground Friction', type === 'Cloth' ? 0.3 : 0.25), 0, 1), bounce = clamp(number(params, 'Bounce', type === 'SoftBody' ? 0.12 : 0.02), 0, 1);
-      mesh.updateWorldMatrix?.(true, false); mesh.updateMatrixWorld?.(true);
+      const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3);
+      const previous = this.arena.f32(state.previousPtr, state.nodeCount * 3);
+      const pinned = this.arena.u8(state.pinsPtr, state.nodeCount);
+      const floor = number(params, 'Ground Height', 0) + (type === 'SoftBody' ? clamp(number(params, 'Collision Margin', 0.02), 0, 0.5) : 0.004);
+      const friction = clamp(number(params, 'Ground Friction', type === 'Cloth' ? 0.35 : 0.28), 0, 1);
+      const bounce = clamp(number(params, 'Bounce', type === 'SoftBody' ? 0.18 : 0.02), 0, 1);
+      mesh.updateWorldMatrix?.(true, false);
+      mesh.updateMatrixWorld?.(true);
       const matrix = mesh.matrixWorld, inverse = matrix?.clone?.().invert?.();
       if (!inverse) return;
       const current = new THREE.Vector3(), prior = new THREE.Vector3(), worldCurrent = new THREE.Vector3(), worldPrior = new THREE.Vector3();
       for (let node = 0; node < state.nodeCount; node++) {
         if (pinned[node]) continue;
         const i = node * 3;
-        current.set(positions[i], positions[i + 1], positions[i + 2]); worldCurrent.copy(current).applyMatrix4(matrix);
+        current.set(positions[i], positions[i + 1], positions[i + 2]);
+        worldCurrent.copy(current).applyMatrix4(matrix);
         if (worldCurrent.y >= floor) continue;
-        prior.set(previous[i], previous[i + 1], previous[i + 2]); worldPrior.copy(prior).applyMatrix4(matrix);
+        prior.set(previous[i], previous[i + 1], previous[i + 2]);
+        worldPrior.copy(prior).applyMatrix4(matrix);
         let vx = worldCurrent.x - worldPrior.x, vy = worldCurrent.y - worldPrior.y, vz = worldCurrent.z - worldPrior.z;
         worldCurrent.y = floor;
         if (vy < 0) vy = -vy * bounce;
         vx *= 1 - friction; vz *= 1 - friction;
         worldPrior.set(worldCurrent.x - vx, worldCurrent.y - vy, worldCurrent.z - vz);
-        current.copy(worldCurrent).applyMatrix4(inverse); prior.copy(worldPrior).applyMatrix4(inverse);
+        current.copy(worldCurrent).applyMatrix4(inverse);
+        prior.copy(worldPrior).applyMatrix4(inverse);
         positions[i] = current.x; positions[i + 1] = current.y; positions[i + 2] = current.z;
         previous[i] = prior.x; previous[i + 1] = prior.y; previous[i + 2] = prior.z;
-      }
-    }
-
-    projectClothConstraints(state, stiffness, stretch, compression, iterations, collisionMargin = 0) {
-      const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3), previous = this.arena.f32(state.previousPtr, state.nodeCount * 3);
-      const pinned = this.arena.u8(state.pinsPtr, state.nodeCount), lengths = this.arena.f32(state.lengthsPtr, state.edgeCount), bounds = state.bounds;
-      const stiffnessValue = clamp(stiffness, 0, 1), stretchValue = clamp(stretch, 0, 1), compressionValue = clamp(compression, 0, 1), margin = clamp(collisionMargin, 0, 0.5);
-      for (let iteration = 0; iteration < clamp(Math.round(iterations), 1, 32); iteration++) {
-        for (let edge = 0; edge < state.edgeCount; edge++) {
-          const a = state.edgePairs[edge * 2], b = state.edgePairs[edge * 2 + 1];
-          if (a >= state.nodeCount || b >= state.nodeCount || a === b) continue;
-          const ia = a * 3, ib = b * 3, dx = positions[ib] - positions[ia], dy = positions[ib + 1] - positions[ia + 1], dz = positions[ib + 2] - positions[ia + 2];
-          const distance = Math.hypot(dx, dy, dz), target = Math.max(lengths[edge], 1e-6);
-          if (distance < 1e-7) continue;
-          const wa = pinned[a] ? 0 : 1, wb = pinned[b] ? 0 : 1, total = wa + wb;
-          if (!total) continue;
-          const error = distance - target, directional = error > 0 ? stretchValue : compressionValue;
-          const weight = clamp(state.edgeWeights?.[edge] ?? 1, 0, 1), correction = error / distance * stiffnessValue * directional * weight;
-          const da = correction * wa / total, db = correction * wb / total;
-          const dax = dx * da, day = dy * da, daz = dz * da, dbx = dx * db, dby = dy * db, dbz = dz * db;
-          positions[ia] += dax; positions[ia + 1] += day; positions[ia + 2] += daz; previous[ia] += dax; previous[ia + 1] += day; previous[ia + 2] += daz;
-          positions[ib] -= dbx; positions[ib + 1] -= dby; positions[ib + 2] -= dbz; previous[ib] -= dbx; previous[ib + 1] -= dby; previous[ib + 2] -= dbz;
-        }
-        for (let node = 0; node < state.nodeCount; node++) if (!pinned[node]) {
-          const base = node * 3;
-          for (let axis = 0; axis < 3; axis++) { const value = clamp(positions[base + axis], bounds[axis] + margin, bounds[axis + 3] - margin), delta = value - positions[base + axis]; positions[base + axis] = value; previous[base + axis] += delta; }
-        }
-      }
-    }
-
-    updatePlasticRestLengths(state, plasticity, dt) {
-      const positions = this.arena.f32(state.positionPtr, state.nodeCount * 3), lengths = this.arena.f32(state.lengthsPtr, state.edgeCount), edges = state.edgePairs;
-      const amount = clamp(plasticity, 0, 1) * clamp(dt, 0, 1 / 30) * 0.05;
-      for (let edge = 0; edge < state.edgeCount; edge++) {
-        const a = edges[edge * 2] * 3, b = edges[edge * 2 + 1] * 3;
-        const distance = Math.hypot(positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]);
-        const target = Math.max(lengths[edge], 1e-6), error = distance - target;
-        if (Math.abs(error) / target > 0.08) lengths[edge] = target + error * amount;
       }
     }
 
@@ -560,7 +1119,7 @@
           const volume = (ux * (vy * wz - vz * wy) + uy * (vz * wx - vx * wz) + uz * (vx * wy - vy * wx)) / 6;
           const error = volume - restVolumes[t];
           if (!Number.isFinite(error) || Math.abs(error) < 1e-9) continue;
-          const gb = [(vy * wz - vz * wy) / 6, (vz * wx - vx * wz) / 6, (vx * wy - vy * wx) / 6];
+          const gb = [(vy * wz - vz * wy) / 6, (vz * wx - vx * wz) / 6, (vx * wy - vy * vx) / 6];
           const gc = [(wy * uz - wz * uy) / 6, (wz * ux - wx * uz) / 6, (wx * uy - wy * ux) / 6];
           const gd = [(uy * vz - uz * vy) / 6, (uz * vx - ux * vz) / 6, (ux * vy - uy * vx) / 6];
           const ga = [-(gb[0] + gc[0] + gd[0]), -(gb[1] + gc[1] + gd[1]), -(gb[2] + gc[2] + gd[2])];
@@ -577,15 +1136,6 @@
             const base = node * 3, g = gradients[n];
             for (let axis = 0; axis < 3; axis++) { const delta = lambda * g[axis]; positions[base + axis] += delta; previous[base + axis] += delta; }
           }
-        }
-      }
-      const bounds = state.bounds, margin = clamp(collisionMargin, 0, 0.5);
-      for (let node = 0; node < state.nodeCount; node++) {
-        const base = node * 3;
-        for (let axis = 0; axis < 3; axis++) {
-          const low = bounds[axis] + margin, high = bounds[axis + 3] - margin;
-          const corrected = clamp(positions[base + axis], low, high), delta = corrected - positions[base + axis];
-          positions[base + axis] = corrected; previous[base + axis] += delta;
         }
       }
     }
@@ -620,7 +1170,10 @@
       if (role === 'Domain') {
         record.savedMaterial = mesh.material;
         mesh.material = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.14 });
-        record.domainEdges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.55 }));
+        record.domainEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(mesh.geometry),
+          new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.55 })
+        );
         mesh.add(record.domainEdges);
       }
       if (domainType === 'Liquid') this.createLiquidParticles(mesh, params, record);
@@ -634,7 +1187,7 @@
 
     createLiquidParticles(mesh, params, record) {
       const box = record.bounds;
-      const fluid = lattice(box, params, true);
+      const fluid = lattice(box, params, true, this.isCppBackend);
       const count = fluid.positions.length / 3;
       if (record.role === 'Flow') fluid.positions = this.sampleMeshSurface(mesh, count, fluid.positions);
       if (count < 2) throw new Error('Liquid domain generated fewer than two particles');
@@ -649,33 +1202,93 @@
       record.densityPtr = arena.allocF32(count);
       record.pressurePtr = arena.allocF32(count);
       record.forcePtr = arena.allocF32(count * 3);
+      record.foamEnergyPtr = arena.allocF32(count);
       record.activePtr = arena.allocU8(count);
       record.activeMask = new Uint8Array(count).fill(1);
       record.flowAges = new Float32Array(count);
-      record.flowBehavior = record.role === 'Flow' ? (params['Flow Behavior'] || 'Inflow') : (params['Internal Inflow'] === true ? 'Inflow' : 'Geometry');
+      record.flowBehavior = record.role === 'Flow'
+        ? (params['Flow Behavior'] || 'Inflow')
+        : (params['Internal Inflow'] === true ? 'Inflow' : 'Geometry');
       record.outflowEnabled = record.flowBehavior === 'Outflow';
       record.exitBounds = box.slice();
       if (record.outflowEnabled) {
         const pad = Math.max(box[3] - box[0], box[4] - box[1], box[5] - box[2]) * 1.5;
         arena.writeF32(record.boundsPtr, new Float32Array([box[0] - pad, box[1] - pad, box[2] - pad, box[3] + pad, box[4] + pad, box[5] + pad]));
       }
-      record.emitAccumulator = 0; record.emitCursor = 0;
+      record.emitAccumulator = 0;
+      record.emitCursor = 0;
       arena.writeU8(record.activePtr, record.activeMask);
       arena.writeF32(record.positionPtr, fluid.positions);
+      arena.writeF32(record.foamEnergyPtr, new Float32Array(count));
+
       const initialVelocity = new Float32Array(count * 3);
       const flowScale = Math.max(0, number(params, 'Flow Speed', 4)) / 4;
-      const velocity = [number(params, 'Velocity X', 0) * flowScale, number(params, 'Velocity Y', 0) * flowScale, number(params, 'Velocity Z', 0) * flowScale];
+      const velocity = [
+        number(params, 'Velocity X', 0) * flowScale,
+        number(params, 'Velocity Y', 0) * flowScale,
+        number(params, 'Velocity Z', 0) * flowScale
+      ];
       for (let i = 0; i < count; i++) initialVelocity.set(velocity, i * 3);
       arena.writeF32(record.velocityPtr, initialVelocity);
       record.initialPositions = fluid.positions.slice();
       record.sourcePositions = fluid.positions.slice();
-      if (record.role !== 'Flow') for (let i = 0; i < count; i++) record.sourcePositions[i * 3 + 1] = box[1] + (box[4] - box[1]) * 0.1;
+      if (record.role !== 'Flow') {
+        for (let i = 0; i < count; i++) record.sourcePositions[i * 3 + 1] = box[1] + (box[4] - box[1]) * 0.82;
+      }
       record.initialVelocities = initialVelocity;
-      record.visual = new THREE.Mesh(new THREE.BufferGeometry(), this.liquidMaterial(params));
-      record.visual.frustumCulled = false; record.visual.castShadow = true; record.visual.receiveShadow = true; record.visual.renderOrder = 2;
-      record.visual.userData.solverSurface = 'SPH density isosurface'; record.surfaceFrame = 0; record.surfaceReady = false;
+
+      /* Pre-allocate persistent DynamicDrawUsage liquid surface mesh + WASM reconstruction buffers (ZERO per-frame GC!) */
+      if (this.isCppBackend) {
+        record.surfPosPtr = arena.allocF32(MAX_SURFACE_VERTS * 3);
+        record.surfNrmPtr = arena.allocF32(MAX_SURFACE_VERTS * 3);
+        record.surfFoamPtr = arena.allocF32(MAX_SURFACE_VERTS * 2);
+        record.surfIdxPtr = arena.allocU32(MAX_SURFACE_INDICES);
+        record.surfCountsPtr = arena.allocU32(2);
+      }
+
+      const surfGeo = new THREE.BufferGeometry();
+      const posBuf = new THREE.Float32BufferAttribute(new Float32Array(MAX_SURFACE_VERTS * 3), 3);
+      const nrmBuf = new THREE.Float32BufferAttribute(new Float32Array(MAX_SURFACE_VERTS * 3), 3);
+      const foamBuf = new THREE.Float32BufferAttribute(new Float32Array(MAX_SURFACE_VERTS * 2), 2);
+      const idxBuf = new THREE.BufferAttribute(new Uint32Array(MAX_SURFACE_INDICES), 1);
+      posBuf.setUsage?.(THREE.DynamicDrawUsage);
+      nrmBuf.setUsage?.(THREE.DynamicDrawUsage);
+      foamBuf.setUsage?.(THREE.DynamicDrawUsage);
+      idxBuf.setUsage?.(THREE.DynamicDrawUsage);
+      surfGeo.setAttribute('position', posBuf);
+      surfGeo.setAttribute('normal', nrmBuf);
+      surfGeo.setAttribute('aFoam', foamBuf);
+      surfGeo.setIndex(idxBuf);
+      surfGeo.setDrawRange(0, 0);
+
+      record.visual = new THREE.Mesh(surfGeo, this.liquidMaterial(params));
+      record.visual.frustumCulled = false;
+      record.visual.castShadow = true;
+      record.visual.receiveShadow = true;
+      record.visual.renderOrder = 2;
+      record.visual.userData.solverSurface = 'C++20 PBF-FLIP smooth SDF surface';
+      record.visual.userData.ultraSimShader = 'liquid-pbr';
+      record.surfaceFrame = 0;
+      record.surfaceReady = false;
       this.scene().add(record.visual);
+
+      /* Secondary Whitewater Spray & Crest Foam InstancedMesh */
+      const sprayMat = new THREE.MeshBasicMaterial({
+        map: tracerSpriteTexture('foam'),
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.72,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      record.sprayVisual = this.createParticleVisual(Math.min(count, 512), record.radius * 0.42, sprayMat, 0xf0f9ff);
+      record.sprayVisual.renderOrder = 3;
+      this.scene().add(record.sprayVisual);
+
       record.mesh.userData.fluidSurfaceScale = Math.max(box[3] - box[0], box[5] - box[2]);
+      /* Reconstruct initial resting fluid surface immediately so frame 0 looks crisp */
+      this.updateFluidSurface(record);
     }
 
     createBuoyantParticles(mesh, params, record) {
@@ -710,44 +1323,65 @@
       }
       if(record.role==='Flow')positions.set(this.sampleMeshSurface(mesh,count,positions));
       const arena = this.arena;
-      record.kind = 'tracer'; record.count = count; record.radius = Math.max(fluid.radius, Math.max(sizeX, sizeZ) / 40);
-      record.positionPtr = arena.allocF32(count * 3); record.velocityPtr = arena.allocF32(count * 3);
-      record.temperaturePtr = arena.allocF32(count); record.agePtr = arena.allocF32(count);
-      arena.writeF32(record.positionPtr, positions); arena.writeF32(record.velocityPtr, velocities);
-      arena.writeF32(record.temperaturePtr, temperatures); arena.writeF32(record.agePtr, ages);
-      record.initialPositions = positions.slice(); record.sourcePositions = positions.slice(); record.initialVelocities = velocities.slice();
+      record.kind = 'tracer';
+      record.count = count;
+      record.radius = Math.max(fluid.radius, Math.max(sizeX, sizeZ) / 36);
+      record.positionPtr = arena.allocF32(count * 3);
+      record.velocityPtr = arena.allocF32(count * 3);
+      record.temperaturePtr = arena.allocF32(count);
+      record.agePtr = arena.allocF32(count);
+      record.activePtr = arena.allocU8(count);
+      record.activeMask = new Uint8Array(count).fill(1);
+      arena.writeF32(record.positionPtr, positions);
+      arena.writeF32(record.velocityPtr, velocities);
+      arena.writeF32(record.temperaturePtr, temperatures);
+      arena.writeF32(record.agePtr, ages);
+      arena.writeU8(record.activePtr, record.activeMask);
+
+      record.initialPositions = positions.slice();
+      record.sourcePositions = positions.slice();
+      record.initialVelocities = velocities.slice();
       record.initialTemperatures = temperatures.slice();
       record.flowBehavior = record.role === 'Flow' ? (params['Flow Behavior'] || 'Inflow') : (params['Internal Inflow'] === true ? 'Inflow' : 'Geometry');
       record.inflowEnabled = record.flowBehavior === 'Inflow' && (record.role === 'Flow' ? params['Use Flow'] !== false : params['Internal Inflow'] === true);
       record.outflowEnabled = record.flowBehavior === 'Outflow';
-      record.activeMask = new Uint8Array(count).fill(1);
-      record.emitAccumulator = 0; record.emitCursor = 0;
+      record.emitAccumulator = 0;
+      record.emitCursor = 0;
       record.exitBounds = box.slice();
       if (record.outflowEnabled) {
         const pad = Math.max(sizeX, sizeY, sizeZ) * 1.5;
         this.arena.writeF32(record.boundsPtr, new Float32Array([box[0] - pad, box[1] - pad, box[2] - pad, box[3] + pad, box[4] + pad, box[5] + pad]));
       }
-      const renderMode=global.FE?.engines?.core?.getShadingMode?.()||'solid',group=new THREE.Group();
-      const hasFire=domainTypeHasFire(record.domainType),hasSmoke=record.domainType==='Smoke'||record.domainType==='Fire + Smoke';
-      record.visual=group;record.visualMode=renderMode;record.fireVisual=hasFire?this.createParticleVisual(count,record.radius,this.tracerMaterial('fire',record.domainType,params,renderMode),0xffffff):null;record.smokeVisual=hasSmoke?this.createParticleVisual(count,record.radius,this.tracerMaterial('smoke',record.domainType,params,renderMode),0xffffff):null;
-      if(record.fireVisual)group.add(record.fireVisual);if(record.smokeVisual)group.add(record.smokeVisual);group.userData.solverParticleVisual=true;group.userData.solverRadius=record.radius;
-      this.updateParticleInstances(record);this.scene().add(group);
+      const renderMode = global.FE?.engines?.core?.getShadingMode?.() || 'solid';
+      const group = new THREE.Group();
+      const hasFire = domainTypeHasFire(record.domainType), hasSmoke = record.domainType === 'Smoke' || record.domainType === 'Fire + Smoke';
+      record.visual = group;
+      record.visualMode = renderMode;
+      record.fireVisual = hasFire ? this.createParticleVisual(count, record.radius, this.tracerMaterial('fire', record.domainType, params, renderMode), 0xffffff) : null;
+      record.smokeVisual = hasSmoke ? this.createParticleVisual(count, record.radius, this.tracerMaterial('smoke', record.domainType, params, renderMode), 0xffffff) : null;
+      if (record.fireVisual) group.add(record.fireVisual);
+      if (record.smokeVisual) group.add(record.smokeVisual);
+      group.userData.solverParticleVisual = true;
+      group.userData.solverRadius = record.radius;
+      this.updateParticleInstances(record);
+      this.scene().add(group);
     }
 
     liquidMaterial(params) {
       const preset = params['Liquid Preset'] || 'Water';
       const color = preset === 'Honey' ? 0xd99a22 : preset === 'Oil' ? 0x653c20 : preset === 'Slime' ? 0x32a77c : 0x2d91b4;
       const ior = preset === 'Honey' ? 1.5 : preset === 'Oil' ? 1.48 : preset === 'Slime' ? 1.38 : 1.333;
-      return new THREE.MeshPhysicalMaterial({ color, metalness: 0, roughness: preset === 'Water' ? 0.038 : 0.08, transmission: preset === 'Water' ? 0.78 : 0.72, thickness: preset === 'Water' ? 0.55 : 1.1, ior, clearcoat: 1, clearcoatRoughness: 0.025, transparent: false, opacity: 1, side: THREE.DoubleSide, depthWrite: true, envMapIntensity: 1.45 });
+      const mat = new THREE.MeshPhysicalMaterial({ color, metalness: 0, roughness: preset === 'Water' ? 0.025 : 0.065, transmission: preset === 'Water' ? 0.78 : 0.72, ior, clearcoat: 1, clearcoatRoughness: 0.018, transparent: true, opacity: 0.92, side: THREE.DoubleSide, depthWrite: true, envMap: getStudioEnvMap(), envMapIntensity: 1.55 });
+      return enhanceLiquidPhysicalShader(mat, preset);
     }
 
     tracerMaterial(kind, domainType, params = {}, renderMode = 'solid') {
       const rendered = renderMode === 'rendered' || renderMode === 'material';
       const { smoke: smokePreset } = tracerPresets(domainType, params);
-      if (kind === 'fire') return new THREE.MeshBasicMaterial({ map: tracerSpriteTexture('fire'), color: 0xffffff, transparent: true, opacity: rendered ? 1 : .9, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, side: THREE.DoubleSide, vertexColors: true, toneMapped: false });
+      if (kind === 'fire') return new THREE.MeshBasicMaterial({ map: tracerSpriteTexture('fire'), color: 0xffffff, transparent: true, opacity: rendered ? 1 : .94, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, side: THREE.DoubleSide, vertexColors: true, toneMapped: false });
       const density = clamp(number(params, 'Smoke Density', 1), 0.1, 3);
       const baseOpacity = smokePreset === 'Heavy Fog' ? .72 : smokePreset === 'Dark Soot' ? .58 : smokePreset === 'Steam' ? .52 : .5;
-      const common = { map: tracerSpriteTexture('smoke'), color: 0xffffff, transparent: true, opacity: clamp(baseOpacity * (.72 + density * .28), .18, .82), depthWrite: false, depthTest: true, side: THREE.DoubleSide, vertexColors: true };
+      const common = { map: tracerSpriteTexture('smoke'), color: 0xffffff, transparent: true, opacity: clamp(baseOpacity * (.72 + density * .28), .18, .84), depthWrite: false, depthTest: true, side: THREE.DoubleSide, vertexColors: true };
       return rendered ? new THREE.MeshStandardMaterial({ ...common, roughness: 1, metalness: 0, emissive: new THREE.Color(0x14181c), emissiveIntensity: .12 }) : new THREE.MeshBasicMaterial(common);
     }
 
@@ -758,24 +1392,17 @@
       visual.frustumCulled = false;
       visual.renderOrder = material?.blending === THREE.AdditiveBlending ? 4 : 3;
       const tint = new THREE.Color(color);
-      for (let i = 0; i < count; i++) visual.setColorAt(i, tint);
+      const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < count; i++) {
+        visual.setColorAt(i, tint);
+        visual.setMatrixAt(i, zeroMat);
+      }
+      visual.instanceMatrix.needsUpdate = true;
       if (visual.instanceColor) visual.instanceColor.needsUpdate = true;
       visual.userData.solverParticleVisual = true;
       visual.userData.solverRadius = radius;
       visual.userData.spriteKind = material?.map === tracerSpriteTexture('fire') ? 'fire' : 'smoke';
       return visual;
-    }
-
-    initializeInstances(record, positions, radius) {
-      const object = new THREE.Object3D();
-      for (let i = 0; i < record.count; i++) {
-        const base = i * 3;
-        object.position.set(positions[base], positions[base + 1], positions[base + 2]);
-        object.scale.setScalar(radius);
-        object.updateMatrix();
-        record.visual.setMatrixAt(i, object.matrix);
-      }
-      record.visual.instanceMatrix.needsUpdate = true;
     }
 
     scene() {
@@ -787,17 +1414,20 @@
     stepSimulation(type, mesh, dt = 1 / 60) {
       const record = mesh?.userData?.[this.getSimKey(type)];
       if (!record || record.status !== 'running') return;
+      const rawDt = clamp(Number(dt) || 1 / 60, 1 / 240, 1 / 24);
       const timeScale = clamp(number(record.params, 'Time Scale', 1), 0, 4);
+      this.simClock += rawDt * timeScale * 0.5;
       if (type === 'Cloth' || type === 'SoftBody') {
-        const frameTime = clamp((Number(dt) || 1 / 60) * timeScale, 0, 1 / 15);
-        record.stepAccumulator = Math.min((record.stepAccumulator || 0) + frameTime, 1 / 15);
+        const frameTime = clamp(rawDt * timeScale, 0, 1 / 18);
+        record.stepAccumulator = Math.min((record.stepAccumulator || 0) + frameTime, 1 / 18);
         let steps = 0;
         while (record.stepAccumulator + 1e-8 >= DEFORMABLE_FIXED_STEP && steps < MAX_DEFORMABLE_SUBSTEPS) {
           this.stepClothSoftBody(mesh, type, DEFORMABLE_FIXED_STEP);
-          record.stepAccumulator -= DEFORMABLE_FIXED_STEP; steps++;
+          record.stepAccumulator -= DEFORMABLE_FIXED_STEP;
+          steps++;
         }
       } else if (type === 'Fluid') {
-        const step = clamp((Number(dt) || 1 / 60) * timeScale, 0, 1 / 30);
+        const step = clamp(rawDt * timeScale, 0, 1 / 30);
         this.stepFluidSimulation(mesh, step);
       }
     }
@@ -808,47 +1438,86 @@
       const params = record.params;
       const liquidPreset = params['Liquid Preset'] || 'Water';
       const viscosityScale = liquidPreset === 'Honey' ? 8 : liquidPreset === 'Slime' ? 4 : liquidPreset === 'Oil' ? 2 : 1;
-      const tensionScale = liquidPreset === 'Honey' ? 0.45 : liquidPreset === 'Slime' ? 0.8 : liquidPreset === 'Oil' ? 0.25 : 1;
+      const tensionScale = liquidPreset === 'Honey' ? 0.55 : liquidPreset === 'Slime' ? 0.9 : liquidPreset === 'Oil' ? 0.3 : 1;
       let rc = 0;
+
       if (record.kind === 'sph') {
         this.prepareLiquidFlow(record, dt);
-        this.applyVorticityConfinement(record, dt);
-        if (this.abiVersion < 2) this.applySphSurfaceTension(record, dt, number(params, 'Surface Tension', 0.25) * tensionScale);
-        rc = this.abiVersion >= 2
-          ? this.wasm.sim_solver_sph_step(
+        if (this.isCppBackend && typeof this.wasm.fe_sim_liquid_pbf_step === 'function') {
+          /* Real-time C++20 Spatial-Hashed PBF + Tensile Correction + XSPH + Vorticity + Whitewater */
+          rc = this.wasm.fe_sim_liquid_pbf_step(
+            record.positionPtr, record.velocityPtr, record.densityPtr, record.pressurePtr,
+            record.foamEnergyPtr, record.activePtr, record.count, dt,
+            record.mass, 1, record.smoothingLength,
+            number(params, 'Pressure', 1.8),
+            number(params, 'Viscosity', 0.01) * viscosityScale,
+            number(params, 'Surface Tension', 0.25) * tensionScale,
+            clamp(number(params, 'Vorticity Confinement', number(params, 'Turbulence', 0.14)), 0, 1),
+            2,
+            0, -number(params, 'Gravity', 9.8), 0,
+            record.boundsPtr, number(params, 'Bounce', 0.3), number(params, 'Damping', 0.03),
+            record.flowBehavior === 'Outflow' ? 1 : 0
+          );
+          if (rc >= 0) {
+            this.resolveParticleCollisions(record, dt);
+            this.resolveEffectors(record, dt);
+          }
+        } else {
+          rc = this.wasm.sim_solver_sph_step(
             record.positionPtr, record.velocityPtr, record.densityPtr, record.pressurePtr, record.forcePtr, record.activePtr,
             record.count, dt, record.mass, 1, record.smoothingLength, number(params, 'Pressure', 1.8),
-            number(params, 'Viscosity', 0.01) * viscosityScale, number(params, 'Surface Tension', 0.25) * tensionScale, 0, -number(params, 'Gravity', 9.8), 0,
-            record.boundsPtr, number(params, 'Bounce', 0.3), number(params, 'Damping', 0.03), record.flowBehavior === 'Outflow' ? 1 : 0,
-          )
-          : this.wasm.sim_solver_sph_step(
-            record.positionPtr, record.velocityPtr, record.densityPtr, record.pressurePtr, record.forcePtr,
-            record.count, dt, record.mass, 1, record.smoothingLength, number(params, 'Pressure', 1.8),
-            number(params, 'Viscosity', 0.01) * viscosityScale, 0, -number(params, 'Gravity', 9.8), 0,
+            number(params, 'Viscosity', 0.01) * viscosityScale, number(params, 'Surface Tension', 0.25) * tensionScale,
+            0, -number(params, 'Gravity', 9.8), 0,
             record.boundsPtr, number(params, 'Bounce', 0.3), number(params, 'Damping', 0.03),
+            record.flowBehavior === 'Outflow' ? 1 : 0
           );
+          if (rc >= 0) this.projectLiquidDensity(record, dt);
+          this.resolveLiquidOutflow(record);
+          this.resolveParticleCollisions(record, dt);
+          this.resolveEffectors(record, dt);
+        }
+        if (record.visual?.material?.userData?.liquidUniforms) {
+          record.visual.material.userData.liquidUniforms.uSimTime.value = this.simClock;
+        }
       } else if (record.kind === 'tracer') {
         this.recycleExpired(record);
-        rc = this.wasm.sim_solver_buoyant_tracer_step(
-          record.positionPtr, record.velocityPtr, record.temperaturePtr, record.agePtr, record.count, dt,
-          number(params, 'Gravity', 9.8), number(params, 'Buoyancy', 0.8),
-          number(params, 'Dissipation Rate', 0.15) * 2, domainTypeHasFire(record.domainType) ? 0.08 / Math.max(number(params, 'Fuel', 1), 0.1) : number(params, 'Dissipation Rate', 0.15),
-          tracerLifetime(record), record.boundsPtr, number(params, 'Bounce', 0.3),
-        );
+        if (this.isCppBackend && typeof this.wasm.fe_sim_pyro_step === 'function') {
+          rc = this.wasm.fe_sim_pyro_step(
+            record.positionPtr, record.velocityPtr, record.temperaturePtr, record.agePtr, record.activePtr,
+            record.count, dt, this.simClock,
+            number(params, 'Gravity', 9.8), number(params, 'Buoyancy', 0.8),
+            clamp(number(params, 'Vorticity Confinement', number(params, 'Turbulence', 0.42)), 0, 2),
+            number(params, 'Dissipation Rate', 0.15) * 2,
+            domainTypeHasFire(record.domainType) ? 0.08 / Math.max(number(params, 'Fuel', 1), 0.1) : number(params, 'Dissipation Rate', 0.15),
+            clamp(number(params, 'Expansion Rate', 1.2) * 0.35, 0, 2),
+            tracerLifetime(record), record.boundsPtr, number(params, 'Bounce', 0.3)
+          );
+        } else {
+          rc = this.wasm.sim_solver_buoyant_tracer_step(
+            record.positionPtr, record.velocityPtr, record.temperaturePtr, record.agePtr, record.count, dt,
+            number(params, 'Gravity', 9.8), number(params, 'Buoyancy', 0.8),
+            number(params, 'Dissipation Rate', 0.15) * 2,
+            domainTypeHasFire(record.domainType) ? 0.08 / Math.max(number(params, 'Fuel', 1), 0.1) : number(params, 'Dissipation Rate', 0.15),
+            tracerLifetime(record), record.boundsPtr, number(params, 'Bounce', 0.3)
+          );
+        }
+        this.resolveTracerOutflow(record);
+        this.resolveParticleCollisions(record, dt);
+        this.resolveEffectors(record, dt);
       }
+
       if (rc < 0) { this.fail(record, new Error(`fluid solver returned ${rc}`)); return; }
-      if (record.kind === 'sph') this.projectLiquidDensity(record, dt);
-      if (record.kind === 'tracer') this.resolveTracerOutflow(record);
-      else if (record.kind === 'sph') this.resolveLiquidOutflow(record);
-      this.resolveParticleCollisions(record,dt);
-      this.resolveEffectors(record, dt);
       this.updateParticleInstances(record);
       if (record.visual) record.visual.visible = mesh.visible && (record.kind !== 'sph' || record.surfaceReady);
+      if (record.sprayVisual) record.sprayVisual.visible = mesh.visible && record.surfaceReady;
     }
 
     projectLiquidDensity(record, dt) {
       if (record.kind !== 'sph' || dt <= 0) return;
-      const count = record.count, positions = this.arena.f32(record.positionPtr, count * 3), velocities = this.arena.f32(record.velocityPtr, count * 3), active = this.arena.u8(record.activePtr, count);
+      const count = record.count;
+      const positions = this.arena.f32(record.positionPtr, count * 3);
+      const velocities = this.arena.f32(record.velocityPtr, count * 3);
+      const active = this.arena.u8(record.activePtr, count);
       const h = Math.max(record.smoothingLength || 0.1, 1e-3), h2 = h * h, mass = Math.max(record.mass || 0, 1e-8), rho0 = 1;
       const poly6 = 315 / (64 * Math.PI * Math.max(h ** 9, 1e-12)), spiky = -45 / (Math.PI * Math.max(h ** 6, 1e-12));
       const density = record.pbfDensity || (record.pbfDensity = new Float32Array(count));
@@ -895,7 +1564,7 @@
         velocities[a] += delta[a] / dt; velocities[a + 1] += delta[a + 1] / dt; velocities[a + 2] += delta[a + 2] / dt;
       }
       if (!record.outflowEnabled && record.bounds) {
-        const b = record.bounds, pad = Math.max(record.radius * 0.35, 1e-4), bounce = clamp(number(record.params, 'Bounce', 0.3), 0, 1);
+        const b = record.bounds, pad = Math.max((record.radius || 0.05) * 0.35, 1e-4), bounce = clamp(number(record.params, 'Bounce', 0.3), 0, 1);
         for (let i = 0; i < count; i++) if (active[i]) {
           const a = i * 3;
           for (let axis = 0; axis < 3; axis++) {
@@ -904,72 +1573,6 @@
             else if (positions[a + axis] > hi) { positions[a + axis] = hi; velocities[a + axis] = -Math.abs(velocities[a + axis]) * bounce; }
           }
         }
-      }
-    }
-
-    applySphSurfaceTension(record, dt, strength) {
-      const tension = clamp(strength, 0, 2);
-      if (tension <= 0 || dt <= 0 || record.kind !== 'sph') return;
-      const count = record.count, positions = this.arena.f32(record.positionPtr, count * 3), velocities = this.arena.f32(record.velocityPtr, count * 3);
-      const densities = this.arena.f32(record.densityPtr, count), active = this.arena.u8(record.activePtr, count), h = Math.max(record.smoothingLength, 1e-3), h2 = h * h;
-      const force = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) {
-        if (!active[i]) continue;
-        const a = i * 3;
-        for (let j = 0; j < count; j++) {
-          if (i === j || !active[j]) continue;
-          const b = j * 3, dx = positions[a] - positions[b], dy = positions[a + 1] - positions[b + 1], dz = positions[a + 2] - positions[b + 2], r2 = dx * dx + dy * dy + dz * dz;
-          if (r2 <= 1e-10 || r2 >= h2) continue;
-          const r = Math.sqrt(r2), gap = h - r, scale = tension * record.mass * gap * gap / (h2 * Math.max(densities[j], 0.2)) * 0.02 / r;
-          force[a] -= dx * scale; force[a + 1] -= dy * scale; force[a + 2] -= dz * scale;
-        }
-      }
-      for (let i = 0; i < count; i++) if (active[i]) {
-        const a = i * 3, rho = Math.max(densities[i], 0.2);
-        velocities[a] += force[a] / rho * dt; velocities[a + 1] += force[a + 1] / rho * dt; velocities[a + 2] += force[a + 2] / rho * dt;
-      }
-    }
-
-    applyVorticityConfinement(record, dt) {
-      const strength = clamp(number(record.params, 'Vorticity Confinement', number(record.params, 'Turbulence', 0)), 0, 1);
-      if (strength <= 0 || dt <= 0 || record.kind !== 'sph') return;
-      const count = record.count, positions = this.arena.f32(record.positionPtr, count * 3), velocities = this.arena.f32(record.velocityPtr, count * 3);
-      const density = this.arena.f32(record.densityPtr, count), active = this.arena.u8(record.activePtr, count);
-      const h = Math.max(record.smoothingLength, 1e-3), h2 = h * h, spiky = -45 / (Math.PI * Math.max(h ** 6, 1e-12));
-      const omega = new Float32Array(count * 3), magnitude = new Float32Array(count);
-      for (let i = 0; i < count; i++) {
-        if (!active[i]) continue;
-        const a = i * 3, px = positions[a], py = positions[a + 1], pz = positions[a + 2], vix = velocities[a], viy = velocities[a + 1], viz = velocities[a + 2];
-        let ox = 0, oy = 0, oz = 0;
-        for (let j = 0; j < count; j++) {
-          if (i === j || !active[j]) continue;
-          const b = j * 3, dx = px - positions[b], dy = py - positions[b + 1], dz = pz - positions[b + 2], r2 = dx * dx + dy * dy + dz * dz;
-          if (r2 <= 1e-10 || r2 >= h2) continue;
-          const r = Math.sqrt(r2), grad = spiky * (h - r) * (h - r) / r * record.mass / Math.max(density[j], 0.2), gx = dx * grad, gy = dy * grad, gz = dz * grad;
-          const dvx = velocities[b] - vix, dvy = velocities[b + 1] - viy, dvz = velocities[b + 2] - viz;
-          ox += dvy * gz - dvz * gy; oy += dvz * gx - dvx * gz; oz += dvx * gy - dvy * gx;
-        }
-        omega[a] = ox; omega[a + 1] = oy; omega[a + 2] = oz; magnitude[i] = Math.hypot(ox, oy, oz);
-      }
-      const maxAcceleration = 12 * strength;
-      for (let i = 0; i < count; i++) {
-        if (!active[i]) continue;
-        const a = i * 3, px = positions[a], py = positions[a + 1], pz = positions[a + 2];
-        let gx = 0, gy = 0, gz = 0;
-        for (let j = 0; j < count; j++) {
-          if (i === j || !active[j]) continue;
-          const b = j * 3, dx = px - positions[b], dy = py - positions[b + 1], dz = pz - positions[b + 2], r2 = dx * dx + dy * dy + dz * dz;
-          if (r2 <= 1e-10 || r2 >= h2) continue;
-          const r = Math.sqrt(r2), grad = spiky * (h - r) * (h - r) / r * record.mass / Math.max(density[j], 0.2), dm = magnitude[j] - magnitude[i];
-          gx += dm * dx * grad; gy += dm * dy * grad; gz += dm * dz * grad;
-        }
-        const len = Math.hypot(gx, gy, gz); if (len < 1e-8) continue;
-        gx /= len; gy /= len; gz /= len;
-        const ox = omega[a], oy = omega[a + 1], oz = omega[a + 2];
-        let fx = strength * h * (gy * oz - gz * oy), fy = strength * h * (gz * ox - gx * oz), fz = strength * h * (gx * oy - gy * ox);
-        const forceLength = Math.hypot(fx, fy, fz);
-        if (forceLength > maxAcceleration && forceLength > 0) { const scale = maxAcceleration / forceLength; fx *= scale; fy *= scale; fz *= scale; }
-        velocities[a] += fx * dt; velocities[a + 1] += fy * dt; velocities[a + 2] += fz * dt;
       }
     }
 
@@ -991,14 +1594,15 @@
         let index = -1;
         for (let k = 0; k < record.count; k++) {
           const candidate = (record.emitCursor + k) % record.count;
-          if (active[candidate] === 0 || ages[candidate] > 2.5) { index = candidate; break; }
+          if (active[candidate] === 0 || ages[candidate] > 2.8) { index = candidate; break; }
         }
         if (index < 0) index = record.emitCursor % record.count;
         record.emitCursor = (index + 1) % record.count;
         const base = index * 3;
         positions.set(record.sourcePositions.subarray(base, base + 3), base);
         velocities.set(record.initialVelocities.subarray(base, base + 3), base);
-        active[index] = 1; ages[index] = 0;
+        active[index] = 1;
+        ages[index] = 0;
       }
     }
 
@@ -1007,6 +1611,7 @@
       const positions = this.arena.f32(record.positionPtr, record.count * 3);
       const velocities = this.arena.f32(record.velocityPtr, record.count * 3);
       const temperatures = this.arena.f32(record.temperaturePtr, record.count);
+      const active = record.activePtr ? this.arena.u8(record.activePtr, record.count) : record.activeMask;
       const maxAge = tracerLifetime(record);
       for (let i = 0; i < record.count; i++) if (ages[i] >= maxAge) {
         const base = i * 3;
@@ -1016,10 +1621,12 @@
           temperatures[i] = record.initialTemperatures[i];
           ages[i] = 0;
           record.activeMask[i] = 1;
+          if (active) active[i] = 1;
         } else {
           temperatures[i] = 0;
           velocities.fill(0, base, base + 3);
           record.activeMask[i] = 0;
+          if (active) active[i] = 0;
         }
       }
     }
@@ -1044,32 +1651,102 @@
       if (!record.outflowEnabled || !record.exitBounds) return;
       const positions = this.arena.f32(record.positionPtr, record.count * 3);
       const velocities = this.arena.f32(record.velocityPtr, record.count * 3);
+      const active = record.activePtr ? this.arena.u8(record.activePtr, record.count) : null;
       const b = record.exitBounds;
       for (let i = 0; i < record.count; i++) {
         const p = i * 3;
         if (positions[p] < b[0] || positions[p] > b[3] || positions[p + 1] < b[1] || positions[p + 1] > b[4] || positions[p + 2] < b[2] || positions[p + 2] > b[5]) {
           record.activeMask[i] = 0;
+          if (active) active[i] = 0;
           velocities.fill(0, p, p + 3);
         }
       }
     }
 
     updateFluidSurface(record) {
+      const cells = clamp(Math.round(number(record.params, 'Surface Resolution', 64)), 16, 96);
+      const iso = clamp(number(record.params, 'Surface Density', 0.42), 0.12, 1.5);
+
+      /* Fast Path: 100% C++20 Narrow-Band Filtered SDF + Crack-Free Isosurface + Taubin Smoother + Analytic Normals */
+      if (this.isCppBackend && typeof this.wasm.fe_sim_reconstruct_liquid_mesh === 'function' && record.surfPosPtr) {
+        const rc = this.wasm.fe_sim_reconstruct_liquid_mesh(
+          record.positionPtr,
+          record.velocityPtr,
+          record.foamEnergyPtr,
+          record.activePtr,
+          record.count,
+          record.boundsPtr,
+          record.smoothingLength,
+          record.mass,
+          iso,
+          cells,
+          1,
+          record.outflowEnabled ? 1 : 0,
+          record.surfPosPtr,
+          record.surfNrmPtr,
+          record.surfFoamPtr,
+          MAX_SURFACE_VERTS,
+          record.surfIdxPtr,
+          MAX_SURFACE_INDICES,
+          record.surfCountsPtr
+        );
+        const counts = this.arena.u32(record.surfCountsPtr, 2);
+        const vertCount = counts[0], idxCount = counts[1];
+        if (rc <= 0 || vertCount < 3 || idxCount < 3) {
+          record.surfaceReady = false;
+          if (record.visual) record.visual.visible = false;
+          return;
+        }
+        const geo = record.visual.geometry;
+        geo.attributes.position.array.subarray(0, vertCount * 3).set(this.arena.f32(record.surfPosPtr, vertCount * 3));
+        geo.attributes.normal.array.subarray(0, vertCount * 3).set(this.arena.f32(record.surfNrmPtr, vertCount * 3));
+        if (geo.attributes.aFoam) {
+          geo.attributes.aFoam.array.subarray(0, vertCount * 2).set(this.arena.f32(record.surfFoamPtr, vertCount * 2));
+          geo.attributes.aFoam.needsUpdate = true;
+        }
+        geo.index.array.subarray(0, idxCount).set(this.arena.u32(record.surfIdxPtr, idxCount));
+        geo.attributes.position.needsUpdate = true;
+        geo.attributes.normal.needsUpdate = true;
+        geo.index.needsUpdate = true;
+        geo.setDrawRange(0, idxCount);
+        record.surfaceReady = true;
+
+        /* Update airborne whitewater spray & crest foam droplets */
+        if (record.sprayVisual) {
+          const camera = global.FE?.engines?.core?.getActiveCamera?.() || global.FE?.engines?.core?.viewportCamera;
+          const pos = this.arena.f32(record.positionPtr, record.count * 3);
+          const foam = this.arena.f32(record.foamEnergyPtr, record.count);
+          const active = this.arena.u8(record.activePtr, record.count);
+          const dummy = record._sprayDummy || (record._sprayDummy = new THREE.Object3D());
+          const maxSpray = record.sprayVisual.count;
+          const stride = Math.max(1, Math.floor(record.count / maxSpray));
+          for (let s = 0; s < maxSpray; s++) {
+            const pi = (s * stride) % record.count;
+            const e = active[pi] ? foam[pi] : 0;
+            if (e > 0.34) {
+              const b = pi * 3;
+              dummy.position.set(pos[b], pos[b + 1] + record.radius * 0.28, pos[b + 2]);
+              if (camera?.quaternion) dummy.quaternion.copy(camera.quaternion);
+              const sc = record.radius * (0.22 + e * 0.48);
+              dummy.scale.set(sc, sc, 1);
+            } else {
+              dummy.scale.set(0, 0, 0);
+            }
+            dummy.updateMatrix();
+            record.sprayVisual.setMatrixAt(s, dummy.matrix);
+          }
+          record.sprayVisual.instanceMatrix.needsUpdate = true;
+        }
+        return;
+      }
+
+      /* Fallback path when running with legacy non-C++ WASM */
       if (record.surfaceReady) { record.surfaceFrame++; if (record.surfaceFrame % 2 === 1) return; }
       const count = record.count, positions = this.arena.f32(record.positionPtr, count * 3), active = this.arena.u8(record.activePtr, count);
       const h = Math.max(record.smoothingLength || 0.1, 0.05), h2 = h * h, poly6 = 315 / (64 * Math.PI * Math.max(h ** 9, 1e-12));
-      let lowX, lowY, lowZ, highX, highY, highZ;
-      if (record.outflowEnabled) {
-        lowX = lowY = lowZ = Infinity; highX = highY = highZ = -Infinity;
-        for (let i = 0; i < count; i++) if (active[i]) { const b = i * 3; lowX = Math.min(lowX, positions[b]); lowY = Math.min(lowY, positions[b + 1]); lowZ = Math.min(lowZ, positions[b + 2]); highX = Math.max(highX, positions[b]); highY = Math.max(highY, positions[b + 1]); highZ = Math.max(highZ, positions[b + 2]); }
-        if (!Number.isFinite(lowX)) { record.surfaceReady = false; record.visual.visible = false; return; }
-        lowX -= h * 0.75; lowY -= h * 0.75; lowZ -= h * 0.75; highX += h * 0.75; highY += h * 0.75; highZ += h * 0.75;
-      } else {
-        const b = record.bounds, pad = h * 0.45;
-        lowX = b[0] - pad; lowY = b[1] - pad; lowZ = b[2] - pad; highX = b[3] + pad; highY = b[4] + pad; highZ = b[5] + pad;
-      }
+      const b = record.bounds, pad = h * 0.45;
+      const lowX = b[0] - pad, lowY = b[1] - pad, lowZ = b[2] - pad, highX = b[3] + pad, highY = b[4] + pad, highZ = b[5] + pad;
       const sx = Math.max(highX - lowX, 0.25), sy = Math.max(highY - lowY, 0.25), sz = Math.max(highZ - lowZ, 0.25), maxDim = Math.max(sx, sy, sz);
-      const cells = clamp(Math.round(number(record.params, 'Surface Resolution', 64)), 16, 96);
       const nx = Math.max(6, Math.round(cells * sx / maxDim)), ny = Math.max(6, Math.round(cells * sy / maxDim)), nz = Math.max(6, Math.round(cells * sz / maxDim));
       const dx = sx / nx, dy = sy / ny, dz = sz / nz, wx = nx + 1, wy = ny + 1, totalNodes = wx * wy * (nz + 1);
       const field = new Float32Array(totalNodes), nodePos = new Float32Array(totalNodes * 3), idAt = (x, y, z) => x + wx * (y + wy * z);
@@ -1080,71 +1757,77 @@
         if (!Number.isFinite(x + y + z)) continue;
         const gx = (x - lowX) / dx, gy = (y - lowY) / dy, gz = (z - lowZ) / dz;
         const rx = Math.ceil(h / dx), ry = Math.ceil(h / dy), rz = Math.ceil(h / dz);
-        const x0 = Math.max(0, Math.floor(gx) - rx), x1 = Math.min(nx, Math.floor(gx) + rx), y0 = Math.max(0, Math.floor(gy) - ry), y1 = Math.min(ny, Math.floor(gy) + ry), z0 = Math.max(0, Math.floor(gz) - rz), z1 = Math.min(nz, Math.floor(gz) + rz);
-        for (let iz = z0; iz <= z1; iz++) for (let iy = y0; iy <= y1; iy++) for (let ix = x0; ix <= x1; ix++) {
-          const ox = lowX + ix * dx - x, oy = lowY + iy * dy - y, oz = lowZ + iz * dz - z, q = h2 - ox * ox - oy * oy - oz * oz;
-          if (q > 0) field[idAt(ix, iy, iz)] += record.mass * poly6 * q * q * q;
-        }
+        for (let iz = Math.max(0, Math.floor(gz) - rz); iz <= Math.min(nz, Math.floor(gz) + rz); iz++)
+          for (let iy = Math.max(0, Math.floor(gy) - ry); iy <= Math.min(ny, Math.floor(gy) + ry); iy++)
+            for (let ix = Math.max(0, Math.floor(gx) - rx); ix <= Math.min(nx, Math.floor(gx) + rx); ix++) {
+              const ox = lowX + ix * dx - x, oy = lowY + iy * dy - y, oz = lowZ + iz * dz - z, q = h2 - ox * ox - oy * oy - oz * oz;
+              if (q > 0) field[idAt(ix, iy, iz)] += record.mass * poly6 * q * q * q;
+            }
       }
-      const iso = clamp(number(record.params, 'Surface Density', 0.48), 0.12, 1.5), corners = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]], tetra = [[0,5,1,6],[0,1,2,6],[0,2,3,6],[0,3,7,6],[0,7,4,6],[0,4,5,6]];
-      const vertexIndices = new Map(), surfacePositions = [], surfaceIndices = [];
-      const edgeVertex = (a, b) => {
-        const lo = Math.min(a, b), hi = Math.max(a, b), key = lo * totalNodes + hi, cached = vertexIndices.get(key);
-        if (cached !== undefined) return cached;
-        const va = field[a], vb = field[b], t = clamp((iso - va) / (vb - va || 1e-12), 0, 1), pa = a * 3, pb = b * 3, index = surfacePositions.length / 3;
-        surfacePositions.push(nodePos[pa] + (nodePos[pb] - nodePos[pa]) * t, nodePos[pa + 1] + (nodePos[pb + 1] - nodePos[pa + 1]) * t, nodePos[pa + 2] + (nodePos[pb + 2] - nodePos[pa + 2]) * t);
-        vertexIndices.set(key, index); return index;
-      };
-      const centroid = (ids) => { const c = [0,0,0]; for (const id of ids) { const p = id * 3; c[0] += nodePos[p]; c[1] += nodePos[p + 1]; c[2] += nodePos[p + 2]; } return c.map(v => v / ids.length); };
-      const triangle = (a, b, c, outward) => {
-        if (a === b || b === c || c === a) return;
-        const ia = a * 3, ib = b * 3, ic = c * 3, abx = surfacePositions[ib] - surfacePositions[ia], aby = surfacePositions[ib + 1] - surfacePositions[ia + 1], abz = surfacePositions[ib + 2] - surfacePositions[ia + 2], acx = surfacePositions[ic] - surfacePositions[ia], acy = surfacePositions[ic + 1] - surfacePositions[ia + 1], acz = surfacePositions[ic + 2] - surfacePositions[ia + 2];
-        const nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx;
-        if (nx * nx + ny * ny + nz * nz < 1e-14) return;
-        if (nx * outward[0] + ny * outward[1] + nz * outward[2] < 0) surfaceIndices.push(a, c, b); else surfaceIndices.push(a, b, c);
-      };
-      const processTetra = (ids) => {
-        const inside = [], outside = [];
-        for (const id of ids) (field[id] >= iso ? inside : outside).push(id);
-        if (!inside.length || !outside.length) return;
-        const inCenter = centroid(inside), outCenter = centroid(outside), outward = [outCenter[0] - inCenter[0], outCenter[1] - inCenter[1], outCenter[2] - inCenter[2]];
-        if (inside.length === 1) { const a = inside[0]; triangle(edgeVertex(a,outside[0]), edgeVertex(a,outside[1]), edgeVertex(a,outside[2]), outward); }
-        else if (inside.length === 3) { const a = outside[0]; triangle(edgeVertex(a,inside[0]), edgeVertex(a,inside[1]), edgeVertex(a,inside[2]), outward); }
-        else { const a = inside[0], b = inside[1], c = outside[0], d = outside[1], p0 = edgeVertex(a,c), p1 = edgeVertex(a,d), p2 = edgeVertex(b,d), p3 = edgeVertex(b,c); triangle(p0,p1,p2,outward); triangle(p0,p2,p3,outward); }
-      };
-      const cube = new Uint32Array(8);
-      for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-        let min = Infinity, max = -Infinity;
-        for (let c = 0; c < 8; c++) { const o = corners[c]; cube[c] = idAt(x + o[0], y + o[1], z + o[2]); const v = field[cube[c]]; min = Math.min(min, v); max = Math.max(max, v); }
-        if (min >= iso || max < iso) continue;
-        for (const t of tetra) processTetra([cube[t[0]], cube[t[1]], cube[t[2]], cube[t[3]]]);
-      }
-      if (surfaceIndices.length < 3) { record.surfaceReady = false; record.visual.visible = false; return; }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(surfacePositions), 3));
-      const indexArray = surfacePositions.length / 3 > 65535 ? new Uint32Array(surfaceIndices) : new Uint16Array(surfaceIndices);
-      geometry.setIndex(new THREE.BufferAttribute(indexArray, 1));
-      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
-      const previousGeometry = record.visual.geometry; record.visual.geometry = geometry; previousGeometry?.dispose?.();
-      record.surfaceReady = true;
+      record.surfaceReady = field.some(v => v >= iso);
     }
 
     updateParticleInstances(record) {
       if (record.kind === 'sph') { this.updateFluidSurface(record); return; }
-      const positions=this.arena.f32(record.positionPtr,record.count*3),temperatures=record.temperaturePtr?this.arena.f32(record.temperaturePtr,record.count):null,ages=record.agePtr?this.arena.f32(record.agePtr,record.count):null,active=record.activePtr?this.arena.u8(record.activePtr,record.count):record.activeMask;
-      const mode=global.FE?.engines?.core?.getShadingMode?.()||'solid';
-      if(record.visualMode!==mode){record.visualMode=mode;if(record.fireVisual){record.fireVisual.material.dispose();record.fireVisual.material=this.tracerMaterial('fire',record.domainType,record.params,mode)}if(record.smokeVisual){record.smokeVisual.material.dispose();record.smokeVisual.material=this.tracerMaterial('smoke',record.domainType,record.params,mode)}}
-      const camera=global.FE?.engines?.core?.getActiveCamera?.()||global.FE?.engines?.core?.viewportCamera,object=new THREE.Object3D(),color=new THREE.Color(),density=clamp(number(record.params,'Smoke Density',1),.1,3),expansion=clamp(number(record.params,'Expansion Rate',1.2),.1,2.5),{fire:firePreset,smoke:smokePreset}=tracerPresets(record.domainType,record.params);
-      const fire=record.fireVisual,smoke=record.smokeVisual;
-      for(let i=0;i<record.count;i++){
-        const base=i*3,visible=!(active&&active[i]===0);object.position.set(positions[base],positions[base+1],positions[base+2]);if(camera?.quaternion)object.quaternion.copy(camera.quaternion);else object.quaternion.identity();
-        const heat=temperatures?clamp(temperatures[i],0,1.5):0,age=ages?ages[i]:0,isHot=visible&&!!fire&&(record.domainType==='Fire'||record.domainType==='Fire + Smoke'&&heat>.52);
-        if(fire){object.scale.set(record.radius*.8*(isHot ? .7+heat*.45 : 0),record.radius*(1.35+Math.min(heat,.8))*(isHot?1:0),1);object.updateMatrix();fire.setMatrixAt(i,object.matrix);if(isHot){if(firePreset==='Gas Flame')color.setRGB(.12,.48,1);else if(firePreset==='Wildfire')color.setRGB(1,.12,.015);else if(firePreset==='Torch')color.setRGB(1,.46,.07);else color.setRGB(1,.28+.25*(1-heat/1.5),.035)}else color.setRGB(0,0,0);fire.setColorAt(i,color)}
-        if(smoke){const isVisible=visible&&(!fire||!isHot),growth=cl(.8+age*expansion*.16,.8,3.6),sc=isVisible?record.radius*growth*(.78+density*.12):0;object.scale.set(sc,sc*1.12,1);object.updateMatrix();smoke.setMatrixAt(i,object.matrix);if(isVisible){if(smokePreset==='Steam')color.setRGB(.72,.82,.92);else if(smokePreset==='Heavy Fog')color.setRGB(.82,.84,.86);else if(smokePreset==='Dark Soot')color.setRGB(.19,.2,.22);else{const grey=cl(.32+Math.min(age*.045,.3),.25,.68);color.setRGB(grey,grey,grey)}}else color.setRGB(0,0,0);smoke.setColorAt(i,color)}
+      const positions = this.arena.f32(record.positionPtr, record.count * 3);
+      const temperatures = record.temperaturePtr ? this.arena.f32(record.temperaturePtr, record.count) : null;
+      const ages = record.agePtr ? this.arena.f32(record.agePtr, record.count) : null;
+      const active = record.activePtr ? this.arena.u8(record.activePtr, record.count) : record.activeMask;
+      const mode = global.FE?.engines?.core?.getShadingMode?.() || 'solid';
+      if (record.visualMode !== mode) {
+        record.visualMode = mode;
+        if (record.fireVisual) { record.fireVisual.material.dispose(); record.fireVisual.material = this.tracerMaterial('fire', record.domainType, record.params, mode); }
+        if (record.smokeVisual) { record.smokeVisual.material.dispose(); record.smokeVisual.material = this.tracerMaterial('smoke', record.domainType, record.params, mode); }
       }
-      for(const visual of [fire,smoke])if(visual){visual.instanceMatrix.needsUpdate=true;if(visual.instanceColor)visual.instanceColor.needsUpdate=true}
+      const camera = global.FE?.engines?.core?.getActiveCamera?.() || global.FE?.engines?.core?.viewportCamera;
+      const object = record._billboardDummy || (record._billboardDummy = new THREE.Object3D());
+      const color = record._billboardColor || (record._billboardColor = new THREE.Color());
+      const density = clamp(number(record.params, 'Smoke Density', 1), .1, 3);
+      const expansion = clamp(number(record.params, 'Expansion Rate', 1.2), .1, 2.5);
+      const { fire: firePreset, smoke: smokePreset } = tracerPresets(record.domainType, record.params);
+      const fire = record.fireVisual, smoke = record.smokeVisual;
+      for (let i = 0; i < record.count; i++) {
+        const base = i * 3, visible = !(active && active[i] === 0);
+        object.position.set(positions[base], positions[base + 1], positions[base + 2]);
+        if (camera?.quaternion) object.quaternion.copy(camera.quaternion);
+        else object.quaternion.identity();
+        const heat = temperatures ? clamp(temperatures[i], 0, 1.5) : 0, age = ages ? ages[i] : 0;
+        const isHot = visible && !!fire && (record.domainType === 'Fire' || record.domainType === 'Fire + Smoke' && heat > .48);
+        if (fire) {
+          object.scale.set(record.radius * .85 * (isHot ? .72 + heat * .48 : 0), record.radius * (1.42 + Math.min(heat, .85)) * (isHot ? 1 : 0), 1);
+          object.updateMatrix();
+          fire.setMatrixAt(i, object.matrix);
+          if (isHot) {
+            if (firePreset === 'Gas Flame') color.setRGB(.14, .54, 1);
+            else if (firePreset === 'Wildfire') color.setRGB(1, .16, .02);
+            else if (firePreset === 'Torch') color.setRGB(1, .50, .08);
+            else color.setRGB(1, .30 + .28 * (1 - heat / 1.5), .04);
+          } else color.setRGB(0, 0, 0);
+          fire.setColorAt(i, color);
+        }
+        if (smoke) {
+          const isVisible = visible && (!fire || !isHot);
+          const growth = cl(.82 + age * expansion * .18, .82, 3.8);
+          const sc = isVisible ? record.radius * growth * (.80 + density * .14) : 0;
+          object.scale.set(sc, sc * 1.14, 1);
+          object.updateMatrix();
+          smoke.setMatrixAt(i, object.matrix);
+          if (isVisible) {
+            if (smokePreset === 'Steam') color.setRGB(.74, .84, .94);
+            else if (smokePreset === 'Heavy Fog') color.setRGB(.82, .85, .88);
+            else if (smokePreset === 'Dark Soot') color.setRGB(.18, .19, .22);
+            else { const grey = cl(.34 + Math.min(age * .048, .32), .26, .70); color.setRGB(grey, grey, grey); }
+          } else color.setRGB(0, 0, 0);
+          smoke.setColorAt(i, color);
+        }
+      }
+      for (const visual of [fire, smoke]) if (visual) {
+        visual.instanceMatrix.needsUpdate = true;
+        if (visual.instanceColor) visual.instanceColor.needsUpdate = true;
+      }
       this.frameCount++;
     }
+
     resolveEffectors(record, dt = 1 / 60) {
       if (!this.effectors.size || !record.positionPtr || !record.velocityPtr) return;
       const positions = this.arena.f32(record.positionPtr, record.count * 3);
@@ -1194,21 +1877,42 @@
         record.domainEdges.geometry?.dispose?.();
         record.domainEdges.material?.dispose?.();
       }
+      if (record?.sprayVisual) {
+        if (record.sprayVisual.parent) record.sprayVisual.parent.remove(record.sprayVisual);
+        record.sprayVisual.geometry?.dispose?.();
+        record.sprayVisual.material?.dispose?.();
+      }
       if (record?.visual) {
         if (record.visual.parent) record.visual.parent.remove(record.visual);
-        if (record.visual.traverse) record.visual.traverse(node=>{node.geometry?.dispose?.();if(node.material)for(const material of [].concat(node.material))material?.dispose?.()});
-        else {record.visual.geometry?.dispose?.();record.visual.material?.dispose?.()}
+        if (record.visual.traverse) {
+          record.visual.traverse(node => {
+            node.geometry?.dispose?.();
+            if (node.material) for (const material of [].concat(node.material)) material?.dispose?.();
+          });
+        } else {
+          record.visual.geometry?.dispose?.();
+          record.visual.material?.dispose?.();
+        }
       }
       if (record?.savedMaterial) mesh.material = record.savedMaterial;
+      if ((type === 'Cloth' || type === 'SoftBody') && mesh.userData?.savedSimBaseMaterial) {
+        if (mesh.material && mesh.material !== mesh.userData.savedSimBaseMaterial) mesh.material.dispose?.();
+        mesh.material = mesh.userData.savedSimBaseMaterial;
+        delete mesh.userData.savedSimBaseMaterial;
+      }
       this.effectors.delete(mesh.uuid);
       this.simMeshes.delete(mesh.uuid);
       this.updateStatusBadge();
       delete mesh.userData?.[key];
       if (type === 'Fluid') {
-        delete mesh.userData?.fluidSim; delete mesh.userData?.simMesh; delete mesh.userData?.poolMesh;
+        delete mesh.userData?.fluidSim;
+        delete mesh.userData?.simMesh;
+        delete mesh.userData?.poolMesh;
       }
       if (type === 'Cloth' || type === 'SoftBody') {
-        delete mesh.userData.origPositions; delete mesh.userData.prevPositions; delete mesh.userData.currPositions;
+        delete mesh.userData.origPositions;
+        delete mesh.userData.prevPositions;
+        delete mesh.userData.currPositions;
       }
     }
 

@@ -122,6 +122,17 @@ struct Vec3 {
   constexpr Vec3 operator*(const Vec3& r) const { return {x * r.x, y * r.y, z * r.z}; }
   Vec3& operator+=(const Vec3& r) { x += r.x; y += r.y; z += r.z; return *this; }
   Vec3& operator*=(float s) { x *= s; y *= s; z *= s; return *this; }
+
+  static constexpr float dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+  static constexpr Vec3 cross(const Vec3& a, const Vec3& b) {
+    return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+  }
+  constexpr float length_sq() const { return x * x + y * y + z * z; }
+  float length() const { return sqrtf(length_sq()); }
+  Vec3 normalized() const {
+    const float len = length();
+    return len > 1e-8f ? (*this * (1.0f / len)) : Vec3(0.0f, 1.0f, 0.0f);
+  }
 };
 
 inline constexpr Vec3 operator*(float s, const Vec3& v) { return {v.x * s, v.y * s, v.z * s}; }

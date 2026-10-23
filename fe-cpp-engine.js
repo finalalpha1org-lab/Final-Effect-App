@@ -1066,9 +1066,11 @@
 
       const eng = window.FE?.engines?.core;
       if (eng?.r && !this.renderState.isRendering && !this.renderState.isSequenceRendering) {
+        // Keep a stable native-resolution viewport; tier changes must not blur editing.
+        const sharpDpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
         const curPr = eng.r.getPixelRatio();
-        if (Math.abs(curPr - recDpr) > 0.12) {
-          eng.r.setPixelRatio(recDpr);
+        if (Math.abs(curPr - sharpDpr) > 0.01) {
+          eng.r.setPixelRatio(sharpDpr);
           const vp = document.getElementById('viewport-core');
           if (vp && vp.clientWidth && vp.clientHeight) {
             eng.r.setSize(vp.clientWidth, vp.clientHeight, false);
@@ -1635,14 +1637,7 @@
       canvas.addEventListener('pointerup', finishPointer, { passive: true });
       canvas.addEventListener('pointercancel', finishPointer, { passive: true });
 
-      /* Start Adaptive C++ GPU Performance Governor RAF observer */
-      const perfLoop = () => {
-        requestAnimationFrame(perfLoop);
-        if (window.FE?.current === 'core') {
-          FECppEngine.tickPerformanceGovernor();
-        }
-      };
-      requestAnimationFrame(perfLoop);
+      /* Performance samples are supplied by the actual Workspace render loop. */
     };
 
     bindCoreViewportHooks();
@@ -1756,6 +1751,7 @@
     const perfOut = this.allocF32(6);
     exp.fe_touch_reset();
     exp.fe_touch_update(2, 120, 200, 240, 200, 800, 600, 0.016, touchOut.ptr);
+    exp.fe_perf_reset();
     exp.fe_perf_push_frame_ms(16.2);
     exp.fe_perf_query_metrics(0, 2.0, perfOut.ptr);
     results.push({
@@ -1873,7 +1869,7 @@
             '</div>' +
             '<button class="export-modal-close" type="button" onclick="document.getElementById(\'cpp-diagnostics-modal\').hidden=true">✕</button>' +
           '</header>' +
-          '<div style="padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">' +
+          '<div class="diagnostics-body" style="padding:14px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">' +
             '<div style="background:#090b10;border:1px solid #262c40;border-radius:12px;padding:10px;text-align:center;">' +
               '<canvas id="cpp-diag-canvas" width="320" height="180" style="width:100%;max-width:460px;height:auto;border-radius:8px;"></canvas>' +
               '<div id="cpp-diag-summary" style="margin-top:8px;font-size:12px;font-weight:700;color:#34d399;">Running C++20 WASM benchmarks…</div>' +
@@ -1895,7 +1891,15 @@
     if (summaryEl) summaryEl.textContent = 'Running C++20 WASM Core Engine self-test…';
     if (listEl) listEl.innerHTML = '';
 
-    const report = await FECppEngine.runLiveSelfTest(cv);
+    let report;
+    try {
+      report = await FECppEngine.runLiveSelfTest(cv);
+    } catch (error) {
+      report = {ok:false, totalMs:0, results:[{name:'Diagnostics execution',ok:false,detail:String(error.message || error)}]};
+    } finally {
+      FECppEngine.exports?.fe_perf_reset();
+      FECppEngine.lastFrameTick = performance.now();
+    }
     if (summaryEl) {
       summaryEl.style.color = report.ok ? '#34d399' : '#f87171';
       summaryEl.textContent = report.ok
