@@ -93,14 +93,12 @@ needs a GPU-drawn indirect buffer, not a JS loop.
 resident ring, and foliage has distance tiers (`fe_lod_classify`, 750 m full
 detail by default). There is no quadtree over the foliage itself.
 
-**Erosion off the main thread.** Hydraulic and thermal erosion run in the core
-(measured here on the shipped artifact: 256² field, 2 000 droplets 10 ms,
-10 000 34 ms, 50 000 174 ms; 512² field 10 000 40 ms, 50 000 201 ms; thermal
-×20 8 ms / 27 ms — about 0.29 M droplets/s). Those numbers are why the panel
-applies erosion as a discrete action rather than per frame. Moving it to a worker is
-possible, but a `WebAssembly` instance cannot be shared with the main thread and
-`SharedArrayBuffer` needs COOP/COEP headers that a static host does not send, so
-a worker would need its own instance and a copied heightmap back. Not done.
+**Erosion in a worker.** Hydraulic erosion is time-sliced (below), so it no
+longer needs a worker. A worker would still be the only way to run the *whole*
+50 000 droplets in the background: a `WebAssembly` instance cannot be shared with
+the main thread and `SharedArrayBuffer` needs COOP/COEP headers that a static
+host does not send, so a worker would need its own instance and a copied
+heightmap back. Not done, and no longer on the critical path.
 
 **GPU compute.** WebGL2 has no compute shaders. The two real options are WebGPU
 compute or fragment/transform-feedback ping-pong; neither exists in this build.
@@ -113,6 +111,58 @@ pass and is not in this budget.
 GPU, no device). The in-page frame timings are the only measurements taken, so
 "120 FPS on a phone" is an unverified claim and is not made here.
 
+## Time-sliced erosion
+
+The batch call `fe_terrain_erode_hydraulic(count, …)` still exists — the
+benchmark and the tests use it — but the studio no longer calls it for hydraulic
+erosion. A run starts with `fe_erosion_begin(count, …)` and is advanced by
+`fe_erosion_step(droplets)` once per frame:
+
+* The kernel owns the run: seed, droplet cursor and RNG state. A droplet
+  finishes before the next one starts and draws exactly two numbers at birth, so
+  **the same run split into 700 + 700 + … droplets is bit-identical to one
+  blocking call**. `tests/landscape-cpp.test.mjs` asserts array equality, not a
+  tolerance, and also that a different split size (137) agrees.
+* `fe_erosion_dirty_ptr()` returns `uint16[4]` — `min_i, min_j, max_i, max_j`,
+  inclusive, with a one-cell halo so the caller can rebuild the normals of the
+  ring it uploads. Empty when `min_i > max_i`.
+* `fe_erosion_set_region(cx, cz, radius)` narrows where droplets start and where
+  they may still change the field. That is what keeps the rectangle small: rain
+  outside the patch is not simulated, and the patch edge is feathered over its
+  outer quarter so a run does not end in a square wall. A patch whose centre is
+  near the border is moved inwards instead of clamped cell by cell — otherwise a
+  camera aimed at the coast would concentrate the whole run into a stripe along
+  the last column.
+
+Measured end to end through the real bridge and controller, 257² island,
+50 000 droplets, the default 120 m area (a 60 m radius patch):
+
+| Quantity | Result |
+| --- | --- |
+| Frames to finish | 111–126 (≈1 s at 120 Hz) |
+| Mean frame cost | 1.8–2.0 ms, uploads included |
+| Worst frame | 4.7–8.3 ms (first slice, cold) |
+| Droplets per frame after adaptation | ≈400–450 (`trim` settled at 0.64–0.68) |
+| Uploaded band | 65 rows × 257 verts = **196 KB per attribute** |
+| Shader heightmap patch | 3 `gl.texSubImage2D` blocks of 32 rows (≈200 KB), not the 1 MB texture |
+| Full refresh (`upd`) | 774 KB per attribute, plus 4.2 MB of surface weights and 1 MB of height texture |
+
+A live run therefore pushes position, colour and normal row bands and **skips the
+three surface-weight attributes**; the height texture is patched in 32-row blocks
+through `copyTextureToTexture` (a `gl.texSubImage2D`) rather than re-uploaded,
+because the shaders that sample it — shore wetness, snow line, grass placement —
+would otherwise lag a second behind the geometry. The whole terrain, height
+texture included, is refreshed once when the run ends. `updLive()` sets
+`BufferAttribute.updateRange` before `needsUpdate`, so three r128 issues
+`gl.bufferSubData` for that band instead of re-uploading the array.
+
+The slice size is not a constant: the controller times the whole tick — the
+droplet loop *and* the band upload on the frames that carry one — and trims the
+droplet budget (0.18×–1.8×) toward ~2 ms, so a slow phone simulates fewer
+droplets instead of dropping frames. A run also pauses rather than burning frames
+when it cannot be seen: hidden tab, another sheet open, the patch off screen, or
+a brush stroke in progress.
+
 ## The order that would actually help a phone
 
 1. **Fill rate first.** On a 390×844 screen at DPR 2, a million instanced grass
@@ -120,5 +170,6 @@ GPU, no device). The in-page frame timings are the only measurements taken, so
    now in the core; smaller cards and fewer overdraw layers would go further.
 2. **WebGPU path** for indirect draws and compute erosion, kept behind a feature
    flag next to the WebGL2 renderer.
-3. **Worker erosion** with a copied heightmap, once 2 exists.
-4. **Quadtree foliage LoD** over the resident chunks.
+3. **Quadtree foliage LoD** over the resident chunks.
+4. **Impostor tier** for trees past a kilometre, where the vertices stop being
+   worth anything on screen.

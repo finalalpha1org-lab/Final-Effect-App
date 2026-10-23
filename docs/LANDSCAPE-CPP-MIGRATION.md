@@ -199,6 +199,36 @@ Cost is four extra noise evaluations on the border ring (128 of 1 089 vertices a
 33²), and the shared edge is now bit-identical in height **and** surface weight
 in both x and z — pinned by `tests/landscape-cpp.test.mjs`.
 
+## Erosion a slice at a time
+
+`fe_terrain_erode_hydraulic()` blocks: 50 000 droplets is 174 ms on a 256² field,
+which is a dozen dropped frames. The droplet loop is now a shared function, and
+the panel drives it through a second entry point:
+
+| Call | What it does |
+| --- | --- |
+| `fe_erosion_begin(count, lifetime, …)` | validates, seeds the RNG, clears the rectangle |
+| `fe_erosion_set_region(cx, cz, radius)` | the square of rain that is actually simulated (`radius ≤ 0` = whole map); a patch that would hang over the border is moved inwards instead of being clamped cell by cell |
+| `fe_erosion_step(droplets)` | runs one slice, returns how many ran |
+| `fe_erosion_dirty_ptr()` | `uint16[4]` = `min_i, min_j, max_i, max_j`, inclusive, one-cell halo |
+| `fe_erosion_remaining()` / `_total()` / `_active()` | progress |
+| `fe_erosion_cancel()` | stop; also implied by `fe_terrain_init()` |
+
+The batch call and the live run share `eroRun()`, so they cannot drift apart.
+Because a droplet is independent of every other droplet and draws its two random
+numbers at birth, the split is exact: `700 + 700 + …` produces the same heights,
+bit for bit, as one call. Tests assert that equality and that a different slice
+size gives the same field.
+
+The rectangle is why a live run is cheaper than a refresh: 65 rows out of 513 is
+196 KB per attribute instead of 774 KB, and the three surface-weight attributes
+and the height texture are not touched at all until the run ends. `updLive()`
+in `terrain-main-01.js` writes `BufferAttribute.updateRange` so three uploads the
+band with `gl.bufferSubData` rather than the whole array, and `updLiveHeight()`
+patches the shader height texture in 32-row `texSubImage2D` blocks; `fe_terrain_compute_normals_region()`
+rebuilds only the normals of that band and a test compares it cell for cell with
+the full pass.
+
 ## Tessendorf ocean in C++
 
 `cpp/src/fe_ocean.cpp` owns the three-cascade spectrum and both inverse FFTs.

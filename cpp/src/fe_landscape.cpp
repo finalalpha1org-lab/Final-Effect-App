@@ -81,6 +81,96 @@ void terrainColorAt(uint32_t i,uint32_t j){
  const float v=.94f+.12f*hash(int(i*3),int(j*7),gNoiseSeed);
  colors[k*3]=r*v;colors[k*3+1]=g*v;colors[k*3+2]=b*v;
 }
+
+/* --- Hydraulic erosion, split across frames -------------------------------
+   The droplet loop below is the one the batch call uses. Splitting it changes
+   only how many droplets run per call: a droplet finishes before the next one
+   starts and draws exactly two random numbers at birth, so the same seed split
+   into 700 + 700 + ... droplets erodes the field *bit-identically* to one call
+   of the whole count. That equality is a test in tests/landscape-cpp.test.mjs,
+   not an assumption.
+
+   The run also reports the cells it touched. The rectangle carries a one-cell
+   halo because a height change moves the normals of its neighbours too, and the
+   caller uploads exactly that rectangle instead of the whole heightfield. */
+struct ErosionParams{uint32_t lifetime;float inertia,capacity,erode,deposit,evap,gravity;
+  /* Spawn / clip box, a square of half-width `radius` around (cx, cz). radius
+     <= 0 means the whole map, which is what the batch call uses and what makes
+     a live run bit-identical to it. A bounded patch is how live erosion stays
+     cheap: rain outside the patch is not simulated, so nothing outside it can
+     change and the uploaded rectangle stays small. */
+  float cx,cz,radius;};
+static ErosionParams eroParams{64,.05f,.3f,.3f,.3f,.01f,4.f,0,0,0};
+static uint32_t eroRng=1,eroTotal=0,eroLeft=0;
+static bool eroActive=false;
+static uint16_t eroRect[4]={0xFFFF,0xFFFF,0,0};   /* min_i, min_j, max_i, max_j — empty when min_i > max_i */
+static void eroResetRect(){eroRect[0]=0xFFFF;eroRect[1]=0xFFFF;eroRect[2]=0;eroRect[3]=0;}
+static void eroTouch(int32_t i,int32_t j){
+  if(i<0)i=0;else if(i>int32_t(N))i=int32_t(N);
+  if(j<0)j=0;else if(j>int32_t(N))j=int32_t(N);
+  const uint16_t u=uint16_t(i),v=uint16_t(j);
+  if(u<eroRect[0])eroRect[0]=u;
+  if(v<eroRect[1])eroRect[1]=v;
+  if(u>eroRect[2])eroRect[2]=u;
+  if(v>eroRect[3])eroRect[3]=v;
+}
+static void eroCancelRun(){eroActive=false;eroLeft=0;eroResetRect();}
+static uint32_t eroRun(uint32_t count,uint32_t& rng,const ErosionParams& p){
+  const float cell=size/N;
+  auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
+  const bool bounded=p.radius>0.f;
+  auto splat=[&](float x,float z,float amount){
+    float m=1.f;
+    if(bounded){
+      const float off=maxf(absf(x-p.cx),absf(z-p.cz));
+      if(off>p.radius)return;
+      /* Feathered over the outer quarter of the patch, so a live run does not
+         leave a square wall where the simulated rain stops. */
+      m=1.f-smoothstepf(p.radius*.72f,p.radius,off);
+      amount*=m;
+    }
+    const float u=clampf((x/size+.5f)*N,0,float(N)-.001f),v=clampf((z/size+.5f)*N,0,float(N)-.001f);
+    const uint32_t i=uint32_t(u),j=uint32_t(v),k=j*W+i;const float a=u-i,b=v-j;
+    H[k]+=amount*(1-a)*(1-b);H[k+1]+=amount*a*(1-b);H[k+W]+=amount*(1-a)*b;H[k+W+1]+=amount*a*b;
+    /* the 2x2 cells that changed, grown by one so their normals are rebuilt too */
+    eroTouch(int32_t(i)-1,int32_t(j)-1);eroTouch(int32_t(i)+2,int32_t(j)+2);
+  };
+  for(uint32_t d=0;d<count;d++){
+    /* Two draws per droplet either way, so bounding the patch does not change
+       how many numbers a droplet consumes. */
+    const float rx=random(),rz=random();
+    float x=bounded?p.cx+(rx-.5f)*2.f*p.radius:(rx-.5f)*size;
+    float z=bounded?p.cz+(rz-.5f)*2.f*p.radius:(rz-.5f)*size;
+    float dx=0,dz=0,speed=1,water=1,sediment=0;
+    for(uint32_t life=0;life<p.lifetime;life++){
+      const float h=sample(H,x,z);
+      const float gx=(sample(H,x+cell,z)-sample(H,x-cell,z))/(2*cell);
+      const float gz=(sample(H,x,z+cell)-sample(H,x,z-cell))/(2*cell);
+      dx=dx*p.inertia-gx*(1-p.inertia);dz=dz*p.inertia-gz*(1-p.inertia);
+      const float length=sqrtf(dx*dx+dz*dz);
+      if(length<.000001f)break;
+      dx/=length;dz/=length;
+      const float nx=x+dx*cell,nz=z+dz*cell;
+      if(nx<=-size*.5f||nx>=size*.5f||nz<=-size*.5f||nz>=size*.5f)break;
+      if(bounded&&maxf(absf(nx-p.cx),absf(nz-p.cz))>p.radius)break;
+      const float dh=sample(H,nx,nz)-h;
+      const float capacity=maxf(-dh*speed*water*p.capacity,.01f);
+      if(sediment>capacity||dh>0){
+        const float amount=dh>0?minf(dh,sediment):(sediment-capacity)*p.deposit;
+        splat(x,z,amount);sediment-=amount;
+      }else{
+        float amount=minf((capacity-sediment)*p.erode,-dh);
+        amount=minf(amount,cell*.5f);
+        splat(x,z,-amount);sediment+=amount;
+      }
+      speed=sqrtf(maxf(speed*speed-dh*p.gravity,0));
+      water*=(1-p.evap);
+      x=nx;z=nz;
+      if(water<.01f)break;
+    }
+  }
+  return count;
+}
 }
 extern "C" {
 float* fe_forest_input_ptr(){return forestInput;}
@@ -179,7 +269,7 @@ int32_t fe_terrain_apply_strata(float strata_height,float strata_strength,float 
  return 0;
 }
 uint32_t fe_landscape_backend_magic(){return FE_LANDSCAPE_CPP_MAGIC;}
-int32_t fe_terrain_init(uint32_t n,float span){if(n<16||n>512||!finite(span)||span<=0)return -1;N=n;W=n+1;size=span;for(uint32_t k=0;k<W*W;k++){H[k]=0;materials[k]=255;for(int c=0;c<3;c++){normals[k*3+c]=c==1?1:0;colors[k*3+c]=.5f;for(int q=0;q<4;q++)weights[c][k*4+q]=0;}for(int q=0;q<4;q++)masks[k*4+q]=0;}return 0;}
+int32_t fe_terrain_init(uint32_t n,float span){if(n<16||n>512||!finite(span)||span<=0)return -1;eroCancelRun();N=n;W=n+1;size=span;for(uint32_t k=0;k<W*W;k++){H[k]=0;materials[k]=255;for(int c=0;c<3;c++){normals[k*3+c]=c==1?1:0;colors[k*3+c]=.5f;for(int q=0;q<4;q++)weights[c][k*4+q]=0;}for(int q=0;q<4;q++)masks[k*4+q]=0;}return 0;}
 uint32_t fe_terrain_get_segments(){return N;}
 uint32_t fe_terrain_get_grid_width(){return W;}
 float* fe_terrain_get_height_ptr(){return H;}
@@ -202,6 +292,20 @@ void fe_terrain_compute_normals(){
   const Vec3 n=normalize(Vec3(-gx,1,-gz));const uint32_t k=(j*W+i)*3;
   normals[k]=n.x;normals[k+1]=n.y;normals[k+2]=n.z;
  }
+}
+/* Normals for one rectangle. The live erosion uploads this band and nothing
+   else, so the normal formula must stay identical to fe_terrain_compute_normals()
+   cell for cell — a test compares the two. */
+int32_t fe_terrain_compute_normals_region(uint32_t x0,uint32_t x1,uint32_t z0,uint32_t z1){
+ if(x0>x1||z0>z1||x1>N||z1>N)return -1;
+ const float d=size/N;
+ for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++){
+  const float gx=(H[j*W+(i<N?i+1:i)]-H[j*W+(i?i-1:i)])/(d*(i&&i<N?2:1));
+  const float gz=(H[(j<N?j+1:j)*W+i]-H[(j?j-1:j)*W+i])/(d*(j&&j<N?2:1));
+  const Vec3 n=normalize(Vec3(-gx,1,-gz));const uint32_t k=(j*W+i)*3;
+  normals[k]=n.x;normals[k+1]=n.y;normals[k+2]=n.z;
+ }
+ return int32_t((x1-x0+1)*(z1-z0+1));
 }
 int32_t fe_terrain_erode_brush(float px,float pz,float radius,float strength,float seed){
  if(!finite(px)||!finite(pz)||!finite(radius)||!finite(strength)||!finite(seed)||radius<=0||strength<0||strength>10||absf(seed)>1000000)return -1;
@@ -263,44 +367,65 @@ int32_t fe_terrain_erode_hydraulic(uint32_t droplet_count,uint32_t max_lifetime,
  if(!finite(erode_speed)||erode_speed<=0||erode_speed>1||!finite(deposit_speed)||deposit_speed<=0||deposit_speed>1)return -1;
  if(!finite(evaporation)||evaporation<0||evaporation>.1f||!finite(gravity)||gravity<=0||gravity>100)return -1;
  if(brush_radius_cells<1||brush_radius_cells>64)return -1;
+ const ErosionParams p{max_lifetime,inertia,sediment_capacity,erode_speed,deposit_speed,evaporation,gravity,0,0,0};
  uint32_t rng=seed?seed:0x9e3779b9u;
- auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
- const float cell=size/N;
- auto splat=[&](float x,float z,float amount){
-  float u=clampf((x/size+.5f)*N,0,float(N)-.001f),v=clampf((z/size+.5f)*N,0,float(N)-.001f);
-  uint32_t i=uint32_t(u),j=uint32_t(v),k=j*W+i;float a=u-i,b=v-j;
-  H[k]+=amount*(1-a)*(1-b);H[k+1]+=amount*a*(1-b);H[k+W]+=amount*(1-a)*b;H[k+W+1]+=amount*a*b;
- };
- for(uint32_t d=0;d<droplet_count;d++){
-  float x=(random()-.5f)*size,z=(random()-.5f)*size,dx=0,dz=0,speed=1,water=1,sediment=0;
-  for(uint32_t life=0;life<max_lifetime;life++){
-   const float h=sample(H,x,z);
-   const float gx=(sample(H,x+cell,z)-sample(H,x-cell,z))/(2*cell);
-   const float gz=(sample(H,x,z+cell)-sample(H,x,z-cell))/(2*cell);
-   dx=dx*inertia-gx*(1-inertia);dz=dz*inertia-gz*(1-inertia);
-   const float length=sqrtf(dx*dx+dz*dz);
-   if(length<.000001f)break;
-   dx/=length;dz/=length;
-   const float nx=x+dx*cell,nz=z+dz*cell;
-   if(nx<=-size*.5f||nx>=size*.5f||nz<=-size*.5f||nz>=size*.5f)break;
-   const float dh=sample(H,nx,nz)-h;
-   const float capacity=maxf(-dh*speed*water*sediment_capacity,.01f);
-   if(sediment>capacity||dh>0){
-    const float amount=dh>0?minf(dh,sediment):(sediment-capacity)*deposit_speed;
-    splat(x,z,amount);sediment-=amount;
-   }else{
-    float amount=minf((capacity-sediment)*erode_speed,-dh);
-    amount=minf(amount,cell*.5f);
-    splat(x,z,-amount);sediment+=amount;
-   }
-   speed=sqrtf(maxf(speed*speed-dh*gravity,0));
-   water*=(1-evaporation);
-   x=nx;z=nz;
-   if(water<.01f)break;
-  }
- }
+ return int32_t(eroRun(droplet_count,rng,p));
+}
+/* Start a live run. Nothing is eroded here: the caller then asks for droplets a
+   frame at a time, so the heightfield visibly changes instead of stalling the
+   frame. `brush_radius_cells` stays in the signature so the live and the batch
+   call take exactly the same arguments. */
+int32_t fe_erosion_begin(uint32_t droplet_count,uint32_t max_lifetime,float inertia,float sediment_capacity,float erode_speed,float deposit_speed,float evaporation,float gravity,uint32_t brush_radius_cells,uint32_t seed){
+ if(droplet_count<1||droplet_count>200000||max_lifetime<1||max_lifetime>256)return -1;
+ if(!finite(inertia)||inertia<0||inertia>1||!finite(sediment_capacity)||sediment_capacity<=0||sediment_capacity>10)return -1;
+ if(!finite(erode_speed)||erode_speed<=0||erode_speed>1||!finite(deposit_speed)||deposit_speed<=0||deposit_speed>1)return -1;
+ if(!finite(evaporation)||evaporation<0||evaporation>.1f||!finite(gravity)||gravity<=0||gravity>100)return -1;
+ if(brush_radius_cells<1||brush_radius_cells>64)return -1;
+ eroParams=ErosionParams{max_lifetime,inertia,sediment_capacity,erode_speed,deposit_speed,evaporation,gravity,0,0,0};
+ eroRng=seed?seed:0x9e3779b9u;
+ eroTotal=droplet_count;eroLeft=droplet_count;eroActive=true;eroResetRect();
  return int32_t(droplet_count);
 }
+/* Narrow where new droplets start and where they may still change the field.
+   radius <= 0 restores the whole map. A live run re-points this at the camera
+   target every frame, which is what keeps the uploaded rectangle small. */
+int32_t fe_erosion_set_region(float cx,float cz,float radius){
+ if(!finite(cx)||!finite(cz)||!finite(radius)||radius>20000.f)return -1;
+ float r=radius>0.f?radius:0.f;
+ if(r>0.f){
+  /* Keep the whole patch inside the field. A patch that hangs over the border
+     would clamp its rain onto the edge cells and pile erosion into a stripe, so
+     the centre moves inwards instead: a camera aimed at the coast erodes the
+     coast, not a wall at x = size/2. */
+  const float half=size*.5f;
+  if(r>half)r=half;
+  const float limit=half-r;
+  if(cx<-limit)cx=-limit;else if(cx>limit)cx=limit;
+  if(cz<-limit)cz=-limit;else if(cz>limit)cz=limit;
+ }
+ eroParams.cx=cx;eroParams.cz=cz;eroParams.radius=r;
+ return 0;
+}
+/* Run at most `droplets`, never more than the run has left. Returns the count
+   actually run, or -1 when no run is active (finished, cancelled or never
+   started) — the caller reads fe_erosion_remaining() to tell "done" apart. */
+int32_t fe_erosion_step(uint32_t droplets){
+ if(!eroActive)return -1;
+ if(droplets>eroLeft)droplets=eroLeft;
+ if(!droplets)return 0;   /* a zero slice is a no-op, not a cancel */
+ eroRun(droplets,eroRng,eroParams);
+ eroLeft-=droplets;
+ if(!eroLeft)eroActive=false;
+ return int32_t(droplets);
+}
+/* min_i, min_j, max_i, max_j as uint16 cell indices, inclusive, including the
+   normal halo. min_i > max_i means nothing changed since the last reset. */
+uint16_t* fe_erosion_dirty_ptr(){return eroRect;}
+int32_t fe_erosion_dirty_reset(){eroResetRect();return 0;}
+uint32_t fe_erosion_remaining(){return eroLeft;}
+uint32_t fe_erosion_total(){return eroTotal;}
+int32_t fe_erosion_active(){return eroActive?1:0;}
+int32_t fe_erosion_cancel(){eroCancelRun();return 0;}
 int32_t fe_terrain_erode_thermal(uint32_t iterations,float talus_angle_tan,float slump_rate){
  if(iterations<1||iterations>512)return -1;
  if(!finite(talus_angle_tan)||talus_angle_tan<.01f||talus_angle_tan>10)return -1;

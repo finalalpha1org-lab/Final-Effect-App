@@ -9,6 +9,9 @@
   const x=instance.exports;
   const required=['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal'];
   const optional=['fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_terrain_scatter_natural','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_ow_visible_count','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr',
+   /* Time-sliced erosion (fe_landscape.cpp) */
+   'fe_erosion_begin','fe_erosion_set_region','fe_erosion_step','fe_erosion_dirty_ptr','fe_erosion_dirty_reset',
+   'fe_erosion_remaining','fe_erosion_total','fe_erosion_active','fe_erosion_cancel','fe_terrain_compute_normals_region',
    /* Surface realism (fe_surface.cpp): measured PBR + tileable micro-structure */
    'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
    'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo',
@@ -134,6 +137,69 @@
    :ex.fe_terrain_erode_hydraulic(state.droplets,64,.05,.3,.3,.3,.01,4,2,(state.seed>>>0)||1);
   if(result<0){core.error='C++ erosion returned '+result;return false}
   state.heights.set(height);core.commands++;return true;
+ };
+ /* --- Live hydraulic erosion ------------------------------------------------
+    The kernel owns the run: seed, droplet cursor and dirty rectangle all live in
+    C++, so a frame only asks for the next slice and then reads back the rows that
+    slice touched. No allocation here — the two typed-array views are rebuilt only
+    when wasm memory grows, and the rectangle is written into a shared array. */
+ let eroBuf=null,eroRectView=null,eroHeightView=null,eroGridW=0;
+ function eroViews(){
+  if(eroBuf===ex.memory.buffer)return true;
+  if(typeof ex.fe_erosion_dirty_ptr!=='function')return false;
+  eroBuf=ex.memory.buffer;
+  eroRectView=new Uint16Array(eroBuf,ex.fe_erosion_dirty_ptr(),4);
+  eroGridW=ex.fe_terrain_get_grid_width();
+  eroHeightView=new Float32Array(eroBuf,ex.fe_terrain_get_height_ptr(),eroGridW*eroGridW);
+  return true;
+ }
+ core.erosionRect=[0,0,0,0];
+ core.erosionBegin=function(state){
+  if(!state||!state.heights){core.error='erosionBegin needs the height field';return false;}
+  if(!ensure(state.n,state.size)||typeof ex.fe_erosion_begin!=='function')return false;
+  if(!eroViews())return false;
+  /* The JS field is authoritative, exactly as it is for every other command:
+     a run never starts from whatever the kernel happened to hold. */
+  new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);
+  const r=ex.fe_erosion_begin(state.droplets,state.lifetime||64,.05,.3,.3,.3,.01,4,2,(state.seed>>>0)||1);
+  if(r<0){core.error='C++ live erosion returned '+r;return false}
+  core.commands++;return true;
+ };
+ core.erosionRegion=function(x,z,radius){
+  return typeof ex.fe_erosion_set_region==='function'&&ex.fe_erosion_set_region(x,z,radius)===0;
+ };
+ core.erosionStep=function(droplets){
+  return typeof ex.fe_erosion_step==='function'?ex.fe_erosion_step(droplets):-1;
+ };
+ core.erosionRemaining=function(){
+  return typeof ex.fe_erosion_remaining==='function'?ex.fe_erosion_remaining():0;
+ };
+ core.erosionActive=function(){
+  return typeof ex.fe_erosion_active==='function'&&ex.fe_erosion_active()===1;
+ };
+ core.erosionCancel=function(){if(typeof ex.fe_erosion_cancel==='function')ex.fe_erosion_cancel()};
+ /* Copies the cells the kernel touched into `out` and leaves the rectangle in
+    core.erosionRect. Returns false when nothing changed since the last read. */
+ core.erosionRead=function(out){
+  if(!eroViews())return false;
+  const r=eroRectView,x0=r[0],y0=r[1],x1=r[2],y1=r[3],w=eroGridW;
+  if(x0>x1||y0>y1||x1>=w||y1>=w)return false;
+  const dst=out,src=eroHeightView;
+  for(let j=y0;j<=y1;j++)for(let i=x0;i<=x1;i++){const k=j*w+i;dst[k]=src[k]}
+  core.erosionRect[0]=x0;core.erosionRect[1]=x1;core.erosionRect[2]=y0;core.erosionRect[3]=y1;
+  ex.fe_erosion_dirty_reset();
+  return true;
+ };
+ /* Normals for the uploaded rectangle only; identical formula to the full pass. */
+ core.normalsRegion=function(state){
+  if(typeof ex.fe_terrain_compute_normals_region!=='function'||!ensure(state.n,state.size))return false;
+  const w=state.n+1,x0=state.rect[0],x1=state.rect[1],z0=state.rect[2],z1=state.rect[3];
+  const src=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),w*w);
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=j*w+i;src[k]=state.heights[k]}
+  if(ex.fe_terrain_compute_normals_region(x0,x1,z0,z1)<0)return false;
+  const nrm=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_normal_ptr(),w*w*3),out=state.output;
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=(j*w+i)*3;out[k]=nrm[k];out[k+1]=nrm[k+1];out[k+2]=nrm[k+2]}
+  return true;
  };
  core.strata=function(state){
   if(!ensure(state.n,state.size))return false;
@@ -745,6 +811,61 @@ function upd(x0=0,x1=N,z0=0,z1=N){
  PA.needsUpdate=C.needsUpdate=hmTex.needsUpdate=tg.attributes.surfaceWeightsA.needsUpdate=tg.attributes.surfaceWeightsB.needsUpdate=tg.attributes.surfaceWeightsC.needsUpdate=true;
  if(window.FELandscapeCore.normals({n:N,size:S,heights:H,output:tg.attributes.normal.array}))tg.attributes.normal.needsUpdate=true;else tg.computeVertexNormals();
  tg.boundingSphere=tg.boundingBox=null;
+}
+/* The same refresh as upd(), but only the changed band goes to the GPU. A live
+   erosion run uploads a row band (position, colour, normal) instead of pushing the
+   heights, the colours, the normals, the three surface-weight attributes and the
+   height texture — measured in docs/PERFORMANCE.md. */
+/* Shader heightmap, one band at a time. `upd()` re-uploads the whole 513² float
+ texture (1 MB) because it is the one place that may change every row; a live
+ erosion slice only moved a rectangle, so the texture is patched through
+ gl.texSubImage2D with a 32-row scratch texture instead. */
+const HMB_ROWS=32;let hmBand=null,hmBandBuf=null;
+function updLiveHeight(z0,z1){
+ /* Rebuilt if the grid ever changes width, so a stale band can never be pasted
+    into a texture of a different size. */
+ if(!hmBand||!hmBandBuf||hmBandBuf.length!==W*HMB_ROWS){
+  hmBandBuf=new Float32Array(W*HMB_ROWS);
+  hmBand=new THREE.DataTexture(hmBandBuf,W,HMB_ROWS,THREE.RedFormat,THREE.FloatType);
+  hmBand.minFilter=hmBand.magFilter=THREE.NearestFilter;hmBand.generateMipmaps=false;hmBand.needsUpdate=true;
+ }
+ if(!ren||typeof ren.copyTextureToTexture!=='function')return 0;
+ let copies=0;
+ for(let end=z1;end>=z0;){
+  const start=Math.min(Math.max(z0,end-HMB_ROWS+1),W-HMB_ROWS);
+  hmBandBuf.set(H.subarray(start*W,(start+HMB_ROWS)*W));
+  ren.copyTextureToTexture({x:0,y:start},hmBand,hmTex);
+  copies++;end=start-1;
+ }
+ return copies;
+}
+function updLive(x0,x1,z0,z1){
+ const core=window.FELandscapeCore,rect=[x0,x1,z0,z1];
+ if(!core.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect,output:C.array}))
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++)col(i,j);
+ /* Track how high the band reaches while it is being written, so the bounding
+    sphere is only rebuilt when the eroded ground actually grew past the one we
+    have — recomputing a 513² sphere on every upload would cost more than the
+    upload. Erosion mostly lowers ground, so this is nearly always free. */
+ let bandY=0;
+ for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=j*W+i,y=H[k];PA.setY(k,y);if(y>bandY)bandY=y}
+ const first=z0*W,count=(z1-z0+1)*W;
+ PA.updateRange.offset=first*3;PA.updateRange.count=count*3;PA.needsUpdate=true;
+ C.updateRange.offset=first*3;C.updateRange.count=count*3;C.needsUpdate=true;
+ const nrm=tg.attributes.normal;
+ if(core.normalsRegion({n:N,size:S,heights:H,rect,output:nrm.array})){
+  nrm.updateRange.offset=first*3;nrm.updateRange.count=count*3;nrm.needsUpdate=true;
+ }
+ updLiveHeight(z0,z1);
+ const seen=tg.userData.liveMaxY;
+ if(seen===undefined||bandY>seen){
+  tg.userData.liveMaxY=bandY;
+  tg.geometry.computeBoundingSphere();
+  /* One metre of pad: a later band can rise without crossing `seen` again, and
+     a sphere is allowed to be conservative. */
+  if(tg.geometry.boundingSphere)tg.geometry.boundingSphere.radius+=1;
+  tg.boundingBox=null;
+ }
 }
 let GENC=0;const PLC={mtn:0,base:0};
 function landRaw(x,z){const wx=(vn(x*.012+seed*.13+41,z*.012+seed*.07+13)-.5)*10,wz=(vn(x*.012+seed*.03+17,z*.012+seed*.17+61)-.5)*10;let n=0,a=.56,f=.026;for(let o=0;o<4;o++){n+=(vn((x+wx)*f+o*17,(z+wz)*f+o*11)-.5)*a;a*=.5;f*=2.05}let ridge=0,ra=.55,rf=.035;for(let o=0;o<4;o++){const q=vn((x+wx*.4)*rf+31+o*7,(z+wz*.4)*rf-17);ridge+=(1-Math.abs(q*2-1))*ra;ra*=.5;rf*=2.05}ridge=ridge/1.03125-.5;return n*hs*1.65+ridge*hs*.6+1.6}

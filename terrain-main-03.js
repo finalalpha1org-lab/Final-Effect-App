@@ -97,7 +97,133 @@ function owSetWorldSize(km){
  return true;
 }
 window.__feWorldSize=owSetWorldSize;
+
 window.__feWorldMemory=owMemory;
+/* --- Live erosion ----------------------------------------------------------
+   One press erodes the patch you are looking at, a slice per frame. The kernel
+   keeps the seed, the droplet cursor and the dirty rectangle, so this side only
+   asks for the next slice and then uploads the band that changed. The run pauses
+   itself when the result cannot be seen: hidden tab, another sheet open, the
+   patch off screen, or a brush stroke in progress. */
+/* `area` is the width of the square patch in metres — the same number the sheet
+   shows — so the radius handed to the kernel is half of it. */
+const LIVE={on:false,area:120,rate:1,trim:1,ran:0,total:0,rect:[0,0,0,0],hasRect:false,lastW:0,lastH:0,uploadAt:0,statusAt:0,paused:'',dots:50000};
+const liveProj=new THREE.Vector3();
+function liveErosionStatus(text){
+ const n=typeof document!=='undefined'?document.getElementById('erosion-live'):null;
+ if(n)n.textContent=text;
+}
+function liveErosionBrushing(){
+ try{return typeof painting!=='undefined'&&!!painting}catch(error){return false}
+}
+function liveErosionVisible(){
+ const x=oc.target.x,z=oc.target.z;
+ liveProj.set(x,hgt(x,z),z).project(cam);
+ return liveProj.z<1&&liveProj.z>-1&&Math.abs(liveProj.x)<1.25&&Math.abs(liveProj.y)<1.25;
+}
+function liveErosionPause(text){
+ if(LIVE.paused===text)return;
+ LIVE.paused=text;
+ liveErosionStatus(text);
+}
+function liveErosionUnion(){
+ const r=window.FELandscapeCore.erosionRect;
+ if(!LIVE.hasRect){LIVE.rect[0]=r[0];LIVE.rect[1]=r[1];LIVE.rect[2]=r[2];LIVE.rect[3]=r[3];LIVE.hasRect=true;return}
+ if(r[0]<LIVE.rect[0])LIVE.rect[0]=r[0];
+ if(r[1]>LIVE.rect[1])LIVE.rect[1]=r[1];
+ if(r[2]<LIVE.rect[2])LIVE.rect[2]=r[2];
+ if(r[3]>LIVE.rect[3])LIVE.rect[3]=r[3];
+}
+function liveErosionFlush(){
+ if(!LIVE.hasRect)return;
+ const r=LIVE.rect;
+ LIVE.lastW=r[1]-r[0]+1;LIVE.lastH=r[3]-r[2]+1;
+ /* One cell of padding keeps the normal of the band edge honest. */
+ updLive(Math.max(0,r[0]-1),Math.min(N,r[1]+1),Math.max(0,r[2]-1),Math.min(N,r[3]+1));
+ LIVE.hasRect=false;
+}
+function startLiveErosion(){
+ const core=window.FELandscapeCore;
+ if(!core||!core.ready||typeof core.erosionBegin!=='function'){showErr('Live erosion needs the engine build — reload the page and try again');return false}
+ if(typeof OW!=='undefined'&&OW.active){showErr('Live erosion works on the island terrain — return to the default terrain first');return false}
+ if(LIVE.on)return true;
+ if(!core.erosionBegin({n:N,size:S,droplets:LIVE.dots,heights:H,seed:(Math.round(seed*1000)+1)>>>0})){
+  showErr('Erosion could not start: '+(core.error||'unknown'));return false;
+ }
+ /* One undo step for the whole run, taken after the kernel accepted it and
+    before the first droplet, so a refused run leaves no empty history entry. */
+ push();
+ LIVE.on=true;LIVE.ran=0;
+ /* The kernel is the authority on how many droplets the run accepted. */
+ LIVE.total=typeof core.erosionRemaining==='function'?core.erosionRemaining():LIVE.dots;
+ LIVE.hasRect=false;LIVE.trim=1;LIVE.paused='';LIVE.statusAt=0;
+ liveErosionStatus('Eroding · 0 / '+LIVE.total+' droplets');
+ if(tab==='terrain')build();
+ return true;
+}
+function stopLiveErosion(reason){
+ const core=window.FELandscapeCore;
+ if(!LIVE.on)return false;
+ if(core&&typeof core.erosionCancel==='function')core.erosionCancel();
+ liveErosionFlush();
+ LIVE.on=false;
+ upd();
+ /* The ground moved under whatever was standing on it, so the plants settle
+    onto the new surface instead of hanging in the air or sinking. */
+ resnap();
+ liveErosionStatus(reason||('Erosion stopped · '+LIVE.ran+' droplets'));
+ if(tab==='terrain')build();
+ return true;
+}
+function liveErosionTick(now){
+ if(!LIVE.on)return;
+ if(typeof document!=='undefined'&&document.hidden){liveErosionPause('Paused · the tab is in the background');return}
+ if(tab!=='terrain'){liveErosionPause('Paused · open the Terrain sheet to keep eroding');return}
+ if(liveErosionBrushing()){liveErosionPause('Paused · you are brushing the ground');return}
+ if(!liveErosionVisible()){liveErosionPause('Paused · the eroded patch is off screen');return}
+ const core=window.FELandscapeCore;
+ if(!core||!core.ready||typeof core.erosionStep!=='function'){stopLiveErosion('Erosion stopped · the engine went away');return}
+ if(LIVE.paused)liveErosionPause('');
+ const x=oc.target.x,z=oc.target.z;
+ core.erosionRegion(x,z,LIVE.area*.5);
+ /* The slice size follows the measured cost, so a slow phone runs fewer
+    droplets instead of dropping frames. */
+ const want=cl(Math.round(700*LIVE.rate*LIVE.trim),140,1800);
+ const t0=nowMs();
+ const ran=core.erosionStep(want);
+ if(ran>0){
+  LIVE.ran+=ran;
+  if(core.erosionRead(H))liveErosionUnion();
+ }
+ if(LIVE.hasRect&&now-LIVE.uploadAt>33){LIVE.uploadAt=now;liveErosionFlush()}
+ /* The cost that matters is the whole tick: the droplets, and the band upload
+    on the frames that carry one. Trimming against the droplet loop alone would
+    ignore the four uploads a second that are most likely to drop a frame. */
+ const cost=nowMs()-t0;
+ if(cost>3.2)LIVE.trim=Math.max(.18,LIVE.trim*.8);
+ else if(cost<1.3)LIVE.trim=Math.min(1.8,LIVE.trim*1.06);
+ if(core.erosionRemaining()===0){
+  /* A regenerated grid cancels the kernel run, so "no droplets left" is only a
+     finish when the run actually consumed its budget. */
+  if(LIVE.ran>=LIVE.total)stopLiveErosion('Erosion finished · '+LIVE.ran+' droplets');
+  else stopLiveErosion('Erosion stopped · the terrain was rebuilt');
+  return;
+ }
+ if(!core.erosionActive()&&LIVE.ran<LIVE.total){stopLiveErosion('Erosion stopped · the terrain was rebuilt');return}
+ if(now-LIVE.statusAt>250){
+  LIVE.statusAt=now;
+  /* Progress and the size of the patch, not a frame time: the sheet is not a
+     profiler. */
+  const r=LIVE.rect;
+  const size=LIVE.hasRect?(r[1]-r[0]+1)+'×'+(r[3]-r[2]+1)+' cells':
+   (LIVE.lastW?'about '+LIVE.lastW+'×'+LIVE.lastH+' cells':LIVE.area+' m patch');
+  liveErosionStatus('Eroding · '+LIVE.ran+' / '+LIVE.total+' droplets · '+size);
+ }
+}
+window.__feLiveErosion=LIVE;
+window.__feStartLiveErosion=startLiveErosion;
+window.__feStopLiveErosion=stopLiveErosion;
+window.__feLiveErosionTick=liveErosionTick;
 function owStatus(text){const n=document.getElementById('owstatus');if(n)n.textContent=text}
 function owPump(token){if(token!==OW.token||!OW.active)return;if(!OW.activeJob&&!OW.queue.length){OW.generating=false;if(OW.waterMapsDirty){OW.waterMapsDirty=false;updateOpenWorldWaterHeightMaps()}owStatus('Ready · '+OW.chunks.size+' terrain chunks loaded · '+[...OW.chunks.values()].reduce((n,c)=>n+Object.values(c.plants).reduce((a,b)=>a+b.length,0),0).toLocaleString()+' plants');return}try{if(!OW.activeJob){const next=OW.queue.shift();if(OW.editStore.has(next.key)){owLoadChunk(next.cx,next.cz);requestAnimationFrame(()=>owPump(token));return}OW.activeJob={...next,job:OpenWorldGenerator.createChunkJob(owChunkConfig(next.cx,next.cz))}}const current=OW.activeJob,result=current.job.step(8,1024);if(result.done){OW.activeJob=null;owLoadChunk(current.cx,current.cz,result.chunk);OW.generated=true;owStatus('Loaded '+current.key+' · '+OW.chunks.size+' chunks active, '+OW.queue.length+' queued')}else owStatus('Generating '+current.key+' · '+result.phase+' '+Math.round(result.progress*100)+'%')}catch(e){console.error('Open World chunk generation failed:',e);owStatus('Generation error: '+(e?.message||e));OW.activeJob=null;OW.generating=false;return}requestAnimationFrame(()=>owPump(token))}
 function owRefresh(force=false){if(!OW?.active)return;const p=owCenter(),half=OW.config.sizeKm*500,x=cl(p.x,-half,half),z=cl(p.z,-half,half),cx=Math.floor((x+OW.chunkSize*.5)/OW.chunkSize),cz=Math.floor((z+OW.chunkSize*.5)/OW.chunkSize);if(!force&&cx===OW.lastCenterX&&cz===OW.lastCenterZ)return;OW.lastCenterX=cx;OW.lastCenterZ=cz;const desired=new Set(),jobs=[],planCore=window.FELandscapeCore&&window.FELandscapeCore.ready&&typeof window.FELandscapeCore.owPlan==='function'?window.FELandscapeCore.owPlan({cx,cz,radius:OW.radius,chunkSize:OW.chunkSize,worldHalf:half}):null;

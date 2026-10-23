@@ -180,7 +180,7 @@ test('the studio boots from the saved document before it generates the world', (
     'the sheet exposes both actions');
   assert.ok(panel.includes('localStorage.setItem(STUDIO_CONFIG_KEY'), 'the web build persists to localStorage');
   assert.ok(panel.includes('pagehide'), 'an unload flushes a pending save');
-  assert.ok(sw.includes("'final-effect-cpp-v26'"), 'the cache is bumped whenever the shipped shell changes');
+  assert.ok(sw.includes("'final-effect-cpp-v27'"), 'the cache is bumped whenever the shipped shell changes');
 });
 
 test('a partial biome mix is merged, and the grown-flora settings survive the trip', () => {

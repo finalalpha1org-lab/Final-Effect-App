@@ -120,3 +120,222 @@ test('two neighbouring chunks meet on one height and one normal, not a seam', ()
     for (let q = 0; q < 12; q++) assert.equal(south.w[ia * 12 + q], north.w[ib * 12 + q], `column ${i}: and one surface weight`);
   }
 });
+
+/* ------------------------------------------------------------------ */
+/* Time-sliced hydraulic erosion                                       */
+/* ------------------------------------------------------------------ */
+
+const ERO_ARGS = [64, .05, .3, .3, .3, .01, 4, 2];
+
+function erosionEngine(n = 128) {
+  const e = engine();
+  const spawn = () => {
+    e.fe_terrain_init(n, 512);
+    e.fe_terrain_generate_gaea(42, 1, 34, 2, 10, .5, 3, 0, 0, 0);
+    return new Float32Array(e.memory.buffer, e.fe_terrain_get_height_ptr(), (n + 1) * (n + 1)).slice();
+  };
+  const heights = () => new Float32Array(e.memory.buffer, e.fe_terrain_get_height_ptr(), (n + 1) * (n + 1));
+  const rect = () => Array.from(new Uint16Array(e.memory.buffer, e.fe_erosion_dirty_ptr(), 4));
+  const restore = (h) => heights().set(h);
+  return { e, n, row: n + 1, spawn, heights, rect, restore };
+}
+
+test('a live erosion run split across frames erodes the field bit-identically', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  a.e.fe_terrain_erode_hydraulic(6000, ...ERO_ARGS, 99);
+  const batch = a.heights().slice();
+
+  /* Same seed, same parameters, delivered 700 droplets at a time. */
+  a.restore(before);
+  assert.equal(a.e.fe_erosion_begin(6000, ...ERO_ARGS, 99), 6000, 'the run reports how many droplets it accepted');
+  assert.equal(a.e.fe_erosion_total(), 6000);
+  assert.equal(a.e.fe_erosion_remaining(), 6000);
+  assert.equal(a.e.fe_erosion_active(), 1);
+  let ran = 0, steps = 0;
+  while (a.e.fe_erosion_remaining() > 0) {
+    const got = a.e.fe_erosion_step(700);
+    assert.ok(got > 0 && got <= 700, 'a step never runs more droplets than asked for');
+    ran += got; steps++;
+    if (steps > 100) break;
+  }
+  assert.equal(ran, 6000, 'every droplet of the run was simulated');
+  assert.equal(steps, 9, '6000 droplets at 700 per frame is nine frames');
+  assert.equal(a.e.fe_erosion_active(), 0, 'the run ends by itself');
+  assert.equal(a.e.fe_erosion_step(700), -1, 'and a further step is refused');
+  assert.deepEqual(a.heights(), batch, 'the frame-sliced field is bit-identical to one blocking call');
+});
+
+test('a zero-droplet slice does nothing instead of cancelling the run', () => {
+  const a = erosionEngine();
+  a.spawn();
+  a.e.fe_erosion_begin(2000, ...ERO_ARGS, 5);
+  assert.equal(a.e.fe_erosion_step(0), 0);
+  assert.equal(a.e.fe_erosion_active(), 1, 'the run is still alive after an empty slice');
+  assert.equal(a.e.fe_erosion_remaining(), 2000, 'and none of its droplets were spent');
+  assert.equal(a.e.fe_erosion_step(500), 500);
+  assert.equal(a.e.fe_erosion_remaining(), 1500);
+});
+
+test('the split size does not change the result', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  const run = (step) => {
+    a.restore(before);
+    a.e.fe_erosion_begin(2500, ...ERO_ARGS, 7);
+    while (a.e.fe_erosion_remaining() > 0) a.e.fe_erosion_step(step);
+    return a.heights().slice();
+  };
+  const a1 = run(700), a2 = run(137), a3 = run(2500);
+  assert.deepEqual(a1, a2, '700 and 137 droplets per frame agree');
+  assert.deepEqual(a1, a3, 'and so does one single step');
+});
+
+test('the dirty rectangle covers what changed, keeps a normal halo, and is not the whole map', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  a.e.fe_erosion_begin(4000, ...ERO_ARGS, 99);
+  assert.equal(a.e.fe_erosion_set_region(0, 0, 60), 0);
+  a.e.fe_erosion_dirty_reset();
+  a.e.fe_erosion_step(700);
+  const [minI, minJ, maxI, maxJ] = a.rect();
+  const h = a.heights();
+  let cMinI = 1e9, cMinJ = 1e9, cMaxI = -1, cMaxJ = -1;
+  for (let j = 0; j <= a.n; j++) for (let i = 0; i <= a.n; i++) {
+    const k = j * a.row + i;
+    if (before[k] === h[k]) continue;
+    cMinI = Math.min(cMinI, i); cMaxI = Math.max(cMaxI, i);
+    cMinJ = Math.min(cMinJ, j); cMaxJ = Math.max(cMaxJ, j);
+  }
+  assert.ok(cMaxI >= 0, 'the droplets actually moved some height');
+  assert.ok(minI <= cMinI && minJ <= cMinJ && maxI >= cMaxI && maxJ >= cMaxJ, 'every changed cell is inside the rectangle');
+  assert.ok(cMinI - minI <= 1 && cMaxI - minI <= (cMaxI - cMinI) + 2, 'the rectangle is the changed box plus at most a one-cell halo');
+  assert.ok((maxI - minI + 1) < a.row * 0.75, 'a bounded patch is a fraction of the map, not all of it');
+  assert.ok(a.e.fe_erosion_dirty_reset() === 0 && a.rect()[0] > a.rect()[2], 'a reset leaves it empty');
+});
+
+test('a bounded patch never touches the terrain outside it', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  a.e.fe_erosion_begin(8000, ...ERO_ARGS, 99);
+  a.e.fe_erosion_set_region(0, 0, 60);
+  while (a.e.fe_erosion_remaining() > 0) a.e.fe_erosion_step(700);
+  const h = a.heights();
+  const half = 512 / 2, cell = 512 / a.n;
+  let changed = 0, outside = 0;
+  for (let j = 0; j <= a.n; j++) for (let i = 0; i <= a.n; i++) {
+    const k = j * a.row + i;
+    if (before[k] === h[k]) continue;
+    changed++;
+    const x = i * cell - half, z = j * cell - half;
+    if (Math.max(Math.abs(x), Math.abs(z)) > 60 + cell) outside++;
+  }
+  assert.ok(changed > 500, 'the patch was eroded');
+  assert.equal(outside, 0, 'not one vertex outside the patch moved');
+  /* The rectangle is the patch plus the one-cell normal halo on each side. */
+  const r = a.rect();
+  assert.ok(r[0] * cell - half >= -(60 + cell), 'the rectangle does not leak to the left of the patch');
+  assert.ok(r[2] * cell - half <= 60 + cell, 'nor to the right');
+  assert.ok(r[1] * cell - half >= -(60 + cell) && r[3] * cell - half <= 60 + cell, 'nor in z');
+});
+
+test('a patch near the border moves inside instead of piling erosion onto the edge', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  /* Region centred dead on the +x border, half of it hanging over the edge. */
+  assert.equal(a.e.fe_erosion_set_region(256, 0, 60), 0);
+  a.e.fe_erosion_begin(6000, ...ERO_ARGS, 99);
+  assert.equal(a.e.fe_erosion_set_region(256, 0, 60), 0);
+  while (a.e.fe_erosion_remaining() > 0) a.e.fe_erosion_step(700);
+  const h = a.heights();
+  let changed = 0, edge = 0;
+  for (let j = 0; j <= a.n; j++) for (let i = 0; i <= a.n; i++) {
+    const k = j * a.row + i;
+    if (before[k] === h[k]) continue;
+    changed++;
+    if (i >= a.n - 1) edge++;
+  }
+  assert.ok(changed > 500, 'the clamped patch still erodes real ground');
+  assert.ok(changed < a.row * a.row * 0.25, 'and it is still a patch');
+  /* Two columns of a fully inside patch hold ~3% of its cells; a patch that
+     clamped its rain onto the border would put most of the change there. */
+  assert.ok(edge / changed < 0.10, `erosion is spread over the patch, not stacked on the border (${edge}/${changed} cells on the last two columns)`);
+
+  /* A camera looking far outside the field still erodes the nearest patch, and
+     an enormous radius degrades to the whole map instead of a negative span. */
+  a.restore(before);
+  a.e.fe_erosion_begin(3000, ...ERO_ARGS, 99);
+  assert.equal(a.e.fe_erosion_set_region(9000, -9000, 60), 0);
+  while (a.e.fe_erosion_remaining() > 0) a.e.fe_erosion_step(700);
+  const corner = a.rect();
+  assert.ok(corner[0] <= a.n && corner[3] <= a.n, 'the clamped patch is inside the field');
+  assert.ok(corner[2] - corner[0] > 10, 'and still has area');
+
+  a.restore(before);
+  a.e.fe_erosion_begin(12, ...ERO_ARGS, 99);
+  assert.equal(a.e.fe_erosion_set_region(0, 0, 5000), 0);
+  assert.equal(a.e.fe_erosion_step(12), 12);
+  const whole = a.rect();
+  assert.ok(whole[0] <= whole[2] && whole[1] <= whole[3] && whole[2] <= a.n, 'an oversized radius covers the whole map instead of inverting the span');
+});
+
+test('a live run is cancelled by a new grid, a cancel call, or bad arguments', () => {
+  const a = erosionEngine();
+  const before = a.spawn();
+  a.e.fe_erosion_begin(500, ...ERO_ARGS, 3);
+  a.e.fe_erosion_step(100);
+  assert.equal(a.e.fe_erosion_cancel(), 0);
+  assert.equal(a.e.fe_erosion_active(), 0);
+  assert.equal(a.e.fe_erosion_remaining(), 0);
+  const frozen = a.heights().slice();
+  assert.equal(a.e.fe_erosion_step(100), -1, 'a cancelled run cannot be stepped');
+  assert.deepEqual(a.heights(), frozen, 'and nothing more changed');
+
+  /* Re-initialising the grid must not let an old run erode the new field. */
+  a.e.fe_erosion_begin(500, ...ERO_ARGS, 3);
+  a.e.fe_erosion_step(50);
+  a.restore(before);
+  a.spawn();
+  assert.equal(a.e.fe_erosion_active(), 0, 'a new heightfield cancels the run');
+
+  /* Bad arguments leave no half-started state behind. */
+  for (const bad of [
+    [0, ...ERO_ARGS, 1],
+    [200001, ...ERO_ARGS, 1],
+    [500, 0, .05, .3, .3, .3, .01, 4, 2, 1],
+    [500, 257, .05, .3, .3, .3, .01, 4, 2, 1],
+    [500, 64, 2, .3, .3, .3, .01, 4, 2, 1],
+    [500, 64, .05, 0, .3, .3, .01, 4, 2, 1],
+    [500, 64, .05, .3, 0, .3, .01, 4, 2, 1],
+    [500, 64, .05, .3, .3, .3, .5, 4, 2, 1],
+    [500, 64, .05, .3, .3, .3, .01, 0, 2, 1],
+    [500, 64, .05, .3, .3, .3, .01, 4, 0, 1],
+    [500, 64, .05, .3, .3, .3, .01, 4, 95, 1]
+  ]) {
+    assert.equal(a.e.fe_erosion_begin(...bad), -1, `rejected: ${bad.join(',')}`);
+    assert.equal(a.e.fe_erosion_active(), 0, 'no run was started');
+  }
+  assert.equal(a.e.fe_erosion_set_region(NaN, 0, 10), -1, 'a non-finite patch centre is refused');
+  assert.equal(a.e.fe_erosion_set_region(0, 0, 1e9), -1, 'and so is a patch wider than the world');
+});
+
+test('the region normal rebuild matches the full one, cell for cell', () => {
+  const a = erosionEngine();
+  a.spawn();
+  a.e.fe_terrain_erode_hydraulic(4000, ...ERO_ARGS, 5);
+  const normals = () => new Float32Array(a.e.memory.buffer, a.e.fe_terrain_get_normal_ptr(), (a.n + 1) * (a.n + 1) * 3);
+  a.e.fe_terrain_compute_normals();
+  const full = normals().slice();
+  /* Dirty the array, rebuild only a band, and compare that band with the pass. */
+  normals().fill(0);
+  assert.ok(a.e.fe_terrain_compute_normals_region(10, 40, 12, 44) > 0);
+  const band = normals();
+  for (let j = 12; j <= 44; j++) for (let i = 10; i <= 40; i++) {
+    const k = (j * a.row + i) * 3;
+    assert.equal(band[k], full[k], `x of cell ${i},${j}`);
+    assert.equal(band[k + 1], full[k + 1], `y of cell ${i},${j}`);
+    assert.equal(band[k + 2], full[k + 2], `z of cell ${i},${j}`);
+  }
+  assert.equal(a.e.fe_terrain_compute_normals_region(40, 10, 0, 4), -1, 'reversed bounds are refused');
+  assert.equal(a.e.fe_terrain_compute_normals_region(0, a.n + 1, 0, 4), -1, 'and out-of-grid bounds');
+});

@@ -81,7 +81,10 @@ test('C++ whole-map hydraulic droplets are seeded, bounded and finite',async()=>
 test('studio exposes whole-map erosion controls wired to the C++ bridge',async()=>{
  const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-07.js','utf8'),bridge=fs.readFileSync('terrain-main-01.js','utf8');
  assert.ok(src.includes("['hydro','💧 Hydraulic erosion']")&&src.includes("['thermal','⛰ Thermal erosion']"));
- assert.ok(src.includes('core.erode({mode,n:N,size:S,heights:H'));
+ /* Hydraulic erosion is a live run now, so the panel no longer hands the chip
+    mode to the blocking kernel: it starts the slice-by-slice run instead. */
+ assert.ok(src.includes("if(mode==='hydro'){")&&src.includes('startLiveErosion()'),'the hydraulic chip starts the live run');
+ assert.ok(src.includes("core.erode({mode:'thermal'"),'thermal erosion keeps the single blocking pass');
  assert.ok(bridge.includes('core.erode=function(state)')&&bridge.includes('fe_terrain_erode_hydraulic')&&bridge.includes('fe_terrain_erode_thermal'));
 });
 test('C++ strata terracing pulls heights toward tilted bands without breaking the grid',async()=>{
