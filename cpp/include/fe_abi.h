@@ -591,6 +591,11 @@ FE_EXPORT int32_t fe_terrain_set_paint_colors(const uint8_t* rgb, uint32_t count
 FE_EXPORT int32_t fe_terrain_generate_layered(float seed, float hs, uint32_t continental, float base, float mountain);
 FE_EXPORT int32_t fe_terrain_compute_colors(uint32_t x0, uint32_t x1, uint32_t z0, uint32_t z1);
 FE_EXPORT int32_t fe_terrain_erode_brush(float x,float z,float radius,float strength,float seed);
+/* Jittered scatter candidate batch: C++ samples the heightfield + slopes so the
+   JS side only runs biome/occupancy rules per point. Writes 4 floats per point:
+   x, z, height, slope. */
+FE_EXPORT float*   fe_terrain_scatter_out_ptr(void);
+FE_EXPORT int32_t  fe_terrain_scatter_batch(uint32_t count, float spread, uint32_t seed);
 FE_EXPORT float    fe_terrain_sample_height(float world_x, float world_z);
 FE_EXPORT void     fe_terrain_sample_normal(float world_x, float world_z, float alignment, float* out_n3);
 

@@ -7,6 +7,7 @@ constexpr uint32_t CAP=513u*513u;
 static float H[CAP], normals[CAP*3], colors[CAP*3], weights[3][CAP*4], scratch[CAP];
 static uint8_t masks[CAP*4], materials[CAP];
 static float forestInput[32768*3];
+static float scatterOut[16384*4];
 static int32_t forestOutput[32768];
 static uint32_t N=128,W=129;
 static float size=100;
@@ -98,6 +99,44 @@ int32_t fe_forest_classify(uint32_t count,float cx,float cz,float nearDist,float
   const int v=int(floorf(q+.5f));forestOutput[i]=((v%4)+4)%4;
  }
  return int32_t(count);
+}
+float* fe_terrain_scatter_out_ptr(){return scatterOut;}
+int32_t fe_terrain_scatter_batch(uint32_t count,float spread,uint32_t seed){
+ if(count<1||count>16384)return -1;
+ if(!finite(spread)||spread<=0||spread>100000)return -1;
+ uint32_t rng=seed?seed:0x9e3779b9u;
+ auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
+ /* Jittered grid: every batch covers the span evenly instead of clumping the
+    way pure uniform sampling does at these counts. */
+ const uint32_t grid=uint32_t(sqrtf(float(count))+.5f);
+ for(uint32_t i=0;i<count;i++){
+  const float x=((float(i%grid)+random())*spread/float(grid))-spread*.5f;
+  const float z=((float(i/grid)+random())*spread/float(grid))-spread*.5f;
+  const float y=sample(H,x,z);
+  const float hx=(sample(H,x+1,z)-sample(H,x-1,z))*.5f;
+  const float hz=(sample(H,x,z+1)-sample(H,x,z-1))*.5f;
+  scatterOut[i*4]=x;scatterOut[i*4+1]=z;scatterOut[i*4+2]=y;
+  scatterOut[i*4+3]=sqrtf(hx*hx+hz*hz);
+ }
+ return int32_t(count);
+}
+int32_t fe_terrain_apply_strata(float strata_height,float strata_strength,float tilt_x,float tilt_z,float warp_amp){
+ if(!finite(strata_height)||strata_height<.05f||strata_height>500)return -1;
+ if(!finite(strata_strength)||strata_strength<=0||strata_strength>1)return -1;
+ if(!finite(tilt_x)||tilt_x<-10||tilt_x>10||!finite(tilt_z)||tilt_z<-10||tilt_z>10)return -1;
+ if(!finite(warp_amp)||warp_amp<0||warp_amp>200)return -1;
+ for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){
+  const uint32_t k=j*W+i;
+  const float x=(float(i)/N-.5f)*size,z=(float(j)/N-.5f)*size;
+  const float warp=(noise(x*.018f+11,z*.018f-7,gNoiseSeed)-.5f)*2.f*warp_amp;
+  const float band=(H[k]+x*tilt_x+z*tilt_z+warp)/strata_height;
+  const float t=band-floorf(band);
+  const float ledge=(floorf(band)+.5f)*strata_height-(x*tilt_x+z*tilt_z+warp);
+  /* Strongest pull in the middle of a band, zero at band edges, so terraces
+     blend into the slope instead of tearing a step discontinuity. */
+  H[k]=lerpf(H[k],ledge,strata_strength*(1.f-absf(t-.5f)*1.2f));
+ }
+ return 0;
 }
 uint32_t fe_landscape_backend_magic(){return FE_LANDSCAPE_CPP_MAGIC;}
 int32_t fe_terrain_init(uint32_t n,float span){if(n<16||n>512||!finite(span)||span<=0)return -1;N=n;W=n+1;size=span;for(uint32_t k=0;k<W*W;k++){H[k]=0;materials[k]=255;for(int c=0;c<3;c++){normals[k*3+c]=c==1?1:0;colors[k*3+c]=.5f;for(int q=0;q<4;q++)weights[c][k*4+q]=0;}for(int q=0;q<4;q++)masks[k*4+q]=0;}return 0;}

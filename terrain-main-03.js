@@ -1,4 +1,5 @@
 
+const SCATTER_BATCH=4096;
 const ROOT_SPAN={pine:1.5,spruce:1.35,krumm:.8,juniper:.7,oak:4.4,birch:.6,palm:.8,acacia:1.8,joshua:1,deadtree:1.6,treefern:.5,shrub:.5,sage:.45,ashbush:.5,saguaro:.7,barrel:.45,prickly:.6,agave:.5};
 const GROUND_UP=new THREE.Vector3(0,1,0),GROUND_N=new THREE.Vector3(),GROUND_Q=new THREE.Quaternion(),GROUND_E=new THREE.Euler();
 function groundNormal(x,z,alignment=1){if(OW?.active)return OW.normalAt(x,z,alignment);const u=cl((x+S/2)/D,0,N-.001),v=cl((z+S/2)/D,0,N-.001),i=u|0,j=v|0,a=u-i,b=v-j,k=j*W+i,gx=((H[k+1]-H[k])*(1-b)+(H[k+W+1]-H[k+W])*b)/D,gz=((H[k+W]-H[k])*(1-a)+(H[k+W+1]-H[k+1])*a)/D;return GROUND_N.set(-gx*alignment,1,-gz*alignment).normalize()}
@@ -11,9 +12,9 @@ function growManualCapacity(k,required){const K=KIND[k];if(!K||required<=K.max)r
 const mAt=(x,z)=>OW?.active?OW.mIdx(x,z):mIdx(cl(Math.round((x+S/2)/D),0,N),cl(Math.round((z+S/2)/D),0,N));
 const slope=(x,z)=>Math.hypot(hgt(x+1,z)-hgt(x-1,z),hgt(x,z+1)-hgt(x,z-1))/2;
 const RULE={grass:[.8,0],tallgrass:[.82,0],flower:[.6,0],daisy:[.6,0],tulip:[.6,0],lavender:[.65,0],shrub:[.9,1.4],pine:[.75,3],oak:[.6,4.2],birch:[.6,2.8],palm:[.5,3.5],rock:[9,0],house:[.32,0],block:[.28,0],mid:[.27,0],tower:[.26,0]},BLD={house:4,block:5.6,mid:6.2,tower:4.4},bY=(x,z,b)=>Math.min(hgt(x,z),...[[1,1],[1,-1],[-1,1],[-1,-1]].map(([a,c])=>hgt(x+a*b*.6,z+c*b*.6))),SM={house:1,block:1,mid:1,tower:1,grass:1.35,tallgrass:1.05,flower:1.05,daisy:1,tulip:1,lavender:1, pine:1.05,oak:1.05,birch:1.05,palm:1.05,shrub:1.05,rock:.8};
-function add(k,x,z,f=1,yaw=0,force=false){
+function add(k,x,z,f=1,yaw=0,force=false,y0,sl0){
 const K=KIND[k]||ensure(k),bd=BLD[k];if(!K)return 0;const edge=force?0.05:1+(bd||0);if(Math.abs(x)>S/2-edge||Math.abs(z)>S/2-edge)return 0;if(K.list.length>=K.max){if(!force)return 0;if(!growManualCapacity(k,K.list.length+1))return 0;if(K.list.length>=K.max)return 0}
-const y=bd?bY(x,z,bd):hgt(x,z),[ms,sp]=RULE[k]||[9,0],m=mAt(x,z),sl=slope(x,z),minAbove=bd?.7:RK[k]?-.3:force?.05:.25,grassKind=k==='grass'||k==='tallgrass',waterDepth=wl-y,shallowWaterGrass=force&&grassKind&&waterDepth>=.45&&waterDepth<=shallowBrushDepth;if(y<wl+minAbove&&!shallowWaterGrass)return 0;
+const y=y0===undefined||bd?(bd?bY(x,z,bd):hgt(x,z)):y0,[ms,sp]=RULE[k]||[9,0],m=mAt(x,z),sl=sl0===undefined||bd?slope(x,z):sl0,minAbove=bd?.7:RK[k]?-.3:force?.05:.25,grassKind=k==='grass'||k==='tallgrass',waterDepth=wl-y,shallowWaterGrass=force&&grassKind&&waterDepth>=.45&&waterDepth<=shallowBrushDepth;if(y<wl+minAbove&&!shallowWaterGrass)return 0;
 if(!force){if(!bd&&!RK[k]&&sl>ms)return 0;if(!bd&&!RK[k]&&k!='palm'&&f<1.5&&R()>veg)return 0;if(bd?m>1:k=='palm'?(biome==='jungle'?(m===2||m===4||m===5):m!=3):!RK[k]&&(['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k)?m!=0:m>1))return 0;if((k=='grass'||k=='tallgrass')&&vn(x*.09+9,z*.09+4)*f<(k=='tallgrass'?.18:.32))return 0;if(k in TL&&y>snowL+TL[k])return 0;if(PATCH[k]&&vn(x*.05+3,z*.05+8)*f<.22+scatterClustering*.46)return 0;if(RK[k]&&f<1.5&&R()>.25+sl*.8)return 0}
 const s=SM[k]*(1+(R()-.5)*2*K.vr);if(bd&&!force){for(const q in BLD)if(KIND[q].list.some(o=>(o.x-x)**2+(o.z-z)**2<(bd+BLD[q])**2*.8))return 0}else if(FP[k]&&!force){if(occBlocked(x,z,FP[k]*s*K.size,k,SPACING_KINDS.has(k)?br.minGap:0))return 0}else if(!force&&sp&&K.list.some(o=>(o.x-x)**2+(o.z-z)**2<(sp*(o.s+s)*.5)**2))return 0;
 K.list.push({x,y,z,s,r:bd?yaw+Math.floor(R()*4)*1.5708:R()*6.28,a:bd?.94+R()*.12:.88+R()*.24,v:.82+R()*.3,manual:!!force});if(FP[k]&&!force)occAdd(x,z,FP[k]*s*K.size,k);return 1}
@@ -85,8 +86,22 @@ const k=br.kind,manualPaint=bt=='plants',cover=['grass','tallgrass'].includes(k)
 for(let j=0;j<samples;j++){const u=from?(j+.5)/samples:1,cx=from?from.x+dx*u:p.x,cz=from?from.z+dz*u:p.z;for(let i=0;i<n;i++){const a=manualPaint?i*2.3999632297+j*1.6180339887+(R()-.5)*.12:R()*6.283,d=manualPaint?br.r*Math.sqrt((i+.5)/n)*(.96+R()*.08):Math.sqrt(R())*br.r;add(k,cl(cx+Math.cos(a)*d,-S/2+.05,S/2-.05),cl(cz+Math.sin(a)*d,-S/2+.05,S/2-.05),1.7,cityAng,manualPaint)}}if(BLD[k])for(const q in KIND)if(!BLD[q]){const Q=KIND[q],n0=Q.list.length;Q.list=Q.list.filter(o=>Math.hypot(o.x-p.x,o.z-p.z)>br.r);if(Q.list.length!=n0)sync(q)}sync(k)}
 
 function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debClear();occRebuild();const density=cl(scatterDensity,1,2.5),big=BTAB[biome].filter(([n])=>FP[n]>=1.8),bw=big.reduce((a,[,w])=>a+w,0),ph=n=>RK[n]?0:FP[n]>=.9?1:2,smallBudget=36000*density,grassMixBonus=Math.round(36000*density),tallGrassMixBonus=Math.round(42000*density),wildflowerMixBonus=Math.round(7000*density),flowers=new Set(['flower','daisy','tulip','lavender']),coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1,tab=BTAB[biome].filter(([n])=>!(FP[n]>=1.8)).map(([n,w])=>[n,Math.round(smallBudget*w*coverBoost(n))+(n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0)]).sort((a,b)=>ph(a[0])-ph(b[0]));
-for(let i=0,N=Math.round(36000*bw*5*density);i<N;i++){let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}add(k,(R()-.5)*S*.96,(R()-.5)*S*.96)}
-for(const[n,c]of tab)for(let i=0;i<c;i++)add(n,(R()-.5)*S*.96,(R()-.5)*S*.96);if(kb)clearUnderB();for(const k in KIND)sync(k)}
+const bigCount=Math.round(36000*bw*5*density),SCBUF=new Float32Array(SCATTER_BATCH*4);
+let uploaded=false;const pickBig=()=>{let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}return k};
+function scatterFill(count,pick){
+ const core=window.FELandscapeCore;
+ if(core&&core.ready&&core.scatterBegin&&core.scatterBatch){
+  if(!uploaded){if(!core.scatterBegin({n:N,size:S,heights:H})){uploaded=false}else uploaded=true}
+  if(uploaded){let failed=false;
+   for(let done=0;done<count;done+=SCATTER_BATCH){const batch=Math.min(SCATTER_BATCH,count-done),got=core.scatterBatch({count:batch,spread:S*.96,seed:(Math.round((seed||0)*1000)+done+1)>>>0,output:SCBUF});
+    if(got!==batch){failed=true;break}
+    for(let i=0;i<got;i++){const o=i*4;add(pick(),SCBUF[o],SCBUF[o+1],1,0,false,SCBUF[o+2],SCBUF[o+3])}}
+   if(!failed)return}}
+ for(let i=0;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96);
+}
+scatterFill(bigCount,pickBig);
+for(const[n,c]of tab)scatterFill(c,()=>n);
+if(kb)clearUnderB();for(const k in KIND)sync(k)}
 function resnap(){for(const k in KIND){KIND[k].list.forEach(o=>o.y=BLD[k]?bY(o.x,o.z,BLD[k]):hgt(o.x,o.z));sync(k)}}
 
 

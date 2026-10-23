@@ -84,3 +84,50 @@ test('studio exposes whole-map erosion controls wired to the C++ bridge',async()
  assert.ok(src.includes('core.erode({mode,n:N,size:S,heights:H'));
  assert.ok(bridge.includes('core.erode=function(state)')&&bridge.includes('fe_terrain_erode_hydraulic')&&bridge.includes('fe_terrain_erode_thermal'));
 });
+test('C++ strata terracing pulls heights toward tilted bands without breaking the grid',async()=>{
+ const c=await core(),n=64,st=terrainState({n,size:200});
+ st.heights=new Float32Array((n+1)*(n+1));c.generate(st);
+ const before=Float32Array.from(st.heights);
+ assert.equal(c.strata({...st,height:9,strength:.55,tiltX:.03,tiltZ:.012,warp:7}),true);
+ assert.ok(st.heights.every(Number.isFinite),'terraced heights must stay finite');
+ assert.ok(st.heights.some((v,i)=>v!==before[i]),'strata must reshape the surface');
+ const drift=st.heights.reduce((s,v,i)=>s+Math.abs(v-before[i]),0)/Math.max(1,before.reduce((s,v)=>s+Math.abs(v),0));
+ assert.ok(drift<.6,'strata must only partially pull heights toward band floors');
+ st.heights.set(before);assert.equal(c.strata({...st,height:9,strength:.55,tiltX:.03,tiltZ:.012,warp:7}),true);
+ const again=Float32Array.from(st.heights);st.heights.set(before);
+ assert.equal(c.strata({...st,height:9,strength:.55,tiltX:.03,tiltZ:.012,warp:7}),true);
+ assert.deepEqual(st.heights,again,'strata terracing must be deterministic');
+ assert.equal(c.strata({...st,height:0,strength:.5,tiltX:0,tiltZ:0,warp:0}),false);
+ assert.equal(c.strata({...st,height:9,strength:2,tiltX:0,tiltZ:0,warp:0}),false);
+});
+test('C++ scatter batch is seeded, in-span and matches sampled heights',async()=>{
+ const c=await core(),n=48,st=terrainState({n,size:200});
+ st.heights=new Float32Array((n+1)*(n+1));c.generate(st);
+ const out=new Float32Array(4096*4);
+ assert.equal(c.scatterBegin(st),true);
+ assert.equal(c.scatterBatch({...st,count:1000,spread:180,seed:31,output:out}),1000);
+ const copy=Float32Array.from(out);
+ assert.equal(c.scatterBatch({...st,count:1000,spread:180,seed:31,output:out}),1000);
+ assert.deepEqual(out,copy,'same seed must reproduce the same candidates');
+ const w=n+1;const jsHeight=(x,z)=>{const u=Math.min(Math.max((x/200+.5)*n,0),n-.001),v=Math.min(Math.max((z/200+.5)*n,0),n-.001),i=u|0,j=v|0,a=u-i,b=v-j,k=j*w+i,H=st.heights;return H[k]*(1-a)*(1-b)+H[k+1]*a*(1-b)+H[k+w]*(1-a)*b+H[k+w+1]*a*b};
+ for(let i=0;i<1000;i++){const x=out[i*4],z=out[i*4+1],y=out[i*4+2],sl=out[i*4+3];
+  assert.ok(Math.abs(x)<=90.0001&&Math.abs(z)<=90.0001,'candidates stay inside the spread');
+  assert.ok(Math.abs(y-jsHeight(x,z))<1e-2,'height must come from the bilinear heightfield sample');
+  assert.ok(sl>=0&&sl<50,'slope is a non-negative central difference');}
+ assert.ok(new Set(Array.from({length:200},(_,i)=>out[i*4].toFixed(2))).size>150,'candidates are spread, not stacked');
+ assert.equal(c.scatterBatch({...st,count:0,spread:180,seed:1,output:out}),0);
+ assert.equal(c.scatterBatch({...st,count:20000,spread:180,seed:1,output:out}),0);
+});
+test('auto-scatter routes candidates through the C++ batch with a JS fallback',async()=>{
+ const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-03.js','utf8'),bridge=fs.readFileSync('terrain-main-01.js','utf8');
+ assert.ok(bridge.includes('core.scatterBegin=function(state)')&&bridge.includes('core.scatterBatch=function(state)'));
+ assert.ok(src.includes('core.scatterBatch({count:batch,spread:S*.96'));
+ assert.ok(src.includes('add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96)'),'JS fallback must stay when C++ is unavailable');
+ assert.ok(src.includes('function add(k,x,z,f=1,yaw=0,force=false,y0,sl0)'));
+ assert.ok(src.includes('SCBUF[o+2],SCBUF[o+3]'),'native candidates must pass precomputed height and slope');
+});
+test('terrain panel exposes C++ strata terracing next to erosion',async()=>{
+ const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-07.js','utf8');
+ assert.ok(src.includes("['strata','🪨 Strata terraces']"));
+ assert.ok(src.includes("mode==='strata'?core.strata({n:N,size:S,heights:H,height:9,strength:.55"));
+});

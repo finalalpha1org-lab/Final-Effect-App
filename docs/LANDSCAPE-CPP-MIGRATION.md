@@ -100,3 +100,25 @@ per-instance threshold and hysteresis band. A Quality-tab slider controls the
 `SHADOW_LOW_DETAIL`. Low batches mirror instance capacity, so memory roughly
 doubles for LOD species - important on phones. This is not mesh decimation for
 trees; their low tier reuses the same geometry with a cheaper material.
+
+## Strata terracing and C++ scatter candidates
+
+`fe_terrain_apply_strata` (previously declared in `fe_abi.h` but never
+implemented) terraces the heightfield toward tilted, noise-warped band floors.
+The pull is strongest mid-band and zero at band edges, so it blends into the
+slope instead of tearing stepped discontinuities. It is exposed as a third
+Terrain-tab button next to hydraulic and thermal erosion and is undoable.
+
+`fe_terrain_scatter_batch` produces jittered-grid scatter candidates (x, z,
+height, slope) from the resident heightfield. Auto-scatter now asks the C++ core
+for candidates in 4096-point batches and only runs the biome/occupancy/instance
+rules in JS; if the core is unavailable the original pure-JS random placement is
+used unchanged. Measured on a 257² grid (Node 22, sandbox CPU): 40 ns per
+candidate in C++ versus 161 ns in JS for the same bilinear height + central
+difference slope, i.e. ≈8 ms versus ≈32 ms for 200k candidates. That is only the
+sampling stage - instancing, tinting and occupancy still dominate total scatter
+time, so this is a real but modest win, not a rewritten scatter pipeline.
+
+Still JS: ocean configuration, Open World hydrology/river tracing, worker
+scheduling and terrain LOD. Open World generation does not run through the
+single-grid `fe_terrain_*` kernels at all.

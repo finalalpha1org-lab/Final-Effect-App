@@ -54,7 +54,10 @@ const REQUIRED_EXPORTS = [
   'fe_terrain_generate_layered',
   'fe_terrain_compute_colors',
   'fe_terrain_erode_hydraulic',
-  'fe_terrain_erode_thermal'
+  'fe_terrain_erode_thermal',
+  'fe_terrain_scatter_out_ptr',
+  'fe_terrain_scatter_batch',
+  'fe_terrain_apply_strata'
 ];
 
 function findZigCompiler() {

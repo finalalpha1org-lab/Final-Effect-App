@@ -6,7 +6,7 @@
  let ex=null,rect=0,palPtr=0,paintPtr=0,wasmBytes=null;
  function bind(instance){
   const x=instance.exports;
-  for(const name of ['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors'])if(typeof x[name]!=='function')throw Error('Terrain C++ export missing: '+name);
+  for(const name of ['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal','fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch'])if(typeof x[name]!=='function')throw Error('Terrain C++ export missing: '+name);
   ex=x;ex.__wasm_call_ctors?.();
   rect=ex.fe_malloc(16);palPtr=ex.fe_malloc(24*4);paintPtr=ex.fe_malloc(48);
   core.ready=true;core.backend='C++ WASM';core.span=0;
@@ -106,6 +106,26 @@
    :ex.fe_terrain_erode_hydraulic(state.droplets,64,.05,.3,.3,.3,.01,4,2,(state.seed>>>0)||1);
   if(result<0){core.error='C++ erosion returned '+result;return false}
   state.heights.set(height);core.commands++;return true;
+ };
+ core.strata=function(state){
+  if(!ensure(state.n,state.size))return false;
+  const height=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),(state.n+1)*(state.n+1));
+  height.set(state.heights);
+  const result=ex.fe_terrain_apply_strata(state.height,state.strength,state.tiltX||0,state.tiltZ||0,state.warp||0);
+  if(result<0){core.error='C++ strata returned '+result;return false}
+  state.heights.set(height);core.commands++;return true;
+ };
+ core.scatterBegin=function(state){
+  if(!ensure(state.n,state.size))return false;
+  new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);
+  return true;
+ };
+ core.scatterBatch=function(state){
+  if(!core.ready||!ex)return 0;
+  const count=ex.fe_terrain_scatter_batch(state.count,state.spread,state.seed>>>0);
+  if(count<0){core.error='C++ scatter returned '+count;return 0}
+  state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_scatter_out_ptr(),count*4));
+  return count;
  };
  core.normals=function(state){
   if(!ensure(state.n,state.size))return false;
