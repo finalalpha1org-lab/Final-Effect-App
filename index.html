@@ -677,14 +677,18 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   z-index: 15;
   transition: height 0.18s ease;
   overflow: hidden;
-  height: 82px;
+  height: 122px;
 }
 .timeline-bar.minimized {
-  height: 30px;
+  height: 48px;
+  overflow: hidden;
+}
+.timeline-bar.minimized .timeline-tracks-wrapper {
+  display: none;
 }
 .timeline-header {
-  height: 30px;
-  min-height: 30px;
+  height: 48px;
+  min-height: 48px;
   background: var(--panel2);
   border-bottom: 1px solid var(--line);
   display: flex;
@@ -698,31 +702,148 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   display: flex;
   align-items: center;
   gap: 5px;
+  padding: 4px 0;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   white-space: nowrap;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 .timeline-left-controls::-webkit-scrollbar { display: none; }
 .tb-btn {
   background: #1f222e;
   border: 1px solid var(--line2);
-  border-radius: 4px;
+  border-radius: 6px;
   color: #cbd5e1;
-  padding: 2px 7px;
+  padding: 2px 9px;
   font-size: 11px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 22px;
+  gap: 5px;
+  min-width: 32px;
+  height: 32px;
+  flex: none;
   transition: all 0.12s ease;
 }
 .tb-btn:hover { background: #2a2e3f; color: #fff; }
 .tb-btn:active { transform: scale(0.95); }
 .tb-btn.active { background: #6366f1; color: #fff; border-color: #818cf8; }
+.tb-btn svg { display: block; pointer-events: none; }
+/* Hydration turns <i data-ico> into a 1em icon, so the row sets its own size. */
+.timeline-left-controls .ico-wrap { font-size: 17px; }
+.tb-step-btn .ico-wrap { font-size: 15px; }
+.tb-bake-btn .ico-wrap { font-size: 14px; }
+.tb-play-glyph { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; }
+.tb-play-glyph svg { width: 18px; height: 18px; }
+.tb-icon-btn { padding: 2px; }
+.tb-step-btn { color: #a9b6d4; }
+.tb-key-btn { color: #fbbf24; border-color: rgba(245,158,11,0.42); background: #241d10; }
+.tb-key-btn:hover { color: #fcd34d; background: #30260f; border-color: rgba(245,158,11,0.7); }
+.tb-key-insert { color: #fbbf24; border-color: rgba(245,158,11,0.45); }
 .tb-bake-btn { background: rgba(99,102,241,0.18); border-color: #6366f1; color: #a5b4fc; font-weight: 600; }
 .tb-bake-btn:hover { background: #6366f1; color: #fff; }
+
+/* ---- Play button: the one control that must never be searched for ----
+   A raised, glossy disc: lit from the top-left, a hard lip underneath, an
+   indigo halo and, while playing, a pulsing ring. Everything else in the
+   transport row stays flat so the eye lands here first. */
+.tb-play-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(165,180,252,.62);
+  color: #fff;
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255,255,255,.62), rgba(255,255,255,0) 44%),
+    linear-gradient(158deg, #8b9bff 0%, #5b5bf0 44%, #3730a3 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.8),
+    inset 0 -3px 7px rgba(15,10,60,.7),
+    0 3px 0 #221c5e,
+    0 5px 11px rgba(79,70,229,.45),
+    0 0 0 3px rgba(99,102,241,.14);
+  transform: translateY(-1px);
+}
+.tb-play-btn:hover { background:
+    radial-gradient(circle at 34% 24%, rgba(255,255,255,.72), rgba(255,255,255,0) 44%),
+    linear-gradient(158deg, #9aa8ff 0%, #6b6bff 44%, #4038b4 100%);
+  transform: translateY(-1px) scale(1.03);
+}
+.tb-play-btn:active {
+  transform: translateY(1px) scale(.96);
+  box-shadow:
+    inset 0 2px 7px rgba(12,8,48,.85),
+    0 1px 0 #221c5e,
+    0 3px 8px rgba(79,70,229,.4),
+    0 0 0 2px rgba(99,102,241,.12);
+}
+.tb-play-btn svg { filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.55)); }
+.tb-play-btn.active {
+  border-color: rgba(110,231,183,.65);
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255,255,255,.55), rgba(255,255,255,0) 44%),
+    linear-gradient(158deg, #34d399 0%, #10b981 44%, #047857 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    inset 0 -3px 7px rgba(6,50,36,.7),
+    0 3px 0 #064e3b,
+    0 7px 16px rgba(16,185,129,.45),
+    0 0 0 3px rgba(52,211,153,.18);
+}
+.tb-play-btn.active::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid rgba(52,211,153,.6);
+  animation: tb-play-ring 1.5s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes tb-play-ring {
+  0% { transform: scale(.84); opacity: .85; }
+  70% { transform: scale(1.16); opacity: 0; }
+  100% { transform: scale(1.16); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tb-play-btn.active::after { animation: none; }
+}
+
+.timeline-end-pin {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(99,102,241,.5);
+  background: linear-gradient(180deg, #1b2030, #141824);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 2px 6px rgba(0,0,0,.35);
+}
+.timeline-end-pin label { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #a5b4fc; }
+.timeline-end-pin input {
+  width: 58px;
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: center;
+  color: #c7d2fe;
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 0;
+}
+.timeline-end-pin input:focus { color: #fff; }
+.timeline-end-pin input::-webkit-outer-spin-button,
+.timeline-end-pin input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.timeline-end-pin input { -moz-appearance: textfield; appearance: textfield; }
 
 .tb-field {
   display: flex;
@@ -730,9 +851,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   gap: 4px;
   background: #161822;
   border: 1px solid var(--line2);
-  border-radius: 4px;
-  padding: 1px 5px;
-  height: 22px;
+  border-radius: 6px;
+  padding: 1px 6px;
+  height: 32px;
+  flex: none;
 }
 .tb-field label { color: var(--mute); font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .tb-field input {
@@ -742,7 +864,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   font-family: monospace;
   font-weight: 700;
   font-size: 11px;
-  width: 38px;
+  width: 44px;
   text-align: center;
   outline: none;
 }
@@ -764,7 +886,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   overflow: hidden;
 }
 .timeline-ruler-container {
-  height: 52px;
+  flex: 1;
+  min-height: 62px;
   position: relative;
   overflow-x: auto;
   overflow-y: hidden;
@@ -790,11 +913,14 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 }
 .playhead-head {
   position: absolute;
-  top: -2px;
-  left: -6px;
-  color: #ef4444;
-  font-size: 12px;
-  line-height: 1;
+  top: 0;
+  left: -7px;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 12px solid #ef4444;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.65));
 }
 .playhead-line {
   position: absolute;
@@ -1792,7 +1918,12 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   .render-modal-backdrop{padding:0;align-items:flex-end}
   .render-modal-window{height:62dvh;max-height:72dvh;border-radius:16px 16px 0 0}
   .tool{min-height:40px;padding:8px 13px}
-  .tb-btn{min-width:32px;min-height:32px}
+  .tb-btn{min-width:36px;min-height:36px;height:36px}
+  .tb-play-btn{width:44px;height:44px;min-width:44px}
+  .timeline-header{height:56px;min-height:56px}
+  .timeline-bar{height:132px}
+  .timeline-bar.minimized{height:56px}
+  .tb-field{height:36px}
 }
 @media(orientation:landscape) and (max-height:520px){
   .top-bar{padding-top:4px;padding-bottom:4px}
@@ -1830,10 +1961,13 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
     padding-right: calc(env(safe-area-inset-right, 0px) + 10px);
   }
   .tool { min-height: 34px; padding: 6px 11px; font-size: 11.5px; }
-  .tb-btn { min-width: 30px; min-height: 30px; }
-  .timeline-bar { height: 58px; }
-  .timeline-bar.minimized { height: 28px; }
-  .timeline-header { height: 26px; min-height: 26px; }
+  .tb-btn { min-width: 32px; min-height: 32px; height: 32px; }
+  .timeline-bar { height: 96px; }
+  .timeline-bar.minimized { height: 42px; }
+  .timeline-header { height: 42px; min-height: 42px; }
+  .timeline-bar.minimized .timeline-header { height: 42px; min-height: 42px; }
+  .tb-play-btn { width: 34px; height: 34px; min-width: 34px; }
+  .timeline-ruler-container { min-height: 52px; }
   #nav-gizmo-wrapper { transform: scale(0.72); transform-origin: top left; }
   #mobile-quick-hud { right: calc(env(safe-area-inset-right, 0px) + 8px); bottom: 8px; gap: 5px; }
   .mob-hud-btn { min-width: 34px; height: 34px; border-radius: 10px; }
@@ -2775,7 +2909,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         </label>
         <button class="anim-btn" id="anim-range-extend" type="button" onclick="extendTimelineRange(50)" title="Add 50 frames to the end of the timeline">+50</button>
         <button class="anim-btn" id="anim-range-fit" type="button" onclick="fitTimelineRangeToKeys()" title="Size the timeline to the last keyframe">Fit to keys</button>
-        <button class="anim-btn" id="anim-loop-btn" type="button" onclick="toggleTimelineLoop()" aria-pressed="false" title="Off: playback keeps extending the timeline. On: playback loops inside the range.">Loop: off</button>
+        <button class="anim-btn" id="anim-loop-btn" type="button" onclick="toggleTimelineLoop()" aria-pressed="false" title="Off: playback stops on the end frame. On: playback loops inside the start–end range.">Loop: off</button>
         <span class="anim-status-chip" id="anim-range-status">0 – 250</span>
       </div>
       <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
@@ -3276,7 +3410,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
       <!-- Pro Mobile Touch Quick Action Pill -->
       <div id="mobile-quick-hud" aria-label="Mobile Quick Controls">
         <button class="mob-hud-btn" type="button" onclick="focusActiveObjectInViewport()" title="Focus Selected Object (or Double-Tap Mesh)">🎯</button>
-        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert keyframe at the current frame">◆ Key</button>
+        <button class="mob-hud-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" title="Insert keyframe at the current frame"><i class="ico" data-ico="keyframe" data-size="14"></i> Key</button>
         <button class="mob-hud-btn" type="button" onclick="openRenderEngineModal()" title="Open the render engine &amp; video exporter">⚡</button>
         <button class="mob-hud-btn" type="button" onclick="toggleMobileFullscreen()" title="Full-Screen Mobile Studio">⛶</button>
       </div>
@@ -3286,16 +3420,15 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <div class="timeline-bar" id="studio-timeline-bar">
       <div class="timeline-header">
         <div class="timeline-left-controls">
-          <button class="tb-btn" id="tb-min-btn" title="Toggle Timeline Height" onclick="toggleTimelineMinimize()">▼</button>
-          <button class="tb-btn" id="tb-play-btn" title="Play / Pause Timeline (Space)" onclick="toggleTimelinePlay()">▶</button>
-          <button class="tb-btn" id="tb-first-btn" title="Jump to First Frame (Shift+Left)" onclick="jumpTimelineToFrame(0)">⏮</button>
-          <button class="tb-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" onclick="stepTimelineFrame(-1)">◀</button>
-          <button class="tb-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" onclick="stepTimelineFrame(1)">▶</button>
-          <button class="tb-btn" id="tb-last-btn" title="Jump to End Frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)">⏭</button>
-          <button class="tb-btn" id="tb-prev-key-btn" title="Previous Keyframe" onclick="jumpTimelineToKey(-1)">◀◆</button>
-          <button class="tb-btn" id="tb-next-key-btn" title="Next Keyframe" onclick="jumpTimelineToKey(1)">◆▶</button>
+          <button class="tb-btn tb-play-btn" id="tb-play-btn" title="Play / Pause Timeline (Space)" aria-label="Play timeline" aria-pressed="false" onclick="toggleTimelinePlay()"><span class="tb-play-glyph"><i class="ico" data-ico="play" data-size="17"></i></span></button>
+          <button class="tb-btn tb-icon-btn" id="tb-first-btn" title="Jump to First Frame (Shift+Left)" aria-label="Jump to first frame" onclick="jumpTimelineToFrame(timelineConfig.startFrame)"><i class="ico" data-ico="skipBack" data-size="16"></i></button>
+          <button class="tb-btn tb-icon-btn tb-step-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" aria-label="Previous frame" onclick="stepTimelineFrame(-1)"><i class="ico" data-ico="stepBack" data-size="14"></i></button>
+          <button class="tb-btn tb-icon-btn tb-step-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" aria-label="Next frame" onclick="stepTimelineFrame(1)"><i class="ico" data-ico="stepForward" data-size="14"></i></button>
+          <button class="tb-btn tb-icon-btn" id="tb-last-btn" title="Jump to End Frame" aria-label="Jump to end frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)"><i class="ico" data-ico="skipForward" data-size="16"></i></button>
+          <button class="tb-btn tb-icon-btn tb-key-btn" id="tb-prev-key-btn" title="Previous Keyframe" aria-label="Previous keyframe" onclick="jumpTimelineToKey(-1)"><i class="ico" data-ico="keyPrev" data-size="17"></i></button>
+          <button class="tb-btn tb-icon-btn tb-key-btn" id="tb-next-key-btn" title="Next Keyframe" aria-label="Next keyframe" onclick="jumpTimelineToKey(1)"><i class="ico" data-ico="keyNext" data-size="17"></i></button>
           <button class="tb-btn active" id="tb-snap-btn" title="Snap scrubbing to keyframes" aria-pressed="true" onclick="toggleTimelineSnap()">SNAP</button>
-          <button class="tb-btn" id="tb-insert-key-btn" title="Insert keyframe on the active object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
+          <button class="tb-btn tb-key-insert" id="tb-insert-key-btn" title="Insert keyframe on the active object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')"><i class="ico" data-ico="keyframe" data-size="14"></i> Key</button>
           
           <div class="tb-field">
             <label>Frame</label>
@@ -3304,10 +3437,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           <div class="tb-field">
             <label>Start</label>
             <input type="number" id="tb-start-frame-input" value="0" min="0" onchange="updateTimelineRange()" />
-          </div>
-          <div class="tb-field">
-            <label>End</label>
-            <input type="number" id="tb-end-frame-input" value="250" min="1" onchange="updateTimelineRange()" />
           </div>
           <div class="tb-field">
             <label>FPS</label>
@@ -3320,14 +3449,21 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
               <option value="120">120</option>
             </select>
           </div>
-          <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
+          <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()"><i class="ico" data-ico="refresh" data-size="14"></i> Bake Sim</button>
+        </div>
+        <button class="tb-btn tb-icon-btn tb-min-btn" id="tb-min-btn" title="Toggle Timeline Height" aria-label="Toggle Timeline Height" aria-pressed="false" onclick="toggleTimelineMinimize()"><i class="ico" data-ico="chevronDown" data-size="16"></i></button>
+        <!-- The end frame is the wall playback stops on, so it never scrolls out
+             of reach: it is pinned to the right of the transport row. -->
+        <div class="timeline-end-pin" title="End frame — playback stops here. Drag the ruler right to add more time.">
+          <label for="tb-end-frame-input">End</label>
+          <input type="number" id="tb-end-frame-input" value="250" min="1" step="1" inputmode="numeric" onchange="updateTimelineRange()" />
         </div>
       </div>
       <div class="timeline-tracks-wrapper" id="timeline-tracks-wrapper">
         <div class="timeline-ruler-container" id="timeline-ruler-container">
           <canvas id="timeline-ruler-canvas"></canvas>
           <div class="timeline-playhead-indicator" id="timeline-playhead">
-            <div class="playhead-head">▼</div>
+            <div class="playhead-head" aria-hidden="true"></div>
             <div class="playhead-line"></div>
           </div>
         </div>
@@ -7878,23 +8014,14 @@ FE.register('core',{
         const steps = Math.floor(timelineConfig.playAccumulator);
         if (steps > 0) {
           timelineConfig.playAccumulator -= steps;
-          const firstFrame = timelineConfig.startFrame;
-          const span = Math.max(1, timelineConfig.endFrame - firstFrame + 1);
-          let nextFrame = timelineConfig.currentFrame + steps;
-          let wrapped = false;
-          if (nextFrame > timelineConfig.endFrame) {
-            if (timelineConfig.loopRange) {
-              nextFrame = firstFrame + ((nextFrame - firstFrame) % span);
-              wrapped = true;
-            } else {
-              /* Unlimited playback: the axis keeps growing, nothing is cut off. */
-              growTimelineForFrame(nextFrame);
-            }
-          }
-          if (wrapped && typeof resetAllPhysicsSimulations === 'function') resetAllPhysicsSimulations();
+          /* Blender rule: the end frame stops playback. Dragging the ruler past
+             the right edge (or typing a longer end) is how time is added. */
+          const advance = advanceTimelinePlayback(steps);
+          if (advance.wrapped && typeof resetAllPhysicsSimulations === 'function') resetAllPhysicsSimulations();
           if (typeof setTimelineCurrentFrame === 'function') {
-            setTimelineCurrentFrame(nextFrame);
+            setTimelineCurrentFrame(advance.frame);
           }
+          if (advance.stopped && typeof stopTimelinePlayback === 'function') stopTimelinePlayback();
         }
       }
 
@@ -9356,17 +9483,23 @@ const timelineConfig = window.timelineConfig = {
   isMinimized: false,
   snapToKeys: true,
   loopRange: false,
+  /* false = the length is derived from content and may auto-grow.
+     true  = the user typed, fitted or dragged a length; it is now the wall that
+             playback stops on, and nothing silently stretches it again. */
+  customRange: false,
   isScrubbing: false,
   playAccumulator: 0,
   _physicsDirty: false,
   lastFrameTime: performance.now()
 };
 
-/* The timeline is unlimited. There is no ceiling on the end frame: the visible
-   range grows to keep every keyframe, baked simulation and the playhead inside
-   it, the end frame can be typed or dragged to any length, and playback keeps
-   extending it instead of stopping. The only guard is that a frame is a finite
-   non-negative integer, so a typo such as `1e999` cannot poison the axis math. */
+/* Blender rules, on a phone.
+   - The timeline has no ceiling: the end frame can be typed to any length and
+     dragging the ruler past the right edge adds more time in that direction.
+   - Once the length is known it is a wall: playback stops exactly on the end
+     frame instead of quietly growing the scene, and stepping stops there too.
+   - The only guard is that a frame is a finite non-negative integer, so a typo
+     such as `1e999` cannot poison the axis math. */
 const TIMELINE_FRAME_LIMIT = Number.MAX_SAFE_INTEGER;
 
 function normaliseTimelineFrame(value, fallback){
@@ -9405,6 +9538,7 @@ function applyTimelineRange(start, end){
   const changed = s !== timelineConfig.startFrame || e !== timelineConfig.endFrame;
   timelineConfig.startFrame = s;
   timelineConfig.endFrame = e;
+  timelineConfig.customRange = true;
   if (timelineConfig.currentFrame < s) timelineConfig.currentFrame = s;
   if (timelineConfig.currentFrame > e) timelineConfig.currentFrame = e;
   syncTimelineRangeInputs();
@@ -9442,7 +9576,11 @@ function timelineContentEndFrame(){
 
 function fitTimelineRangeToKeys(){
   const last = timelineContentEndFrame();
-  return setTimelineEndFrame(Math.max(50, Math.ceil((last + 12) / 50) * 50));
+  const changed = setTimelineEndFrame(Math.max(50, Math.ceil((last + 12) / 50) * 50));
+  /* Fitting reads the length back out of the content, so auto-tracking resumes
+     and a later keyframe keeps the axis honest. */
+  timelineConfig.customRange = false;
+  return changed;
 }
 window.fitTimelineRangeToKeys = fitTimelineRangeToKeys;
 
@@ -9450,6 +9588,7 @@ window.fitTimelineRangeToKeys = fitTimelineRangeToKeys;
    widens it instead of being drawn off the edge. Never shrinks - only the
    explicit range controls do that. */
 function timelineAutoFitRange(){
+  if (timelineConfig.customRange) return false;
   const need = timelineContentEndFrame();
   if (need <= timelineConfig.endFrame) return false;
   timelineConfig.endFrame = Math.ceil((need + 1) / 50) * 50;
@@ -9484,7 +9623,7 @@ window.timelineEnsureRange = function timelineEnsureRange(frame){
 function toggleTimelineLoop(){
   timelineConfig.loopRange = !timelineConfig.loopRange;
   syncTimelineRangeInputs();
-  window.FE?.toast?.(timelineConfig.loopRange ? 'Timeline will loop inside the range' : 'Timeline extends as it plays');
+  window.FE?.toast?.(timelineConfig.loopRange ? 'Timeline loops inside the range' : 'Timeline stops at the end frame');
   return timelineConfig.loopRange;
 }
 window.toggleTimelineLoop = toggleTimelineLoop;
@@ -9492,10 +9631,48 @@ window.toggleTimelineLoop = toggleTimelineLoop;
 function growTimelineForFrame(frame){
   if (frame <= timelineConfig.endFrame) return false;
   timelineConfig.endFrame = Math.ceil((frame + 1) / 50) * 50;
+  /* Dragging into the future is the user adding time, so the new length is
+     theirs as well - it becomes the wall playback stops on. */
+  timelineConfig.customRange = true;
   syncTimelineRangeInputs();
   return true;
 }
 window.growTimelineForFrame = growTimelineForFrame;
+
+/* Transport buttons are vector icons, so swapping play<->pause means replacing
+   the SVG instead of a text glyph. Static markup is hydrated by FEIcons on
+   load; this only has to handle the buttons whose icon changes at runtime. */
+function setTimelineTransportIcon(btn, name, size = 17) {
+  if (!btn) return;
+  const icons = window.FEIcons;
+  if (!icons || typeof icons.svg !== 'function') return;
+  const host = (btn.querySelector && btn.querySelector('.tb-play-glyph')) || btn;
+  host.innerHTML = icons.svg(name, { size });
+}
+
+/* One playback tick. The end frame is a hard stop (Blender behaviour); time is
+   added by dragging the ruler past the right edge or by typing a longer end
+   frame. With looping on, the playhead wraps inside [start, end] instead.
+   Pure on purpose: no DOM, no physics - the render loop owns those. */
+function advanceTimelinePlayback(steps) {
+  const n = Math.max(0, Math.round(Number(steps) || 0));
+  if (!n) return { frame: timelineConfig.currentFrame, wrapped: false, stopped: false };
+  const firstFrame = timelineConfig.startFrame;
+  const span = Math.max(1, timelineConfig.endFrame - firstFrame + 1);
+  let nextFrame = timelineConfig.currentFrame + n;
+  let wrapped = false, stopped = false;
+  if (nextFrame > timelineConfig.endFrame) {
+    if (timelineConfig.loopRange) {
+      nextFrame = firstFrame + ((nextFrame - firstFrame) % span);
+      wrapped = true;
+    } else {
+      nextFrame = timelineConfig.endFrame;
+      stopped = true;
+    }
+  }
+  return { frame: nextFrame, wrapped, stopped };
+}
+window.advanceTimelinePlayback = advanceTimelinePlayback;
 
 function toggleTimelineMinimize() {
   const bar = document.getElementById('studio-timeline-bar');
@@ -9504,25 +9681,41 @@ function toggleTimelineMinimize() {
   timelineConfig.isMinimized = !timelineConfig.isMinimized;
   if (timelineConfig.isMinimized) {
     bar.classList.add('minimized');
-    if (btn) btn.textContent = '▲';
   } else {
     bar.classList.remove('minimized');
-    if (btn) btn.textContent = '▼';
     renderTimelineRulerCanvas();
+    /* The height transition is 180ms; measure again once it has settled. */
+    setTimeout(() => { try { renderTimelineRulerCanvas(); } catch (_) {} }, 220);
+  }
+  if (btn) {
+    setTimelineTransportIcon(btn, timelineConfig.isMinimized ? 'chevronUp' : 'chevronDown', 16);
+    btn.setAttribute?.('aria-pressed', timelineConfig.isMinimized ? 'true' : 'false');
   }
 }
 window.toggleTimelineMinimize = toggleTimelineMinimize;
 
 function toggleTimelinePlay() {
-  timelineConfig.isPlaying = !timelineConfig.isPlaying;
+  const starting = !timelineConfig.isPlaying;
+  /* Parked on the end frame? Play rewinds to the start first, so the hard stop
+     can never leave the button looking dead. */
+  if (starting && timelineConfig.currentFrame >= timelineConfig.endFrame) {
+    timelineConfig.currentFrame = timelineConfig.startFrame;
+    const frameInput = document.getElementById('tb-current-frame-input');
+    if (frameInput && document.activeElement !== frameInput) frameInput.value = timelineConfig.currentFrame;
+  }
+  timelineConfig.isPlaying = starting;
   timelineConfig.playAccumulator = 0;
   timelineConfig.lastFrameTime = performance.now();
   const playBtn = document.getElementById('tb-play-btn');
   if (playBtn) {
-    playBtn.textContent = timelineConfig.isPlaying ? '⏸' : '▶';
-    playBtn.classList.toggle('active', timelineConfig.isPlaying);
+    playBtn.classList?.toggle('active', starting);
+    playBtn.setAttribute?.('aria-pressed', starting ? 'true' : 'false');
+    playBtn.setAttribute?.('aria-label', starting ? 'Pause timeline' : 'Play timeline');
+    playBtn.setAttribute?.('title', starting ? 'Pause Timeline (Space)' : 'Play Timeline (Space)');
+    setTimelineTransportIcon(playBtn, starting ? 'pause' : 'play');
   }
-  FE.toast(timelineConfig.isPlaying ? 'Timeline Playing ▶' : 'Timeline Paused ⏸');
+  renderTimelineRulerCanvas();
+  FE.toast(starting ? 'Timeline Playing' : 'Timeline Paused');
 }
 window.toggleTimelinePlay = toggleTimelinePlay;
 
@@ -9532,13 +9725,12 @@ function jumpTimelineToFrame(frame) {
 window.jumpTimelineToFrame = jumpTimelineToFrame;
 
 function stepTimelineFrame(delta) {
-  let nextFrame = timelineConfig.currentFrame + delta;
-  if (nextFrame > timelineConfig.endFrame) {
-    nextFrame = timelineConfig.startFrame;
-  } else if (nextFrame < timelineConfig.startFrame) {
-    nextFrame = timelineConfig.endFrame;
-  }
-  setTimelineCurrentFrame(nextFrame);
+  const step = Math.sign(Number(delta) || 0);
+  if (!step) return;
+  /* Stepping honours the same walls as playback instead of wrapping around. */
+  const nextFrame = Math.max(timelineConfig.startFrame, Math.min(timelineConfig.endFrame, timelineConfig.currentFrame + step));
+  pauseTimelineForScrub();
+  setTimelineCurrentFrame(nextFrame, { clampRange: true });
 }
 window.stepTimelineFrame = stepTimelineFrame;
 
@@ -9704,7 +9896,7 @@ function renderTimelineRulerCanvas() {
   const majorStep = Math.max(1, Math.round(nice * magnitude));
   const minorStep = Math.max(1, Math.round(majorStep / 5));
 
-  ctx.font = '10px monospace';
+  ctx.font = '11px monospace';
   ctx.textAlign = 'center';
   ctx.lineWidth = 1;
 
@@ -9725,12 +9917,12 @@ function renderTimelineRulerCanvas() {
     ctx.fillText(String(f), x, 30);
   }
 
-  /* Range bounds */
+  /* Range bounds. The end frame is the wall playback stops on, so it is drawn
+     in amber - a different colour from the start line, not just another tick. */
   ctx.strokeStyle = '#6366f1';
-  for (const f of [m.startFrame, m.endFrame]) {
-    const x = m.frameToX(f);
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-  }
+  ctx.beginPath(); ctx.moveTo(m.frameToX(m.startFrame), 0); ctx.lineTo(m.frameToX(m.startFrame), h); ctx.stroke();
+  ctx.strokeStyle = '#f59e0b';
+  ctx.beginPath(); ctx.moveTo(m.frameToX(m.endFrame), 0); ctx.lineTo(m.frameToX(m.endFrame), h); ctx.stroke();
 
   /* Physics sim tracks stay pinned to the bar's bottom edge */
   const eng = FE.engines?.core;
@@ -9782,11 +9974,28 @@ function applyTimelineScrub(clientX) {
 }
 
 function pauseTimelineForScrub() {
-  if (!timelineConfig.isPlaying) return;
+  if (!timelineConfig.isPlaying) return false;
   timelineConfig.isPlaying = false;
   timelineConfig.playAccumulator = 0;
   const playBtn = document.getElementById('tb-play-btn');
-  if (playBtn) { playBtn.textContent = '▶'; playBtn.classList.remove('active'); }
+  if (playBtn) {
+    playBtn.classList?.remove('active');
+    playBtn.classList?.remove('paused');
+    playBtn.setAttribute?.('aria-pressed', 'false');
+    setTimelineTransportIcon(playBtn, 'play');
+  }
+  return true;
+}
+
+/* Reaching the end frame stops playback - it does not extend the scene. The
+   first time it happens the shell says how to add more time, then stays quiet. */
+function stopTimelinePlayback() {
+  const wasPlaying = pauseTimelineForScrub();
+  if (wasPlaying && !timelineConfig._stopHintShown) {
+    timelineConfig._stopHintShown = true;
+    window.FE?.toast?.(`End frame reached — drag the ruler right to add time`);
+  }
+  return wasPlaying;
 }
 
 function handleRulerPointer(e) {
@@ -9847,6 +10056,9 @@ function jumpTimelineToKey(direction) {
     return;
   }
   pauseTimelineForScrub();
+  /* A key beyond the end frame is reachable: the jump widens the range to it
+     rather than leaving the button pointing at a frame it cannot show. */
+  window.timelineEnsureRange?.(target);
   setTimelineCurrentFrame(target, { clampRange: true });
   FE.toast(`Keyframe @ Frame ${target}`);
 }

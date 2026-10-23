@@ -32,8 +32,8 @@ test('landscape compacts studio chrome so the viewport stays usable',()=>{
     assert.ok(block.includes(rule),`missing landscape chrome rule ${rule}`);
   }
   assert.ok(/\.layer-bar \{[^}]*height: 34px/.test(block),'the layer bar shrinks in landscape');
-  assert.ok(/\.timeline-bar \{[^}]*height: 58px/.test(block),'the timeline bar shrinks in landscape');
-  assert.ok(/\.timeline-bar\.minimized \{[^}]*height: 28px/.test(block),'the minimized timeline shrinks in landscape');
+  assert.ok(/\.timeline-bar \{[^}]*height: 96px/.test(block),'the timeline bar shrinks in landscape but stays tall enough to drag');
+  assert.ok(/\.timeline-bar\.minimized \{[^}]*height: 42px/.test(block),'the minimized timeline shrinks in landscape');
 });
 
 test('every studio sheet docks to the right edge in landscape',()=>{

@@ -132,6 +132,15 @@
     broom: '<path d="M14.5 3.5 10 8"/><path d="M7.4 7.4 16.6 16.6"/><path d="M6.2 10.6 3.4 20.6l10-2.8z"/>',
     heart: '<path d="M12 20.4S3.6 15 3.6 9.4A4.6 4.6 0 0 1 12 6.6a4.6 4.6 0 0 1 8.4 2.8c0 5.6-8.4 11-8.4 11z"/>',
     skipBack: '<path d="M18.5 5.5v13L8.5 12z"/><path d="M5 5.5v13"/>',
+    /* Timeline transport. Each glyph is deliberately different in silhouette:
+       a bare triangle steps one frame, triangle+bar jumps to the range end, and
+       a diamond marks a keyframe so "jump key" cannot be mistaken for "play". */
+    chevronUp: '<path d="M6 14.5 12 9l6 5.5"/>',
+    stepBack: '<path d="M15.5 5.5v13L7 12z"/>',
+    stepForward: '<path d="M8.5 5.5v13L17 12z"/>',
+    keyframe: '<path d="M12 4.4 19.6 12 12 19.6 4.4 12z"/>',
+    keyPrev: '<path d="M11.6 7.4 16.2 12l-4.6 4.6L7 12z"/><path d="M8 12H3.4M6 8.6 2.6 12 6 15.4"/>',
+    keyNext: '<path d="M12.4 7.4 7.8 12l4.6 4.6L17 12z"/><path d="M16 12h4.6M18 8.6 21.4 12 18 15.4"/>',
     skipForward: '<path d="M5.5 5.5v13L15.5 12z"/><path d="M19 5.5v13"/>',
     ban: '<circle cx="12" cy="12" r="8.6"/><path d="M6.2 6.2 17.8 17.8"/>',
     grass: '<path d="M4.5 20c0-4.6 1.4-8 4.2-10.4M9 20c-.4-3.6.4-6.6 2.6-9M13.6 20c.4-4 2-6.8 4.8-8.4"/><path d="M3.5 20h17"/>',
