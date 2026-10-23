@@ -256,10 +256,17 @@ int32_t fe_ow_surface_grid(uint32_t segments, float origin_x, float origin_z, fl
       const float x = origin_x - chunk_size * .5f + float(i) * step;
       const uint32_t k = j * row + i;
       const float h = owHeights[k];
-      const float hl = owHeights[j * row + (i ? i - 1 : i)];
-      const float hr = owHeights[j * row + (i + 1 < row ? i + 1 : i)];
-      const float hd = owHeights[(j ? j - 1 : j) * row + i];
-      const float hu = owHeights[(j + 1 < row ? j + 1 : j) * row + i];
+      /* The border of a chunk has no neighbour inside its own grid, so the
+         missing sample is evaluated straight from the world-space noise instead
+         of being clamped to the edge value. Clamping made the slope one-sided
+         on the border, which popped the normal (and the biome weights derived
+         from it) against the identical edge of the next chunk. The noise is a
+         pure function of the world position, so both sides now compute the same
+         central difference and the seam is not a seam at all. */
+      const float hl = i ? owHeights[j * row + i - 1] : owHeightAt(x - step, z);
+      const float hr = (i + 1 < row) ? owHeights[j * row + i + 1] : owHeightAt(x + step, z);
+      const float hd = j ? owHeights[(j - 1) * row + i] : owHeightAt(x, z - step);
+      const float hu = (j + 1 < row) ? owHeights[(j + 1) * row + i] : owHeightAt(x, z + step);
       const float slope = sqrtf((hr - hl) * (hr - hl) + (hu - hd) * (hu - hd)) * inv;
       owBiomeWeights(x, z, h, bio);
       owSurfaceWeights(x, z, h, slope, bio, weights);

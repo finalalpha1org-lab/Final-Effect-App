@@ -88,3 +88,35 @@ test('the compaction kernel rejects out-of-range arguments instead of writing ru
  const over=new Array(65537).fill([0,0,-5]);
  assert.ok(visibleCall(e,over).got<0,'a list past the fixed buffer is rejected');
 });
+test('two neighbouring chunks meet on one height and one normal, not a seam', () => {
+  const e = engine();
+  const SEG = 32, SIZE = 256, row = SEG + 1;
+  const mix = e.fe_malloc(16);
+  new Float32Array(e.memory.buffer, mix, 4).set([1.2, .9, .6, .5]);
+  assert.equal(e.fe_ow_set_params(7, 42, 28, 5000, -24, .68, mix), 0);
+  const sample = (ox, oz) => {
+    assert.ok(e.fe_ow_height_grid(SEG, ox, oz, SIZE) > 0);
+    const h = new Float32Array(e.memory.buffer, e.fe_ow_height_ptr(), row * row).slice();
+    assert.ok(e.fe_ow_surface_grid(SEG, ox, oz, SIZE) > 0);
+    const w = new Float32Array(e.memory.buffer, e.fe_ow_surface_ptr(), row * row * 12).slice();
+    return { h, w };
+  };
+  const a = sample(256, 0), b = sample(512, 0);
+  for (let j = 0; j < row; j++) {
+    const ia = j * row + (row - 1), ib = j * row;
+    assert.equal(a.h[ia], b.h[ib], `row ${j}: the shared edge is one world position, so one height`);
+    for (let q = 0; q < 12; q++) {
+      /* The border slope needs the neighbour outside the grid; clamping to the
+         edge value used to pop the normal here (measured 0.17 of a weight). */
+      assert.equal(a.w[ia * 12 + q], b.w[ib * 12 + q], `row ${j}: surface weight ${q} is continuous across the seam`);
+    }
+  }
+  /* The same must hold along z, or the horizontal seams of the ring would still
+     pop where a chunk is streamed in from the north. */
+  const south = sample(256, 0), north = sample(256, 256);
+  for (let i = 0; i < row; i++) {
+    const ia = (row - 1) * row + i, ib = i;
+    assert.equal(south.h[ia], north.h[ib], `column ${i}: the z seam shares one height`);
+    for (let q = 0; q < 12; q++) assert.equal(south.w[ia * 12 + q], north.w[ib * 12 + q], `column ${i}: and one surface weight`);
+  }
+});

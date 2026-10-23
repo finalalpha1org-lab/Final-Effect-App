@@ -31,7 +31,7 @@ is the contract below.
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1121249` bytes, ABI v1, **242 exports**; every group above
+The shipped build is `1121101` bytes, ABI v1, **242 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 ## When a row is red
@@ -51,7 +51,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1121249 bytes, ABI v1, 242 exports)`.
+that passes `Validated fe_core_engine.wasm (1121101 bytes, ABI v1, 242 exports)`.
 
 ## Verification
 
@@ -61,6 +61,6 @@ node --test tests/landscape-realism.test.mjs      # 14 tests
 node --test tests/landscape-flora.test.mjs        # 18 tests
 node --test tests/landscape-climate.test.mjs      # 15 tests
 node --test tests/landscape-settings-persistence.test.mjs  # 7 tests
-npm test                                          # 367 tests
+npm test                                          # 368 tests
 npm run build                                     # revalidates + copies the artifact
 ```

@@ -173,6 +173,32 @@ JS baseline is `open-world-generator.js` without the C++ path):
 These are CPU numbers only — not a phone benchmark and not a viewport FPS claim.
 The JS fallback still ships and is used whenever the core is unavailable.
 
+## Chunk seams: heights were already shared, normals were not
+
+Each chunk is sampled from the same world-space noise, `owHeightAt(x, z)`, over a
+grid that starts at `origin − size/2` with a step of `size/segments`. Two
+neighbours therefore evaluate the *same* world coordinates along their shared
+edge, so the height seam has never existed — a test asserts bit equality, not an
+epsilon.
+
+The normal did pop. `fe_ow_surface_grid()` derives the slope from central
+differences, but on the grid border the neighbour is outside the chunk, so it
+used to clamp the difference to the edge value. That made the border slope
+one-sided on both sides of the seam, with different results: measured on the
+shared edge of two consecutive chunks, up to **0.17** of a surface weight
+differed, which is a visible line in both the lighting and the biome blend.
+
+The fix evaluates the missing neighbour straight from the noise:
+
+```cpp
+hl = i ? owHeights[j * row + i - 1] : owHeightAt(x - step, z);
+hr = (i + 1 < row) ? owHeights[j * row + i + 1] : owHeightAt(x + step, z);
+```
+
+Cost is four extra noise evaluations on the border ring (128 of 1 089 vertices at
+33²), and the shared edge is now bit-identical in height **and** surface weight
+in both x and z — pinned by `tests/landscape-cpp.test.mjs`.
+
 ## Tessendorf ocean in C++
 
 `cpp/src/fe_ocean.cpp` owns the three-cascade spectrum and both inverse FFTs.
