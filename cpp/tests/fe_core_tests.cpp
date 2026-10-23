@@ -153,6 +153,64 @@ int main() {
   ) == 1);
   assert(surf_counts[0] >= 12 && surf_counts[1] >= 12);
 
+  /* Timeline editing kernels */
+  fe_anim_reset();
+  assert(fe_anim_ensure_object(4, rest) == 1);
+  fe_anim_insert_keyframe(4, FE_CH_POS_X, 0.0f, 0.0f, FE_INTERP_LINEAR);
+  fe_anim_insert_keyframe(4, FE_CH_POS_X, 30.0f, 3.0f, FE_INTERP_LINEAR);
+  fe_anim_insert_keyframe(4, FE_CH_POS_X, 60.0f, 6.0f, FE_INTERP_LINEAR);
+  assert(fe_anim_edit_key(4, FE_CH_POS_X, 30.0f, 45.0f, 9.0f, 0.45f) == 1);
+  assert(fe_anim_get_keyframe_count(4, FE_CH_POS_X) == 3);
+  assert(nearf(fe_anim_evaluate_channel(4, FE_CH_POS_X, 45.0f, 0.0f, 250.0f), 9.0f, 1e-3f));
+  assert(fe_anim_move_keys_in_range(4, 1u << FE_CH_POS_X, 40.0f, 50.0f, 5.0f) == 1);
+  assert(nearf(fe_anim_evaluate_channel(4, FE_CH_POS_X, 50.0f, 0.0f, 250.0f), 9.0f, 1e-3f));
+  assert(fe_anim_duplicate_keys_in_range(4, 1u << FE_CH_POS_X, 70.0f, 70.0f, 10.0f) == 0);
+  assert(fe_anim_duplicate_keys_in_range(4, 1u << FE_CH_POS_X, 50.0f, 50.0f, 20.0f) == 1);
+  assert(fe_anim_get_keyframe_count(4, FE_CH_POS_X) == 4);
+  assert(fe_anim_delete_keys_in_range(4, 0xFFFFFFFFu, 0.0f, 10.0f) == 1);
+  assert(fe_anim_get_keyframe_count(4, FE_CH_POS_X) == 3);
+
+  const float curve_pts[9] = {0, 0, 0, 1, 2, 0, 2, 0, 0};
+  float curve_out[64] = {};
+  const uint32_t curve_n = fe_anim_catmull_rom(curve_pts, 3, 4, curve_out, 64);
+  assert(curve_n == 9);
+  assert(nearf(curve_out[0], 0.0f) && nearf(curve_out[4 * 3 + 1], 2.0f));
+  assert(nearf(curve_out[8 * 3 + 0], 2.0f));
+
+  /* Sampling, baking and simulation keyframe reduction */
+  fe_anim_reset();
+  assert(fe_anim_ensure_object(7, rest) == 1);
+  fe_anim_insert_keyframe(7, FE_CH_POS_X, 0.0f, 0.0f, FE_INTERP_LINEAR);
+  fe_anim_insert_keyframe(7, FE_CH_POS_X, 60.0f, 10.0f, FE_INTERP_LINEAR);
+
+  float sampled[11 * 5] = {};
+  assert(fe_anim_sample_object(7, 0.0f, 60.0f, 5, sampled, 55) == 5);
+  assert(nearf(sampled[0], 0.0f));
+  assert(nearf(sampled[4 * 11 + 0], 10.0f));
+  assert(nearf(sampled[2 * 11 + 0], 5.0f, 0.05f));
+
+  float channel_samples[3] = {};
+  assert(fe_anim_sample_channel(7, FE_CH_POS_X, 0.0f, 60.0f, 3, channel_samples, 3) == 3);
+  assert(nearf(channel_samples[2], 10.0f));
+
+  float bake_input[11 * 3] = {};
+  for (uint32_t i = 0; i < 3; ++i) {
+    bake_input[i * 11 + FE_CH_POS_X] = static_cast<float>(i) * 5.0f;
+    bake_input[i * 11 + FE_CH_SCL_X] = 1.0f;
+  }
+  assert(fe_anim_bake_samples(8, (1u << FE_CH_POS_X), 0.0f, 10.0f, bake_input, 3, FE_INTERP_LINEAR, 1e-3f) == 3);
+  assert(fe_anim_get_keyframe_count(8, FE_CH_POS_X) == 3);
+  assert(nearf(fe_anim_evaluate_channel(8, FE_CH_POS_X, 20.0f, 0.0f, 60.0f), 10.0f));
+
+  const float sim_frames[3 * 2 * 3] = {
+    0, 0, 0, 0, 0, 0,
+    0.001f, 0, 0, 0, 0.001f, 0,
+    0.5f, 0, 0, 0, 0.5f, 0
+  };
+  uint32_t kept_frames[8] = {};
+  assert(fe_sim_bake_compress(sim_frames, 3, 2, 0.01f, kept_frames, 8) == 2);
+  assert(kept_frames[0] == 0 && kept_frames[1] == 2);
+
   printf("All Final Effect C++20 Core Engine tests passed!\n");
   return 0;
 }

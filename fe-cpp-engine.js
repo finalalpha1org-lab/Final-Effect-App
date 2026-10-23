@@ -233,6 +233,7 @@
       else if (group === 'scale') channelsToKey = [6, 7, 8];
       else if (group === 'extra') channelsToKey = [9, 10];
       else if (group === 'all') channelsToKey = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      else if (group === 'keyset') channelsToKey = keyingSetChannels(this.keyingSet);
 
       if (objId === 'camera' || objId === 'light') {
         channelsToKey = channelsToKey.filter(c => c < 6 || c === 9);
@@ -1157,6 +1158,745 @@
     }
   }
 
+
+  /* -----------------------------------------------------------------------
+   * Animation Studio: curve/dope editing, keying sets, simulation bake,
+   * onion skin, motion trails, camera paths and glTF animation export.
+   * --------------------------------------------------------------------- */
+  const KEYING_SETS = {
+    transform: { label: 'Keying Set: Full Transform', channels: [0, 1, 2, 3, 4, 5, 6, 7, 8] },
+    location: { label: 'Keying Set: Location', channels: [0, 1, 2] },
+    rotation: { label: 'Keying Set: Rotation', channels: [3, 4, 5] },
+    scale: { label: 'Keying Set: Scale', channels: [6, 7, 8] },
+    locrot: { label: 'Keying Set: Location + Rotation', channels: [0, 1, 2, 3, 4, 5] },
+    all: { label: 'Keying Set: All Channels', channels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+    extra: { label: 'Keying Set: Lens / Light', channels: [9, 10] }
+  };
+
+  function keyingSetChannels(id) {
+    return (KEYING_SETS[id] || KEYING_SETS.transform).channels.slice();
+  }
+
+  function animationCanvasMetrics(w, h, startF, endF) {
+    const padL = 88, padR = 14, padT = 22, padB = 12;
+    const plotW = Math.max(40, w - padL - padR);
+    const plotH = Math.max(40, h - padT - padB);
+    const span = Math.max(1e-6, endF - startF);
+    return {
+      padL, padR, padT, padB, plotW, plotH,
+      frameToX: f => padL + ((f - startF) / span) * plotW,
+      xToFrame: x => startF + ((x - padL) / plotW) * span
+    };
+  }
+
+  function readAllKeys(slot, channel) {
+    if (!FECppEngine.ready) return [];
+    FECppEngine.exports.fe_arena_reset();
+    const buf = FECppEngine.allocF32(128 * 3);
+    const n = FECppEngine.exports.fe_anim_list_object_keyframes(slot, channel, buf.ptr, 128);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      out.push({ frame: buf.view[i * 3], value: buf.view[i * 3 + 1], interp: buf.view[i * 3 + 2] });
+    }
+    return out;
+  }
+
+  function sceneTimeConfig() {
+    const cfg = window.timelineConfig || {};
+    const startF = Number(cfg.startFrame || 0);
+    const endF = Math.max(startF + 1, Number(cfg.endFrame || 250));
+    const curF = Number(cfg.currentFrame || 0);
+    const fps = Math.max(1, Number(cfg.fps || 30));
+    return { startF, endF, curF, fps };
+  }
+
+  Object.assign(FECppEngine, {
+    keyingSet: 'transform',
+    editorMode: 'dope',
+    graphChannel: 0,
+    selectedKey: null,
+    onionSkin: { enabled: false, before: 2, after: 2 },
+    motionTrail: { enabled: false, length: 30 },
+    _onionGroup: null,
+    _trailGroup: null,
+    _trailLine: null,
+
+    toggleAutoKey() {
+      this.autoKey = !this.autoKey;
+      refreshAnimationStudioUI();
+      window.FE?.toast?.(this.autoKey ? 'Auto-Key enabled — transform edits are keyed' : 'Auto-Key disabled');
+    },
+
+    setKeyingSet(id) {
+      this.keyingSet = KEYING_SETS[id] ? id : 'transform';
+      refreshAnimationStudioUI();
+      window.FE?.toast?.((KEYING_SETS[this.keyingSet]).label.replace('Keying Set: ', 'Keying set → '));
+    },
+
+    setAnimationEditorMode(mode) {
+      this.editorMode = mode === 'graph' ? 'graph' : 'dope';
+      const canvas = document.getElementById('anim-dopesheet-canvas');
+      if (canvas) canvas.style.cursor = this.editorMode === 'graph' ? 'crosshair' : 'ew-resize';
+      if (document.body?.classList) document.body.classList.toggle('anim-graph-mode', this.editorMode === 'graph');
+      renderDopeSheetAndCurveCanvas();
+    },
+
+    setGraphChannel(channel) {
+      this.graphChannel = Math.max(0, Math.min(10, parseInt(channel, 10) || 0));
+      renderDopeSheetAndCurveCanvas();
+    },
+
+    getAnimationCanvasMetrics() {
+      const canvas = document.getElementById('anim-dopesheet-canvas');
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const { startF, endF } = sceneTimeConfig();
+      return Object.assign({ rect, startF, endF }, animationCanvasMetrics(rect.width, rect.height, startF, endF));
+    },
+
+    animationValueRange(slot, startF, endF) {
+      if (!this.ready) return { min: -1, max: 1 };
+      let min = Infinity, max = -Infinity;
+      this.exports.fe_arena_reset();
+      const buf = this.allocF32(64);
+      for (let c = 0; c < CH.COUNT; c++) {
+        if (this.exports.fe_anim_get_keyframe_count(slot, c) === 0) continue;
+        const n = this.exports.fe_anim_sample_channel(slot, c, startF, endF, 48, buf.ptr, 64);
+        for (let i = 0; i < n; i++) {
+          const v = buf.view[i];
+          if (!Number.isFinite(v)) continue;
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+      }
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: -1, max: 1 };
+      if (max - min < 1e-4) { min -= 0.5; max += 0.5; }
+      const pad = (max - min) * 0.08;
+      return { min: min - pad, max: max + pad };
+    },
+
+    hitTestAnimationKey(clientX, clientY) {
+      if (!this.ready) return null;
+      const m = this.getAnimationCanvasMetrics();
+      if (!m) return null;
+      const px = clientX - m.rect.left;
+      const py = clientY - m.rect.top;
+      if (px < m.padL - 6 || px > m.rect.width - m.padR + 6) return null;
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const slot = this.getSlotForObjectId(objId);
+      if (this.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) === 0) return null;
+
+      let best = null;
+      const consider = (channel, frame, value, x, y, radius) => {
+        const d = Math.hypot(x - px, y - py);
+        if (d <= radius && (!best || d < best.d)) best = { slot, channel, frame, value, d };
+      };
+
+      if (this.editorMode === 'graph') {
+        const range = this.animationValueRange(slot, m.startF, m.endF);
+        const valueToY = v => m.padT + m.plotH - ((v - range.min) / (range.max - range.min)) * m.plotH;
+        for (let c = 0; c < CH.COUNT; c++) {
+          for (const key of readAllKeys(slot, c)) {
+            consider(c, key.frame, key.value, m.frameToX(key.frame), valueToY(key.value), 10);
+          }
+        }
+      } else {
+        const groups = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]];
+        const rowH = m.plotH / groups.length;
+        groups.forEach((chs, idx) => {
+          const yMid = m.padT + idx * rowH + rowH * 0.5;
+          for (const c of chs) {
+            for (const key of readAllKeys(slot, c)) {
+              consider(c, key.frame, key.value, m.frameToX(key.frame), yMid, 9);
+            }
+          }
+        });
+      }
+      return best;
+    },
+
+    beginKeyDrag(hit) {
+      this.selectedKey = hit ? { slot: hit.slot, channel: hit.channel, frame: hit.frame, value: hit.value } : null;
+      renderDopeSheetAndCurveCanvas();
+    },
+
+    updateKeyDrag(newFrame, newValue) {
+      const sel = this.selectedKey;
+      if (!this.ready || !sel) return false;
+      const frame = Math.round(Math.max(0, newFrame) * 100) / 100;
+      const value = Number.isFinite(newValue) ? newValue : sel.value;
+      if (Math.abs(frame - sel.frame) < 1e-4 && Math.abs(value - sel.value) < 1e-6) return false;
+      const res = this.exports.fe_anim_edit_key(sel.slot, sel.channel, sel.frame, frame, value, 0.8);
+      if (res < 0) return false;
+      sel.frame = frame;
+      sel.value = value;
+      renderDopeSheetAndCurveCanvas();
+      return true;
+    },
+
+    endKeyDrag() {
+      const sel = this.selectedKey;
+      if (!sel) return;
+      this.evaluateSceneAtFrame(sceneTimeConfig().curF);
+      refreshAnimationStudioUI();
+      if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+    },
+
+    deleteSelectedAnimationKey() {
+      const sel = this.selectedKey;
+      if (!this.ready || !sel) {
+        window.FE?.toast?.('Drag-select a keyframe first');
+        return 0;
+      }
+      const removed = this.exports.fe_anim_delete_keys_in_range(sel.slot, 1 << sel.channel, sel.frame, sel.frame);
+      if (removed > 0) {
+        this.selectedKey = null;
+        this.evaluateSceneAtFrame(sceneTimeConfig().curF);
+        refreshAnimationStudioUI();
+        if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+        window.FE?.toast?.(`Deleted ${CHANNEL_LABELS[sel.channel]} key at frame ${sel.frame}`);
+      }
+      return removed;
+    },
+
+    duplicateSelectedAnimationKey() {
+      const sel = this.selectedKey;
+      if (!this.ready || !sel) {
+        window.FE?.toast?.('Drag-select a keyframe first');
+        return 0;
+      }
+      const copied = this.exports.fe_anim_duplicate_keys_in_range(sel.slot, 1 << sel.channel, sel.frame, sel.frame, 10);
+      if (copied > 0) {
+        this.selectedKey = { slot: sel.slot, channel: sel.channel, frame: sel.frame + 10, value: sel.value };
+        refreshAnimationStudioUI();
+        window.FE?.toast?.(`Duplicated ${CHANNEL_LABELS[sel.channel]} key to frame ${sel.frame + 10}`);
+      }
+      return copied;
+    },
+
+    /* ---- Simulation bake: freeze cloth / soft body deformation ---- */
+    bakeSimulation() {
+      if (!this.ready) { window.FE?.toast?.('Engine still starting…'); return 0; }
+      const mesh = window.getActiveObjectMesh?.();
+      const record = mesh?.userData?.clothSim || mesh?.userData?.softBodySim;
+      if (!mesh || !record) {
+        window.FE?.toast?.('Select a cloth or soft body object to bake');
+        return 0;
+      }
+      const geo = mesh.geometry;
+      const attr = geo?.attributes?.position;
+      if (!attr) { window.FE?.toast?.('This object has no deformable mesh'); return 0; }
+
+      const { startF, endF, curF, fps } = sceneTimeConfig();
+      const vertexCount = attr.count;
+      const maxFrames = 120;
+      const stepFrames = Math.max(1, Math.ceil((endF - startF + 1) / maxFrames));
+      const frameList = [];
+      for (let f = startF; f <= endF; f += stepFrames) frameList.push(f);
+      if (frameList[frameList.length - 1] !== endF) frameList.push(endF);
+
+      const floatCount = frameList.length * vertexCount * 3;
+      if (floatCount > 4000000) {
+        window.FE?.toast?.('Bake range is too dense — shorten it or use a lighter mesh');
+        return 0;
+      }
+
+      const captured = new Float32Array(floatCount);
+      window.FE?.toast?.('Baking simulation…');
+      try {
+        window.resetAllPhysicsSimulations?.();
+        let next = 0;
+        for (let f = startF; f <= endF; f++) {
+          if (next < frameList.length && frameList[next] === f) {
+            const src = geo.attributes.position.array;
+            captured.set(src.subarray(0, vertexCount * 3), next * vertexCount * 3);
+            next++;
+          }
+          if (f < endF) window.stepPhysicsSimulations?.(1 / fps);
+        }
+      } catch (err) {
+        window.FE?.toast?.('Simulation bake failed: ' + err.message);
+        return 0;
+      }
+
+      this.exports.fe_arena_reset();
+      const inPtr = this.exports.fe_malloc(floatCount * 4);
+      new Float32Array(this.memory.buffer, inPtr, floatCount).set(captured);
+      const outPtr = this.exports.fe_malloc(frameList.length * 4);
+      const keptCount = this.exports.fe_sim_bake_compress(inPtr, frameList.length, vertexCount, 0.0025, outPtr, frameList.length);
+      const keptIndex = new Uint32Array(this.memory.buffer, outPtr, keptCount).slice();
+
+      const frames = [];
+      for (const idx of keptIndex) {
+        frames.push({
+          frame: frameList[idx],
+          positions: captured.slice(idx * vertexCount * 3, (idx + 1) * vertexCount * 3)
+        });
+      }
+      mesh.userData.simBake = {
+        type: mesh.userData.clothSim ? 'Cloth' : 'SoftBody',
+        frameStart: startF,
+        frameEnd: endF,
+        fps,
+        vertexCount,
+        sourceFrames: frameList.length,
+        frames
+      };
+      mesh.userData.simBake._lastFrame = null;
+
+      window.seekTimelinePhysics?.(curF);
+      this.applySimulationBakeAtFrame(curF);
+      refreshAnimationStudioUI();
+      window.FE?.toast?.(`Baked ${frames.length} of ${frameList.length} simulation frames`);
+      return frames.length;
+    },
+
+    clearSimulationBake() {
+      const mesh = window.getActiveObjectMesh?.();
+      const bake = mesh?.userData?.simBake;
+      if (!bake) { window.FE?.toast?.('No baked simulation on this object'); return 0; }
+      delete mesh.userData.simBake;
+      try {
+        window.SimEngine?.resetSimulation?.(bake.type, mesh);
+      } catch {}
+      window.seekTimelinePhysics?.(sceneTimeConfig().curF);
+      refreshAnimationStudioUI();
+      window.FE?.toast?.('Cleared simulation bake');
+      return 1;
+    },
+
+    applySimulationBakeAtFrame(frame) {
+      const eng = window.FE?.engines?.core;
+      if (!eng?.sc) return false;
+      let applied = false;
+      eng.sc.children.forEach(child => {
+        const bake = child.userData?.simBake;
+        if (!bake || !bake.frames?.length) return;
+        const attr = child.geometry?.attributes?.position;
+        if (!attr) return;
+        const frames = bake.frames;
+        const f = Math.max(frames[0].frame, Math.min(frames[frames.length - 1].frame, frame));
+        let i = 0;
+        while (i < frames.length - 1 && frames[i + 1].frame <= f) i++;
+        const a = frames[i];
+        const b = frames[Math.min(frames.length - 1, i + 1)];
+        const span = Math.max(1e-6, b.frame - a.frame);
+        const t = a === b ? 0 : Math.max(0, Math.min(1, (f - a.frame) / span));
+        const dst = attr.array;
+        const pa = a.positions, pb = b.positions;
+        const count = Math.min(dst.length, pa.length);
+        if (t < 1e-4) {
+          dst.set(pa.subarray(0, count));
+        } else {
+          for (let k = 0; k < count; k++) dst[k] = pa[k] + (pb[k] - pa[k]) * t;
+        }
+        attr.needsUpdate = true;
+        if (child.geometry.computeVertexNormals) child.geometry.computeVertexNormals();
+        bake._lastFrame = f;
+        applied = true;
+      });
+      return applied;
+    },
+
+    /* ---- Onion skin ghosts ---- */
+    _onionGhostMaterial(obj, past) {
+      const T = window.THREE;
+      if (!T) return null;
+      this._onionMaterials = this._onionMaterials || {};
+      if (this._onionMaterialSource !== obj.uuid) {
+        this._onionMaterials = {};
+        this._onionMaterialSource = obj.uuid;
+      }
+      const key = past ? 'past' : 'future';
+      if (!this._onionMaterials[key]) {
+        const base = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+        const material = base?.clone?.();
+        if (!material) return null;
+        material.transparent = true;
+        material.opacity = past ? 0.2 : 0.14;
+        material.depthWrite = false;
+        if (material.color) material.color.setHex(past ? 0x38bdf8 : 0xf472b6);
+        if (material.emissive) material.emissive.setHex(past ? 0x0b3a5a : 0x4a1030);
+        if ('metalness' in material) material.metalness = 0;
+        if ('roughness' in material) material.roughness = 1;
+        this._onionMaterials[key] = material;
+      }
+      return this._onionMaterials[key];
+    },
+
+    updateOnionSkin() {
+      const T = window.THREE;
+      const eng = window.FE?.engines?.core;
+      if (!T || !eng?.sc) return;
+      if (!this._onionGroup) {
+        this._onionGroup = new T.Group();
+        this._onionGroup.name = 'OnionSkin';
+        this._onionGroup.userData.feOnionGhost = true;
+        eng.sc.add(this._onionGroup);
+      }
+      const group = this._onionGroup;
+      if (!group.parent) eng.sc.add(group);
+      for (let i = group.children.length - 1; i >= 0; i--) group.remove(group.children[i]);
+      const sheet = document.getElementById('animation-sheet');
+      const open = !!(sheet && !sheet.hidden && sheet.style.display !== 'none');
+      if (!this.onionSkin.enabled || !open || !this.ready || window.timelineConfig?.isPlaying) {
+        group.visible = false;
+        return;
+      }
+
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const obj = window.getActiveObjectMesh?.();
+      if (!obj || !obj.geometry) { group.visible = false; return; }
+      const slot = this.getSlotForObjectId(objId);
+      if (this.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) === 0) { group.visible = false; return; }
+
+      const { startF, endF, curF } = sceneTimeConfig();
+      const before = Math.max(0, Math.min(5, this.onionSkin.before | 0));
+      const after = Math.max(0, Math.min(5, this.onionSkin.after | 0));
+      const offsets = [];
+      for (let d = 1; d <= Math.max(before, after); d++) {
+        if (d <= before) offsets.push(-d);
+        if (d <= after) offsets.push(d);
+      }
+
+      this.exports.fe_arena_reset();
+      const out = this.allocF32(15);
+      const parentWorld = obj.parent && obj.parent !== eng.sc ? obj.parent.matrixWorld : null;
+      let made = 0;
+      for (const off of offsets) {
+        const ghostFrame = Math.max(startF, Math.min(endF, curF + off));
+        if (Math.abs(ghostFrame - curF) < 1e-3) continue;
+        if (this.exports.fe_anim_evaluate_object(slot, ghostFrame, startF, endF, out.ptr) <= 0) continue;
+        const v = out.view;
+        const material = this._onionGhostMaterial(obj, off < 0);
+        if (!material) continue;
+        const ghost = new T.Mesh(obj.geometry, material);
+        const pos = new T.Vector3(v[0], v[1], v[2]);
+        const quat = new T.Quaternion().setFromEuler(new T.Euler(v[3] * DEG2RAD, v[4] * DEG2RAD, v[5] * DEG2RAD, 'XYZ'));
+        const scl = new T.Vector3(Math.max(0.01, v[6]), Math.max(0.01, v[7]), Math.max(0.01, v[8]));
+        if (parentWorld) {
+          const local = new T.Matrix4().compose(pos, quat, scl);
+          ghost.matrixAutoUpdate = false;
+          ghost.matrix.multiplyMatrices(parentWorld, local);
+        } else {
+          ghost.position.copy(pos);
+          ghost.quaternion.copy(quat);
+          ghost.scale.copy(scl);
+        }
+        ghost.raycast = () => {};
+        ghost.userData.feOnionGhost = true;
+        ghost.renderOrder = -1;
+        group.add(ghost);
+        made++;
+      }
+      group.visible = made > 0;
+    },
+
+    toggleOnionSkin() {
+      this.onionSkin.enabled = !this.onionSkin.enabled;
+      const range = parseInt(document.getElementById('anim-onion-range')?.value || '2', 10) || 2;
+      this.onionSkin.before = range;
+      this.onionSkin.after = range;
+      this.updateOnionSkin();
+      refreshAnimationStudioUI();
+      window.FE?.toast?.(this.onionSkin.enabled ? `Onion skin on (${range} before / ${range} after)` : 'Onion skin off');
+    },
+
+    setOnionRange(value) {
+      const range = Math.max(1, Math.min(5, parseInt(value, 10) || 2));
+      this.onionSkin.before = range;
+      this.onionSkin.after = range;
+      if (this.onionSkin.enabled) this.updateOnionSkin();
+    },
+
+    /* ---- Motion trail ---- */
+    updateMotionTrail() {
+      const T = window.THREE;
+      const eng = window.FE?.engines?.core;
+      if (!T || !eng?.sc) return;
+      if (!this._trailGroup) {
+        this._trailGroup = new T.Group();
+        this._trailGroup.name = 'MotionTrail';
+        this._trailGroup.userData.feOnionGhost = true;
+        const geo = new T.BufferGeometry();
+        geo.setAttribute('position', new T.BufferAttribute(new Float32Array(3 * 128), 3));
+        geo.setAttribute('color', new T.BufferAttribute(new Float32Array(3 * 128), 3));
+        const mat = new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false });
+        this._trailLine = new T.Line(geo, mat);
+        this._trailLine.frustumCulled = false;
+        this._trailGroup.add(this._trailLine);
+        eng.sc.add(this._trailGroup);
+      }
+      const group = this._trailGroup;
+      if (!group.parent) eng.sc.add(group);
+      const sheet = document.getElementById('animation-sheet');
+      const sheetOpen = !!(sheet && !sheet.hidden && sheet.style.display !== 'none');
+      if (!this.motionTrail.enabled || !sheetOpen || !this.ready) { group.visible = false; return; }
+
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const obj = window.getActiveObjectMesh?.();
+      const slot = this.getSlotForObjectId(objId);
+      if (!obj || this.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) === 0) { group.visible = false; return; }
+
+      const { startF, endF, curF } = sceneTimeConfig();
+      const length = Math.max(2, Math.min(120, this.motionTrail.length | 0));
+      const from = Math.max(startF, curF - length);
+      const to = curF;
+      const count = Math.max(2, Math.round(to - from) + 1);
+
+      const base = this.readObjectChannels11(objId);
+      this.exports.fe_arena_reset();
+      const buf = this.allocF32(64);
+      const coords = [];
+      for (let c = 0; c < 3; c++) {
+        if (this.exports.fe_anim_get_keyframe_count(slot, c) > 0) {
+          const n = this.exports.fe_anim_sample_channel(slot, c, from, to, count, buf.ptr, 64);
+          const arr = new Float32Array(count);
+          for (let i = 0; i < count; i++) arr[i] = buf.view[Math.min(n - 1, i)];
+          coords.push(arr);
+        } else {
+          coords.push(new Float32Array(count).fill(base[c]));
+        }
+      }
+
+      const geo = this._trailLine.geometry;
+      const posAttr = geo.attributes.position;
+      const colAttr = geo.attributes.color;
+      const positions = posAttr.array;
+      const colors = colAttr.array;
+      const now = new T.Color(0xffd166);
+      const old = new T.Color(0x6366f1);
+      const mix = new T.Color();
+      for (let i = 0; i < count; i++) {
+        positions[i * 3] = coords[0][i];
+        positions[i * 3 + 1] = coords[1][i];
+        positions[i * 3 + 2] = coords[2][i];
+        mix.copy(old).lerp(now, count === 1 ? 1 : i / (count - 1));
+        colors[i * 3] = mix.r;
+        colors[i * 3 + 1] = mix.g;
+        colors[i * 3 + 2] = mix.b;
+      }
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+      geo.setDrawRange(0, count);
+      geo.computeBoundingSphere();
+      group.visible = true;
+    },
+
+    toggleMotionTrail() {
+      this.motionTrail.enabled = !this.motionTrail.enabled;
+      this.updateMotionTrail();
+      refreshAnimationStudioUI();
+      window.FE?.toast?.(this.motionTrail.enabled ? 'Motion trail on' : 'Motion trail off');
+    },
+
+    /* ---- Camera path animation ---- */
+    buildCameraPath() {
+      if (!this.ready) { window.FE?.toast?.('Engine still starting…'); return 0; }
+      const T = window.THREE;
+      const eng = window.FE?.engines?.core;
+      const camObj = this.resolveObjectById('camera');
+      if (!T || !eng?.sc || !camObj) { window.FE?.toast?.('Camera is not ready'); return 0; }
+
+      const { startF, endF, curF } = sceneTimeConfig();
+      const target = new T.Vector3(0, 1, 0);
+      const active = window.getActiveObjectMesh?.();
+      if (active && active !== camObj) active.getWorldPosition(target);
+
+      const ampEl = document.getElementById('anim-preset-amp');
+      const amp = ampEl ? Math.max(0.1, Number(ampEl.value) || 1) : 1;
+      let size = 2;
+      if (active) {
+        const box = new T.Box3().setFromObject(active);
+        if (!box.isEmpty()) {
+          const s = box.getSize(new T.Vector3());
+          size = Math.max(s.x, s.y, s.z, 0.5);
+        }
+      }
+      const radius = Math.max(2.2, size * 1.9 * amp);
+      const height = Math.max(0.6, radius * 0.32);
+      const baseAngle = Math.atan2(camObj.position.z - target.z, camObj.position.x - target.x);
+
+      const controlCount = 9;
+      const control = new Float32Array(controlCount * 3);
+      for (let i = 0; i < controlCount; i++) {
+        const a = baseAngle + (i / controlCount) * Math.PI * 2;
+        control[i * 3] = target.x + Math.cos(a) * radius;
+        control[i * 3 + 1] = target.y + height;
+        control[i * 3 + 2] = target.z + Math.sin(a) * radius;
+      }
+
+      this.exports.fe_arena_reset();
+      const inPtr = this.exports.fe_malloc(control.length * 4);
+      new Float32Array(this.memory.buffer, inPtr, control.length).set(control);
+      const perSegment = 8;
+      const outCap = controlCount * perSegment * 3 + 3;
+      const outPtr = this.exports.fe_malloc(outCap * 4);
+      const pathCount = this.exports.fe_anim_catmull_rom(inPtr, controlCount, perSegment, outPtr, outCap);
+      if (!pathCount) { window.FE?.toast?.('Camera path could not be generated'); return 0; }
+      const path = new Float32Array(this.memory.buffer, outPtr, pathCount * 3).slice();
+
+      const maxKeys = 96;
+      const step = Math.max(1, Math.round((endF - startF) / maxKeys));
+      const sampleCount = Math.min(128, Math.floor((endF - startF) / step) + 1);
+      const samples = new Float32Array(sampleCount * 11);
+      const tmpCam = new T.PerspectiveCamera();
+      const euler = new T.Euler();
+      const pos = new T.Vector3();
+      const fov = camObj.fov || eng.sceneCamera?.fov || 39.6;
+
+      for (let s = 0; s < sampleCount; s++) {
+        const t = sampleCount === 1 ? 0 : s / (sampleCount - 1);
+        const pi = Math.min(pathCount - 1, Math.round(t * (pathCount - 1)));
+        pos.set(path[pi * 3], path[pi * 3 + 1], path[pi * 3 + 2]);
+        tmpCam.position.copy(pos);
+        tmpCam.up.set(0, 1, 0);
+        tmpCam.lookAt(target);
+        euler.setFromQuaternion(tmpCam.quaternion, 'XYZ');
+        samples[s * 11 + 0] = pos.x;
+        samples[s * 11 + 1] = pos.y;
+        samples[s * 11 + 2] = pos.z;
+        samples[s * 11 + 3] = euler.x * RAD2DEG;
+        samples[s * 11 + 4] = euler.y * RAD2DEG;
+        samples[s * 11 + 5] = euler.z * RAD2DEG;
+        samples[s * 11 + 6] = 1;
+        samples[s * 11 + 7] = 1;
+        samples[s * 11 + 8] = 1;
+        samples[s * 11 + 9] = fov;
+        samples[s * 11 + 10] = 0;
+      }
+
+      const slot = this.getSlotForObjectId('camera');
+      const rest = this.readObjectChannels11('camera');
+      const restPtr = this.exports.fe_malloc(11 * 4);
+      new Float32Array(this.memory.buffer, restPtr, 11).set(rest);
+      this.exports.fe_anim_ensure_object(slot, restPtr);
+
+      const samplePtr = this.exports.fe_malloc(samples.length * 4);
+      new Float32Array(this.memory.buffer, samplePtr, samples.length).set(samples);
+      const mask = 0x3f | (1 << 9);
+      const written = this.exports.fe_anim_bake_samples(slot, mask, startF, step, samplePtr, sampleCount, 0, 1e-3);
+      this.evaluateSceneAtFrame(curF);
+      refreshAnimationStudioUI();
+      if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+      window.FE?.toast?.(`Camera path: ${written} keys over frames ${startF}–${endF}`);
+      return written;
+    },
+
+    /* ---- glTF animation export ---- */
+    exportAnimatedGLTF() {
+      const T = window.THREE;
+      if (!T || typeof T.GLTFExporter !== 'function') {
+        window.FE?.toast?.('glTF exporter is still loading');
+        return;
+      }
+      if (!this.ready || this.exports.fe_anim_get_total_keyframes() === 0) {
+        window.FE?.toast?.('Nothing to export — add keyframes first');
+        return;
+      }
+      const eng = window.FE?.engines?.core;
+      if (!eng?.sc) return;
+      const { startF, endF, fps } = sceneTimeConfig();
+      const frameCount = Math.max(2, Math.round(endF - startF) + 1);
+
+      const entries = [];
+      for (const [objId, slot] of this.objectSlots.entries()) {
+        if (this.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) === 0) continue;
+        const obj = this.resolveObjectById(objId);
+        if (!obj) continue;
+        entries.push({ objId, slot, obj });
+      }
+
+      const exportScene = new T.Scene();
+      const cloneMap = new Map();
+      eng.sc.children.forEach(child => {
+        if (!child.isGridHelper && child.name !== 'Cursor3D' && child.name !== 'StudioFloor' && child.name !== 'ShadowFloor'
+          && !child.userData?.feOnionGhost && child !== this._onionGroup && child !== this._trailGroup) {
+          const clone = child.clone(true);
+          exportScene.add(clone);
+          cloneMap.set(child, clone);
+        }
+      });
+
+      /* glTF animation tracks address nodes by name, so keyed nodes need unique names. */
+      const claimed = new Set();
+      exportScene.children.forEach(child => {
+        if (!child.name) return;
+        if (claimed.has(child.name)) child.name = '';
+        else claimed.add(child.name);
+      });
+      for (const entry of entries) {
+        const target = cloneMap.get(entry.obj) || entry.obj;
+        const fallback = 'FE_' + entry.objId.replace(/[^a-zA-Z0-9_]/g, '_') + '_' + entry.slot;
+        let base = target.name || fallback;
+        let name = base;
+        let suffix = 2;
+        while (claimed.has(name)) name = base + '_' + suffix++;
+        target.name = name;
+        entry.trackName = name;
+        claimed.add(name);
+      }
+
+      const tracks = [];
+      for (const { slot, trackName } of entries) {
+        if (!trackName) continue;
+        this.exports.fe_arena_reset();
+        const cap = frameCount * 11;
+        const ptr = this.exports.fe_malloc(cap * 4);
+        const n = this.exports.fe_anim_sample_object(slot, startF, endF, frameCount, ptr, cap);
+        if (!n) continue;
+        const v = new Float32Array(this.memory.buffer, ptr, n * 11).slice();
+
+        const times = new Float32Array(n);
+        const positions = new Float32Array(n * 3);
+        const quaternions = new Float32Array(n * 4);
+        const scales = new Float32Array(n * 3);
+        const euler = new T.Euler();
+        const quat = new T.Quaternion();
+        for (let i = 0; i < n; i++) {
+          times[i] = i / fps;
+          const b = i * 11;
+          positions[i * 3] = v[b];
+          positions[i * 3 + 1] = v[b + 1];
+          positions[i * 3 + 2] = v[b + 2];
+          euler.set(v[b + 3] * DEG2RAD, v[b + 4] * DEG2RAD, v[b + 5] * DEG2RAD, 'XYZ');
+          quat.setFromEuler(euler);
+          quaternions[i * 4] = quat.x;
+          quaternions[i * 4 + 1] = quat.y;
+          quaternions[i * 4 + 2] = quat.z;
+          quaternions[i * 4 + 3] = quat.w;
+          scales[i * 3] = Math.max(0.01, v[b + 6]);
+          scales[i * 3 + 1] = Math.max(0.01, v[b + 7]);
+          scales[i * 3 + 2] = Math.max(0.01, v[b + 8]);
+        }
+        tracks.push(new T.VectorKeyframeTrack(entry.trackName + '.position', times, positions));
+        tracks.push(new T.QuaternionKeyframeTrack(entry.trackName + '.quaternion', times, quaternions));
+        tracks.push(new T.VectorKeyframeTrack(entry.trackName + '.scale', times, scales));
+      }
+
+      if (!tracks.length) { window.FE?.toast?.('No keyframed objects found in the scene'); return; }
+      const clip = new T.AnimationClip('FinalEffectAnimation', (frameCount - 1) / fps, tracks);
+      const exporter = new T.GLTFExporter();
+      window.FE?.toast?.('Exporting glTF animation…');
+      exporter.parse(exportScene, result => {
+        const json = JSON.stringify(result, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        if (typeof window.downloadBlob === 'function') window.downloadBlob(blob, 'FinalEffect-Animated.gltf');
+        else {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'FinalEffect-Animated.gltf';
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        }
+        window.FE?.toast?.('Exported FinalEffect-Animated.gltf with animation');
+      }, err => {
+        console.error('Animated glTF export failed:', err);
+        window.FE?.toast?.('glTF export failed');
+      }, { binary: false, animations: [clip], embedImages: true });
+    }
+  });
+
   function refreshAnimationStudioUI() {
     const sheet = document.getElementById('animation-sheet');
     if (!sheet) return;
@@ -1182,6 +1922,47 @@
       autoBtn.textContent = FECppEngine.autoKey ? '⏺ Auto-Key ON' : '⏺ Auto-Key';
     }
 
+    const keySetSelect = document.getElementById('anim-keying-set');
+    if (keySetSelect) keySetSelect.value = FECppEngine.keyingSet;
+
+    const modeSelect = document.getElementById('anim-editor-mode');
+    if (modeSelect) modeSelect.value = FECppEngine.editorMode;
+
+    const channelSelect = document.getElementById('anim-graph-channel');
+    if (channelSelect) channelSelect.value = String(FECppEngine.graphChannel);
+
+    const onionBtn = document.getElementById('anim-onion-toggle');
+    if (onionBtn) {
+      onionBtn.classList.toggle('is-on', FECppEngine.onionSkin.enabled);
+      onionBtn.setAttribute('aria-pressed', FECppEngine.onionSkin.enabled ? 'true' : 'false');
+    }
+    const onionRange = document.getElementById('anim-onion-range');
+    if (onionRange) onionRange.value = String(FECppEngine.onionSkin.before);
+
+    const trailBtn = document.getElementById('anim-trail-toggle');
+    if (trailBtn) {
+      trailBtn.classList.toggle('is-on', FECppEngine.motionTrail.enabled);
+      trailBtn.setAttribute('aria-pressed', FECppEngine.motionTrail.enabled ? 'true' : 'false');
+    }
+
+    const bakeStatus = document.getElementById('anim-bake-status');
+    if (bakeStatus) {
+      const mesh = window.getActiveObjectMesh?.();
+      const bake = mesh?.userData?.simBake;
+      bakeStatus.textContent = bake
+        ? `${bake.frames.length} baked frames · ${bake.frameStart}–${bake.frameEnd}`
+        : 'No simulation bake';
+      bakeStatus.classList.toggle('is-on', !!bake);
+    }
+
+    const dupBtn = document.getElementById('anim-dup-btn');
+    const delSelBtn = document.getElementById('anim-del-sel-btn');
+    const hasSelection = !!FECppEngine.selectedKey;
+    if (dupBtn) dupBtn.disabled = !hasSelection;
+    if (delSelBtn) delSelBtn.disabled = !hasSelection;
+
+    FECppEngine.updateOnionSkin();
+    FECppEngine.updateMotionTrail();
     renderDopeSheetAndCurveCanvas();
   }
   window.refreshAnimationStudioUI = refreshAnimationStudioUI;
@@ -1202,16 +1983,14 @@
     ctx.fillStyle = '#0b0d14';
     ctx.fillRect(0, 0, w, h);
 
-    const startF = Number(window.timelineConfig?.startFrame || 0);
-    const endF = Math.max(startF + 1, Number(window.timelineConfig?.endFrame || 250));
-    const curF = Number(window.timelineConfig?.currentFrame || 0);
-    const padL = 88, padR = 14, padT = 22, padB = 12;
-    const plotW = Math.max(40, w - padL - padR);
-    const plotH = Math.max(40, h - padT - padB);
+    const { startF, endF, curF } = sceneTimeConfig();
+    const m = animationCanvasMetrics(w, h, startF, endF);
+    const objId = window.FE?.getActiveObjectId?.() || 'cube';
+    const slot = FECppEngine.getSlotForObjectId(objId);
+    const graph = FECppEngine.editorMode === 'graph';
+    const sel = FECppEngine.selectedKey;
 
-    const frameToX = f => padL + ((f - startF) / (endF - startF)) * plotW;
-
-    /* Frame grid */
+    /* Frame grid shared by both editors */
     ctx.strokeStyle = '#1c2030';
     ctx.lineWidth = 1;
     ctx.fillStyle = '#64748b';
@@ -1219,90 +1998,181 @@
     ctx.textAlign = 'center';
     const step = Math.max(5, Math.round((endF - startF) / 8 / 5) * 5);
     for (let f = startF; f <= endF; f += step) {
-      const x = frameToX(f);
+      const x = m.frameToX(f);
       ctx.beginPath();
-      ctx.moveTo(x, padT - 4);
-      ctx.lineTo(x, h - padB);
+      ctx.moveTo(x, m.padT - 4);
+      ctx.lineTo(x, h - m.padB);
       ctx.stroke();
       ctx.fillText(String(f), x, 13);
     }
 
-    const objId = window.FE?.getActiveObjectId?.() || 'cube';
-    const slot = FECppEngine.getSlotForObjectId(objId);
+    if (!FECppEngine.ready) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Animation engine starting…', w * 0.5, h * 0.5);
+      return;
+    }
 
-    const groups = [
-      { label: 'Location XYZ', chs: [0, 1, 2] },
-      { label: 'Rotation XYZ', chs: [3, 4, 5] },
-      { label: 'Scale XYZ',    chs: [6, 7, 8] },
-      { label: 'Lens / Light', chs: [9, 10] }
-    ];
-    const rowH = plotH / groups.length;
+    const anyKeys = FECppEngine.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) > 0;
 
-    groups.forEach((g, idx) => {
-      const yMid = padT + idx * rowH + rowH * 0.5;
-      ctx.strokeStyle = '#171b29';
-      ctx.beginPath();
-      ctx.moveTo(0, padT + (idx + 1) * rowH);
-      ctx.lineTo(w, padT + (idx + 1) * rowH);
-      ctx.stroke();
+    if (graph) {
+      const active = FECppEngine.graphChannel;
+      const range = FECppEngine.animationValueRange(slot, startF, endF);
+      FECppEngine._graphRange = range;
+      const valueToY = v => m.padT + m.plotH - ((v - range.min) / (range.max - range.min)) * m.plotH;
 
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(g.label, 8, yMid + 4);
-
-      if (!FECppEngine.ready) return;
-      FECppEngine.exports.fe_arena_reset();
-      const kBuf = FECppEngine.allocF32(128 * 3);
-
-      for (const c of g.chs) {
-        const n = FECppEngine.exports.fe_anim_list_object_keyframes(slot, c, kBuf.ptr, 128);
-        if (n === 0) continue;
-
-        /* Draw mini interpolated C++ curve preview in the row */
-        let minV = Infinity, maxV = -Infinity;
-        const samples = 48;
-        const vals = new Float32Array(samples + 1);
-        for (let s = 0; s <= samples; s++) {
-          const sf = startF + ((endF - startF) * s) / samples;
-          const v = FECppEngine.exports.fe_anim_evaluate_channel(slot, c, sf, startF, endF);
-          vals[s] = v;
-          if (v < minV) minV = v;
-          if (v > maxV) maxV = v;
-        }
-        const spanV = Math.max(0.01, maxV - minV);
-        ctx.strokeStyle = CHANNEL_COLORS[c] + '88';
-        ctx.lineWidth = 1.25;
+      ctx.strokeStyle = '#161a27';
+      ctx.fillStyle = '#64748b';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'right';
+      for (let g = 0; g <= 4; g++) {
+        const y = m.padT + (m.plotH * g) / 4;
         ctx.beginPath();
-        for (let s = 0; s <= samples; s++) {
-          const x = padL + (s / samples) * plotW;
-          const norm = (vals[s] - minV) / spanV;
-          const y = (padT + idx * rowH + rowH - 5) - norm * (rowH - 10);
-          if (s === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+        ctx.moveTo(m.padL, y);
+        ctx.lineTo(w - m.padR, y);
         ctx.stroke();
+        const value = range.max - ((range.max - range.min) * g) / 4;
+        ctx.fillText(value.toFixed(Math.abs(value) < 10 ? 2 : 1), m.padL - 6, y + 3);
+      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = CHANNEL_COLORS[active];
+      ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(`Graph · ${CHANNEL_LABELS[active]}`, 8, m.padT + 12);
 
-        /* Draw diamond keyframe markers */
-        for (let k = 0; k < n; k++) {
-          const kf = kBuf.view[k * 3];
-          const x = frameToX(kf);
-          if (x < padL - 4 || x > w - padR + 4) continue;
-          ctx.fillStyle = Math.abs(kf - curF) < 0.5 ? '#fbbf24' : CHANNEL_COLORS[c];
+      if (!anyKeys) {
+        ctx.fillStyle = '#475569';
+        ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No keys yet — key the selected object to edit its curves', w * 0.5, h * 0.5);
+      } else {
+        FECppEngine.exports.fe_arena_reset();
+        const buf = FECppEngine.allocF32(64);
+        const samples = 48;
+        for (let c = 0; c < CH.COUNT; c++) {
+          const keyCount = FECppEngine.exports.fe_anim_get_keyframe_count(slot, c);
+          if (keyCount === 0) continue;
+          const n = FECppEngine.exports.fe_anim_sample_channel(slot, c, startF, endF, samples, buf.ptr, 64);
+          const isActive = c === active;
+          ctx.strokeStyle = CHANNEL_COLORS[c] + (isActive ? 'ee' : '3a');
+          ctx.lineWidth = isActive ? 1.8 : 1;
           ctx.beginPath();
-          ctx.moveTo(x, yMid - 5);
-          ctx.lineTo(x + 5, yMid);
-          ctx.lineTo(x, yMid + 5);
-          ctx.lineTo(x - 5, yMid);
-          ctx.closePath();
-          ctx.fill();
+          for (let i = 0; i < n; i++) {
+            const x = m.padL + (i / Math.max(1, n - 1)) * m.plotW;
+            const y = valueToY(buf.view[i]);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+
+        for (let c = 0; c < CH.COUNT; c++) {
+          const isActive = c === active;
+          for (const key of readAllKeys(slot, c)) {
+            const x = m.frameToX(key.frame);
+            const y = valueToY(key.value);
+            if (x < m.padL - 6 || x > w - m.padR + 6) continue;
+            ctx.fillStyle = CHANNEL_COLORS[c];
+            ctx.globalAlpha = isActive ? 1 : 0.45;
+            ctx.beginPath();
+            ctx.arc(x, y, isActive ? 4.2 : 3.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            if (sel && sel.channel === c && Math.abs(sel.frame - key.frame) < 0.01) {
+              ctx.strokeStyle = '#fde047';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(x, y, 7.5, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+          }
         }
       }
-    });
+    } else {
+      const groups = [
+        { label: 'Location XYZ', chs: [0, 1, 2] },
+        { label: 'Rotation XYZ', chs: [3, 4, 5] },
+        { label: 'Scale XYZ',    chs: [6, 7, 8] },
+        { label: 'Lens / Light', chs: [9, 10] }
+      ];
+      const rowH = m.plotH / groups.length;
 
-    /* Current Playhead Line */
-    const playX = frameToX(curF);
-    if (playX >= padL && playX <= w - padR) {
+      groups.forEach((g, idx) => {
+        const yMid = m.padT + idx * rowH + rowH * 0.5;
+        ctx.strokeStyle = '#171b29';
+        ctx.beginPath();
+        ctx.moveTo(0, m.padT + (idx + 1) * rowH);
+        ctx.lineTo(w, m.padT + (idx + 1) * rowH);
+        ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(g.label, 8, yMid + 4);
+
+        if (!anyKeys) return;
+        FECppEngine.exports.fe_arena_reset();
+        const kBuf = FECppEngine.allocF32(128 * 3);
+
+        for (const c of g.chs) {
+          const n = FECppEngine.exports.fe_anim_list_object_keyframes(slot, c, kBuf.ptr, 128);
+          if (n === 0) continue;
+
+          const samples = 48;
+          const vals = new Float32Array(samples + 1);
+          let minV = Infinity, maxV = -Infinity;
+          for (let s = 0; s <= samples; s++) {
+            const sf = startF + ((endF - startF) * s) / samples;
+            const v = FECppEngine.exports.fe_anim_evaluate_channel(slot, c, sf, startF, endF);
+            vals[s] = v;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+          }
+          const spanV = Math.max(0.01, maxV - minV);
+          ctx.strokeStyle = CHANNEL_COLORS[c] + '88';
+          ctx.lineWidth = 1.25;
+          ctx.beginPath();
+          for (let s = 0; s <= samples; s++) {
+            const x = m.padL + (s / samples) * m.plotW;
+            const norm = (vals[s] - minV) / spanV;
+            const y = (m.padT + idx * rowH + rowH - 5) - norm * (rowH - 10);
+            if (s === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+
+          for (let k = 0; k < n; k++) {
+            const kf = kBuf.view[k * 3];
+            const x = m.frameToX(kf);
+            if (x < m.padL - 4 || x > w - m.padR + 4) continue;
+            ctx.fillStyle = Math.abs(kf - curF) < 0.5 ? '#fbbf24' : CHANNEL_COLORS[c];
+            ctx.beginPath();
+            ctx.moveTo(x, yMid - 5);
+            ctx.lineTo(x + 5, yMid);
+            ctx.lineTo(x, yMid + 5);
+            ctx.lineTo(x - 5, yMid);
+            ctx.closePath();
+            ctx.fill();
+            if (sel && sel.channel === c && Math.abs(sel.frame - kf) < 0.01) {
+              ctx.strokeStyle = '#fde047';
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x - 8, yMid - 8, 16, 16);
+            }
+          }
+        }
+      });
+
+      if (!anyKeys) {
+        ctx.fillStyle = '#475569';
+        ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No keys yet — press + Key All to animate this object', w * 0.5, h * 0.5);
+      }
+    }
+
+    /* Current playhead line */
+    const playX = m.frameToX(curF);
+    if (playX >= m.padL && playX <= w - m.padR) {
       ctx.strokeStyle = '#6366f1';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -1444,7 +2314,11 @@
     if (typeof origSetFrame === 'function' && !origSetFrame._cppWrapped) {
       const wrapped = function (frame, options) {
         origSetFrame(frame, options);
-        FECppEngine.evaluateSceneAtFrame(Number(window.timelineConfig?.currentFrame || frame || 0));
+        const current = Number(window.timelineConfig?.currentFrame || frame || 0);
+        FECppEngine.evaluateSceneAtFrame(current);
+        FECppEngine.applySimulationBakeAtFrame(current);
+        FECppEngine.updateOnionSkin();
+        FECppEngine.updateMotionTrail();
         const sheet = document.getElementById('animation-sheet');
         if (sheet && sheet.style.display !== 'none') {
           renderDopeSheetAndCurveCanvas();
@@ -1505,6 +2379,18 @@
       window.openAnimationModal = wrappedAnim;
     }
 
+    /* 3b. Hide ghosts and trails when the Animation Studio closes */
+    const origCloseAnim = window.closeAnimationModal;
+    if (typeof origCloseAnim === 'function' && !origCloseAnim._cppWrapped) {
+      const wrappedClose = function () {
+        origCloseAnim();
+        if (FECppEngine._onionGroup) FECppEngine._onionGroup.visible = false;
+        if (FECppEngine._trailGroup) FECppEngine._trailGroup.visible = false;
+      };
+      wrappedClose._cppWrapped = true;
+      window.closeAnimationModal = wrappedClose;
+    }
+
     /* 4. Listen for tool='render' & object selection & mode changes */
     document.addEventListener('fe:tool', e => {
       if (e.detail?.studio === 'core' && e.detail?.tool === 'render') {
@@ -1535,11 +2421,13 @@
       }
     });
 
-    /* 5. Dope sheet pointer scrubbing */
+    /* 5. Dope sheet / graph editor: scrub, drag keys, delete and duplicate */
     const dopeCanvas = document.getElementById('anim-dopesheet-canvas');
     if (dopeCanvas && !dopeCanvas.dataset.bound) {
       dopeCanvas.dataset.bound = '1';
-      let dragging = false;
+      let scrubbing = false;
+      let keyDragging = false;
+
       const scrubDope = ev => {
         const rect = dopeCanvas.getBoundingClientRect();
         const padL = 88, padR = 14;
@@ -1553,17 +2441,75 @@
           window.setTimelineCurrentFrame(target, { scrub: true, clampRange: true });
         }
       };
-      dopeCanvas.addEventListener('pointerdown', ev => { dragging = true; scrubDope(ev); });
-      window.addEventListener('pointermove', ev => { if (dragging) scrubDope(ev); });
-      const endDopeScrub = () => {
-        if (!dragging) return;
-        dragging = false;
+
+      const dragKeyTo = ev => {
+        const m = FECppEngine.getAnimationCanvasMetrics();
+        if (!m || !FECppEngine.selectedKey) return;
+        const px = ev.clientX - m.rect.left;
+        const py = ev.clientY - m.rect.top;
+        const rawFrame = m.xToFrame(px);
+        const snapped = typeof window.snapTimelineFrame === 'function'
+          ? window.snapTimelineFrame(Math.round(rawFrame * 10) / 10, 6)
+          : Math.round(rawFrame);
+        let value;
+        if (FECppEngine.editorMode === 'graph' && FECppEngine._graphRange) {
+          const range = FECppEngine._graphRange;
+          const t = Math.max(0, Math.min(1, (py - m.padT) / m.plotH));
+          value = range.max - t * (range.max - range.min);
+        }
+        FECppEngine.updateKeyDrag(snapped, value);
+      };
+
+      dopeCanvas.addEventListener('pointerdown', ev => {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        const hit = FECppEngine.hitTestAnimationKey(ev.clientX, ev.clientY);
+        if (hit) {
+          keyDragging = true;
+          scrubbing = false;
+          FECppEngine.beginKeyDrag(hit);
+          try { dopeCanvas.setPointerCapture(ev.pointerId); } catch {}
+          ev.preventDefault();
+          return;
+        }
+        scrubbing = true;
+        FECppEngine.selectedKey = null;
+        renderDopeSheetAndCurveCanvas();
+        scrubDope(ev);
+      });
+
+      window.addEventListener('pointermove', ev => {
+        if (keyDragging) { dragKeyTo(ev); return; }
+        if (scrubbing) scrubDope(ev);
+      });
+
+      const endDopePointer = () => {
+        if (keyDragging) {
+          keyDragging = false;
+          FECppEngine.endKeyDrag();
+          return;
+        }
+        if (!scrubbing) return;
+        scrubbing = false;
         if (window.timelineConfig?._physicsDirty && typeof window.seekTimelinePhysics === 'function') {
           window.seekTimelinePhysics(window.timelineConfig.currentFrame);
         }
       };
-      window.addEventListener('pointerup', endDopeScrub);
-      window.addEventListener('pointercancel', endDopeScrub);
+      window.addEventListener('pointerup', endDopePointer);
+      window.addEventListener('pointercancel', endDopePointer);
+
+      window.addEventListener('keydown', ev => {
+        const sheet = document.getElementById('animation-sheet');
+        const open = sheet && !sheet.hidden && sheet.style.display !== 'none';
+        if (!open || !FECppEngine.selectedKey) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+        if (ev.key === 'Delete' || ev.key === 'Backspace') {
+          ev.preventDefault();
+          FECppEngine.deleteSelectedAnimationKey();
+        } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'd') {
+          ev.preventDefault();
+          FECppEngine.duplicateSelectedAnimationKey();
+        }
+      });
     }
 
     /* 6. Bind Sculpt/Paint strokes + C++ Touch Gesture + Mobile Double-Tap Focus on #canvas-core */
@@ -1581,7 +2527,7 @@
       if (eng.transformControls) {
         eng.transformControls.addEventListener('dragging-changed', ev => {
           if (!ev.value && FECppEngine.autoKey) {
-            FECppEngine.insertKeyframeForActive('locrotscale', true);
+            FECppEngine.insertKeyframeForActive('keyset', true);
             window.FE?.toast?.(`⏺ Auto-Keyed Frame ${window.timelineConfig?.currentFrame || 0}`);
           }
         });
