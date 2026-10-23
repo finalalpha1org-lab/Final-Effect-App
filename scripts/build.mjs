@@ -98,6 +98,16 @@ const optimizedTerrainHtml = await minifyInlineScripts(readFileSync(srcPath("Ter
 writeFileSync("build/client/index.html", optimizedIndexHtml);
 writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml);
 
+const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
+const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
+  ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
+  : "";
+
+const terrainBootstrap = `<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(cppWasmBase64)};</script>`;
+if (!optimizedTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
+  writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml.replace('<head>', `<head>\n${terrainBootstrap}`));
+}
+
 const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {
   celestialMath: readFileSync("build/client/celestial-math.js", "utf8"),
   scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
@@ -105,13 +115,9 @@ const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, 
   openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
   terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),
   openWorldAddon: readFileSync("build/client/open-world.js", "utf8"),
+  cppWasmBase64,
 });
 writeFileSync("build/client/Terrain-System-Standalone.html", standaloneTerrainHtml);
-
-const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
-const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
-  ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
-  : "";
 
 const standaloneAppHtml = createStandaloneAppHtml(
   readFileSync(srcPath("index.html"), "utf8"),

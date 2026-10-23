@@ -586,6 +586,10 @@ FE_EXPORT int32_t  fe_terrain_rebuild_region(
 );
 
 FE_EXPORT void fe_terrain_compute_normals(void);
+FE_EXPORT int32_t fe_terrain_set_palette(const float* pal, uint32_t count, float seed, float water, float rock, float snow, uint32_t desert);
+FE_EXPORT int32_t fe_terrain_set_paint_colors(const uint8_t* rgb, uint32_t count);
+FE_EXPORT int32_t fe_terrain_generate_layered(float seed, float hs, uint32_t continental, float base, float mountain);
+FE_EXPORT int32_t fe_terrain_compute_colors(uint32_t x0, uint32_t x1, uint32_t z0, uint32_t z1);
 FE_EXPORT int32_t fe_terrain_erode_brush(float x,float z,float radius,float strength,float seed);
 FE_EXPORT float    fe_terrain_sample_height(float world_x, float world_z);
 FE_EXPORT void     fe_terrain_sample_normal(float world_x, float world_z, float alignment, float* out_n3);

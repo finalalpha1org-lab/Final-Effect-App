@@ -2,9 +2,9 @@
 
 Approved: hybrid procedural stack + interactive sculpt; selectable high-resolution terrain up to 512 segments; migration of all landscape heavy systems; one unified `fe_core_engine.wasm`.
 
-## Implemented foundation (not yet connected to the landscape UI)
+## Implemented foundation (now wired into the landscape UI)
 
-`cpp/src/fe_landscape.cpp` provides persistent buffers, bounded 16–512 segment grids, deterministic warped/ridged generation, height sampling, continuous stroke brushes, dirty bounds, region normals and basic palette colors/cavity mask. Hydraulic/thermal brush requests return -2 rather than substituting smoothing. The ABI header also contains planned declarations; a declaration is NOT an implemented/exported feature.
+`cpp/src/fe_landscape.cpp` provides persistent buffers, bounded 16–512 segment grids, deterministic warped/ridged generation, layered biome-colour shading, height sampling, continuous stroke brushes, dirty bounds, brush erosion, region/global normals and palette colours. Hydraulic/thermal full-map requests still return -2 rather than substituting smoothing. The ABI header also contains planned declarations; a declaration is NOT an implemented/exported feature.
 
 Tests: `node --test tests/landscape-cpp.test.mjs tests/cpp-core-engine.test.mjs` — 9 passing. These validate computational behavior, not rendered appearance or viewport FPS.
 
@@ -39,6 +39,45 @@ load failure emits a warning. This instance runs on the main thread: this update
 is **not** the terrain worker migration. Normal calculation uses height gradients,
 not triangle-averaged Three.js normals, so shading may change slightly.
 
-Still outstanding: UI wiring for C++ terrain generation, surface paint/colour,
-full erosion stack, ocean, hydrology, scatter, planet/open-world generation and
-worker scheduling. Do not describe Landscaping as fully C++ migrated.
+## Terrain core migration update
+
+Generation, biome/paint shading, normals, height sampling copies and all sculpt
+brushes now execute in C++:
+
+- `fe_terrain_generate_layered` renders the warped four-octave ridge field plus
+  island falloff (or continental mountains) directly into the persistent grid.
+- `fe_terrain_compute_colors` reproduces the studio's grass/soil/rock/sand/snow
+  blend, 12-layer PBR paint weights, material override and per-vertex variation.
+- `fe_terrain_set_palette` / `fe_terrain_set_paint_colors` receive the active
+  biome palette and PBR colours; JS remains the authoring surface for those.
+- JS keeps undo/redo, autosave/export, paint authoring, Three.js buffers and the
+  GPU upload path. It re-uploads the dirty height/weight/material rectangle
+  before each C++ command, so undo, imports and the JS fallback stay coherent.
+- The WASM binary is embedded in standalone builds, so the first generated
+  terrain is already C++-produced; the network fetch is only a fallback.
+
+**One-time realization change:** the C++ generator uses a new deterministic
+integer hash instead of the old `sin()`-based JS hash. The same seed now produces
+a different (but equally deterministic) terrain than builds before this change.
+Saved projects keep their stored height/paint data, so they are unaffected.
+There is no exact bit-for-bit JS/C++ parity test because the two hash families
+differ; tests cover determinism, seed variation, island borders, continental
+mode, paint blending and invalid-input rejection.
+
+Still outstanding: worker-thread scheduling and cancellation, full-map hydraulic/
+thermal erosion stacks, spectral ocean FFT, hydrology, scatter, planet/open-world
+chunk generation and terrain LOD. Do not describe Landscaping as fully C++
+migrated while those systems remain in JS.
+
+### Build embedding and measurements
+
+`scripts/build.mjs` now embeds the unified `fe_core_engine.wasm` as base64 in
+both `build/client/Terrain_system_.html` and the standalone terrain page, before
+the studio scripts. `FELandscapeCore` therefore binds synchronously on the first
+frame; a network fetch is only used for direct source-file development.
+
+Sandbox CPU measurements (Node 22 + WASM, not a phone or GPU benchmark):
+128² ≈ 4 ms generate / 3 ms shade; 256² ≈ 15 ms / 6 ms; 512² ≈ 57 ms / 23 ms.
+Shading timings include the JS↔WASM dirty-region copies and the colour download.
+Brush frames copy only the dirty rectangle, so they are cheaper than a full-map
+shade. These numbers say nothing about viewport FPS.

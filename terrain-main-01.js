@@ -1,28 +1,108 @@
-/* Dedicated terrain WASM instance: JS owns UI/history/GPU uploads, C++ owns
-   supported brush arithmetic. Copy current height state before each command so
-   undo, imports and external edits cannot leave the native buffers stale. */
+/* C++ terrain kernel bridge: JS owns UI, history and GPU buffers; C++ owns the
+   heightfield maths. Inputs are re-uploaded before each command so undo,
+   imports and the JS fallback always stay authoritative. */
 (function(root){
- const core={ready:false,error:null,backend:'loading',commands:0};let ex,rect;
- core.load=async function(){try{
-  const response=await fetch(new URL('./fe_core_engine.wasm',document.baseURI));if(!response.ok)throw Error('Terrain WASM HTTP '+response.status);
-  const {instance}=await WebAssembly.instantiate(await response.arrayBuffer(),{});ex=instance.exports;ex.__wasm_call_ctors?.();
-  if(!ex.fe_terrain_compute_normals||!ex.fe_terrain_erode_brush||!ex.fe_terrain_brush_stroke)throw Error('Terrain C++ brush exports missing');
-  rect=ex.fe_malloc(16);core.ready=true;core.backend='C++ WASM';
- }catch(error){core.error=String(error);core.backend='JS fallback';console.warn('Landscape C++ unavailable:',error)}};
- core.brush=function(state){if(!core.ready)return false;
-  const tools={raise:0,lower:1,flat:2,smooth:3,terrace:4},id=tools[state.tool];if(id===undefined&&state.tool!=='erode')return false;
-  if(ex.fe_terrain_get_segments()!==state.n||core.span!==state.size){if(ex.fe_terrain_init(state.n,state.size)!==0)return false;core.span=state.size}
-  const height=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),(state.n+1)**2);height.set(state.heights);
-  const result=state.tool==='erode'?ex.fe_terrain_erode_brush(state.x,state.z,state.radius,state.strength,state.seed):ex.fe_terrain_brush_stroke(id,state.x,state.z,state.x,state.z,state.radius,state.strength,state.dt*(id===3?1.4:1),state.target||0,0,0,state.seed,rect);
+ const core={ready:false,error:null,backend:'loading',commands:0,span:0};
+ let ex=null,rect=0,palPtr=0,paintPtr=0;
+ function bind(instance){
+  const x=instance.exports;
+  for(const name of ['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors'])if(typeof x[name]!=='function')throw Error('Terrain C++ export missing: '+name);
+  ex=x;ex.__wasm_call_ctors?.();
+  rect=ex.fe_malloc(16);palPtr=ex.fe_malloc(24*4);paintPtr=ex.fe_malloc(48);
+  core.ready=true;core.backend='C++ WASM';core.span=0;
+ }
+ core.load=async function(){
+  try{
+   const response=await fetch(new URL('./fe_core_engine.wasm',document.baseURI));
+   if(!response.ok)throw Error('Terrain WASM HTTP '+response.status);
+   const {instance}=await WebAssembly.instantiate(await response.arrayBuffer(),{});
+   bind(instance);
+  }catch(error){core.error=String(error);core.backend='JS fallback';console.warn('Landscape C++ unavailable:',error)}
+ };
+ try{
+  const encoded=root.__FE_CPP_WASM_BASE64__;
+  if(typeof encoded==='string'&&encoded.length>64&&typeof root.atob==='function'){
+   const binary=root.atob(encoded),bytes=new Uint8Array(binary.length);
+   for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+   bind(new WebAssembly.Instance(new WebAssembly.Module(bytes),{}));
+  }
+ }catch(error){core.error=String(error);console.warn('Embedded terrain WASM unavailable:',error)}
+ core.loading=core.ready?Promise.resolve():core.load();
+ function ensure(n,size){
+  if(!core.ready)return false;
+  if(ex.fe_terrain_get_segments()!==n||core.span!==size){
+   if(ex.fe_terrain_init(n,size)!==0)return false;
+   core.span=size;
+  }
+  return true;
+ }
+ function setEnv(state){
+  const pal=state.pal;
+  if(!pal||!pal.length)return false;
+  const count=Math.min(8,Math.ceil(pal.length/3));
+  const view=new Float32Array(ex.memory.buffer,palPtr,count*3);
+  for(let i=0;i<count*3;i++)view[i]=pal[i];
+  if(ex.fe_terrain_set_palette(palPtr,count,state.seed||0,state.water||0,state.rock??1.3,state.snow??16,state.desert?1:0)!==0)return false;
+  if(state.paint&&state.paint.length){
+   const paintCount=Math.min(16,Math.ceil(state.paint.length/3));
+   const paintView=new Uint8Array(ex.memory.buffer,paintPtr,paintCount*3);
+   paintView.set(state.paint.subarray(0,paintCount*3));
+   if(ex.fe_terrain_set_paint_colors(paintPtr,paintCount)!==0)return false;
+  }
+  return true;
+ }
+ function syncSurface(state){
+  const n=state.n,w=n+1,[x0,x1,z0,z1]=state.rect,width=x1-x0+1;
+  const heights=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),w*w);
+  const A=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_surf_weights_a_ptr(),w*w*4);
+  const B=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_surf_weights_b_ptr(),w*w*4);
+  const Cc=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_surf_weights_c_ptr(),w*w*4);
+  const mats=new Uint8Array(ex.memory.buffer,ex.fe_terrain_get_mat_index_ptr(),w*w);
+  for(let j=z0;j<=z1;j++){
+   heights.set(state.heights.subarray(j*w+x0,j*w+x1+1),j*w+x0);
+   const off=(j*w+x0)*4,len=width*4;
+   A.set(state.weightsA.subarray(off,off+len),off);
+   B.set(state.weightsB.subarray(off,off+len),off);
+   Cc.set(state.weightsC.subarray(off,off+len),off);
+   const moff=j*w+x0;
+   mats.set(state.materials.subarray(moff,moff+width),moff);
+  }
+ }
+ core.generate=function(state){
+  if(!ensure(state.n,state.size)||!setEnv(state))return false;
+  if(ex.fe_terrain_generate_layered(state.seed,state.hs,state.continental?1:0,state.base||0,state.mountain||0)!==0)return false;
+  state.heights.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),(state.n+1)*(state.n+1)));
+  core.commands++;return true;
+ };
+ core.colors=function(state){
+  if(!ensure(state.n,state.size)||!setEnv(state))return false;
+  syncSurface(state);
+  const[x0,x1,z0,z1]=state.rect;
+  if(ex.fe_terrain_compute_colors(x0,x1,z0,z1)<0)return false;
+  const w=state.n+1,src=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_color_ptr(),w*w*3),out=state.output;
+  for(let j=z0;j<=z1;j++){const off=(j*w+x0)*3;out.set(src.subarray(off,off+(x1-x0+1)*3),off)}
+  core.commands++;return true;
+ };
+ core.brush=function(state){
+  if(!ensure(state.n,state.size))return false;
+  const tools={raise:0,lower:1,flat:2,smooth:3,terrace:4},id=tools[state.tool];
+  if(id===undefined&&state.tool!=='erode')return false;
+  const height=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),(state.n+1)*(state.n+1));
+  height.set(state.heights);
+  const result=state.tool==='erode'
+   ?ex.fe_terrain_erode_brush(state.x,state.z,state.radius,state.strength,state.seed)
+   :ex.fe_terrain_brush_stroke(id,state.x,state.z,state.x,state.z,state.radius,state.strength,state.dt*(id===3?1.4:1),state.target||0,0,0,state.seed,rect);
   if(result<0){core.error='C++ brush returned '+result;return false}
   state.heights.set(height);core.commands++;return true;
  };
- core.normals=function(state){if(!core.ready)return false;
-  if(ex.fe_terrain_get_segments()!==state.n||core.span!==state.size){if(ex.fe_terrain_init(state.n,state.size)!==0)return false;core.span=state.size}
+ core.normals=function(state){
+  if(!ensure(state.n,state.size))return false;
   new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);
-  ex.fe_terrain_compute_normals();state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_get_normal_ptr(),state.output.length));return true;
+  ex.fe_terrain_compute_normals();
+  state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_get_normal_ptr(),state.output.length));
+  return true;
  };
- root.FELandscapeCore=core;core.loading=core.load();
+ root.FELandscapeCore=core;
 })(globalThis);
 /* END LANDSCAPE CORE BRIDGE */
 
@@ -181,6 +261,7 @@ function terrainDetailTex(kind){const c=document.createElement('canvas');c.width
 const TERRAIN_PBR={grass:terrainDetailTex('grass'),soil:terrainDetailTex('soil'),rock:terrainDetailTex('rock'),snow:terrainDetailTex('snow'),rough:terrainDetailTex('rough')};
 const OW_SURFACE_DEFS=[{key:'hills',label:'Hills',rgb:[103,129,76],rough:.9},{key:'alpine',label:'Alpine',rgb:[139,148,139],rough:.84},{key:'desert',label:'Desert',rgb:[185,145,87],rough:.92},{key:'volcano',label:'Volcano',rgb:[57,54,52],rough:.96},{key:'shore',label:'Sand Shores',rgb:[218,198,145],rough:.98},{key:'rocky',label:'Rocky Mountains',rgb:[112,108,100],rough:.9},{key:'grassy',label:'Grassy',rgb:[83,133,59],rough:.96},{key:'sand',label:'Sand',rgb:[185,150,96],rough:.94},{key:'lava',label:'Lava',rgb:[183,54,16],rough:.74},{key:'magma',label:'Magma',rgb:[107,24,44],rough:.66},{key:'pebbles',label:'Pebbles',rgb:[122,118,109],rough:.88},{key:'beach',label:'Beach Sand',rgb:[226,207,154],rough:.98}];
 function owSurfaceTexture(def,i){const c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d'),[r,g,b]=def.rgb,key=def.key;let state=(0x9e3779b9^Math.imul(i+1,0x45d9f3b))>>>0;const rnd=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};x.fillStyle='rgb('+r+','+g+','+b+')';x.fillRect(0,0,256,256);for(let n=0;n<4200;n++){const q=(rnd()-.5)*(key==='grassy'?36:58),a=cl(Math.round(r+q),0,255),bb=cl(Math.round(g+q*.82),0,255),cc=cl(Math.round(b+q*.66),0,255);x.fillStyle='rgba('+a+','+bb+','+cc+','+(.12+rnd()*.3)+')';const px=rnd()*256,py=rnd()*256;if(key==='grassy'){x.strokeStyle=x.fillStyle;x.lineWidth=.35+rnd()*.7;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*5,py-3-rnd()*12);x.stroke()}else{x.fillRect(px,py,1+rnd()*3,1+rnd()*4)}}if(key==='pebbles'){for(let n=0;n<650;n++){const px=rnd()*256,py=rnd()*256,rx=1+rnd()*4,ry=1+rnd()*3,v=Math.round(80+rnd()*105);x.fillStyle='rgba('+v+','+v+','+(v-5)+','+(.22+rnd()*.42)+')';x.beginPath();x.ellipse(px,py,rx,ry,rnd()*.4,0,6.283);x.fill();x.strokeStyle='rgba(255,255,255,.13)';x.lineWidth=.5;x.stroke()}}if(key==='sand'||key==='shore'||key==='beach'){for(let n=0;n<170;n++){const py=rnd()*256;x.strokeStyle='rgba('+Math.min(255,r+22)+','+Math.min(255,g+18)+','+Math.min(255,b+8)+','+(.08+rnd()*.18)+')';x.lineWidth=.4+rnd()*1.1;x.beginPath();x.moveTo(0,py);x.quadraticCurveTo(128,py+(rnd()-.5)*9,256,py+(rnd()-.5)*12);x.stroke()}}if(key==='lava'||key==='magma'||key==='volcano'||key==='rocky'){const glow=key==='magma'?'rgba(255,72,38,.55)':'rgba(255,145,35,.55)';for(let n=0;n<(key==='lava'||key==='magma'?55:34);n++){const px=rnd()*256,py=rnd()*256;x.strokeStyle=glow;x.lineWidth=.5+rnd()*1.8;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*42,py+(rnd()-.5)*32);x.lineTo(px+(rnd()-.5)*64,py+(rnd()-.5)*56);x.stroke()}}const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.anisotropy=Math.min(4,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in t)t.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;t.needsUpdate=true;return t}
+const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb));
 const OW_SURFACE_MAPS=OW_SURFACE_DEFS.map(owSurfaceTexture),OW_SURFACE_ROUGHNESS=OW_SURFACE_DEFS.map(x=>x.rough);
 const OW_SURFACE_ATLAS=(()=>{const tile=256,gutter=4,cell=tile+gutter*2,c=document.createElement('canvas');c.width=cell*4;c.height=cell*3;const x=c.getContext('2d');OW_SURFACE_MAPS.forEach((t,i)=>{const px=(i%4)*cell,py=Math.floor(i/4)*cell,img=t.image;x.drawImage(img,px+gutter,py+gutter,tile,tile);x.drawImage(img,0,0,1,tile,px,py+gutter,gutter,tile);x.drawImage(img,tile-1,0,1,tile,px+gutter+tile,py+gutter,gutter,tile);x.drawImage(img,0,0,tile,1,px+gutter,py,tile,gutter);x.drawImage(img,0,tile-1,tile,1,px+gutter,py+gutter+tile,tile,gutter)});const a=new THREE.CanvasTexture(c);a.wrapS=a.wrapT=THREE.ClampToEdgeWrapping;a.minFilter=THREE.LinearMipmapLinearFilter;a.magFilter=THREE.LinearFilter;a.anisotropy=Math.min(8,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in a)a.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;a.needsUpdate=true;return a})();
 const tm=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:mkNormal(),normalScale:new THREE.Vector2(.34,.34)});tm.userData.surfacePaintEnabled=true;tm.onBeforeCompile=shader=>{shader.uniforms.uTriGrass={value:TERRAIN_PBR.grass};shader.uniforms.uTriSoil={value:TERRAIN_PBR.soil};shader.uniforms.uTriRock={value:TERRAIN_PBR.rock};shader.uniforms.uTriSnow={value:TERRAIN_PBR.snow};shader.uniforms.uTriRough={value:TERRAIN_PBR.rough};shader.uniforms.uTriScale={value:.72};const pars='\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;uniform sampler2D uTriGrass,uTriSoil,uTriRock,uTriSnow,uTriRough;uniform float uTriScale;float triGray(sampler2D tex,vec3 p,vec3 w,float sc){return texture2D(tex,p.zy*sc).r*w.x+texture2D(tex,p.xz*sc).r*w.y+texture2D(tex,p.xy*sc).r*w.z;}\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;').replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainWorld=(modelMatrix*vec4(transformed,1.)).xyz;vTerrainNormal=normalize(mat3(modelMatrix)*objectNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+pars).replace('#include <color_fragment>','#include <color_fragment>\nvec3 tN=normalize(vTerrainNormal),tW=pow(abs(tN),vec3(4.));tW/=max(dot(tW,vec3(1.)),.001);vec3 tBase=diffuseColor.rgb;float tSlope=1.-abs(tN.y);float tRock=clamp(smoothstep(.24,.72,tSlope)*.9,0.,.9);float tSnow=smoothstep(.75,.94,min(tBase.r,min(tBase.g,tBase.b)));float tSand=clamp((tBase.r-tBase.b)*1.7,0.,.62)*(1.-tRock)*(1.-tSnow);float tGrass=max(0.,1.-tRock-tSnow-tSand);float dG=triGray(uTriGrass,vTerrainWorld,tW,uTriScale*1.7),dS=triGray(uTriSoil,vTerrainWorld,tW,uTriScale),dR=triGray(uTriRock,vTerrainWorld,tW,uTriScale*.55),dN=triGray(uTriSnow,vTerrainWorld,tW,uTriScale*1.15);float detail=(dG*tGrass+dS*tSand+dR*tRock+dN*tSnow);diffuseColor.rgb*=mix(1.,clamp(.68+detail*.42,.72,1.18),.78);').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nfloat tR=triGray(uTriRough,vTerrainWorld,tW,uTriScale*1.2);roughnessFactor=clamp(roughnessFactor+(tR-.82)*.24,.55,1.);').replace('#include <aomap_fragment>','#include <aomap_fragment>\nfloat tAO=triGray(uTriRough,vTerrainWorld,tW,uTriScale*.8);ambientOcclusion*=mix(.78,1.,clamp(tAO,.3,1.));')};tm.customProgramCacheKey=()=>'terrain-triplanar-pbr-v1';tm.color.setScalar(.9);
@@ -193,11 +274,19 @@ const mx3=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t],sm
 const slopeAt=(i,j)=>{const h=H[j*W+i];return Math.abs(H[Math.min(j+1,N)*W+i]-h)+Math.abs(H[j*W+Math.min(i+1,N)]-h)};
 function mIdx(i,j){const k=j*W+i,h=H[k];if(MI[k]!=255)return MI[k];const n=vn(i*.071+seed*.17,j*.071-seed*.11),cliff=rockT+(.5-n)*.55;if(h<wl+.35+n*.55)return 3;if(h>snowL-1+(n-.5)*2.2)return 4;if(slopeAt(i,j)>cliff)return 2;if(h>9+(n-.5)*4)return 1;return 0}
 function col(i,j){const k=j*W+i,h=H[k],sl=slopeAt(i,j),paintSum=SWA[k*4]+SWA[k*4+1]+SWA[k*4+2]+SWA[k*4+3]+SWB[k*4]+SWB[k*4+1]+SWB[k*4+2]+SWB[k*4+3]+SWC[k*4]+SWC[k*4+1]+SWC[k*4+2]+SWC[k*4+3];let c;if(paintSum>.001){c=[0,0,0];for(let q=0;q<OW_SURFACE_DEFS.length;q++){const w=q<4?SWA[k*4+q]:q<8?SWB[k*4+q-4]:SWC[k*4+q-8],rgb=OW_SURFACE_DEFS[q].rgb;c[0]+=rgb[0]/255*w;c[1]+=rgb[1]/255*w;c[2]+=rgb[2]/255*w}c=c.map(x=>x/paintSum)}else if(MI[k]!=255)c=PAL[MI[k]]||PAL[0];else{const broad=vn(i*.045+seed*.09,j*.045-seed*.12),mid=vn(i*.14+seed*.23,j*.14-seed*.31),fine=vn(i*.36-seed*.17,j*.36+seed*.31),field=broad*.56+mid*.3+fine*.14,ground=sm(.4,.68,field+cl((h-12)*.002,-.03,.03));c=mx3(PAL[0],PAL[1],ground*.62);const rockThreshold=rockT+(broad-.5)*.5+(mid-.5)*.25,cliff=sm(rockThreshold-.25,rockThreshold+1.15,sl),outcrop=sm(.72,.9,field)*.25,rock=cl(cliff*.88+outcrop*(1-cliff*.65),0,1);c=mx3(c,PAL[2],rock);const shore=1-sm(wl-.35+(broad-.5)*.6,wl+1.55+(broad-.5)*1.3,h),dune=biome=='desert'?sm(.46,.69,field)*(1-cliff*.8):0,sand=cl(Math.max(shore,dune)*(1-cliff*.6),0,1);c=mx3(c,PAL[3],sand);const snowNoise=(broad-.5)*6+(mid-.5)*3+(fine-.5)*1.5,snow=sm(snowL-1.2+snowNoise,snowL+3.4+snowNoise,h)*(1-cliff*.25);c=mx3(c,PAL[4],snow);const variation=.9+.18*broad+.08*(mid-.5)+.06*(fine-.5)+.04*(hash(i,j*7)-.5);c=c.map(q=>q*variation)}const v=.94+.12*hash(i*3,j*7);C.setXYZ(k,c[0]*v,c[1]*v,c[2]*v)}
-function upd(x0=0,x1=N,z0=0,z1=N){for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){PA.setY(j*W+i,H[j*W+i]);col(i,j)}PA.needsUpdate=C.needsUpdate=hmTex.needsUpdate=tg.attributes.surfaceWeightsA.needsUpdate=tg.attributes.surfaceWeightsB.needsUpdate=tg.attributes.surfaceWeightsC.needsUpdate=true;if(window.FELandscapeCore.normals({n:N,size:S,heights:H,output:tg.attributes.normal.array}))tg.attributes.normal.needsUpdate=true;else tg.computeVertexNormals();tg.boundingSphere=tg.boundingBox=null}
+function upd(x0=0,x1=N,z0=0,z1=N){
+ const rx0=Math.max(0,Math.min(N,x0)),rx1=Math.max(0,Math.min(N,x1)),rz0=Math.max(0,Math.min(N,z0)),rz1=Math.max(0,Math.min(N,z1));
+ const native=window.FELandscapeCore.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect:[rx0,rx1,rz0,rz1],output:C.array});
+ if(!native)for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j);
+ for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)PA.setY(j*W+i,H[j*W+i]);
+ PA.needsUpdate=C.needsUpdate=hmTex.needsUpdate=tg.attributes.surfaceWeightsA.needsUpdate=tg.attributes.surfaceWeightsB.needsUpdate=tg.attributes.surfaceWeightsC.needsUpdate=true;
+ if(window.FELandscapeCore.normals({n:N,size:S,heights:H,output:tg.attributes.normal.array}))tg.attributes.normal.needsUpdate=true;else tg.computeVertexNormals();
+ tg.boundingSphere=tg.boundingBox=null;
+}
 let GENC=0;const PLC={mtn:0,base:0};
 function landRaw(x,z){const wx=(vn(x*.012+seed*.13+41,z*.012+seed*.07+13)-.5)*10,wz=(vn(x*.012+seed*.03+17,z*.012+seed*.17+61)-.5)*10;let n=0,a=.56,f=.026;for(let o=0;o<4;o++){n+=(vn((x+wx)*f+o*17,(z+wz)*f+o*11)-.5)*a;a*=.5;f*=2.05}let ridge=0,ra=.55,rf=.035;for(let o=0;o<4;o++){const q=vn((x+wx*.4)*rf+31+o*7,(z+wz*.4)*rf-17);ridge+=(1-Math.abs(q*2-1))*ra;ra*=.5;rf*=2.05}ridge=ridge/1.03125-.5;return n*hs*1.65+ridge*hs*.6+1.6}
 function landH(x,z){const r=Math.hypot(x,z);let m=0,a=.55,f=.0019;for(let o=0;o<4;o++){const q=vn(x*f+seed*.21+o*13,z*f-seed*.11);m+=(1-Math.abs(q*2-1))*a;a*=.5;f*=2.1}m=m/1.03125;return landRaw(x,z)+PLC.base+PLC.mtn*Math.pow(m,1.6)*190*smJ(15,420,r)}
-function gen(seedIn,cont){GENC=cont?1:0;seed=seedIn===undefined?R()*100:seedIn;MI.fill(255);SWA.fill(0);SWB.fill(0);SWC.fill(0);for(let j=0;j<W;j++)for(let i=0;i<W;i++){const x=i*D-S/2,z=j*D-S/2,wx=(vn(x*.012+seed*.13+41,z*.012+seed*.07+13)-.5)*10,wz=(vn(x*.012+seed*.03+17,z*.012+seed*.17+61)-.5)*10;let n=0,a=.56,f=.026;for(let o=0;o<4;o++){n+=(vn((x+wx)*f+o*17,(z+wz)*f+o*11)-.5)*a;a*=.5;f*=2.05}let ridge=0,ra=.55,rf=.035;for(let o=0;o<4;o++){const q=vn((x+wx*.4)*rf+31+o*7,(z+wz*.4)*rf-17);ridge+=(1-Math.abs(q*2-1))*ra;ra*=.5;rf*=2.05}ridge=ridge/1.03125-.5;const r=Math.hypot(x,z)/(S/2),e2=Math.max(Math.abs(x),Math.abs(z))/(S/2),fd=sm(.62,.93,e2),h0=n*hs*1.65+ridge*hs*.6-r*r*10+1.6;H[j*W+i]=GENC?landH(x,z):h0*(1-fd)-14*fd}upd();try{SB.seed=seed;sbSoon()}catch(e){}}
+function gen(seedIn,cont){GENC=cont?1:0;seed=seedIn===undefined?R()*100:seedIn;MI.fill(255);SWA.fill(0);SWB.fill(0);SWC.fill(0);const native=window.FELandscapeCore.generate({n:N,size:S,heights:H,seed,hs,continental:!!GENC,base:PLC.base,mountain:PLC.mtn});if(!native)for(let j=0;j<W;j++)for(let i=0;i<W;i++){const x=i*D-S/2,z=j*D-S/2,wx=(vn(x*.012+seed*.13+41,z*.012+seed*.07+13)-.5)*10,wz=(vn(x*.012+seed*.03+17,z*.012+seed*.17+61)-.5)*10;let n=0,a=.56,f=.026;for(let o=0;o<4;o++){n+=(vn((x+wx)*f+o*17,(z+wz)*f+o*11)-.5)*a;a*=.5;f*=2.05}let ridge=0,ra=.55,rf=.035;for(let o=0;o<4;o++){const q=vn((x+wx*.4)*rf+31+o*7,(z+wz*.4)*rf-17);ridge+=(1-Math.abs(q*2-1))*ra;ra*=.5;rf*=2.05}ridge=ridge/1.03125-.5;const r=Math.hypot(x,z)/(S/2),e2=Math.max(Math.abs(x),Math.abs(z))/(S/2),fd=sm(.62,.93,e2),h0=n*hs*1.65+ridge*hs*.6-r*r*10+1.6;H[j*W+i]=GENC?landH(x,z):h0*(1-fd)-14*fd}upd();try{SB.seed=seed;sbSoon()}catch(e){}}
 function hgt(x,z){if(OW?.active)return OW.heightAt(x,z);const u=cl((x+S/2)/D,0,N-.001),v=cl((z+S/2)/D,0,N-.001),i=u|0,j=v|0,a=u-i,b=v-j,k=j*W+i;return H[k]*(1-a)*(1-b)+H[k+1]*a*(1-b)+H[k+W]*(1-a)*b+H[k+W+1]*a*b}
 const SHORE_SPRAY_COUNT=160;let shoreSpray=null,sprayLife=null,sprayMaxLife=null,sprayVelocity=null;
 function createShoreSpray(){const p=new Float32Array(SHORE_SPRAY_COUNT*3),sz=new Float32Array(SHORE_SPRAY_COUNT),al=new Float32Array(SHORE_SPRAY_COUNT);sprayLife=new Float32Array(SHORE_SPRAY_COUNT);sprayMaxLife=new Float32Array(SHORE_SPRAY_COUNT);sprayVelocity=new Float32Array(SHORE_SPRAY_COUNT*3);const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(p,3));geo.setAttribute('aSize',new THREE.BufferAttribute(sz,1));geo.setAttribute('aAlpha',new THREE.BufferAttribute(al,1));const mat=new THREE.ShaderMaterial({uniforms:{uSize:{value:34}},vertexShader:'attribute float aSize,aAlpha;uniform float uSize;varying float vAlpha;void main(){vAlpha=aAlpha;vec4 mv=modelViewMatrix*vec4(position,1.);gl_PointSize=clamp(aSize*uSize/max(-mv.z,1.),1.,14.);gl_Position=projectionMatrix*mv;}',fragmentShader:'varying float vAlpha;void main(){vec2 q=gl_PointCoord-vec2(.5);float d=length(q);float a=(1.-smoothstep(.12,.5,d))*vAlpha;if(a<.015)discard;gl_FragColor=vec4(.82,.93,1.,a);}',transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,toneMapped:false});shoreSpray=new THREE.Points(geo,mat);shoreSpray.name='Ocean shoreline spray';shoreSpray.frustumCulled=false;shoreSpray.renderOrder=4;shoreSpray.visible=false;scene.add(shoreSpray);for(let i=0;i<SHORE_SPRAY_COUNT;i++)resetShoreSpray(i,true)}

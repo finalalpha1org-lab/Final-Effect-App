@@ -14,6 +14,72 @@ float hash(int x,int z,uint32_t s){uint32_t h=uint32_t(x)*374761393u+uint32_t(z)
 float noise(float x,float z,uint32_t s){int i=int(floorf(x)),j=int(floorf(z));float a=x-i,b=z-j;a=a*a*(3-2*a);b=b*b*(3-2*b);return lerpf(lerpf(hash(i,j,s),hash(i+1,j,s),a),lerpf(hash(i,j+1,s),hash(i+1,j+1,s),a),b);}
 float sample(const float* h,float x,float z){float u=clampf((x/size+.5f)*N,0,float(N)-.0001f),v=clampf((z/size+.5f)*N,0,float(N)-.0001f);uint32_t i=uint32_t(u),j=uint32_t(v),k=j*W+i;return lerpf(lerpf(h[k],h[k+1],u-i),lerpf(h[k+W],h[k+W+1],u-i),v-j);}
 bool finite(float x){return isfinitef(x);}
+
+/* --- C++ terrain surface/colour kernel (JS feeds weights; C++ shades) --- */
+float gPal[8*3]={.28f,.5f,.16f,.42f,.29f,.17f,.42f,.42f,.44f,.64f,.56f,.38f,.92f,.94f,.98f,.13f,.13f,.14f,.5f,.5f,.5f,.5f,.5f,.5f};
+uint32_t gPalCount=5,gPaintCount=12,gNoiseSeed=1,gDesert=0;
+uint8_t gPaintRGB[16*3]={0};
+float gSeed=0,gWater=0,gRock=1.3f,gSnow=16;
+
+float layeredHeight(float x,float z,float seed,float hs,uint32_t s){
+ const float wx=(noise(x*.012f+seed*.13f+41,z*.012f+seed*.07f+13,s)-.5f)*10;
+ const float wz=(noise(x*.012f+seed*.03f+17,z*.012f+seed*.17f+61,s)-.5f)*10;
+ float n=0,a=.56f,f=.026f;
+ for(int o=0;o<4;o++){n+=(noise((x+wx)*f+(float)o*17,(z+wz)*f+(float)o*11,s)-.5f)*a;a*=.5f;f*=2.05f;}
+ float ridge=0,ra=.55f,rf=.035f;
+ for(int o=0;o<4;o++){const float q=noise((x+wx*.4f)*rf+31+(float)o*7,(z+wz*.4f)*rf-17,s);ridge+=(1-absf(q*2-1))*ra;ra*=.5f;rf*=2.05f;}
+ ridge=ridge/1.03125f-.5f;
+ return n*hs*1.65f+ridge*hs*.6f;
+}
+float continentalMountain(float x,float z,float seed,float mountain,uint32_t s){
+ const float r=sqrtf(x*x+z*z);
+ float m=0,a=.55f,f=.0019f;
+ for(int o=0;o<4;o++){const float q=noise(x*f+seed*.21f+(float)o*13,z*f-seed*.11f,s);m+=(1-absf(q*2-1))*a;a*=.5f;f*=2.1f;}
+ m/=1.03125f;
+ return mountain*powf(m,1.6f)*190.f*smoothstepf(15,420,r);
+}
+void mixInto(float& r,float& g,float& b,float tr,float tg,float tb,float t){
+ r=lerpf(r,tr,t);g=lerpf(g,tg,t);b=lerpf(b,tb,t);
+}
+void terrainColorAt(uint32_t i,uint32_t j){
+ const uint32_t k=j*W+i;const float h=H[k];
+ const float sl=absf(H[(j<N?j+1:j)*W+i]-h)+absf(H[j*W+(i<N?i+1:i)]-h);
+ float total=0;for(int c=0;c<3;c++)for(int q=0;q<4;q++)total+=weights[c][k*4+q];
+ float r=0,g=0,b=0;
+ if(total>.001f){
+  for(uint32_t q=0;q<gPaintCount&&q<12;q++){
+   const float w=q<4?weights[0][k*4+q]:q<8?weights[1][k*4+q-4]:weights[2][k*4+q-8];
+   r+=gPaintRGB[q*3]/255.f*w;g+=gPaintRGB[q*3+1]/255.f*w;b+=gPaintRGB[q*3+2]/255.f*w;
+  }
+  r/=total;g/=total;b/=total;
+ }else if(materials[k]!=255){
+  const uint32_t p=(materials[k]<gPalCount?materials[k]:0)*3;r=gPal[p];g=gPal[p+1];b=gPal[p+2];
+ }else{
+  const uint32_t s=gNoiseSeed;
+  const float broad=noise(i*.045f+gSeed*.09f,j*.045f-gSeed*.12f,s);
+  const float mid=noise(i*.14f+gSeed*.23f,j*.14f-gSeed*.31f,s);
+  const float fine=noise(i*.36f-gSeed*.17f,j*.36f+gSeed*.31f,s);
+  const float field=broad*.56f+mid*.3f+fine*.14f;
+  const float ground=smoothstepf(.4f,.68f,field+clampf((h-12)*.002f,-.03f,.03f));
+  r=lerpf(gPal[0],gPal[3],ground*.62f);g=lerpf(gPal[1],gPal[4],ground*.62f);b=lerpf(gPal[2],gPal[5],ground*.62f);
+  const float rockThreshold=gRock+(broad-.5f)*.5f+(mid-.5f)*.25f;
+  const float cliff=smoothstepf(rockThreshold-.25f,rockThreshold+1.15f,sl);
+  const float outcrop=smoothstepf(.72f,.9f,field)*.25f;
+  const float rock=clampf(cliff*.88f+outcrop*(1-cliff*.65f),0,1);
+  mixInto(r,g,b,gPal[6],gPal[7],gPal[8],rock);
+  const float shore=1-smoothstepf(gWater-.35f+(broad-.5f)*.6f,gWater+1.55f+(broad-.5f)*1.3f,h);
+  const float dune=gDesert?smoothstepf(.46f,.69f,field)*(1-cliff*.8f):0.f;
+  const float sand=clampf(maxf(shore,dune)*(1-cliff*.6f),0,1);
+  mixInto(r,g,b,gPal[9],gPal[10],gPal[11],sand);
+  const float snowNoise=(broad-.5f)*6+(mid-.5f)*3+(fine-.5f)*1.5f;
+  const float snow=smoothstepf(gSnow-1.2f+snowNoise,gSnow+3.4f+snowNoise,h)*(1-cliff*.25f);
+  mixInto(r,g,b,gPal[12],gPal[13],gPal[14],snow);
+  const float variation=.9f+.18f*broad+.08f*(mid-.5f)+.06f*(fine-.5f)+.04f*(hash(int(i),int(j*7),s)-.5f);
+  r*=variation;g*=variation;b*=variation;
+ }
+ const float v=.94f+.12f*hash(int(i*3),int(j*7),gNoiseSeed);
+ colors[k*3]=r*v;colors[k*3+1]=g*v;colors[k*3+2]=b*v;
+}
 }
 extern "C" {
 float* fe_forest_input_ptr(){return forestInput;}
@@ -78,4 +144,38 @@ int32_t fe_terrain_erode_brush(float px,float pz,float radius,float strength,flo
  return int32_t(count);
 }
 int32_t fe_terrain_brush_stroke(uint32_t tool,float ax,float az,float bx,float bz,float radius,float strength,float dt,float target,uint32_t paint,uint32_t pbr,float seed,uint32_t* rect){if(tool==5||tool==6)return -2;if(tool>10||!finite(ax)||!finite(az)||!finite(bx)||!finite(bz)||!finite(radius)||radius<=0||!finite(strength)||!finite(dt)||dt<0||!finite(target)||!rect)return -1;(void)seed;float d=size/N;uint32_t x0=uint32_t(clampf(floorf((minf(ax,bx)-radius)/d+N*.5f),0,N)),x1=uint32_t(clampf(ceilf((maxf(ax,bx)+radius)/d+N*.5f),0,N)),z0=uint32_t(clampf(floorf((minf(az,bz)-radius)/d+N*.5f),0,N)),z1=uint32_t(clampf(ceilf((maxf(az,bz)+radius)/d+N*.5f),0,N));for(uint32_t j=z0?z0-1:0;j<=minf(N,z1+1);j++)for(uint32_t i=x0?x0-1:0;i<=minf(N,x1+1);i++)scratch[j*W+i]=H[j*W+i];float dx=bx-ax,dz=bz-az,l=dx*dx+dz*dz;int changed=0;for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++){float x=i*d-size*.5f,z=j*d-size*.5f,t=l>0?clampf(((x-ax)*dx+(z-az)*dz)/l,0,1):0,rx=x-ax-t*dx,rz=z-az-t*dz,q=(rx*rx+rz*rz)/(radius*radius);if(q>=1)continue;float f=(1-q)*(1-q),a=clampf(f*strength*dt*10,0,1);uint32_t k=j*W+i;float old=scratch[k];if(tool==0)H[k]+=f*strength*dt*10;else if(tool==1)H[k]-=f*strength*dt*10;else if(tool==2||tool==9)H[k]=lerpf(old,target,a);else if(tool==3){float avg=(scratch[j*W+(i?i-1:i)]+scratch[j*W+(i<N?i+1:i)]+scratch[(j?j-1:j)*W+i]+scratch[(j<N?j+1:j)*W+i])*.25f;H[k]=lerpf(old,avg,a);}else if(tool==4)H[k]=lerpf(old,floorf(old/3+.5f)*3,a);else if(tool==7)H[k]+=f*strength*dt*10*(1-q);else if(tool==8)H[k]+=(noise(x,z,uint32_t(absf(seed)))-.5f)*a;else if(tool==10){if(pbr&&paint<12){for(int c=0;c<3;c++)for(int v=0;v<4;v++)weights[c][k*4+v]*=1-a;weights[paint/4][k*4+paint%4]+=a;materials[k]=255;}else materials[k]=uint8_t(paint<6?paint:0);}changed++;}rect[0]=x0?x0-1:0;rect[1]=x1<N?x1+1:N;rect[2]=z0?z0-1:0;rect[3]=z1<N?z1+1:N;return changed;}
+int32_t fe_terrain_set_palette(const float* pal,uint32_t count,float seed,float water,float rock,float snow,uint32_t desert){
+ if(!pal||count<1||count>8||!finite(seed)||!finite(water)||!finite(rock)||!finite(snow))return -1;
+ gPalCount=count;for(uint32_t k=0;k<count*3;k++)gPal[k]=pal[k];
+ gSeed=seed;gWater=water;gRock=rock;gSnow=snow;gDesert=desert;
+ gNoiseSeed=(uint32_t(absf(seed)*1000.f))^0x51ed270bu;return 0;
+}
+int32_t fe_terrain_set_paint_colors(const uint8_t* rgb,uint32_t count){
+ if(!rgb||count<1||count>16)return -1;
+ gPaintCount=count;for(uint32_t k=0;k<count*3;k++)gPaintRGB[k]=rgb[k];return 0;
+}
+int32_t fe_terrain_generate_layered(float seed,float hs,uint32_t continental,float base,float mountain){
+ if(!finite(seed)||!finite(hs)||!finite(base)||!finite(mountain)||hs<0||hs>5000||absf(base)>1e5f||absf(mountain)>1e5f)return -1;
+ const uint32_t s=(uint32_t(absf(seed)*1000.f))^0x9e3779b9u;
+ for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){
+  const float x=(float(i)/N-.5f)*size,z=(float(j)/N-.5f)*size;
+  const float h=layeredHeight(x,z,seed,hs,s);
+  float v;
+  if(continental){v=h+1.6f+base+continentalMountain(x,z,seed,mountain,s);}
+  else{
+   const float r2=(x*x+z*z)/(size*size*.25f);
+   const float e2=maxf(absf(x),absf(z))/(size*.5f);
+   const float fd=smoothstepf(.62f,.93f,e2);
+   v=(h+1.6f-r2*10.f)*(1-fd)-14.f*fd;
+  }
+  H[j*W+i]=v;materials[j*W+i]=255;
+ }
+ return 0;
+}
+int32_t fe_terrain_compute_colors(uint32_t x0,uint32_t x1,uint32_t z0,uint32_t z1){
+ if(x0>x1||z0>z1||x1>N||z1>N)return -1;
+ for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++)terrainColorAt(i,j);
+ return int32_t((x1-x0+1)*(z1-z0+1));
+}
+
 }

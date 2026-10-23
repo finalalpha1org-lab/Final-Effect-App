@@ -1,4 +1,4 @@
-export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon}={}){
+export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
   const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
@@ -9,6 +9,11 @@ export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,t
     const count=out.split(tag).length-1;
     if(count!==1)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
     out=out.replace(tag,`<script>\n${source}\n</script>`);
+  }
+  if(cppWasmBase64){
+    if(String(cppWasmBase64).toLowerCase().includes('</script'))throw new Error('Unsafe closing script marker in embedded terrain WASM');
+    const bootstrap=`<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(String(cppWasmBase64).replace(/<\/script/gi,'<\\/script'))};</script>`;
+    out=out.includes('<head>')?out.replace('<head>','<head>\n'+bootstrap):bootstrap+out;
   }
   return out;
 }

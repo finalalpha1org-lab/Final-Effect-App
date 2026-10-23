@@ -10,3 +10,45 @@ test('live bridge executes C++ sculpt tools and matches existing brush arithmeti
 test('restored/imported height data replaces stale native state on the next stroke',async()=>{const c=await core(),h=new Float32Array(289);const args={n:16,size:16,heights:h,x:0,z:0,radius:4,strength:.6,dt:.02,target:2,seed:12,tool:'raise'};c.brush(args);h.fill(10);c.brush(args);assert.ok(h[144]>10);assert.equal(h[0],10);h.fill(30);assert.equal(c.brush({...args,tool:'paint'}),false);assert.equal(h[144],30)});
 test('C++ erosion modifies finite terrain, is deterministic and rejects invalid parameters',async()=>{const c=await core(),initial=Float32Array.from({length:289},(_,i)=>Math.sin(i*.17)*4),a=initial.slice(),b=initial.slice();const args={n:16,size:16,x:0,z:0,radius:4,strength:.6,dt:.02,seed:12,tool:'erode'};assert.ok(c.brush({...args,heights:a}));assert.ok(c.brush({...args,heights:b}));assert.deepEqual(a,b);assert.ok(a.some((v,i)=>v!==initial[i]));assert.ok(a.every(Number.isFinite));const before=a.slice();assert.equal(c.brush({...args,heights:a,radius:-1}),false);assert.deepEqual(a,before)});
 test('GPU normal upload receives finite unit slope normals computed by C++',async()=>{const c=await core(),h=Float32Array.from({length:289},(_,k)=>(k%17)*.5+Math.floor(k/17)*.25),out=new Float32Array(289*3);assert.equal(c.normals({n:16,size:16,heights:h,output:out}),true);const length=Math.hypot(.5,1,.25);for(let k=0;k<289;k++){assert.ok(Math.abs(out[k*3]+.5/length)<1e-6);assert.ok(Math.abs(out[k*3+1]-1/length)<1e-6);assert.ok(Math.abs(out[k*3+2]+.25/length)<1e-6)}});
+function terrainState(over={}){
+ const n=32,heights=new Float32Array((n+1)*(n+1));
+ return Object.assign({n,size:200,heights,seed:12.5,hs:34,continental:false,base:0,mountain:0,
+  pal:new Float32Array([.28,.5,.16,.42,.29,.17,.42,.42,.44,.64,.56,.38,.92,.94,.98,.13,.13,.14]),
+  paint:new Uint8Array([103,129,76,139,148,139,185,145,87,57,54,52,218,198,145,112,108,100,83,133,59,185,150,96,183,54,16,107,24,44,122,118,109,226,207,154]),
+  water:0,rock:1.3,snow:16,desert:false,
+  weightsA:new Float32Array((n+1)*(n+1)*4),weightsB:new Float32Array((n+1)*(n+1)*4),weightsC:new Float32Array((n+1)*(n+1)*4),
+  materials:new Uint8Array((n+1)*(n+1)).fill(255)},over);
+}
+test('C++ generation owns the seeded heightfield and matches itself every run',async()=>{
+ const c=await core(),a=terrainState(),b=terrainState(),other=terrainState({seed:77});
+ assert.equal(c.generate(a),true);assert.equal(c.generate(b),true);
+ assert.deepEqual(a.heights,b.heights,'same seed must reproduce the same terrain');
+ assert.equal(c.generate(other),true);assert.notDeepEqual(a.heights,other.heights,'different seeds must differ');
+ assert.ok(a.heights.every(Number.isFinite));
+ const w=33,edge=a.heights[w*w-1];assert.ok(edge<-13&&edge>-15,'non-continental maps fade the border down to the sea');
+ const centre=a.heights[Math.floor(w*w/2)];assert.notEqual(centre,edge);
+ const continental=terrainState({continental:true,base:2,mountain:48});assert.equal(c.generate(continental),true);
+ assert.notDeepEqual(continental.heights,a.heights);assert.ok(continental.heights.every(Number.isFinite));
+ assert.equal(c.generate(terrainState({hs:-1})),false,'invalid height scale is rejected');
+});
+test('C++ shading blends painted PBR weights and falls back to the biome palette',async()=>{
+ const c=await core(),s=terrainState(),out=new Float32Array((33)*(33)*3);
+ assert.equal(c.generate(s),true);
+ s.output=out;assert.equal(c.colors({...s,rect:[0,32,0,32]}),true);
+ assert.ok(out.every(Number.isFinite));assert.ok(out.every(v=>v>=0&&v<=1.3));
+ const sand=[185,150,96],k=5*33+5;for(const w of ['weightsA','weightsB','weightsC'])s[w].fill(0);
+ s.weightsB[k*4+3]=1;s.materials[k]=255; // paint slot 7 = Sand
+ assert.equal(c.colors({...s,rect:[k%33,k%33,Math.floor(k/33),Math.floor(k/33)]}),true);
+ for(let q=0;q<3;q++)assert.ok(Math.abs(out[k*3+q]-sand[q]/255)<.06,`painted channel ${q}`); // the shade kernel keeps its ±6% colour variation
+ s.weightsB.fill(0);s.materials[k]=2; // palette rock
+ assert.equal(c.colors({...s,rect:[k%33,k%33,Math.floor(k/33),Math.floor(k/33)]}),true);
+ assert.ok(Math.abs(out[k*3]-.42)<.04&&Math.abs(out[k*3+1]-.42)<.04&&Math.abs(out[k*3+2]-.44)<.04);
+ assert.equal(c.colors({...s,rect:[9,3,0,1]}),false,'reversed colour rect is rejected');
+});
+test('default studio generation and shading route through the C++ kernel with a JS fallback',async()=>{
+ const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-01.js','utf8');
+ assert.ok(src.includes('const native=window.FELandscapeCore.generate({n:N,size:S,heights:H,seed,hs,continental:!!GENC,base:PLC.base,mountain:PLC.mtn});if(!native)for('));
+ assert.ok(src.includes('window.FELandscapeCore.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB'));
+ assert.ok(src.includes('if(!native)for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j)'),'JS colour fallback remains for WASM failure');
+ assert.ok(src.includes('const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb))'));
+});

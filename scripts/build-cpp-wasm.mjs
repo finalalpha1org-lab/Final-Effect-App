@@ -48,7 +48,11 @@ const REQUIRED_EXPORTS = [
   'fe_forest_output_ptr',
   'fe_forest_classify',
   'fe_terrain_erode_brush',
-  'fe_terrain_compute_normals'
+  'fe_terrain_compute_normals',
+  'fe_terrain_set_palette',
+  'fe_terrain_set_paint_colors',
+  'fe_terrain_generate_layered',
+  'fe_terrain_compute_colors'
 ];
 
 function findZigCompiler() {
