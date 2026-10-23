@@ -1752,6 +1752,15 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 #anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:none}
 #anim-dopesheet-canvas{width:100%;height:100%;display:block;cursor:ew-resize}
 .anim-presets-bar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.anim-tools-strip{background:#121623;padding:7px 9px}
+.anim-strip-label{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;padding:0 2px}
+.anim-status-chip{font-size:10px;font-weight:700;padding:4px 8px;border-radius:999px;background:#171b29;border:1px solid #2b3247;color:#94a3b8}
+.anim-status-chip.is-on{background:rgba(16,185,129,0.14);border-color:rgba(16,185,129,0.45);color:#6ee7b7}
+.anim-btn.is-on{background:rgba(16,185,129,0.18);border-color:#10b981;color:#6ee7b7;box-shadow:0 0 10px rgba(16,185,129,0.22)}
+.anim-btn:disabled{opacity:.42}
+.anim-btn .ico{display:inline-flex;align-items:center}
+#anim-graph-channel{display:none}
+body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 .anim-presets-bar::-webkit-scrollbar{display:none}
 .anim-preset-chip{flex:none;min-height:34px;padding:5px 11px;border-radius:999px;background:#181c2a;border:1px solid #2e354d;color:#cbd5e1;font-size:11px;font-weight:600;white-space:nowrap}
 .anim-preset-chip:hover,.anim-preset-chip:active{border-color:#818cf8;color:#fff;background:#222840}
@@ -2547,7 +2556,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
       <small>Keyframes &amp; Curves</small>
     </div>
     <div class="animation-header-actions" style="display:flex;align-items:center;gap:6px;">
-      <button class="anim-btn" id="btn-anim-autokey" type="button" onclick="FECppEngine.autoKey=!FECppEngine.autoKey;refreshAnimationStudioUI();FE.toast(FECppEngine.autoKey?'⏺ Auto-Key Enabled':'Auto-Key Disabled')">⏺ Auto-Key</button>
+      <button class="anim-btn" id="btn-anim-autokey" type="button" onclick="FECppEngine.toggleAutoKey()" title="Automatically key the active keying set when a transform drag ends">⏺ Auto-Key</button>
       <button class="btn animation-close" type="button" aria-label="Close Animation Studio" onclick="closeAnimationModal(event)">✕</button>
     </div>
   </header>
@@ -2578,6 +2587,54 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           <option value="1">Mode: Loop Cycle</option>
           <option value="2">Mode: Ping-Pong</option>
         </select>
+      </div>
+      <div class="anim-top-strip anim-tools-strip">
+        <span class="anim-strip-label">Editor</span>
+        <select class="anim-select" id="anim-editor-mode" title="Switch between the dope sheet and the curve graph editor" onchange="FECppEngine.setAnimationEditorMode(this.value)">
+          <option value="dope">Dope Sheet</option>
+          <option value="graph">Graph Editor</option>
+        </select>
+        <select class="anim-select" id="anim-graph-channel" title="Curve shown by the graph editor" onchange="FECppEngine.setGraphChannel(this.value)">
+          <option value="0">Location X</option>
+          <option value="1">Location Y</option>
+          <option value="2">Location Z</option>
+          <option value="3">Rotation X°</option>
+          <option value="4">Rotation Y°</option>
+          <option value="5">Rotation Z°</option>
+          <option value="6">Scale X</option>
+          <option value="7">Scale Y</option>
+          <option value="8">Scale Z</option>
+          <option value="9">Lens FOV / Intensity</option>
+          <option value="10">Roughness</option>
+        </select>
+        <select class="anim-select" id="anim-keying-set" title="Channels written by Auto-Key and + Key All" onchange="FECppEngine.setKeyingSet(this.value)">
+          <option value="transform">Set: Full Transform</option>
+          <option value="location">Set: Location</option>
+          <option value="rotation">Set: Rotation</option>
+          <option value="scale">Set: Scale</option>
+          <option value="locrot">Set: Location + Rotation</option>
+          <option value="extra">Set: Lens / Light</option>
+          <option value="all">Set: All Channels</option>
+        </select>
+        <button class="anim-btn" id="anim-dup-btn" type="button" onclick="FECppEngine.duplicateSelectedAnimationKey()" title="Duplicate the selected key 10 frames later" disabled><i class="ico" data-ico="layers"></i>Duplicate</button>
+        <button class="anim-btn danger" id="anim-del-sel-btn" type="button" onclick="FECppEngine.deleteSelectedAnimationKey()" title="Delete the selected keyframe" disabled><i class="ico" data-ico="trash"></i>Delete Key</button>
+      </div>
+      <div class="anim-top-strip anim-tools-strip">
+        <span class="anim-strip-label">Simulation</span>
+        <button class="anim-btn" id="anim-bake-btn" type="button" onclick="FECppEngine.bakeSimulation()" title="Freeze the selected cloth or soft body simulation into keyed frames"><i class="ico" data-ico="snow"></i>Bake Simulation</button>
+        <button class="anim-btn" id="anim-clear-bake-btn" type="button" onclick="FECppEngine.clearSimulationBake()" title="Remove the baked simulation cache"><i class="ico" data-ico="eraser"></i>Clear Bake</button>
+        <span class="anim-status-chip" id="anim-bake-status">No simulation bake</span>
+        <span class="anim-strip-label">Motion</span>
+        <button class="anim-btn" id="anim-onion-toggle" type="button" onclick="FECppEngine.toggleOnionSkin()" aria-pressed="false" title="Show ghost poses before and after the current frame"><i class="ico" data-ico="layers"></i>Onion Skin</button>
+        <select class="anim-select" id="anim-onion-range" title="Ghost frames on each side of the playhead" onchange="FECppEngine.setOnionRange(this.value)">
+          <option value="1">±1 frame</option>
+          <option value="2" selected>±2 frames</option>
+          <option value="3">±3 frames</option>
+          <option value="5">±5 frames</option>
+        </select>
+        <button class="anim-btn" id="anim-trail-toggle" type="button" onclick="FECppEngine.toggleMotionTrail()" aria-pressed="false" title="Draw the motion path of the selected object"><i class="ico" data-ico="wave"></i>Motion Trail</button>
+        <button class="anim-btn" id="anim-camera-path-btn" type="button" onclick="FECppEngine.buildCameraPath()" title="Bake a smooth camera orbit around the selected object"><i class="ico" data-ico="camera"></i>Camera Path</button>
+        <button class="anim-btn primary" id="anim-export-gltf-btn" type="button" onclick="FECppEngine.exportAnimatedGLTF()" title="Export the scene with its animation tracks as glTF"><i class="ico" data-ico="download"></i>Export glTF</button>
       </div>
       <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
         <canvas id="anim-dopesheet-canvas"></canvas>
@@ -4042,7 +4099,7 @@ function serializeSceneToFinal3d() {
   }
 
   eng.sc.children.forEach(obj => {
-    if (obj.name === 'ImportedLandscape' || obj.isGridHelper || obj.isCamera || obj.isLight || obj.name === 'Cursor3D' || obj.name === 'StudioFloor' || obj.name === 'ShadowFloor') return;
+    if (obj.name === 'ImportedLandscape' || obj.isGridHelper || obj.isCamera || obj.isLight || obj.name === 'Cursor3D' || obj.name === 'StudioFloor' || obj.name === 'ShadowFloor' || obj.userData?.feOnionGhost) return;
     if (obj.isMesh || obj.isGroup) {
       payload.objects.push({
         name: obj.name || 'Object',
@@ -4116,7 +4173,7 @@ function exportGLTF(isBinary = true) {
     const exporter = new THREE.GLTFExporter();
     const exportScene = new THREE.Scene();
     eng.sc.children.forEach(c => {
-      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor') {
+      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor' && !c.userData?.feOnionGhost) {
         exportScene.add(c.clone(true));
       }
     });
@@ -4157,7 +4214,7 @@ function exportOBJ() {
     const exporter = new THREE.OBJExporter();
     const exportScene = new THREE.Scene();
     eng.sc.children.forEach(c => {
-      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor') {
+      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor' && !c.userData?.feOnionGhost) {
         exportScene.add(c.clone(true));
       }
     });
@@ -7602,7 +7659,7 @@ FE.register('core',{
     const captureMaterial=material=>Array.isArray(material)?material.map(captureMaterial):!material?null:(()=>{const state={color:material.color?.clone?.()||null,emissive:material.emissive?.clone?.()||null,specular:material.specular?.clone?.()||null,roughness:material.roughness,metalness:material.metalness,shininess:material.shininess,opacity:material.opacity,transparent:material.transparent,wireframe:material.wireframe,side:material.side,emissiveIntensity:material.emissiveIntensity,envMapIntensity:material.envMapIntensity,alphaTest:material.alphaTest,depthWrite:material.depthWrite,visible:material.visible};return{ref:material,state,key:JSON.stringify([material.uuid,state.color?.toArray?.(),state.emissive?.toArray?.(),state.specular?.toArray?.(),state.roughness,state.metalness,state.shininess,state.opacity,state.transparent,state.wireframe,state.side,state.emissiveIntensity,state.envMapIntensity,state.alphaTest,state.depthWrite,state.visible])}})();
     const applyMaterial=record=>Array.isArray(record)?record.map(applyMaterial):!record?null:(()=>{const material=record.ref,s=record.state;if(s.color&&material.color?.copy)material.color.copy(s.color);if(s.emissive&&material.emissive?.copy)material.emissive.copy(s.emissive);if(s.specular&&material.specular?.copy)material.specular.copy(s.specular);for(const key of ['roughness','metalness','shininess','opacity','transparent','wireframe','side','emissiveIntensity','envMapIntensity','alphaTest','depthWrite','visible'])if(s[key]!==undefined)material[key]=s[key];material.needsUpdate=true;return material})();
     const captureCamera=camera=>camera?{ref:camera,position:camera.position.clone(),quaternion:camera.quaternion.clone(),up:camera.up.clone(),rotationOrder:camera.rotation.order,near:camera.near,far:camera.far,aspect:camera.aspect,fov:camera.fov,zoom:camera.zoom}:null;
-    const captureCoreState=()=>{const roots=sc.children.slice(),nodes=[];const walk=o=>{const material=captureMaterial(o.material),data=cloneHistoryData(o.userData||{}),lightColor=o.color?.clone?.()||null,groundColor=o.groundColor?.clone?.()||null;nodes.push({object:o,children:o.children.slice(),position:o.position.clone(),quaternion:o.quaternion.clone(),scale:o.scale.clone(),visible:o.visible,name:o.name,geometry:o.geometry,material,materialKey:JSON.stringify(Array.isArray(material)?material.map(m=>m?.key):material?.key),userData:data,userDataKey:(()=>{try{return JSON.stringify(data)}catch{return''}})(),matrixAutoUpdate:o.matrixAutoUpdate,renderOrder:o.renderOrder,castShadow:o.castShadow,receiveShadow:o.receiveShadow,frustumCulled:o.frustumCulled,layers:o.layers?.mask,color:lightColor,groundColor,intensity:o.intensity,visibleLight:o.isLight?o.visible:undefined});o.children.forEach(walk)};roots.forEach(walk);return{roots,nodes,customObjects:{...(this.customObjects||{})},engineRefs:{cube:this.cube,blenderCam:this.blenderCam,blenderCamLines:this.blenderCamLines,blenderLight:this.blenderLight,light:this.light},activeObject,isCameraView,currentShadingMode,viewportCamera:captureCamera(viewportCamera),sceneCamera:captureCamera(sceneCamera),orbitTarget:oc.target.clone(),sceneCameraTarget:sceneCameraTarget.clone(),background:sc.background,fog:sc.fog}};
+    const captureCoreState=()=>{const roots=sc.children.filter(o=>!o.userData?.feOnionGhost).slice(),nodes=[];const walk=o=>{const material=captureMaterial(o.material),data=cloneHistoryData(o.userData||{}),lightColor=o.color?.clone?.()||null,groundColor=o.groundColor?.clone?.()||null;nodes.push({object:o,children:o.children.slice(),position:o.position.clone(),quaternion:o.quaternion.clone(),scale:o.scale.clone(),visible:o.visible,name:o.name,geometry:o.geometry,material,materialKey:JSON.stringify(Array.isArray(material)?material.map(m=>m?.key):material?.key),userData:data,userDataKey:(()=>{try{return JSON.stringify(data)}catch{return''}})(),matrixAutoUpdate:o.matrixAutoUpdate,renderOrder:o.renderOrder,castShadow:o.castShadow,receiveShadow:o.receiveShadow,frustumCulled:o.frustumCulled,layers:o.layers?.mask,color:lightColor,groundColor,intensity:o.intensity,visibleLight:o.isLight?o.visible:undefined});o.children.forEach(walk)};roots.forEach(walk);return{roots,nodes,customObjects:{...(this.customObjects||{})},engineRefs:{cube:this.cube,blenderCam:this.blenderCam,blenderCamLines:this.blenderCamLines,blenderLight:this.blenderLight,light:this.light},activeObject,isCameraView,currentShadingMode,viewportCamera:captureCamera(viewportCamera),sceneCamera:captureCamera(sceneCamera),orbitTarget:oc.target.clone(),sceneCameraTarget:sceneCameraTarget.clone(),background:sc.background,fog:sc.fog}};
     const sameCoreState=(a,b)=>{if(!a||!b||a.roots.length!==b.roots.length||a.nodes.length!==b.nodes.length)return false;for(let i=0;i<a.roots.length;i++)if(a.roots[i]!==b.roots[i])return false;for(let i=0;i<a.nodes.length;i++){const x=a.nodes[i],y=b.nodes[i];if(x.object!==y.object||x.children.length!==y.children.length||x.position.distanceToSquared(y.position)>1e-12||!x.quaternion.equals(y.quaternion)||!x.scale.equals(y.scale)||x.visible!==y.visible||x.name!==y.name||x.geometry!==y.geometry||x.materialKey!==y.materialKey||x.userDataKey!==y.userDataKey||x.renderOrder!==y.renderOrder||x.castShadow!==y.castShadow||x.receiveShadow!==y.receiveShadow||x.frustumCulled!==y.frustumCulled||x.color?.getHex?.()!==y.color?.getHex?.()||x.intensity!==y.intensity)return false;for(let j=0;j<x.children.length;j++)if(x.children[j]!==y.children[j])return false}return true};
     const history={undo:[],redo:[],limit:GLOBAL_SETTINGS.undoLimit,current:null,pending:null,coalesceKey:null,coalesceAt:0,restoring:false};
     const trimHistoryStack=stack=>{while(stack.length>history.limit)stack.shift()};
@@ -9549,6 +9606,7 @@ function stepPhysicsSimulations(dt) {
 
     eng.sc.children.forEach(child => {
       try {
+        if (child.userData?.simBake) return;
         if (child.userData?.clothSim) stepClothSim(child, dt);
         if (child.userData?.softBodySim) stepSoftBodySim(child, dt);
         if (child.userData?.fluidSim) stepFluidSim(child, dt);
@@ -9562,6 +9620,7 @@ function resetAllPhysicsSimulations() {
   if (!eng || !eng.sc) return;
 
   eng.sc.children.forEach(child => {
+    if (child.userData?.simBake) return;
     if (child.userData?.clothSim) {
       window.SimEngine.resetSimulation('Cloth', child);
     }

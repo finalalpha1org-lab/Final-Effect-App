@@ -154,6 +154,34 @@ FE_EXPORT uint32_t fe_anim_serialized_float_count(void);
 FE_EXPORT uint32_t fe_anim_serialize(float* out_floats, uint32_t max_floats);
 FE_EXPORT int32_t  fe_anim_deserialize(const float* in_floats, uint32_t float_count);
 
+/* Timeline editing (dope sheet / graph editor / simulation bake / paths) */
+FE_EXPORT int32_t  fe_anim_edit_key(uint32_t object_slot, uint32_t channel,
+                                    float from_frame, float to_frame,
+                                    float new_value, float tolerance);
+FE_EXPORT int32_t  fe_anim_delete_keys_in_range(uint32_t object_slot, uint32_t channel_mask,
+                                                float start_frame, float end_frame);
+FE_EXPORT int32_t  fe_anim_move_keys_in_range(uint32_t object_slot, uint32_t channel_mask,
+                                              float start_frame, float end_frame, float delta_frames);
+FE_EXPORT int32_t  fe_anim_duplicate_keys_in_range(uint32_t object_slot, uint32_t channel_mask,
+                                                   float start_frame, float end_frame, float offset_frames);
+FE_EXPORT uint32_t fe_anim_catmull_rom(const float* points_xyz, uint32_t point_count,
+                                       uint32_t samples_per_segment, float* out_xyz,
+                                       uint32_t out_capacity_floats);
+FE_EXPORT uint32_t fe_anim_sample_object(uint32_t object_slot, float start_frame, float end_frame,
+                                         uint32_t sample_count, float* out_11,
+                                         uint32_t out_capacity_floats);
+FE_EXPORT uint32_t fe_anim_sample_channel(uint32_t object_slot, uint32_t channel,
+                                          float start_frame, float end_frame,
+                                          uint32_t sample_count, float* out_values,
+                                          uint32_t out_capacity_floats);
+FE_EXPORT int32_t  fe_anim_bake_samples(uint32_t object_slot, uint32_t channel_mask,
+                                        float start_frame, float frame_step,
+                                        const float* samples_11, uint32_t sample_count,
+                                        uint32_t interp_mode, float tolerance);
+FE_EXPORT uint32_t fe_sim_bake_compress(const float* frames_xyz, uint32_t frame_count,
+                                        uint32_t vertex_count, float tolerance,
+                                        uint32_t* out_frame_indices, uint32_t out_capacity);
+
 /* ---- Progressive C++ PBR Path Tracer & Post-Processing Render Engine ---- */
 FE_EXPORT void     fe_render_scene_clear(void);
 FE_EXPORT int32_t  fe_render_add_mesh(

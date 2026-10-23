@@ -570,4 +570,359 @@ FE_EXPORT int32_t fe_anim_deserialize(const float* in_floats, uint32_t float_cou
   return static_cast<int32_t>(fe_anim_get_total_keyframes());
 }
 
+
+/* -------------------------------------------------------------------------
+ * Timeline editing kernels (dope sheet / graph editor / bake / paths)
+ * ---------------------------------------------------------------------- */
+
+FE_EXPORT int32_t fe_anim_edit_key(
+  uint32_t object_slot,
+  uint32_t channel,
+  float from_frame,
+  float to_frame,
+  float new_value,
+  float tolerance
+) {
+  if (object_slot >= kMaxAnimatedObjects || channel >= FE_CH_COUNT) return -1;
+  if (!fe::isfinitef(from_frame) || !fe::isfinitef(to_frame) || !fe::isfinitef(new_value)) return -2;
+  if (!g_tracks[object_slot].initialized) return 0;
+
+  ChannelTrack& ch = g_tracks[object_slot].channels[channel];
+  const float tol = tolerance > 0.0f ? tolerance : 0.45f;
+  int32_t found = -1;
+  for (uint32_t i = 0; i < ch.count; ++i) {
+    if (fe::absf(ch.keys[i].frame - from_frame) <= tol) { found = static_cast<int32_t>(i); break; }
+  }
+  if (found < 0) return 0;
+
+  Keyframe moved = ch.keys[found];
+  moved.frame = fe::clampf(to_frame, 0.0f, 10000.0f);
+  moved.value = (channel >= FE_CH_SCL_X && channel <= FE_CH_SCL_Z) ? fe::maxf(0.01f, new_value) : new_value;
+
+  for (uint32_t i = static_cast<uint32_t>(found); i + 1 < ch.count; ++i) ch.keys[i] = ch.keys[i + 1];
+  --ch.count;
+
+  /* Dropping a key onto another one merges them instead of duplicating. */
+  for (uint32_t i = 0; i < ch.count;) {
+    if (fe::absf(ch.keys[i].frame - moved.frame) <= 0.01f) {
+      for (uint32_t j = i; j + 1 < ch.count; ++j) ch.keys[j] = ch.keys[j + 1];
+      --ch.count;
+    } else {
+      ++i;
+    }
+  }
+
+  uint32_t insert = ch.count;
+  while (insert > 0 && ch.keys[insert - 1].frame > moved.frame) {
+    ch.keys[insert] = ch.keys[insert - 1];
+    --insert;
+  }
+  ch.keys[insert] = moved;
+  ++ch.count;
+  return 1;
+}
+
+FE_EXPORT int32_t fe_anim_delete_keys_in_range(
+  uint32_t object_slot,
+  uint32_t channel_mask,
+  float start_frame,
+  float end_frame
+) {
+  if (object_slot >= kMaxAnimatedObjects) return -1;
+  if (!g_tracks[object_slot].initialized) return 0;
+  float a = start_frame, b = end_frame;
+  if (b < a) { const float t = a; a = b; b = t; }
+  const float eps = 1e-4f;
+
+  int32_t removed = 0;
+  for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+    if (!(channel_mask & (1u << c))) continue;
+    ChannelTrack& ch = g_tracks[object_slot].channels[c];
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < ch.count; ++i) {
+      const float f = ch.keys[i].frame;
+      if (f >= a - eps && f <= b + eps) {
+        ++removed;
+      } else {
+        ch.keys[w++] = ch.keys[i];
+      }
+    }
+    ch.count = w;
+  }
+  return removed;
+}
+
+static int32_t anim_collect_range(
+  uint32_t object_slot,
+  uint32_t channel,
+  float a,
+  float b,
+  float* frames,
+  float* values,
+  uint32_t* interps
+) {
+  ChannelTrack& ch = g_tracks[object_slot].channels[channel];
+  const float eps = 1e-4f;
+  uint32_t n = 0, w = 0;
+  for (uint32_t i = 0; i < ch.count; ++i) {
+    const float f = ch.keys[i].frame;
+    if (f >= a - eps && f <= b + eps && n < kMaxKeysPerChannel) {
+      frames[n] = f;
+      values[n] = ch.keys[i].value;
+      interps[n] = ch.keys[i].interp;
+      ++n;
+    } else {
+      ch.keys[w++] = ch.keys[i];
+    }
+  }
+  ch.count = w;
+  return static_cast<int32_t>(n);
+}
+
+FE_EXPORT int32_t fe_anim_move_keys_in_range(
+  uint32_t object_slot,
+  uint32_t channel_mask,
+  float start_frame,
+  float end_frame,
+  float delta_frames
+) {
+  if (object_slot >= kMaxAnimatedObjects) return -1;
+  if (!g_tracks[object_slot].initialized) return 0;
+  if (!fe::isfinitef(delta_frames)) return -2;
+  float a = start_frame, b = end_frame;
+  if (b < a) { const float t = a; a = b; b = t; }
+
+  int32_t moved = 0;
+  float frames[kMaxKeysPerChannel];
+  float values[kMaxKeysPerChannel];
+  uint32_t interps[kMaxKeysPerChannel];
+
+  for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+    if (!(channel_mask & (1u << c))) continue;
+    const int32_t n = anim_collect_range(object_slot, c, a, b, frames, values, interps);
+    for (int32_t i = 0; i < n; ++i) {
+      const float f = fe::clampf(frames[i] + delta_frames, 0.0f, 10000.0f);
+      fe_anim_insert_keyframe(object_slot, c, f, values[i], interps[i]);
+      ++moved;
+    }
+  }
+  return moved;
+}
+
+FE_EXPORT int32_t fe_anim_duplicate_keys_in_range(
+  uint32_t object_slot,
+  uint32_t channel_mask,
+  float start_frame,
+  float end_frame,
+  float offset_frames
+) {
+  if (object_slot >= kMaxAnimatedObjects) return -1;
+  if (!g_tracks[object_slot].initialized) return 0;
+  if (!fe::isfinitef(offset_frames) || fe::absf(offset_frames) < 1e-4f) return -2;
+  float a = start_frame, b = end_frame;
+  if (b < a) { const float t = a; a = b; b = t; }
+
+  int32_t copied = 0;
+  float frames[kMaxKeysPerChannel];
+  float values[kMaxKeysPerChannel];
+  uint32_t interps[kMaxKeysPerChannel];
+
+  for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+    if (!(channel_mask & (1u << c))) continue;
+    const int32_t n = anim_collect_range(object_slot, c, a, b, frames, values, interps);
+    /* anim_collect_range removed the originals; put them back verbatim first. */
+    for (int32_t i = 0; i < n; ++i) {
+      fe_anim_insert_keyframe(object_slot, c, frames[i], values[i], interps[i]);
+    }
+    for (int32_t i = 0; i < n; ++i) {
+      const float f = fe::clampf(frames[i] + offset_frames, 0.0f, 10000.0f);
+      if (fe::absf(f - frames[i]) < 1e-4f) continue;
+      if (fe_anim_insert_keyframe(object_slot, c, f, values[i], interps[i]) >= 0) ++copied;
+    }
+  }
+  return copied;
+}
+
+FE_EXPORT uint32_t fe_anim_catmull_rom(
+  const float* points_xyz,
+  uint32_t point_count,
+  uint32_t samples_per_segment,
+  float* out_xyz,
+  uint32_t out_capacity_floats
+) {
+  if (!points_xyz || point_count < 2 || !out_xyz || out_capacity_floats < 6) return 0;
+  uint32_t per = samples_per_segment < 1 ? 1 : samples_per_segment;
+  if (per > 64) per = 64;
+  const uint32_t max_points = out_capacity_floats / 3;
+  uint32_t w = 0;
+
+  for (uint32_t seg = 0; seg + 1 < point_count && w < max_points; ++seg) {
+    const uint32_t i0 = seg > 0 ? seg - 1 : 0;
+    const uint32_t i1 = seg;
+    const uint32_t i2 = seg + 1;
+    const uint32_t i3 = (seg + 2 < point_count) ? seg + 2 : point_count - 1;
+
+    for (uint32_t s = 0; s < per && w < max_points; ++s) {
+      const float t = static_cast<float>(s) / static_cast<float>(per);
+      const float t2 = t * t;
+      const float t3 = t2 * t;
+      for (uint32_t k = 0; k < 3; ++k) {
+        const float p0 = points_xyz[i0 * 3 + k];
+        const float p1 = points_xyz[i1 * 3 + k];
+        const float p2 = points_xyz[i2 * 3 + k];
+        const float p3 = points_xyz[i3 * 3 + k];
+        out_xyz[w * 3 + k] = 0.5f * (
+          (2.0f * p1) +
+          (-p0 + p2) * t +
+          (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+          (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
+        );
+      }
+      ++w;
+    }
+  }
+  if (w < max_points) {
+    out_xyz[w * 3 + 0] = points_xyz[(point_count - 1) * 3 + 0];
+    out_xyz[w * 3 + 1] = points_xyz[(point_count - 1) * 3 + 1];
+    out_xyz[w * 3 + 2] = points_xyz[(point_count - 1) * 3 + 2];
+    ++w;
+  }
+  return w;
+}
+
+
+FE_EXPORT uint32_t fe_anim_sample_object(
+  uint32_t object_slot,
+  float start_frame,
+  float end_frame,
+  uint32_t sample_count,
+  float* out_11,
+  uint32_t out_capacity_floats
+) {
+  if (object_slot >= kMaxAnimatedObjects || !out_11) return 0;
+  if (sample_count < 1 || out_capacity_floats < 11) return 0;
+  if (!g_tracks[object_slot].initialized) return 0;
+  const uint32_t max_samples = out_capacity_floats / 11;
+  const uint32_t n = sample_count < max_samples ? sample_count : max_samples;
+  if (n < 1) return 0;
+  const float span = end_frame - start_frame;
+
+  for (uint32_t i = 0; i < n; ++i) {
+    const float t = n == 1 ? 0.0f : static_cast<float>(i) / static_cast<float>(n - 1);
+    const float frame = start_frame + span * t;
+    for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+      float v = eval_channel_internal(g_tracks[object_slot].channels[c],
+                                      g_tracks[object_slot].rest[c],
+                                      frame,
+                                      g_tracks[object_slot].extrapolation);
+      if (c >= FE_CH_SCL_X && c <= FE_CH_SCL_Z) v = fe::maxf(0.01f, v);
+      out_11[i * 11 + c] = v;
+    }
+  }
+  return n;
+}
+
+FE_EXPORT uint32_t fe_anim_sample_channel(
+  uint32_t object_slot,
+  uint32_t channel,
+  float start_frame,
+  float end_frame,
+  uint32_t sample_count,
+  float* out_values,
+  uint32_t out_capacity_floats
+) {
+  if (object_slot >= kMaxAnimatedObjects || channel >= FE_CH_COUNT || !out_values) return 0;
+  if (sample_count < 1 || out_capacity_floats < 1) return 0;
+  if (!g_tracks[object_slot].initialized) return 0;
+  const uint32_t n = sample_count < out_capacity_floats ? sample_count : out_capacity_floats;
+  const float span = end_frame - start_frame;
+  for (uint32_t i = 0; i < n; ++i) {
+    const float t = n == 1 ? 0.0f : static_cast<float>(i) / static_cast<float>(n - 1);
+    const float frame = start_frame + span * t;
+    float v = eval_channel_internal(g_tracks[object_slot].channels[channel],
+                                    g_tracks[object_slot].rest[channel],
+                                    frame,
+                                    g_tracks[object_slot].extrapolation);
+    if (channel >= FE_CH_SCL_X && channel <= FE_CH_SCL_Z) v = fe::maxf(0.01f, v);
+    out_values[i] = v;
+  }
+  return n;
+}
+
+FE_EXPORT int32_t fe_anim_bake_samples(
+  uint32_t object_slot,
+  uint32_t channel_mask,
+  float start_frame,
+  float frame_step,
+  const float* samples_11,
+  uint32_t sample_count,
+  uint32_t interp_mode,
+  float tolerance
+) {
+  if (object_slot >= kMaxAnimatedObjects || !samples_11) return -1;
+  if (sample_count < 1) return 0;
+  if (!fe::isfinitef(start_frame) || !fe::isfinitef(frame_step) || frame_step < 0.0f) return -2;
+  if (channel_mask == 0) return 0;
+  if (!g_tracks[object_slot].initialized) fe_anim_ensure_object(object_slot, nullptr);
+
+  const float tol = tolerance > 0.0f ? tolerance : 1e-4f;
+  const uint32_t mode = interp_mode <= FE_INTERP_BOUNCE ? interp_mode : static_cast<uint32_t>(FE_INTERP_LINEAR);
+
+  for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+    if (channel_mask & (1u << c)) g_tracks[object_slot].channels[c].count = 0;
+  }
+
+  int32_t written = 0;
+  for (uint32_t c = 0; c < FE_CH_COUNT; ++c) {
+    if (!(channel_mask & (1u << c))) continue;
+    float last_kept = samples_11[c];
+    for (uint32_t i = 0; i < sample_count; ++i) {
+      const float v = samples_11[i * 11 + c];
+      const bool is_last = (i + 1 == sample_count);
+      if (i > 0 && !is_last && fe::absf(v - last_kept) < tol) continue;
+      if (fe_anim_insert_keyframe(object_slot, c, start_frame + frame_step * static_cast<float>(i), v, mode) >= 0) {
+        last_kept = v;
+        ++written;
+      }
+    }
+  }
+  return written;
+}
+
+FE_EXPORT uint32_t fe_sim_bake_compress(
+  const float* frames_xyz,
+  uint32_t frame_count,
+  uint32_t vertex_count,
+  float tolerance,
+  uint32_t* out_frame_indices,
+  uint32_t out_capacity
+) {
+  if (!frames_xyz || !out_frame_indices || frame_count < 1 || vertex_count < 1 || out_capacity < 1) return 0;
+  const float tol = tolerance > 0.0f ? tolerance : 0.0025f;
+  const uint32_t stride = vertex_count * 3;
+
+  out_frame_indices[0] = 0;
+  uint32_t kept = 1;
+  uint32_t last = 0;
+
+  if (kept < out_capacity) {
+    for (uint32_t f = 1; f + 1 < frame_count; ++f) {
+      const float* cur = frames_xyz + static_cast<size_t>(f) * stride;
+      const float* ref = frames_xyz + static_cast<size_t>(last) * stride;
+      float largest = 0.0f;
+      for (uint32_t v = 0; v < stride; ++v) {
+        const float d = fe::absf(cur[v] - ref[v]);
+        if (d > largest) largest = d;
+      }
+      if (largest > tol) {
+        if (kept >= out_capacity) break;
+        out_frame_indices[kept++] = f;
+        last = f;
+      }
+    }
+  }
+  if (frame_count > 1 && kept < out_capacity) out_frame_indices[kept++] = frame_count - 1;
+  return kept;
+}
+
 } // extern "C"

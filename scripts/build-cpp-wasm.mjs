@@ -93,7 +93,10 @@ const REQUIRED_EXPORTS = [
   'fe_mod_target_idx_ptr','fe_mod_sd_bind','fe_mod_sd_upload','fe_mod_sd_apply',
   'fe_mod_sd_ordinal_ptr','fe_mod_sd_bary_ptr','fe_mod_sd_scalars_ptr','fe_mod_sd_tris_ptr',
   'fe_mod_sd_tri_count','fe_mod_lattice_cage','fe_mod_lattice_alloc','fe_mod_lattice_rest_ptr',
-  'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap'
+  'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap',
+  'fe_anim_edit_key','fe_anim_delete_keys_in_range','fe_anim_move_keys_in_range',
+  'fe_anim_duplicate_keys_in_range','fe_anim_catmull_rom',
+  'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
