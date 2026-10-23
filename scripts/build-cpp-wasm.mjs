@@ -7,7 +7,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_renderer.cpp',
   'cpp/src/fe_sculpt_touch.cpp',
   'cpp/src/fe_simulation.cpp',
-  'cpp/src/fe_landscape.cpp'
+  'cpp/src/fe_landscape.cpp',
+  'cpp/src/fe_openworld.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -57,7 +58,19 @@ const REQUIRED_EXPORTS = [
   'fe_terrain_erode_thermal',
   'fe_terrain_scatter_out_ptr',
   'fe_terrain_scatter_batch',
-  'fe_terrain_apply_strata'
+  'fe_terrain_apply_strata',
+  'fe_ow_height_ptr',
+  'fe_ow_surface_ptr',
+  'fe_ow_set_params',
+  'fe_ow_height_at',
+  'fe_ow_biome_weights_at',
+  'fe_ow_height_grid',
+  'fe_ow_surface_grid',
+  'fe_ow_plan_chunks',
+  'fe_ow_hydro_set_grid',
+  'fe_ow_hydro_trace',
+  'fe_lod_classify',
+  'fe_lod_out_ptr'
 ];
 
 function findZigCompiler() {

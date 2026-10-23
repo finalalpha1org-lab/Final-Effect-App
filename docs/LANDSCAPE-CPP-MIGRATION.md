@@ -122,3 +122,44 @@ time, so this is a real but modest win, not a rewritten scatter pipeline.
 Still JS: ocean configuration, Open World hydrology/river tracing, worker
 scheduling and terrain LOD. Open World generation does not run through the
 single-grid `fe_terrain_*` kernels at all.
+
+## Open World generation, scheduling and hydrology
+
+`cpp/src/fe_openworld.cpp` now owns the streamed Open World maths:
+
+- `fe_ow_set_params` + `fe_ow_height_at` — the seeded chunk sampler. JS
+  `OpenWorldGenerator.heightAt` asks C++ first, so brush placement, spawn search
+  and generated chunks share one height field.
+- `fe_ow_height_grid` / `fe_ow_surface_grid` — one call fills a whole chunk
+  (193² vertices max) with heights, biome weights and the 12 blended surface
+  weights. `createChunkJob` still steps in rows and plants in JS; only the maths
+  moved. Segments above 192 fall back to the JS sampler.
+- `fe_ow_plan_chunks` — nearest-first chunk ring with the world-bounds test, used
+  by `owRefresh` to order the stream queue. The JS loop remains for fallback.
+- `fe_ow_hydro_set_grid` / `fe_ow_hydro_trace` — two smoothing passes,
+  priority-flood drainage and downhill river tracing (sources spread by spacing,
+  minimum length, edge/sea/join termination). `open-world.js` feeds it the same
+  `S.gs` grid the JS solver used and converts the returned polylines into the
+  existing river records; the JS solver is untouched as the fallback.
+- `fe_lod_classify` — bulk foliage terrain-LOD classification (0 full, 1 low,
+  -1 culled) with the same hashed threshold and the 8 km ground / 14 km tree
+  cutoffs. `sync()` uploads instance positions once and reads tiers per instance.
+
+Measured on the sandbox CPU (Node 22, single wasm instance, 20-run average; the
+JS baseline is `open-world-generator.js` without the C++ path):
+
+| kernel | C++ | JS fallback | result |
+| --- | --- | --- | --- |
+| 65² chunk height grid | 3.5 ms | 94.8 ms | ≈27× faster |
+| 65² chunk surface grid (12 weights/vertex) | 2.1 ms | 86.4 ms | ≈42× faster |
+| hydrology set-grid, 288² (smooth + priority flood) | 13.4 ms | — | one call per world |
+| river trace, 7 rivers | 1.4 ms | — | |
+| chunk plan, 13×13 ring | 0.03 ms | — | |
+| LOD classify, 30k instances | 0.5 ms | — | |
+
+These are CPU numbers only — not a phone benchmark and not a viewport FPS claim.
+The JS fallback still ships and is used whenever the core is unavailable.
+
+Still JS: ocean (the Tessendorf bundle and its FFT textures), worker message
+passing, chunk meshing/instancing, and the plant-placement solver inside
+`createChunkJob`.

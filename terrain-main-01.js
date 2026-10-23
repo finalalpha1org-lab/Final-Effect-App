@@ -3,12 +3,13 @@
    imports and the JS fallback always stay authoritative. */
 (function(root){
  const core={ready:false,error:null,backend:'loading',commands:0,span:0};
- let ex=null,rect=0,palPtr=0,paintPtr=0,wasmBytes=null;
+ let ex=null,rect=0,palPtr=0,paintPtr=0,owMixPtr=0,owBioPtr=0,lodPtr=0,lodBytes=0,wasmBytes=null;
+ const owState={key:''};
  function bind(instance){
   const x=instance.exports;
-  for(const name of ['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal','fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch'])if(typeof x[name]!=='function')throw Error('Terrain C++ export missing: '+name);
+  for(const name of ['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal','fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr'])if(typeof x[name]!=='function')throw Error('Terrain C++ export missing: '+name);
   ex=x;ex.__wasm_call_ctors?.();
-  rect=ex.fe_malloc(16);palPtr=ex.fe_malloc(24*4);paintPtr=ex.fe_malloc(48);
+  rect=ex.fe_malloc(16);palPtr=ex.fe_malloc(24*4);paintPtr=ex.fe_malloc(48);owMixPtr=ex.fe_malloc(16);owBioPtr=ex.fe_malloc(16);owState.key='';
   core.ready=true;core.backend='C++ WASM';core.span=0;
  }
  core.load=async function(){
@@ -133,6 +134,79 @@
   ex.fe_terrain_compute_normals();
   state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_get_normal_ptr(),state.output.length));
   return true;
+ };
+ /* --- Open World kernels: chunk sampling, scheduling plan and hydrology --- */
+ core.owParams=function(config){
+  if(!core.ready||!config)return false;
+  const mix=config.biomeMix||{hills:1,alpine:1,desert:1,volc:1};
+  const seed=Number(config.seed)||1,mountain=Number(config.mountainHeight)||0,water=Number(config.waterCoverage)||0;
+  const half=Number(config.worldHalf)||6000,sea=Number(config.seaLevel||config.waterLevel)||0,blend=Number(config.blend)||0;
+  const m=[Number(mix.hills??1)||1,Number(mix.alpine??1)||1,Number(mix.desert??1)||1,Number(mix.volc??1)||1];
+  const key=[seed,mountain,water,half,sea,blend,...m].join('|');
+  if(key===owState.key)return true;
+  new Float32Array(ex.memory.buffer,owMixPtr,4).set(m);
+  if(ex.fe_ow_set_params(seed,mountain,water,half,sea,blend,owMixPtr)!==0){core.error='Open World parameter upload failed';return false}
+  owState.key=key;return true;
+ };
+ core.owHeightAt=function(config,x,z){
+  if(!core.owParams(config))return null;
+  const v=ex.fe_ow_height_at(x,z);
+  return Number.isFinite(v)?v:null;
+ };
+ core.owBiomeWeights=function(config,x,z,h){
+  if(!core.owParams(config))return null;
+  if(ex.fe_ow_biome_weights_at(x,z,h,owBioPtr)!==0)return null;
+  return new Float32Array(ex.memory.buffer,owBioPtr,4);
+ };
+ core.owHeightGrid=function(state){
+  if(!core.owParams(state.config))return null;
+  const count=ex.fe_ow_height_grid(state.segments,state.originX,state.originZ,state.chunkSize);
+  if(count<0){core.error='Open World height grid returned '+count;return null}
+  return new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_ow_height_ptr(),count));
+ };
+ core.owSurfaceGrid=function(state){
+  if(!core.ready)return null;
+  const count=ex.fe_ow_surface_grid(state.segments,state.originX,state.originZ,state.chunkSize);
+  if(count<0){core.error='Open World surface grid returned '+count;return null}
+  return new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_ow_surface_ptr(),count));
+ };
+ core.owPlan=function(state){
+  if(!core.ready)return null;
+  const count=ex.fe_ow_plan_chunks(state.cx,state.cz,state.radius,state.chunkSize,state.worldHalf);
+  if(count<0){core.error='Open World chunk plan returned '+count;return null}
+  const cells=new Int32Array(new Int32Array(ex.memory.buffer,ex.fe_ow_plan_cells_ptr(),count*3));
+  const dist=new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_ow_plan_distance_ptr(),count));
+  return {count,cells,dist};
+ };
+ core.owHydroSet=function(state){
+  if(!core.ready)return 0;
+  const cells=state.n*state.n;
+  if(cells>state.heights.length)return 0;
+  new Float32Array(ex.memory.buffer,ex.fe_ow_hydro_input_ptr(),cells).set(state.heights.subarray(0,cells));
+  const result=ex.fe_ow_hydro_set_grid(state.n,state.span,state.sea);
+  if(result<0){core.error='Open World hydrology grid returned '+result;return 0}
+  return result;
+ };
+ core.owHydroTrace=function(state){
+  if(!core.ready)return null;
+  const count=ex.fe_ow_hydro_trace(state.rivers,state.minLength,state.spacing,state.seed>>>0);
+  if(count<0){core.error='Open World river trace returned '+count;return null}
+  const meta=new Int32Array(new Int32Array(ex.memory.buffer,ex.fe_ow_river_meta_ptr(),count*6));
+  let total=0;
+  for(let i=0;i<count;i++)total=Math.max(total,meta[i*6+2]+meta[i*6+3]);
+  const points=new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_ow_river_points_ptr(),total*2));
+  return {count,meta,points,total};
+ };
+ core.lodClassify=function(state){
+  if(!core.ready||!state||!state.xyz)return null;
+  const count=Math.min(state.xyz.length/3|0,state.count|0);
+  if(count<=0)return new Int8Array(0);
+  const bytes=count*12;
+  if(bytes>lodBytes){lodPtr=ex.fe_malloc(bytes);lodBytes=bytes}
+  new Float32Array(ex.memory.buffer,lodPtr,count*3).set(state.xyz.subarray(0,count*3));
+  const got=ex.fe_lod_classify(count,lodPtr,state.camX,state.camY,state.camZ,state.full,state.ground?1:0);
+  if(got<0){core.error='LOD classification returned '+got;return null}
+  return new Int8Array(new Int8Array(ex.memory.buffer,ex.fe_lod_out_ptr(),count));
  };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;

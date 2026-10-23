@@ -599,6 +599,37 @@ FE_EXPORT int32_t  fe_terrain_scatter_batch(uint32_t count, float spread, uint32
 FE_EXPORT float    fe_terrain_sample_height(float world_x, float world_z);
 FE_EXPORT void     fe_terrain_sample_normal(float world_x, float world_z, float alignment, float* out_n3);
 
+/* --- Open World streamed generation, scheduling and hydrology (C++ kernels) --- */
+FE_EXPORT float*  fe_ow_height_ptr(void);
+FE_EXPORT float*  fe_ow_surface_ptr(void);
+FE_EXPORT int32_t* fe_ow_plan_cells_ptr(void);
+FE_EXPORT float*  fe_ow_plan_distance_ptr(void);
+FE_EXPORT int32_t* fe_ow_river_meta_ptr(void);
+FE_EXPORT float*  fe_ow_river_points_ptr(void);
+FE_EXPORT float*  fe_ow_hydro_input_ptr(void);
+FE_EXPORT float*  fe_ow_hydro_field_ptr(void);
+
+FE_EXPORT int32_t fe_ow_set_params(float seed, float mountain_height, float water_coverage,
+                                   float world_half, float sea_level, float blend,
+                                   const float* biome_mix4);
+FE_EXPORT float   fe_ow_height_at(float world_x, float world_z);
+FE_EXPORT int32_t fe_ow_biome_weights_at(float world_x, float world_z, float height, float* out4);
+/* Fills the resident (segments+1)^2 height grid for one streamed chunk. */
+FE_EXPORT int32_t fe_ow_height_grid(uint32_t segments, float origin_x, float origin_z, float chunk_size);
+/* Fills 12 blended surface weights per vertex from the resident height grid. */
+FE_EXPORT int32_t fe_ow_surface_grid(uint32_t segments, float origin_x, float origin_z, float chunk_size);
+/* Nearest-first chunk ring for the stream scheduler: cx, cz, ring distance^2. */
+FE_EXPORT int32_t fe_ow_plan_chunks(int32_t center_cx, int32_t center_cz, uint32_t radius,
+                                    float chunk_size, float world_half);
+/* Bulk foliage terrain-LOD classification: 0 = full, 1 = low tier, -1 = culled. */
+FE_EXPORT int8_t* fe_lod_out_ptr(void);
+FE_EXPORT int32_t fe_lod_classify(uint32_t count, const float* xyz, float cam_x, float cam_y,
+                                  float cam_z, float full_distance, uint32_t ground_cover);
+/* Copies the JS height grid, smooths it and builds a priority-flood drainage graph. */
+FE_EXPORT int32_t fe_ow_hydro_set_grid(uint32_t n, float span, float sea_level);
+/* Traces downhill river polylines; returns the river count (-1 on bad input). */
+FE_EXPORT int32_t fe_ow_hydro_trace(uint32_t max_rivers, float min_length, float spacing, uint32_t seed);
+
 /* Unreal Engine 5 / Gaea Continuous Stroke Terrain Sculpt & Surface Brush */
 FE_EXPORT int32_t  fe_terrain_brush_stroke(
   uint32_t tool_id,

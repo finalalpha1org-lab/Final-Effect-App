@@ -263,6 +263,26 @@ function* generate(){ // generator: yields progress 0..1
   const n=S.gn=P.size>=16384?320:P.size>=8192?288:P.size>=4096?224:160,cs=S.cs=P.size/(n-1),sea=P.sea;S.gs=new Float32Array(n*n);
   for(let j=0;j<n;j++){for(let i=0;i<n;i++)S.gs[j*n+i]=baseH(i*cs-P.half,j*cs-P.half);if(j%6==5)yield .3*j/n}
   for(let p=0;p<2;p++){const s=S.gs.slice();for(let j=1;j<n-1;j++)for(let i=1;i<n-1;i++){let a=0;for(let q=-1;q<=1;q++)for(let w=-1;w<=1;w++)a+=s[(j+q)*n+i+w];S.gs[j*n+i]=a/9}yield .32+.02*p}
+  /* Native hydrology: priority-flood drainage and downhill river tracing run in
+     the C++ core; the JS solver below stays as the fallback. */
+  let traces=null;
+  const hydroCpp=root.FELandscapeCore&&root.FELandscapeCore.ready&&typeof root.FELandscapeCore.owHydroSet==='function'?root.FELandscapeCore:null;
+  if(hydroCpp){
+    try{
+      const grid=hydroCpp.owHydroSet({n,span:P.size,sea,heights:S.gs});
+      const res=grid?hydroCpp.owHydroTrace({rivers:P.rivers,minLength:520,spacing:max(420,P.size/(P.rivers+2)*.62),seed:((P.seed*31+7)>>>0)||1}):null;
+      if(res&&res.count>0){
+        traces=[];
+        for(let i=0;i<res.count;i++){
+          const m=i*6,first=res.meta[m+2],len=res.meta[m+3],pts=new Array(len);
+          for(let q=0;q<len;q++)pts[q]=[res.points[(first+q)*2],res.points[(first+q)*2+1]];
+          const code=res.meta[m+4];
+          traces.push({sx:res.meta[m]/100,sz:res.meta[m+1]/100,pts,end:code===2?'join':code===1?'edge':'sea',join:res.meta[m+5]>=0?res.meta[m+5]:null,id:i});
+        }
+      }
+    }catch(error){traces=null}
+  }
+  if(!traces){
   /* priority-flood: every cell gets a drainage parent that leads to the sea or the world edge */
   const N2=n*n,F=Float32Array.from(S.gs),par=new Int32Array(N2).fill(-1),closed=new Uint8Array(N2),heap=new Int32Array(N2+8);let hs=0;
   const push=i=>{let c=hs++;while(c>0){const p=(c-1)>>1;if(F[heap[p]]<=F[i])break;heap[c]=heap[p];c=p}heap[c]=i};
@@ -276,7 +296,7 @@ function* generate(){ // generator: yields progress 0..1
   /* river sources: high land, well spread, long enough drainage */
   const cand=[];for(let i=0;i<1400;i++){const x=(rn()-.5)*P.size*.84,z=(rn()-.5)*P.size*.84,h=gsAt(x,z);if(h>sea+40)cand.push({x,z,h})}
   cand.sort((a,b)=>b.h-a.h);
-  const used=new Int16Array(N2).fill(-1),sp=max(420,P.size/(P.rivers+2)*.62),traces=[];let id=0;
+  const used=new Int16Array(N2).fill(-1),sp=max(420,P.size/(P.rivers+2)*.62);traces=[];let id=0;
   const cellOf=(x,z)=>{const i=clamp(Math.round((x+P.half)/cs),0,n-1),j=clamp(Math.round((z+P.half)/cs),0,n-1);return j*n+i};
   for(const s of cand){if(traces.length>=P.rivers)break;if(traces.some(t=>hypot(t.sx-s.x,t.sz-s.z)<sp))continue;
     let c=cellOf(s.x,s.z);if(used[c]>=0)continue;const pts=[],cells=[];let end='sea',join=null;
@@ -287,6 +307,8 @@ function* generate(){ // generator: yields progress 0..1
       c=p}
     let len=0;for(let i=1;i<pts.length;i++)len+=hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);if(len<520||pts.length<6)continue;
     for(const k of cells)used[k]=id;traces.push({sx:s.x,sz:s.z,pts,end,join,id:id++});yield .5+.05*traces.length/P.rivers}
+  }
+  yield .48;
   /* resample (smooth + Catmull–Rom) and give every river a width and a bed */
   const rv=[];
   for(const t of traces){let P0=t.pts.map(p=>[p[0],p[1]]);
