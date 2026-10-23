@@ -1,6 +1,6 @@
-export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf}={}){
+export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf]];
+  const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
   for(const [name,source] of helpers){
     if(typeof source!=='string'||!source)throw new Error(`Missing standalone helper: ${name}`);
