@@ -6,7 +6,11 @@ test('viewport governor preserves stable native pixel density',()=>{
  const start=bridge.indexOf('tickPerformanceGovernor() {'),end=bridge.indexOf('const perfStats',start),code=bridge.slice(start,end);
  assert.ok(code.includes('eng.r.setPixelRatio(sharpDpr)'));
  assert.ok(!code.includes('eng.r.setPixelRatio(recDpr)'));
- assert.ok(code.includes('Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)'));
+ // The cap is 2x by default and only drops to a still-sharp 1.5x when the
+ // user explicitly enables High Refresh Mode. Never the governor's recDpr.
+ assert.ok(code.includes('const sharpCap = window.__feHighRefresh ? 1.5 : 2;'));
+ assert.ok(code.includes('Math.min(Math.max(window.devicePixelRatio || 1, 1), sharpCap)'));
+ assert.ok(/sharpCap[\s\S]{0,40}1\.5[\s\S]{0,40}2/.test(code), 'high refresh must stay above 1x');
 });
 test('render and diagnostics use bounded scrollable bottom sheets without the home install CTA',()=>{
  assert.ok(html.includes('.render-modal-backdrop{align-items:flex-end'));
