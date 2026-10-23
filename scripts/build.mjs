@@ -41,6 +41,7 @@ if (hasPublicDir) {
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
+    "landscape-realism.js",
     "fe_core_engine.wasm",
     "manifest.webmanifest",
     "sw.js",
@@ -72,6 +73,7 @@ const minifiableJs = [
   "volume-library.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
+  "landscape-realism.js",
 ];
 
 async function minifyInlineScripts(html, label) {

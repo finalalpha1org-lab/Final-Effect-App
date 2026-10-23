@@ -24,11 +24,12 @@ is the contract below.
 | `animation` | `fe_anim_insert_keyframe`, `fe_anim_evaluate_channel`, `fe_anim_bake_samples` |
 | `ocean` | `fe_ocean_configure`, `fe_ocean_update`, `fe_ocean_resolution` |
 | `terrain` | `fe_terrain_erode_brush`, `fe_terrain_erode_hydraulic` |
+| `surface` | `fe_surface_pbr`, `fe_surface_detail`, `fe_water_optical` |
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `853601` bytes, ABI v1, **185 exports**; every group above
+The shipped build is `929661` bytes, ABI v1, **193 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 ## When a row is red
@@ -48,12 +49,13 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (853601 bytes, ABI v1, 185 exports)`.
+that passes `Validated fe_core_engine.wasm (929661 bytes, ABI v1, 193 exports)`.
 
 ## Verification
 
 ```bash
 node --test tests/cpp-live-diagnostics.test.mjs   # 6 tests
-npm test                                          # 275 tests
+node --test tests/landscape-realism.test.mjs      # 13 tests
+npm test                                          # 297 tests
 npm run build                                     # revalidates + copies the artifact
 ```

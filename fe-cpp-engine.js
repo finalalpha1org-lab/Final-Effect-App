@@ -43,6 +43,7 @@
     animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
     ocean: ['fe_ocean_configure', 'fe_ocean_update', 'fe_ocean_resolution'],
     terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic'],
+    surface: ['fe_surface_pbr', 'fe_surface_detail', 'fe_water_optical'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
     modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
     simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']

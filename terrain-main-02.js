@@ -283,4 +283,8 @@ LZ('deadtree',1200,()=>SX(deadTree,{map:BT.char,nt:1,std:1,nm:BN.char,ns:.65,rm:
 LZ('ashbush',3000,()=>TV(ashBushTree,bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
 LZ('treefern',1500,()=>TV(treeFernTree,bk('palm',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.03}));
 LZ('fern',3000,()=>TV(fernTree,bk('palm',.02),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.02,wf:0}));
+/* The build routines run inside this try-block, so their const textures
+   are block scoped. Publish them so the realism module can re-synthesise
+   bark / leaf micro-structure into the very same canvases the meshes use. */
+window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL};
 }catch(e){MODELS_ERR=e;showErr('Models fallback: '+e.message);fallbackModels()}

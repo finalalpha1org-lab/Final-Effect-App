@@ -11,7 +11,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_openworld.cpp',
   'cpp/src/fe_ocean.cpp',
   'cpp/src/fe_volumetrics.cpp',
-  'cpp/src/fe_modifiers.cpp'
+  'cpp/src/fe_modifiers.cpp',
+  'cpp/src/fe_surface.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -96,7 +97,10 @@ const REQUIRED_EXPORTS = [
   'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap',
   'fe_anim_edit_key','fe_anim_delete_keys_in_range','fe_anim_move_keys_in_range',
   'fe_anim_duplicate_keys_in_range','fe_anim_catmull_rom',
-  'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress'
+  'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress',
+  /* Landscape surface realism: measured PBR + tileable micro-structure */
+  'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
+  'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
