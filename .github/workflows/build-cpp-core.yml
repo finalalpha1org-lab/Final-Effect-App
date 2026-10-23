@@ -29,9 +29,9 @@ jobs:
       - name: Compile freestanding WebAssembly artifact via Clang/Zig
         run: |
           pip install ziglang
-          python3 -m ziglang c++ -std=c++20 -O3 -target wasm32-freestanding -nostdlib \
+          python3 -m ziglang c++ -std=c++20 -O3 -fno-builtin -target wasm32-freestanding -nostdlib \
             -fno-exceptions -fno-rtti \
-            -Wl,--no-entry -Wl,--export-dynamic -Wl,--export-memory -Wl,--export=__heap_base \
+            -Wl,--no-entry -Wl,--export-dynamic -Wl,--export-memory -Wl,--export=__heap_base -Wl,--export=__wasm_call_ctors \
             cpp/src/fe_wasm_exports.cpp \
             cpp/src/fe_animation.cpp \
             cpp/src/fe_renderer.cpp \
