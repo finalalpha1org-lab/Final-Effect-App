@@ -2395,6 +2395,13 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         </div>
         <input type="file" id="ws-hdr-file" accept=".hdr,.exr" style="display:none">
       </div>
+      <div class="settings-section">
+        <div class="settings-section-title"><span>📱</span> App</div>
+        <div class="setting-item">
+          <div class="setting-label"><span>Loaded build</span><small id="ws-build-stamp">Checking…</small></div>
+          <button class="settings-action-btn" type="button" onclick="refreshAppCache()" title="Clear cached files and reload the latest build">⟳ Update</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -3488,12 +3495,31 @@ function syncWorkspaceSettingsUI() {
   }
   renderWorkspacePerf(window.FEWorkspacePerf);
 }
+function renderAppBuildStamp() {
+  const el = document.getElementById('ws-build-stamp');
+  if (!el) return;
+  let stamp = '';
+  try { const d = new Date(document.lastModified); if (!Number.isNaN(d.getTime())) stamp = 'Loaded ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) {}
+  el.textContent = stamp || 'Loaded build unknown — tap Update if the interface looks old';
+}
+async function refreshAppCache() {
+  const btn = document.querySelector('#workspace-settings-sheet .settings-action-btn[onclick="refreshAppCache()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Updating…'; }
+  try {
+    if ('caches' in window) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+    if (navigator.serviceWorker) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+  } catch (_) {}
+  try { location.reload(); } catch (_) {}
+}
+window.refreshAppCache = refreshAppCache;
 function openWorkspaceSettings() {
   const sheet = document.getElementById('workspace-settings-sheet');
   if (!sheet) return;
-  try { syncGlobalSettingsUI(); } catch (_) {}
-  syncWorkspaceSettingsUI();
+  /* Opening the sheet must never depend on any other panel being healthy. */
   sheet.hidden = false;
+  try { syncGlobalSettingsUI(); } catch (_) {}
+  try { syncWorkspaceSettingsUI(); } catch (_) {}
+  try { renderAppBuildStamp(); } catch (_) {}
 }
 function closeWorkspaceSettings() {
   const sheet = document.getElementById('workspace-settings-sheet');

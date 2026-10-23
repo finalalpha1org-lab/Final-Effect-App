@@ -1851,6 +1851,29 @@
       detail: `${((litPx / (rw * rh)) * 100).toFixed(1)}% lit pixels · Golden Sunset HDRI`
     });
 
+    /* 7. Landscape bridge + ocean kernel: reports every degraded subsystem
+       instead of only the engine-side checks. */
+    t0 = performance.now();
+    try {
+      const land = typeof window !== 'undefined' ? window.FELandscapeCore : null;
+      const present = !!land;
+      const bound = !!(land && land.ready);
+      let oceanOk = false;
+      if (typeof exp.fe_ocean_configure === 'function' && typeof exp.fe_ocean_update === 'function') {
+        oceanOk = exp.fe_ocean_configure(32, 256, 1024, 4096, 12, 30, 7) === 0 &&
+          exp.fe_ocean_update(1.5, 1, 1, 3, 2) > 0 && exp.fe_ocean_resolution() === 32;
+      }
+      const degraded = bound && land.missing ? land.missing.length : 0;
+      results.push({
+        name: 'Landscape & Ocean Kernels',
+        ok: oceanOk && (present ? bound && degraded === 0 : true),
+        detail: (oceanOk ? `Wave field 32² · ${(performance.now() - t0).toFixed(2)} ms · ` : 'Ocean kernel unavailable · ') +
+          (present ? (bound ? (degraded ? `${degraded} kernels on JS fallback` : 'Every terrain, Open World and ocean kernel bound') : 'Terrain bridge did not bind — JS fallback active') : 'Terrain bridge not part of this page')
+      });
+    } catch (error) {
+      results.push({ name: 'Landscape & Ocean Kernels', ok: false, detail: String(error.message || error) });
+    }
+
     const allOk = results.every(r => r.ok);
     return { ok: allOk, results, totalMs: +(performance.now() - tTotal0).toFixed(1) };
   };

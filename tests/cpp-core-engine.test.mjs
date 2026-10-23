@@ -172,7 +172,7 @@ test('UI shell wires C++ Animation Studio, Render Engine, Sculpt Mode, GPU Tier,
   assert.ok(existsSync(appPath('../CMakeLists.txt')) || existsSync('CMakeLists.txt'));
 });
 
-test('standalone 1-file portable build embeds C++20 WASM and passes live 6/6 self-test offline without fetch', async () => {
+test('standalone 1-file portable build embeds C++20 WASM and passes live 7/7 self-test offline without fetch', async () => {
   const html = readFileSync(appPath('index.html'), 'utf8');
   const bridge = readFileSync(appPath('fe-cpp-engine.js'), 'utf8');
   const b64 = wasmBytes.toString('base64');
@@ -221,7 +221,7 @@ test('standalone 1-file portable build embeds C++20 WASM and passes live 6/6 sel
     getContext: () => ({ putImageData(img) { putPixels = img; } })
   };
   const report = await ctx.FECppEngine.runLiveSelfTest(fakeCanvas);
-  assert.equal(report.ok, true, 'All 6 on-device C++20 self-test checks must pass offline');
-  assert.equal(report.results.length, 6);
+  assert.equal(report.ok, true, 'All 7 on-device self-test checks must pass offline');
+  assert.equal(report.results.length, 7);
   assert.ok(putPixels && putPixels.width === 240 && putPixels.height === 135);
 });

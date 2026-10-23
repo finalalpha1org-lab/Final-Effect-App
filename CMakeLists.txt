@@ -13,6 +13,7 @@ set(FE_CORE_SOURCES
   cpp/src/fe_simulation.cpp
   cpp/src/fe_landscape.cpp
   cpp/src/fe_openworld.cpp
+  cpp/src/fe_ocean.cpp
 )
 
 if(EMSCRIPTEN)

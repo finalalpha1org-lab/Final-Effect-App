@@ -664,6 +664,8 @@ FE_EXPORT int32_t  fe_ocean_update(
   float max_height_encode,
   float max_displace_encode
 );
+FE_EXPORT float*   fe_ocean_field_ptr(void);
+FE_EXPORT uint32_t fe_ocean_resolution(void);
 FE_EXPORT uint8_t* fe_ocean_get_cascade_rgba8_ptr(uint32_t cascade_idx);
 FE_EXPORT float*   fe_ocean_get_cascade_float4_ptr(uint32_t cascade_idx);
 FE_EXPORT int32_t  fe_ocean_ifft2d_f32(float* real, float* imag, uint32_t n);

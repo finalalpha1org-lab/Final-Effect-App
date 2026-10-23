@@ -62,3 +62,13 @@ test('live FPS updates only while the sheet is open and stops after closing',()=
  assert.equal(els.get('ws-perf-fps').textContent,'29','a closed sheet must not keep repainting');
  assert.equal(window.FEWorkspacePerf.fps,60,'latest metrics stay available for the next open');
 });
+
+test('the sheet offers a hard refresh so a stale installed build can update',()=>{
+ assert.ok(html.includes('onclick="refreshAppCache()"'),'the sheet needs an update action');
+ assert.ok(html.includes('window.refreshAppCache = refreshAppCache'));
+ assert.ok(html.includes('id="ws-build-stamp"'),'the loaded build must be visible');
+ assert.ok(/caches\.keys\(\)/.test(html)&&/serviceWorker\.getRegistrations\(\)/.test(html),'update clears caches and registrations');
+ const sw=readFileSync('sw.js','utf8');
+ assert.ok(sw.includes("'final-effect-cpp-v2'"),'bump the cache name whenever the shipped shell changes');
+ for(const file of ['fe_core_engine.wasm','terrain-main-01.js','terrain-main-09.js','open-world-generator.js','open-world.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
+});

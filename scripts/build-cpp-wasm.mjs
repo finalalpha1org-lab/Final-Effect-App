@@ -8,7 +8,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_sculpt_touch.cpp',
   'cpp/src/fe_simulation.cpp',
   'cpp/src/fe_landscape.cpp',
-  'cpp/src/fe_openworld.cpp'
+  'cpp/src/fe_openworld.cpp',
+  'cpp/src/fe_ocean.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -70,7 +71,10 @@ const REQUIRED_EXPORTS = [
   'fe_ow_hydro_set_grid',
   'fe_ow_hydro_trace',
   'fe_lod_classify',
-  'fe_lod_out_ptr'
+  'fe_lod_out_ptr',
+  'fe_ocean_field_ptr',
+  'fe_ocean_configure',
+  'fe_ocean_update'
 ];
 
 function findZigCompiler() {

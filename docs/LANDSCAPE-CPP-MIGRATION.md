@@ -119,9 +119,8 @@ difference slope, i.e. ≈8 ms versus ≈32 ms for 200k candidates. That is only
 sampling stage - instancing, tinting and occupancy still dominate total scatter
 time, so this is a real but modest win, not a rewritten scatter pipeline.
 
-Still JS: ocean configuration, Open World hydrology/river tracing, worker
-scheduling and terrain LOD. Open World generation does not run through the
-single-grid `fe_terrain_*` kernels at all.
+Open World generation does not run through the single-grid `fe_terrain_*`
+kernels at all: it has its own sampler and chunk kernels (below).
 
 ## Open World generation, scheduling and hydrology
 
@@ -160,6 +159,46 @@ JS baseline is `open-world-generator.js` without the C++ path):
 These are CPU numbers only — not a phone benchmark and not a viewport FPS claim.
 The JS fallback still ships and is used whenever the core is unavailable.
 
-Still JS: ocean (the Tessendorf bundle and its FFT textures), worker message
-passing, chunk meshing/instancing, and the plant-placement solver inside
-`createChunkJob`.
+## Tessendorf ocean in C++
+
+`cpp/src/fe_ocean.cpp` owns the three-cascade spectrum and both inverse FFTs.
+`fe_ocean_configure(resolution, len0, len1, len2, wind_speed, wind_dir_deg, seed)`
+rebuilds the seeded `h0(k)` tables, and
+`fe_ocean_update(time, amplitude, choppiness, max_height_encode, max_displace_encode)`
+advances the gravity-dispersion phase, runs the 2D IFFT for each cascade and
+normalises the surface. Kernel outputs:
+
+- `fe_ocean_get_cascade_float4_ptr(i)` — raw `[height, dx, dz, 1]` floats.
+- `fe_ocean_get_cascade_rgba8_ptr(i)` — the packed RGBA8 bytes the water shader
+  samples, encoded exactly like the JS shader packing.
+- `fe_ocean_ifft2d_f32(real, imag, n)` — the shared inverse transform.
+
+The bridge (`FELandscapeCore.oceanConfigure / oceanUpdate / oceanCascade /
+oceanCascadeRgba`) drives `updateTessendorfOcean`, which keeps its per-quality
+update interval and its minified JS bundle as the fallback. Parity is pinned by
+`tests/ocean-cpp.test.mjs`: all three cascades are compared with
+`tessendorf-ocean.js` for three configurations, and the packed bytes are
+compared with the JS encoder.
+
+| ocean update, 3 cascades | C++ | JS fallback | result |
+| --- | --- | --- | --- |
+| 64² | 2.7 ms | 57.7 ms | ≈21× faster |
+| 128² | 12.5 ms | 277.6 ms | ≈22× faster |
+| 256² | 58.0 ms | 1245.4 ms | ≈21× faster |
+
+Max deviation from the reference is 4e-7 on amplitudes around 1.5 (float32
+storage rounding) and the packed RGBA8 bytes match exactly. CPU numbers only.
+
+## Degraded / stale artifacts
+
+The landscape bridge treats only the nine original terrain kernels as mandatory.
+Everything newer (strata, scatter, Open World, terrain LOD, ocean) is optional,
+is listed in `FELandscapeCore.missing`, and falls back per subsystem instead of
+failing the whole bridge. The on-device benchmark now includes a "Landscape &
+Ocean Kernels" row that runs a 32² ocean update inside the engine and names any
+kernel that is missing, so an older cached wasm shows exactly which subsystem is
+degraded rather than reporting a generic failure.
+
+Still JS: worker message passing, chunk mesh/instance buffer construction and the
+GPU uploads themselves (three.js buffers and WebGL calls cannot move into wasm),
+and the plant-placement solver inside `createChunkJob`.
