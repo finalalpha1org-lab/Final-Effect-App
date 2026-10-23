@@ -13,8 +13,7 @@ root.FEForestImpostors=function(THREE){
   let ex;
   self.onmessage=async({data:d})=>{try{
    if(d.type==='init'){
-    const response=await fetch(d.url);if(!response.ok)throw Error('Forest WASM HTTP '+response.status);
-    const result=await WebAssembly.instantiate(await response.arrayBuffer(),{});ex=result.instance.exports;ex.__wasm_call_ctors?.();
+    const result=await WebAssembly.instantiate(d.buffer,{});ex=result.instance.exports;ex.__wasm_call_ctors?.();
     if(!ex.fe_forest_classify)throw Error('Forest C++ exports unavailable');self.postMessage({type:'ready'});return;
    }
    if(d.type==='classify'&&ex){
@@ -28,6 +27,21 @@ root.FEForestImpostors=function(THREE){
    }
   }catch(error){self.postMessage({type:'error',message:String(error)})}};
  };
+ // Single WASM source of truth: the page's embedded bytes or FELandscapeCore.
+ // The add-on never performs network requests itself.
+ function forestWasmBytes(){
+  try{
+   let bytes=root.__FE_FOREST_WASM_BYTES__;
+   if(!bytes&&root.FELandscapeCore?.bytes)bytes=root.FELandscapeCore.bytes();
+   if(!bytes&&typeof root.__FE_CPP_WASM_BASE64__==='string'&&root.__FE_CPP_WASM_BASE64__.length>64&&typeof root.atob==='function'){
+    const binary=root.atob(root.__FE_CPP_WASM_BASE64__),fresh=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++)fresh[i]=binary.charCodeAt(i);bytes=fresh;
+   }
+   if(!bytes)return null;
+   const copy=new Uint8Array(bytes.byteLength||bytes.length);copy.set(bytes);
+   root.__FE_FOREST_WASM_BYTES__=bytes;return copy;
+  }catch(error){return null}
+ }
  function startWorker(){
   if(worker||typeof Worker==='undefined')return;
   let url;
@@ -38,7 +52,9 @@ root.FEForestImpostors=function(THREE){
     if(d.type==='result'){inFlight=false;if(d.epoch!==epoch)return;const next=new WeakMap();for(let i=0;i<lastItems.length;i++)next.set(lastItems[i],d.output[i]);selection=next;stats.selectionUpdated=true}
    };
    worker.onerror=()=>{worker.terminate();workerReady=false;inFlight=false;stats.cppWorker=false};
-   worker.postMessage({type:'init',url:new URL('./fe_core_engine.wasm',document.baseURI).href});
+   const bytes=forestWasmBytes();
+   if(!bytes){worker.terminate();worker=null;workerReady=false;return}
+   worker.postMessage({type:'init',buffer:bytes.buffer},[bytes.buffer]);
   }catch(error){workerReady=false}finally{if(url)URL.revokeObjectURL(url)}
  }
  function classify(items,cp,near,far){

@@ -52,7 +52,9 @@ const REQUIRED_EXPORTS = [
   'fe_terrain_set_palette',
   'fe_terrain_set_paint_colors',
   'fe_terrain_generate_layered',
-  'fe_terrain_compute_colors'
+  'fe_terrain_compute_colors',
+  'fe_terrain_erode_hydraulic',
+  'fe_terrain_erode_thermal'
 ];
 
 function findZigCompiler() {

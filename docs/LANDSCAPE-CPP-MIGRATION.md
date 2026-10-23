@@ -81,3 +81,22 @@ Sandbox CPU measurements (Node 22 + WASM, not a phone or GPU benchmark):
 Shading timings include the JS↔WASM dirty-region copies and the colour download.
 Brush frames copy only the dirty rectangle, so they are cheaper than a full-map
 shade. These numbers say nothing about viewport FPS.
+
+## Whole-map erosion and foliage LOD
+
+`fe_terrain_erode_hydraulic` runs a seeded droplet model over the whole grid and
+`fe_terrain_erode_thermal` performs mass-conserving talus slumping. Both are wired
+to Terrain-tab buttons through `FELandscapeCore.erode`; the result is uploaded
+to the same mesh and is undoable. Hydraulic droplets leave the map carrying
+sediment, so the height sum is not conserved (measured ≈2%/100 droplets on a
+41² test grid); do not describe it as a mass-balanced solver. Thermal transfer
+is exactly conservative inside the border and deterministic.
+
+Default-terrain foliage now has a distance LOD tier: ground cover/trees route to
+`lowMeshes` with reduced grass geometry and map-free materials, with a stable
+per-instance threshold and hysteresis band. A Quality-tab slider controls the
+750 m default full-detail radius and persists it. Tier changes are deferred for
+240 ms after camera movement, and low-shadow species remain governed by
+`SHADOW_LOW_DETAIL`. Low batches mirror instance capacity, so memory roughly
+doubles for LOD species - important on phones. This is not mesh decimation for
+trees; their low tier reuses the same geometry with a cheaper material.

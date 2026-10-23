@@ -178,4 +178,71 @@ int32_t fe_terrain_compute_colors(uint32_t x0,uint32_t x1,uint32_t z0,uint32_t z
  return int32_t((x1-x0+1)*(z1-z0+1));
 }
 
+int32_t fe_terrain_erode_hydraulic(uint32_t droplet_count,uint32_t max_lifetime,float inertia,float sediment_capacity,float erode_speed,float deposit_speed,float evaporation,float gravity,uint32_t brush_radius_cells,uint32_t seed){
+ if(droplet_count<1||droplet_count>200000||max_lifetime<1||max_lifetime>256)return -1;
+ if(!finite(inertia)||inertia<0||inertia>1||!finite(sediment_capacity)||sediment_capacity<=0||sediment_capacity>10)return -1;
+ if(!finite(erode_speed)||erode_speed<=0||erode_speed>1||!finite(deposit_speed)||deposit_speed<=0||deposit_speed>1)return -1;
+ if(!finite(evaporation)||evaporation<0||evaporation>.1f||!finite(gravity)||gravity<=0||gravity>100)return -1;
+ if(brush_radius_cells<1||brush_radius_cells>64)return -1;
+ uint32_t rng=seed?seed:0x9e3779b9u;
+ auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
+ const float cell=size/N;
+ auto splat=[&](float x,float z,float amount){
+  float u=clampf((x/size+.5f)*N,0,float(N)-.001f),v=clampf((z/size+.5f)*N,0,float(N)-.001f);
+  uint32_t i=uint32_t(u),j=uint32_t(v),k=j*W+i;float a=u-i,b=v-j;
+  H[k]+=amount*(1-a)*(1-b);H[k+1]+=amount*a*(1-b);H[k+W]+=amount*(1-a)*b;H[k+W+1]+=amount*a*b;
+ };
+ for(uint32_t d=0;d<droplet_count;d++){
+  float x=(random()-.5f)*size,z=(random()-.5f)*size,dx=0,dz=0,speed=1,water=1,sediment=0;
+  for(uint32_t life=0;life<max_lifetime;life++){
+   const float h=sample(H,x,z);
+   const float gx=(sample(H,x+cell,z)-sample(H,x-cell,z))/(2*cell);
+   const float gz=(sample(H,x,z+cell)-sample(H,x,z-cell))/(2*cell);
+   dx=dx*inertia-gx*(1-inertia);dz=dz*inertia-gz*(1-inertia);
+   const float length=sqrtf(dx*dx+dz*dz);
+   if(length<.000001f)break;
+   dx/=length;dz/=length;
+   const float nx=x+dx*cell,nz=z+dz*cell;
+   if(nx<=-size*.5f||nx>=size*.5f||nz<=-size*.5f||nz>=size*.5f)break;
+   const float dh=sample(H,nx,nz)-h;
+   const float capacity=maxf(-dh*speed*water*sediment_capacity,.01f);
+   if(sediment>capacity||dh>0){
+    const float amount=dh>0?minf(dh,sediment):(sediment-capacity)*deposit_speed;
+    splat(x,z,amount);sediment-=amount;
+   }else{
+    float amount=minf((capacity-sediment)*erode_speed,-dh);
+    amount=minf(amount,cell*.5f);
+    splat(x,z,-amount);sediment+=amount;
+   }
+   speed=sqrtf(maxf(speed*speed-dh*gravity,0));
+   water*=(1-evaporation);
+   x=nx;z=nz;
+   if(water<.01f)break;
+  }
+ }
+ return int32_t(droplet_count);
+}
+int32_t fe_terrain_erode_thermal(uint32_t iterations,float talus_angle_tan,float slump_rate){
+ if(iterations<1||iterations>512)return -1;
+ if(!finite(talus_angle_tan)||talus_angle_tan<.01f||talus_angle_tan>10)return -1;
+ if(!finite(slump_rate)||slump_rate<=0||slump_rate>1)return -1;
+ const float talus=talus_angle_tan*(size/N);
+ for(uint32_t it=0;it<iterations;it++){
+  for(uint32_t j=1;j<N;j++)for(uint32_t i=1;i<N;i++){
+   const uint32_t k=j*W+i;
+   if(H[k]<=0)continue;
+   uint32_t best=k;float low=H[k];
+   if(H[k-1]<low){low=H[k-1];best=k-1;}
+   if(H[k+1]<low){low=H[k+1];best=k+1;}
+   if(H[k-W]<low){low=H[k-W];best=k-W;}
+   if(H[k+W]<low){low=H[k+W];best=k+W;}
+   const float diff=H[k]-low;
+   if(diff<=talus)continue;
+   const float move=(diff-talus)*slump_rate*.5f;
+   H[k]-=move;H[best]+=move;
+  }
+ }
+ return int32_t(iterations);
+}
+
 }

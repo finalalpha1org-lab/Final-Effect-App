@@ -52,3 +52,35 @@ test('default studio generation and shading route through the C++ kernel with a 
  assert.ok(src.includes('if(!native)for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j)'),'JS colour fallback remains for WASM failure');
  assert.ok(src.includes('const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb))'));
 });
+test('C++ whole-map thermal erosion conserves material and rejects invalid angles',async()=>{
+ const c=await core(),n=48,st=terrainState({n,heights:new Float32Array((n+1)*(n+1)),weightsA:new Float32Array((n+1)*(n+1)*4),weightsB:new Float32Array((n+1)*(n+1)*4),weightsC:new Float32Array((n+1)*(n+1)*4),materials:new Uint8Array((n+1)*(n+1)).fill(255)});
+ st.size=200;c.generate(st);
+ const before=st.heights.reduce((a,b)=>a+b,0),copy=Float32Array.from(st.heights);
+ assert.equal(c.erode({...st,mode:'thermal',iterations:30,talus:Math.tan(.55),slump:.5}),true);
+ assert.ok(st.heights.some((v,i)=>v!==copy[i]),'thermal slumping must move material');
+ assert.ok(st.heights.every(Number.isFinite));
+ const after=st.heights.reduce((a,b)=>a+b,0);
+ assert.ok(Math.abs(after-before)<Math.max(1e-3,Math.abs(before)*1e-6),'talus transfer must conserve mass');
+ const first=Float32Array.from(st.heights),again=Float32Array.from(first);st.heights.set(copy);
+ assert.equal(c.erode({...st,mode:'thermal',iterations:30,talus:Math.tan(.55),slump:.5}),true);
+ assert.deepEqual(st.heights,again,'thermal erosion must be deterministic');
+ assert.equal(c.erode({...st,mode:'thermal',iterations:30,talus:0,slump:.5}),false);
+ assert.equal(c.erode({...st,mode:'thermal',iterations:0,talus:1,slump:.5}),false);
+});
+test('C++ whole-map hydraulic droplets are seeded, bounded and finite',async()=>{
+ const c=await core(),st=terrainState({n:40,size:200});
+ st.heights=new Float32Array(41*41);c.generate(st);
+ const a=Float32Array.from(st.heights),b=Float32Array.from(st.heights);
+ assert.equal(c.erode({...st,mode:'hydraulic',droplets:1500,seed:7}),true);const first=Float32Array.from(st.heights);
+ st.heights.set(b);assert.equal(c.erode({...st,mode:'hydraulic',droplets:1500,seed:7}),true);
+ assert.deepEqual(st.heights,first,'same seed must reproduce the same erosion');
+ assert.ok(st.heights.some((v,i)=>v!==a[i]));assert.ok(st.heights.every(Number.isFinite));
+ const drift=st.heights.reduce((sum,v,i)=>sum+Math.abs(v-a[i]),0)/Math.max(1,a.reduce((s,v)=>s+Math.abs(v),0));
+ assert.ok(drift<.2,'droplet erosion must stay bounded instead of flattening or exploding the map');
+});
+test('studio exposes whole-map erosion controls wired to the C++ bridge',async()=>{
+ const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-07.js','utf8'),bridge=fs.readFileSync('terrain-main-01.js','utf8');
+ assert.ok(src.includes("['hydro','💧 Hydraulic erosion']")&&src.includes("['thermal','⛰ Thermal erosion']"));
+ assert.ok(src.includes('core.erode({mode,n:N,size:S,heights:H'));
+ assert.ok(bridge.includes('core.erode=function(state)')&&bridge.includes('fe_terrain_erode_hydraulic')&&bridge.includes('fe_terrain_erode_thermal'));
+});

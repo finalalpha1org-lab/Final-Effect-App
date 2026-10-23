@@ -49,11 +49,12 @@ test('background worker executes the real unified WASM classifier and clear inva
  class URLMock extends URL{static createObjectURL(){return 'blob:forest'}static revokeObjectURL(){}}
  class WorkerMock{
   constructor(){const self={postMessage:d=>queueMicrotask(()=>{this.onmessage?.({data:d});if(d.type==='ready')readyResolve();if(d.type==='result')resultResolve()})};this.self=self;
-   vm.runInNewContext(code,{self,WebAssembly,Float32Array,Int32Array,Math,Error,fetch:async()=>({ok:true,arrayBuffer:async()=>wasm.buffer.slice(wasm.byteOffset,wasm.byteOffset+wasm.byteLength)})});
+   vm.runInNewContext(code,{self,WebAssembly,Float32Array,Int32Array,Math,Error});
   }
   postMessage(data){queueMicrotask(()=>this.self.onmessage({data}))}terminate(){}
  }
- const context={console,Worker:WorkerMock,Blob:BlobMock,URL:URLMock,document:{baseURI:'https://example.test/Terrain_system_.html'}};
+ const bytes=new Uint8Array(wasm.buffer.slice(wasm.byteOffset,wasm.byteOffset+wasm.byteLength));
+ const context={console,Worker:WorkerMock,Blob:BlobMock,URL:URLMock,document:{baseURI:'https://example.test/Terrain_system_.html'},__FE_FOREST_WASM_BYTES__:bytes};
  vm.runInNewContext(bridge,context);const api=context.FEForestImpostors(THREE),items=[{x:0,z:-200,r:0},{x:0,z:0,r:0}];
  api.classify(items,{x:0,z:0},10,1000);await ready;
  assert.equal(api.stats.cppWorker,true);api.classify(items,{x:0,z:0},10,1000);await result;

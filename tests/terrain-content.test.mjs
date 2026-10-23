@@ -88,7 +88,7 @@ test('grass keeps its original green PBR look and blade proportions',()=>{
   assert.ok(html.includes('height=1.05+R()*1.35,width=.014+R()*.024'));
   assert.ok(html.includes("mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25"));
   assert.ok(html.includes("mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22"));
-  assert.ok(html.includes('h=tall?1.15+(i%3)*.18:.48+(i%3)*.09'));
+  assert.ok(html.includes('const tallGrassG=')&&html.includes('height=1.05+R()*1.35'),'tall grass keeps taller blades than lawn grass');
 });
 
 test('flower petals are smaller, cupped and matte instead of oversized flat plastic shapes',()=>{

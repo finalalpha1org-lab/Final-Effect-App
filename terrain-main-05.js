@@ -113,7 +113,7 @@ function planetApply(){const c=hsv2rgb(PLAN.hue,.55,1);pU.uAtmC.value.set(c[0],c
 const PSAVE={};
 function planetEnter(){if(PLANON)return;if(!PLAN.done){if(!PLAN.gen)genPlanet(planetEnter);return}
 PLANON=true;PSAVE.nav=nav;nav=true;PSAVE.vis=new Map();const hide=o=>{if(o&&!PSAVE.vis.has(o)){PSAVE.vis.set(o,o.visible);o.visible=false}};
-[ter,water,sky,SBM,pitIM,debIM,torGrp,rainMesh,snowMesh,bolt,grid,...clouds].forEach(hide);Object.values(KIND).forEach(k=>k.meshes.forEach(hide));objs.forEach(hide);if(mapRoot)hide(mapRoot);
+[ter,water,sky,SBM,pitIM,debIM,torGrp,rainMesh,snowMesh,bolt,grid,...clouds].forEach(hide);Object.values(KIND).forEach(k=>[...k.meshes,...(k.lowMeshes||[])].forEach(hide));objs.forEach(hide);if(mapRoot)hide(mapRoot);
 PGRP.visible=true;PSPACE.visible=true;planetApply();PGRP.updateMatrixWorld(true);
  PSAVE.cam={p:cam.position.clone(),t:oc.target.clone(),u:cam.up.clone(),q:cam.quaternion.clone(),near:cam.near,far:cam.far,fov:cam.fov,minD:oc.minDistance,maxD:oc.maxDistance,z:oc.enableZoom,pan:oc.enablePan,rs:oc.rotateSpeed};cam.up.set(0,1,0);
 oc.enableZoom=false;oc.enablePan=false;oc.target.set(0,0,0);oc.minDistance=0;oc.maxDistance=1e9;
