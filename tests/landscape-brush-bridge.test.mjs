@@ -122,7 +122,7 @@ test('auto-scatter routes candidates through the C++ batch with a JS fallback',a
  const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-03.js','utf8'),bridge=fs.readFileSync('terrain-main-01.js','utf8');
  assert.ok(bridge.includes('core.scatterBegin=function(state)')&&bridge.includes('core.scatterBatch=function(state)'));
  assert.ok(src.includes('core.scatterBatch({count:batch,spread:S*.96'));
- assert.ok(src.includes('add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96)'),'JS fallback must stay when C++ is unavailable');
+ assert.ok(src.includes('for(let i=done;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96)'),'JS fallback must stay, and resume from the first unfinished candidate');
  assert.ok(src.includes('function add(k,x,z,f=1,yaw=0,force=false,y0,sl0)'));
  assert.ok(src.includes('SCBUF[o+2],SCBUF[o+3]'),'native candidates must pass precomputed height and slope');
 });

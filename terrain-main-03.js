@@ -89,15 +89,16 @@ function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debCle
 const bigCount=Math.round(36000*bw*5*density),SCBUF=new Float32Array(SCATTER_BATCH*4);
 let uploaded=false;const pickBig=()=>{let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}return k};
 function scatterFill(count,pick){
- const core=window.FELandscapeCore;
+ const core=window.FELandscapeCore;let done=0;
  if(core&&core.ready&&core.scatterBegin&&core.scatterBatch){
-  if(!uploaded){if(!core.scatterBegin({n:N,size:S,heights:H})){uploaded=false}else uploaded=true}
-  if(uploaded){let failed=false;
-   for(let done=0;done<count;done+=SCATTER_BATCH){const batch=Math.min(SCATTER_BATCH,count-done),got=core.scatterBatch({count:batch,spread:S*.96,seed:(Math.round((seed||0)*1000)+done+1)>>>0,output:SCBUF});
-    if(got!==batch){failed=true;break}
-    for(let i=0;i<got;i++){const o=i*4;add(pick(),SCBUF[o],SCBUF[o+1],1,0,false,SCBUF[o+2],SCBUF[o+3])}}
-   if(!failed)return}}
- for(let i=0;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96);
+  if(!uploaded)uploaded=!!core.scatterBegin({n:N,size:S,heights:H});
+  if(uploaded){
+   while(done<count){const batch=Math.min(SCATTER_BATCH,count-done),got=core.scatterBatch({count:batch,spread:S*.96,seed:(Math.round((seed||0)*1000)+done+1)>>>0,output:SCBUF});
+    if(got!==batch)break;
+    for(let i=0;i<got;i++){const o=i*4;add(pick(),SCBUF[o],SCBUF[o+1],1,0,false,SCBUF[o+2],SCBUF[o+3])}
+    done+=got}
+   if(done>=count)return}}
+ for(let i=done;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96);
 }
 scatterFill(bigCount,pickBig);
 for(const[n,c]of tab)scatterFill(c,()=>n);
