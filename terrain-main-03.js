@@ -63,6 +63,167 @@ function owLoadChunk(cx,cz,generatedData=null){const key=owKey(cx,cz);if(OW.chun
 function owCenter(){if(exploreMode==='first'&&walkRig)return{x:walkRig.position.x,z:walkRig.position.z};if(exploreMode==='heli')return{x:heliX,z:heliZ};return{x:oc.target.x,z:oc.target.z}}
 function owFindSpawn(){const cfg=owHeightConfig(),sea=cfg.seaLevel,half=OW.config.sizeKm*500,maxRadius=Math.max(0,Math.min(5000,half-OW.chunkSize*.5));let best={x:0,z:0,y:OpenWorldGenerator.heightAt(0,0,cfg)};for(let radius=0;radius<=maxRadius;radius+=256){const count=radius?Math.max(8,Math.ceil(2*Math.PI*radius/256)):1;for(let i=0;i<count;i++){const a=2*Math.PI*i/count,x=radius*Math.cos(a),z=radius*Math.sin(a),y=OpenWorldGenerator.heightAt(x,z,cfg);if(y>best.y)best={x,z,y};if(y<sea+20)continue;let dry=0;for(const dz of [-256,0,256])for(const dx of [-256,0,256])if(OpenWorldGenerator.heightAt(x+dx,z+dz,cfg)>sea+8)dry++;if(dry>=7)return{x,z,y}}}return best}
 function owValidChunk(cx,cz){const half=OW.config.sizeKm*500,edge=OW.chunkSize*.5;return Math.abs(cx*OW.chunkSize)-edge<=half&&Math.abs(cz*OW.chunkSize)-edge<=half}
+/* World size is a bound on the streamed grid, not an allocation. Only the 3x3
+   neighbourhood of 256 m chunks is ever resident, so a 50 km world costs the
+   same memory as a 1 km one: what changes is how far you can walk before the
+   edge, not how much is held. Changing it therefore re-streams; it never grows
+   a buffer by area, which is the out-of-memory path this had to avoid. */
+function owChunkBytes(c){return (c.heights?c.heights.length*4:0)+(c.surfaceWeights?c.surfaceWeights.length*4:0)}
+function owMemory(){
+ let bytes=0;
+ for(const c of OW.chunks.values())bytes+=owChunkBytes(c);
+ for(const s of OW.editStore.values())bytes+=owChunkBytes(s)+96;
+ return{chunks:OW.chunks.size,edits:OW.editStore.size,bytes};
+}
+function owSetWorldSize(km){
+ const asked=Number(km),next=cl(Math.round(Number.isFinite(asked)?asked:OW.config.sizeKm),1,50);
+ if(next===OW.config.sizeKm)return false;
+ OW.config.sizeKm=next;
+ if(OW.currentConfig)OW.currentConfig.sizeKm=next;
+ if(!OW.active)return true;
+ const half=next*500;
+ for(const key of [...OW.editStore.keys()]){
+  const v=OW.editStore.get(key);
+  if(Math.abs(v.cx*OW.chunkSize)>half||Math.abs(v.cz*OW.chunkSize)>half)OW.editStore.delete(key);
+ }
+ for(const [key,c] of [...OW.chunks]){
+  if(owValidChunk(c.cx,c.cz))continue;
+  owDisposeChunk(c);OW.chunks.delete(key);
+ }
+ OW.lastCenterX=OW.lastCenterZ=NaN;
+ setOpenWorldWaterRadius(true);
+ owRefresh(true);
+ owStatus('World size '+next+' km \u00b7 '+OW.chunks.size+' chunks resident');
+ return true;
+}
+window.__feWorldSize=owSetWorldSize;
+
+window.__feWorldMemory=owMemory;
+/* --- Live erosion ----------------------------------------------------------
+   One press erodes the patch you are looking at, a slice per frame. The kernel
+   keeps the seed, the droplet cursor and the dirty rectangle, so this side only
+   asks for the next slice and then uploads the band that changed. The run pauses
+   itself when the result cannot be seen: hidden tab, another sheet open, the
+   patch off screen, or a brush stroke in progress. */
+/* `area` is the width of the square patch in metres — the same number the sheet
+   shows — so the radius handed to the kernel is half of it. */
+const LIVE={on:false,area:120,rate:1,trim:1,ran:0,total:0,rect:[0,0,0,0],hasRect:false,lastW:0,lastH:0,uploadAt:0,statusAt:0,paused:'',dots:50000};
+const liveProj=new THREE.Vector3();
+function liveErosionStatus(text){
+ const n=typeof document!=='undefined'?document.getElementById('erosion-live'):null;
+ if(n)n.textContent=text;
+}
+function liveErosionBrushing(){
+ try{return typeof painting!=='undefined'&&!!painting}catch(error){return false}
+}
+function liveErosionVisible(){
+ const x=oc.target.x,z=oc.target.z;
+ liveProj.set(x,hgt(x,z),z).project(cam);
+ return liveProj.z<1&&liveProj.z>-1&&Math.abs(liveProj.x)<1.25&&Math.abs(liveProj.y)<1.25;
+}
+function liveErosionPause(text){
+ if(LIVE.paused===text)return;
+ LIVE.paused=text;
+ liveErosionStatus(text);
+}
+function liveErosionUnion(){
+ const r=window.FELandscapeCore.erosionRect;
+ if(!LIVE.hasRect){LIVE.rect[0]=r[0];LIVE.rect[1]=r[1];LIVE.rect[2]=r[2];LIVE.rect[3]=r[3];LIVE.hasRect=true;return}
+ if(r[0]<LIVE.rect[0])LIVE.rect[0]=r[0];
+ if(r[1]>LIVE.rect[1])LIVE.rect[1]=r[1];
+ if(r[2]<LIVE.rect[2])LIVE.rect[2]=r[2];
+ if(r[3]>LIVE.rect[3])LIVE.rect[3]=r[3];
+}
+function liveErosionFlush(){
+ if(!LIVE.hasRect)return;
+ const r=LIVE.rect;
+ LIVE.lastW=r[1]-r[0]+1;LIVE.lastH=r[3]-r[2]+1;
+ /* One cell of padding keeps the normal of the band edge honest. */
+ updLive(Math.max(0,r[0]-1),Math.min(N,r[1]+1),Math.max(0,r[2]-1),Math.min(N,r[3]+1));
+ LIVE.hasRect=false;
+}
+function startLiveErosion(){
+ const core=window.FELandscapeCore;
+ if(!core||!core.ready||typeof core.erosionBegin!=='function'){showErr('Live erosion needs the engine build — reload the page and try again');return false}
+ if(typeof OW!=='undefined'&&OW.active){showErr('Live erosion works on the island terrain — return to the default terrain first');return false}
+ if(LIVE.on)return true;
+ if(!core.erosionBegin({n:N,size:S,droplets:LIVE.dots,heights:H,seed:(Math.round(seed*1000)+1)>>>0})){
+  showErr('Erosion could not start: '+(core.error||'unknown'));return false;
+ }
+ /* One undo step for the whole run, taken after the kernel accepted it and
+    before the first droplet, so a refused run leaves no empty history entry. */
+ push();
+ LIVE.on=true;LIVE.ran=0;
+ /* The kernel is the authority on how many droplets the run accepted. */
+ LIVE.total=typeof core.erosionRemaining==='function'?core.erosionRemaining():LIVE.dots;
+ LIVE.hasRect=false;LIVE.trim=1;LIVE.paused='';LIVE.statusAt=0;
+ liveErosionStatus('Eroding · 0 / '+LIVE.total+' droplets');
+ if(tab==='terrain')build();
+ return true;
+}
+function stopLiveErosion(reason){
+ const core=window.FELandscapeCore;
+ if(!LIVE.on)return false;
+ if(core&&typeof core.erosionCancel==='function')core.erosionCancel();
+ liveErosionFlush();
+ LIVE.on=false;
+ upd();
+ /* The ground moved under whatever was standing on it, so the plants settle
+    onto the new surface instead of hanging in the air or sinking. */
+ resnap();
+ liveErosionStatus(reason||('Erosion stopped · '+LIVE.ran+' droplets'));
+ if(tab==='terrain')build();
+ return true;
+}
+function liveErosionTick(now){
+ if(!LIVE.on)return;
+ if(typeof document!=='undefined'&&document.hidden){liveErosionPause('Paused · the tab is in the background');return}
+ if(tab!=='terrain'){liveErosionPause('Paused · open the Terrain sheet to keep eroding');return}
+ if(liveErosionBrushing()){liveErosionPause('Paused · you are brushing the ground');return}
+ if(!liveErosionVisible()){liveErosionPause('Paused · the eroded patch is off screen');return}
+ const core=window.FELandscapeCore;
+ if(!core||!core.ready||typeof core.erosionStep!=='function'){stopLiveErosion('Erosion stopped · the engine went away');return}
+ if(LIVE.paused)liveErosionPause('');
+ const x=oc.target.x,z=oc.target.z;
+ core.erosionRegion(x,z,LIVE.area*.5);
+ /* The slice size follows the measured cost, so a slow phone runs fewer
+    droplets instead of dropping frames. */
+ const want=cl(Math.round(700*LIVE.rate*LIVE.trim),140,1800);
+ const t0=nowMs();
+ const ran=core.erosionStep(want);
+ if(ran>0){
+  LIVE.ran+=ran;
+  if(core.erosionRead(H))liveErosionUnion();
+ }
+ if(LIVE.hasRect&&now-LIVE.uploadAt>33){LIVE.uploadAt=now;liveErosionFlush()}
+ /* The cost that matters is the whole tick: the droplets, and the band upload
+    on the frames that carry one. Trimming against the droplet loop alone would
+    ignore the four uploads a second that are most likely to drop a frame. */
+ const cost=nowMs()-t0;
+ if(cost>3.2)LIVE.trim=Math.max(.18,LIVE.trim*.8);
+ else if(cost<1.3)LIVE.trim=Math.min(1.8,LIVE.trim*1.06);
+ if(core.erosionRemaining()===0){
+  /* A regenerated grid cancels the kernel run, so "no droplets left" is only a
+     finish when the run actually consumed its budget. */
+  if(LIVE.ran>=LIVE.total)stopLiveErosion('Erosion finished · '+LIVE.ran+' droplets');
+  else stopLiveErosion('Erosion stopped · the terrain was rebuilt');
+  return;
+ }
+ if(!core.erosionActive()&&LIVE.ran<LIVE.total){stopLiveErosion('Erosion stopped · the terrain was rebuilt');return}
+ if(now-LIVE.statusAt>250){
+  LIVE.statusAt=now;
+  /* Progress and the size of the patch, not a frame time: the sheet is not a
+     profiler. */
+  const r=LIVE.rect;
+  const size=LIVE.hasRect?(r[1]-r[0]+1)+'×'+(r[3]-r[2]+1)+' cells':
+   (LIVE.lastW?'about '+LIVE.lastW+'×'+LIVE.lastH+' cells':LIVE.area+' m patch');
+  liveErosionStatus('Eroding · '+LIVE.ran+' / '+LIVE.total+' droplets · '+size);
+ }
+}
+window.__feLiveErosion=LIVE;
+window.__feStartLiveErosion=startLiveErosion;
+window.__feStopLiveErosion=stopLiveErosion;
+window.__feLiveErosionTick=liveErosionTick;
 function owStatus(text){const n=document.getElementById('owstatus');if(n)n.textContent=text}
 function owPump(token){if(token!==OW.token||!OW.active)return;if(!OW.activeJob&&!OW.queue.length){OW.generating=false;if(OW.waterMapsDirty){OW.waterMapsDirty=false;updateOpenWorldWaterHeightMaps()}owStatus('Ready · '+OW.chunks.size+' terrain chunks loaded · '+[...OW.chunks.values()].reduce((n,c)=>n+Object.values(c.plants).reduce((a,b)=>a+b.length,0),0).toLocaleString()+' plants');return}try{if(!OW.activeJob){const next=OW.queue.shift();if(OW.editStore.has(next.key)){owLoadChunk(next.cx,next.cz);requestAnimationFrame(()=>owPump(token));return}OW.activeJob={...next,job:OpenWorldGenerator.createChunkJob(owChunkConfig(next.cx,next.cz))}}const current=OW.activeJob,result=current.job.step(8,1024);if(result.done){OW.activeJob=null;owLoadChunk(current.cx,current.cz,result.chunk);OW.generated=true;owStatus('Loaded '+current.key+' · '+OW.chunks.size+' chunks active, '+OW.queue.length+' queued')}else owStatus('Generating '+current.key+' · '+result.phase+' '+Math.round(result.progress*100)+'%')}catch(e){console.error('Open World chunk generation failed:',e);owStatus('Generation error: '+(e?.message||e));OW.activeJob=null;OW.generating=false;return}requestAnimationFrame(()=>owPump(token))}
 function owRefresh(force=false){if(!OW?.active)return;const p=owCenter(),half=OW.config.sizeKm*500,x=cl(p.x,-half,half),z=cl(p.z,-half,half),cx=Math.floor((x+OW.chunkSize*.5)/OW.chunkSize),cz=Math.floor((z+OW.chunkSize*.5)/OW.chunkSize);if(!force&&cx===OW.lastCenterX&&cz===OW.lastCenterZ)return;OW.lastCenterX=cx;OW.lastCenterZ=cz;const desired=new Set(),jobs=[],planCore=window.FELandscapeCore&&window.FELandscapeCore.ready&&typeof window.FELandscapeCore.owPlan==='function'?window.FELandscapeCore.owPlan({cx,cz,radius:OW.radius,chunkSize:OW.chunkSize,worldHalf:half}):null;
@@ -146,20 +307,52 @@ function lowMeshesFor(k){
  });
  return K.lowMeshes;
 }
+/* One scratch buffer for the visibility call, grown once and then reused, so a
+   camera settle never allocates. */
+let lodScratch=new Float32Array(0);
+let vpMat=null;
+/* How far an instance of a kind is worth submitting. Ground cover also thins
+   out inside its radius (the core does that), which is the overdraw budget. */
+const VIEW_RADIUS={grass:190,tallgrass:210,flower:120,daisy:120,tulip:120,lavender:150,clover:130,shrub:600,ashbush:600,joshua:900,cactus:700,saguaro:700,barrel:520,rock:900,sandrock:900,basalt:900,pine:2400,oak:2400,birch:2400,palm:2000,acacia:2000,deadtree:2200,house:4200,block:4200,mid:4200,tower:5200};
+/* A caster just outside the view still lands in the 60 m shadow box, so it is
+   kept; a caster 100 m behind the camera cannot shadow anything on screen. */
+function shadowPadFor(K){if(!K.meshes||!K.meshes.length)return 0;for(let i=0;i<K.meshes.length;i++)if(K.meshes[i].castShadow)return 60;return 0}
 function sync(k,allInstances=false){
  const K=KIND[k],gr=['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k),tl=gr ? .4 : RK[k] ? .5 : (BLD[k]||NT[k]) ? 0 : .07,T=K.tint;
  const lowAll=LOD_KINDS.has(k)?lowMeshesFor(k):null;
- let lodTiers=null;
- if(lowAll&&!allInstances&&LOD_BOTANICAL.has(k)&&window.FELandscapeCore?.lodClassify&&K.list.length){
-  const n=K.list.length,xyz=new Float32Array(n*3);
+ /* The core answers with a compacted list of instance indices plus their tier;
+   the bridge never walks the invisible ones. */
+ const core=window.FELandscapeCore,n=K.list.length;
+ let lodTiers=null,visOrder=null,visN=0;
+ if(n&&!allInstances&&core&&core.ready){
+  if(lodScratch.length<n*3)lodScratch=new Float32Array(n*3);
+  const xyz=lodScratch;
   for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z}
-  lodTiers=window.FELandscapeCore.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  if(typeof core.lodVisible==='function'){
+   if(!vpMat)vpMat=new THREE.Matrix4();
+   cam.updateMatrixWorld();
+   vpMat.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);
+   const vis=core.lodVisible({count:n,xyz,vp:vpMat.elements,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,radius:VIEW_RADIUS[k]||2600,margin:Math.min(90,Math.max(6,(K.size||1)*2+shadowPadFor(K))),options:LOD_GROUND.has(k)?1:0});
+   /* A degenerate matrix must never empty the world: if the core reports
+      nothing while the kind clearly has instances, fall back to no culling. */
+   if(vis&&vis.count>0){visOrder=vis.indices;lodTiers=vis.tiers;visN=vis.count}
+   else if(core.lodClassify)lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  }else if(lowAll&&LOD_BOTANICAL.has(k)&&core.lodClassify){
+   lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
+  }
  }
  K.meshes.forEach((m,mi)=>{
   const pal=m.userData.pal,low=lowAll?.[mi]||null;
   let ci=0,li=0;
   const sourceListIndices=[],lowSourceListIndices=[];
-  K.list.forEach((o,sourceIndex)=>{
+  /* Dense list: matrix index i is the visible slot, and sourceIndex is only
+     used to look the instance up (and to map a tap back to its plant). */
+  const total=visOrder?visN:K.list.length;
+  for(let q=0;q<total;q++){
+   const sourceIndex=visOrder?visOrder[q]:q;
+   const tierIndex=visOrder?q:sourceIndex;
+   if(visOrder===null&&lodTiers&&lodTiers[sourceIndex]<0)continue;
+   const o=K.list[sourceIndex];
    const nv=m.userData.vn;
    if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
    const h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
@@ -174,7 +367,7 @@ function sync(k,allInstances=false){
    dm.updateMatrix();
    let useLow=false;
    if(!allInstances&&LOD_BOTANICAL.has(k)){
-    if(low){if(lodTiers){useLow=lodTiers[sourceIndex]===1}
+    if(low){if(lodTiers){useLow=lodTiers[tierIndex]===1}
      else{const cx=cam.position.x,cz=cam.position.z,d=Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz);
       useLow=plantLodTier(k,d,o.x,o.z,lodFullDistance)===1}}
    }
@@ -186,7 +379,7 @@ function sync(k,allInstances=false){
    if(gr&&!pal){const d=vn(o.x*.03+50,o.z*.03+20);c=[c[0]*(.85+d*.5),c[1]*(1-d*.15),c[2]*(1-d*.4)]}
    const v=o.v,t=pal||m.userData.nt?[1,1,1]:T,dmgTint=BLD[k]?1-(o.damage||0)*.14:1;
    target.setColorAt(i,tcol.setRGB(c[0]*v*t[0]*dmgTint,c[1]*v*t[1]*dmgTint,c[2]*v*t[2]*dmgTint));
-  });
+  }
   m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;
   if(low){low.count=li;low.visible=li>0;low.userData.sourceListIndices=lowSourceListIndices;low.instanceMatrix.needsUpdate=true;low.instanceColor.needsUpdate=true}
   const shadow=K.shadowMeshes?.[mi];
@@ -197,16 +390,44 @@ function sync(k,allInstances=false){
 
 const LOD_KINDS=new Set([...LOD_GROUND,...LOD_BOTANICAL,...LOD_TREES]);
 const lodCameraAnchor=cam.position.clone();
-let lodMotionAt=0,lodSettled=false,lodCursor=0;
+let lodMotionAt=0,lodSettled=false;
+/* The render loop must not allocate. The kind list and its camera anchor are
+   built once, and the per-frame work is a distance compare plus, at most, one
+   matrix rebuild. */
+let lodKindList=null;
+function foliageLodKinds(){
+ const dirty=typeof window!=='undefined'&&window.__feFoliageLodDirty===true;
+ if(!lodKindList||dirty){
+  if(typeof window!=='undefined')window.__feFoliageLodDirty=false;
+  lodKindList=[];
+  for(const k of LOD_KINDS)if(KIND[k]&&Array.isArray(KIND[k].list))lodKindList.push(k);
+ }
+ return lodKindList;
+}
+/* Culling is only valid for the view it was computed for, so a settled camera
+   re-builds every kind once, time-sliced across frames. Moving or rotating
+   restarts the settle timer; nothing is queued while the camera is in motion,
+   because a stale visible list is a missing plant. */
+const lodQuat=typeof THREE!=='undefined'&&THREE.Quaternion?new THREE.Quaternion():null;
+let lodSweep=0,lodSweeping=false;
 function updateFoliageLOD(now){
- if(cam.position.distanceToSquared(lodCameraAnchor)>.0025){lodCameraAnchor.copy(cam.position);lodMotionAt=now;lodSettled=false;return}
- if(lodSettled||now-lodMotionAt<240)return;
- const kinds=[...LOD_KINDS].filter(k=>KIND[k]&&Array.isArray(KIND[k].list));
- if(!kinds.length)return;
- lodSettled=true;
- const k=kinds[lodCursor++%kinds.length];
- KIND[k].list.forEach(()=>{});
- sync(k);
+ const moved=cam.position.distanceToSquared(lodCameraAnchor)>.0025;
+ const turned=!!(lodQuat&&cam.quaternion)&&cam.quaternion.angleTo(lodQuat)>0.09;
+ if(moved||turned){lodCameraAnchor.copy(cam.position);if(lodQuat&&cam.quaternion)lodQuat.copy(cam.quaternion);lodMotionAt=now;lodSettled=false;lodSweeping=false;return}
+ if(!lodSettled){
+  if(now-lodMotionAt<240)return;
+  lodSettled=true;lodSweeping=true;lodSweep=0;
+ }
+ if(!lodSweeping)return;
+ const kinds=foliageLodKinds();
+ if(!kinds.length){lodSweeping=false;return}
+ const start=(typeof performance!=='undefined'?performance:Date).now();
+ while(lodSweep<kinds.length){
+  const k=kinds[lodSweep++];
+  if(KIND[k]&&Array.isArray(KIND[k].list)&&KIND[k].list.length)sync(k);
+  if((typeof performance!=='undefined'?performance:Date).now()-start>3)return;
+ }
+ lodSweeping=false;
 }
 let season='summer';
 const SEAS={spring:{},summer:{},autumn:{},winter:{}};

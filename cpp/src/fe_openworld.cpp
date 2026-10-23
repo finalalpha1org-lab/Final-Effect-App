@@ -256,10 +256,17 @@ int32_t fe_ow_surface_grid(uint32_t segments, float origin_x, float origin_z, fl
       const float x = origin_x - chunk_size * .5f + float(i) * step;
       const uint32_t k = j * row + i;
       const float h = owHeights[k];
-      const float hl = owHeights[j * row + (i ? i - 1 : i)];
-      const float hr = owHeights[j * row + (i + 1 < row ? i + 1 : i)];
-      const float hd = owHeights[(j ? j - 1 : j) * row + i];
-      const float hu = owHeights[(j + 1 < row ? j + 1 : j) * row + i];
+      /* The border of a chunk has no neighbour inside its own grid, so the
+         missing sample is evaluated straight from the world-space noise instead
+         of being clamped to the edge value. Clamping made the slope one-sided
+         on the border, which popped the normal (and the biome weights derived
+         from it) against the identical edge of the next chunk. The noise is a
+         pure function of the world position, so both sides now compute the same
+         central difference and the seam is not a seam at all. */
+      const float hl = i ? owHeights[j * row + i - 1] : owHeightAt(x - step, z);
+      const float hr = (i + 1 < row) ? owHeights[j * row + i + 1] : owHeightAt(x + step, z);
+      const float hd = j ? owHeights[(j - 1) * row + i] : owHeightAt(x, z - step);
+      const float hu = (j + 1 < row) ? owHeights[(j + 1) * row + i] : owHeightAt(x, z + step);
       const float slope = sqrtf((hr - hl) * (hr - hl) + (hu - hd) * (hu - hd)) * inv;
       owBiomeWeights(x, z, h, bio);
       owSurfaceWeights(x, z, h, slope, bio, weights);
@@ -325,6 +332,92 @@ int32_t fe_lod_classify(uint32_t count, const float* xyz, float cam_x, float cam
     lodOut[i] = d <= threshold ? 0 : 1;
   }
   return int32_t(count);
+}
+
+/* ---------------------------------------------------------------- */
+/* Compacted visible-instance list                                   */
+/* ---------------------------------------------------------------- */
+/* The LoD call above answers "how far is this instance"; this one answers
+ * "which instances are worth submitting at all" and writes a dense list of
+ * their indices, so the bridge never has to walk the full set in JS. The six
+ * frustum planes are extracted here (Gribb-Hartmann) from the column-major
+ * view-projection matrix three.js already keeps, and a deterministic hash turns
+ * the distance into a ground-cover density falloff — no flicker, because the
+ * same instance always falls on the same side of the threshold. */
+static uint32_t visIndex[LOD_MAX];
+static uint32_t visCount = 0;
+static uint8_t visTier[LOD_MAX];
+
+extern "C" uint32_t* fe_lod_visible_index_ptr() { return visIndex; }
+extern "C" uint8_t* fe_lod_visible_tier_ptr() { return visTier; }
+
+inline void planeFrom(const float* m, int32_t row, float sign, float* out) {
+  const float a = m[0 * 4 + 3] + sign * m[0 * 4 + row];
+  const float b = m[1 * 4 + 3] + sign * m[1 * 4 + row];
+  const float c = m[2 * 4 + 3] + sign * m[2 * 4 + row];
+  const float d = m[3 * 4 + 3] + sign * m[3 * 4 + row];
+  const float n = sqrtf(a * a + b * b + c * c);
+  const float inv = n > 1e-8f ? 1.f / n : 0.f;
+  out[0] = a * inv; out[1] = b * inv; out[2] = c * inv; out[3] = d * inv;
+}
+
+inline bool outside(const float* p, float x, float y, float z, float r) {
+  return p[0] * x + p[1] * y + p[2] * z + p[3] < -r;
+}
+
+int32_t fe_ow_visible_count(void) { return int32_t(visCount); }
+int32_t fe_lod_visible(uint32_t count, const float* xyz, const float* vp,
+                       float cam_x, float cam_y, float cam_z,
+                       float full_distance, float cull_radius, float margin,
+                       uint32_t options) {
+  if (!xyz || !vp || count > LOD_MAX) return -1;
+  if (!finite(cam_x) || !finite(cam_y) || !finite(cam_z)) return -1;
+  if (!finite(full_distance) || full_distance < 10.f || full_distance > 20000.f) return -1;
+  if (!finite(cull_radius) || cull_radius < 10.f || cull_radius > 40000.f) return -1;
+  if (!finite(margin) || margin < 0.f || margin > 96.f) return -1;
+  const bool ground = (options & 1u) != 0u;
+  const bool skip_frustum = (options & 2u) != 0u;
+  float planes[6][4];
+  if (!skip_frustum) {
+    planeFrom(vp, 0, 1.f, planes[0]);
+    planeFrom(vp, 0, -1.f, planes[1]);
+    planeFrom(vp, 1, 1.f, planes[2]);
+    planeFrom(vp, 1, -1.f, planes[3]);
+    planeFrom(vp, 2, 1.f, planes[4]);
+    planeFrom(vp, 2, -1.f, planes[5]);
+  }
+  const float band = maxf(120.f, full_distance * 2.f);
+  const float keepFrom = cull_radius * 0.55f;
+  uint32_t out = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    const float x = xyz[i * 3], y = xyz[i * 3 + 1], z = xyz[i * 3 + 2];
+    if (!finite(x) || !finite(y) || !finite(z)) continue;
+    const float dx = x - cam_x, dy = y - cam_y, dz = z - cam_z;
+    const float d = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (d > cull_radius + margin) continue;
+    if (!skip_frustum) {
+      bool cut = false;
+      for (int32_t p = 0; p < 6; ++p) {
+        if (outside(planes[p], x, y, z, margin)) { cut = true; break; }
+      }
+      if (cut) continue;
+    }
+    const float h = owHash(x * .731f + 13.7f, z * .917f - 7.3f, 1.f);
+    /* Ground cover thins out with distance: full density up to 55% of the
+       radius, then a deterministic hash decides, so the same blade is always
+       kept or dropped while the camera moves. */
+    if (ground && d > keepFrom) {
+      const float t = (d - keepFrom) / maxf(1.f, cull_radius - keepFrom);
+      const float keep = 1.f - t * t * (3.f - 2.f * t);
+      if (h > keep) continue;
+    }
+    visIndex[out] = i;
+    visTier[out] = d <= full_distance + h * band ? 0 : 1;
+    out++;
+    if (out >= LOD_MAX) break;
+  }
+  visCount = out;
+  return int32_t(out);
 }
 
 int32_t fe_ow_hydro_set_grid(uint32_t n, float span, float sea_level) {

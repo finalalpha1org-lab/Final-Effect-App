@@ -47,11 +47,14 @@ const aptC=(x,y,ox,oy,w,h,on)=>{wallFill(x,ox,oy,w,h,'#b9a99a');x.fillStyle='rgb
 const offC=(x,y,ox,oy,w,h,on)=>{wallFill(x,ox,oy,w,h,'#9a9a98');x.fillStyle='#55585c';x.fillRect(ox,oy+h*.7,w,h*.3);glass(x,ox+4,oy+h*.08,w-8,h*.6,'#5f7f99','#1f2c38');x.fillStyle='#777';x.fillRect(ox,oy,3,h);x.fillStyle='#c9cdd0';x.fillRect(ox+w/2-1,oy+h*.08,2,h*.6);if(on)litW(y,ox+4,oy+h*.08,w-8,h*.6)};
 const glsC=(x,y,ox,oy,w,h,on)=>{const t=[['#4d6d8a','#1b2a3a'],['#5b7a96','#223344'],['#456580','#18283a']][(R()*3)|0];glass(x,ox,oy,w,h*.82,t[0],t[1]);x.fillStyle='#2b3138';x.fillRect(ox,oy+h*.82,w,h*.18);x.fillStyle='#b8c0c8';x.fillRect(ox,oy,2,h);x.fillRect(ox+w/2,oy,1.5,h*.82);if(on)litW(y,ox+3,oy+3,w-6,h*.78)};
 /* geometry helpers */
-const GA=()=>({P:[],N:[],C:[],T:[],I:[],RND:[],CEN:[]});
-function gaV(g,p,n,c,t){g.P.push(p[0],p[1],p[2]);g.N.push(n[0],n[1],n[2]);g.C.push(c[0],c[1],c[2]);g.T.push(t[0],t[1]);g.RND.push(g.cr===undefined?Math.random():g.cr);g.CEN.push(...(g.cc||p));return g.P.length/3-1}
+/* SW/PH are the skeletal wind channels: per-vertex compliance and branch phase.
+   Only the grown species fill them; everything else leaves them at zero, which
+   the material reads as "no skeletal bend". */
+const GA=()=>({P:[],N:[],C:[],T:[],I:[],RND:[],CEN:[],SW:[],PH:[]});
+function gaV(g,p,n,c,t){g.P.push(p[0],p[1],p[2]);g.N.push(n[0],n[1],n[2]);g.C.push(c[0],c[1],c[2]);g.T.push(t[0],t[1]);g.RND.push(g.cr===undefined?Math.random():g.cr);g.CEN.push(...(g.cc||p));g.SW.push(g.sw===undefined?0:g.sw);g.PH.push(g.phv===undefined?0:g.phv);return g.P.length/3-1}
 function gaQ(g,p,n,c,uv){const h0=g.cr!==undefined,hc=g.cc!==undefined;if(!h0)g.cr=Math.random();if(!hc)g.cc=[(p[0][0]+p[1][0]+p[2][0]+p[3][0])/4,(p[0][1]+p[1][1]+p[2][1]+p[3][1])/4,(p[0][2]+p[1][2]+p[2][2]+p[3][2])/4];const a=p.map((q,i)=>gaV(g,q,n,c,uv?uv[i]:[[0,0],[1,0],[1,1],[0,1]][i]));g.I.push(a[0],a[1],a[2],a[0],a[2],a[3]);if(!h0)g.cr=undefined;if(!hc)g.cc=undefined}
 function gaT(g,p,n,c,uv){const h0=g.cr!==undefined,hc=g.cc!==undefined;if(!h0)g.cr=Math.random();if(!hc)g.cc=[(p[0][0]+p[1][0]+p[2][0])/3,(p[0][1]+p[1][1]+p[2][1])/3,(p[0][2]+p[1][2]+p[2][2])/3];const a=p.map((q,i)=>gaV(g,q,n,c,uv[i]));g.I.push(a[0],a[1],a[2]);if(!h0)g.cr=undefined;if(!hc)g.cc=undefined}
-function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',new THREE.Float32BufferAttribute(g.P,3));o.setAttribute('normal',new THREE.Float32BufferAttribute(g.N,3));o.setAttribute('color',new THREE.Float32BufferAttribute(g.C,3));o.setAttribute('uv',new THREE.Float32BufferAttribute(g.T,2));o.setAttribute('aRnd',new THREE.Float32BufferAttribute(g.RND,1));o.setAttribute('aCen',new THREE.Float32BufferAttribute(g.CEN,3));o.setIndex(g.I);return o}
+function gaGeo(g){const o=new THREE.BufferGeometry();o.setAttribute('position',new THREE.Float32BufferAttribute(g.P,3));o.setAttribute('normal',new THREE.Float32BufferAttribute(g.N,3));o.setAttribute('color',new THREE.Float32BufferAttribute(g.C,3));o.setAttribute('uv',new THREE.Float32BufferAttribute(g.T,2));o.setAttribute('aRnd',new THREE.Float32BufferAttribute(g.RND,1));o.setAttribute('aCen',new THREE.Float32BufferAttribute(g.CEN,3));o.setAttribute('aSway',new THREE.Float32BufferAttribute(g.SW,1));o.setAttribute('aPhase',new THREE.Float32BufferAttribute(g.PH,1));o.setIndex(g.I);return o}
 function foliage(vols,cnt,sz,c0,c1){const g=GA();vols.forEach(([cx,cy_,cz,rx,ry,rz])=>{for(let i=0;i<cnt;i++){let x,y,z;do{x=R()*2-1;y=R()*2-1;z=R()*2-1}while(x*x+y*y+z*z>1);const d=Math.hypot(x,y,z)||1,ox=x/d,oy=y/d,oz=z/d;
 const a=R()*6.283,e=(R()-.4)*1.5,r2x=Math.cos(a),r2z=Math.sin(a),ux=-Math.sin(a)*Math.sin(e),uz=Math.cos(a)*Math.sin(e),uy=Math.cos(e),s=sz*(.7+R()*.6),px=cx+x*rx,py=cy_+y*ry,pz=cz+z*rz;
 const nx=ox*.85+ux*.15,ny=oy*.85+uy*.15+.12,nz=oz*.85+uz*.15,nl=Math.hypot(nx,ny,nz),n=[nx/nl,ny/nl,nz/nl],t=cl(.45+oy*.35+(d-.5)*.45,0,1)*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],h=s/2;
@@ -107,10 +110,10 @@ let u=Math.abs(T[0][1])<.97?[T[0][2],0,-T[0][0]]:[1,0,0];const ul=Math.hypot(u[0
 for(let i=0;i<n;i++){const t=T[i];if(i){const dd=u[0]*t[0]+u[1]*t[1]+u[2]*t[2];u=[u[0]-t[0]*dd,u[1]-t[1]*dd,u[2]-t[2]*dd];const l=Math.hypot(u[0],u[1],u[2])||1;u=u.map(q=>q/l);vv+=Math.hypot(P[i][0]-P[i-1][0],P[i][1]-P[i-1][1],P[i][2]-P[i-1][2])*us[1]}
 const w=[t[1]*u[2]-t[2]*u[1],t[2]*u[0]-t[0]*u[2],t[0]*u[1]-t[1]*u[0]],sh=.68+.32*cl((P[i][1]+1)/8,0,1);for(let j=0;j<=sd;j++){const th=j/sd*6.2832,cs=Math.cos(th),sn=Math.sin(th),nx=u[0]*cs+w[0]*sn,ny=u[1]*cs+w[1]*sn,nz=u[2]*cs+w[2]*sn,rr=Rd[i]*(rib?rib(th):1);gaV(g,[P[i][0]+nx*rr,P[i][1]+ny*rr,P[i][2]+nz*rr],[nx,ny,nz],[sh,sh,sh],[j/sd*us[0],vv])}}
 for(let i=0;i<n-1;i++)for(let j=0;j<sd;j++){const a0=o+i*(sd+1)+j,a1=a0+1,b0=a0+sd+1,b1=b0+1;g.I.push(a0,a1,b0,a1,b1,b0)}if(caps){const t0=T[0],w0=[t0[1]*uStart[2]-t0[2]*uStart[1],t0[2]*uStart[0]-t0[0]*uStart[2],t0[0]*uStart[1]-t0[1]*uStart[0]],sh0=.68+.32*cl((P[0][1]+1)/8,0,1),e=n-1,te=T[e],we=[te[1]*u[2]-te[2]*u[1],te[2]*u[0]-te[0]*u[2],te[0]*u[1]-te[1]*u[0]],sh1=.68+.32*cl((P[e][1]+1)/8,0,1);capLoop(g,P[0],[-t0[0],-t0[1],-t0[2]],uStart,w0,Rd[0],sd,sh0,true,rib);capLoop(g,P[e],te,u,we,Rd[e],sd,sh1,false,rib)}}
-function lcard(g,b,d,size,c0,c1,ctr){const dl=Math.hypot(d[0],d[1],d[2])||1,vx=d[0]/dl,vy=d[1]/dl,vz=d[2]/dl;let ux=vz,uz=-vx,ul=Math.hypot(ux,uz);if(ul<.2){ux=1;uz=0;ul=1}ux/=ul;uz/=ul;
+function lcard(g,b,d,size,c0,c1,ctr,tO){const dl=Math.hypot(d[0],d[1],d[2])||1,vx=d[0]/dl,vy=d[1]/dl,vz=d[2]/dl;let ux=vz,uz=-vx,ul=Math.hypot(ux,uz);if(ul<.2){ux=1;uz=0;ul=1}ux/=ul;uz/=ul;
 const roll=R()*3.1416,cr=Math.cos(roll),sr=Math.sin(roll),wx=vy*uz,wy=vz*ux-vx*uz,wz=-vy*ux,ax=ux*cr+wx*sr,ay=wy*sr,az=uz*cr+wz*sr,h=size*.42;
 let nx=vy*az-vz*ay,ny=vz*ax-vx*az,nz=vx*ay-vy*ax;const ox=b[0]-ctr[0],oy=b[1]-ctr[1],oz=b[2]-ctr[2],ol=Math.hypot(ox,oy,oz)||1;if(nx*ox+ny*oy+nz*oz<0){nx=-nx;ny=-ny;nz=-nz}
-let fx=nx*.4+ox/ol*.6,fy=ny*.4+oy/ol*.6+.15,fz=nz*.4+oz/ol*.6;const fl=Math.hypot(fx,fy,fz)||1,t=cl(.5+(oy/ol)*.3+(ol/ctr[3]-.5)*.5,0,1)*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],tp=[b[0]+vx*size,b[1]+vy*size,b[2]+vz*size];
+let fx=nx*.4+ox/ol*.6,fy=ny*.4+oy/ol*.6+.15,fz=nz*.4+oz/ol*.6;const fl=Math.hypot(fx,fy,fz)||1,t=(tO!==undefined?cl(tO,0,1):cl(.5+(oy/ol)*.3+(ol/ctr[3]-.5)*.5,0,1))*(.85+R()*.3),c=[c0[0]+(c1[0]-c0[0])*t,c0[1]+(c1[1]-c0[1])*t,c0[2]+(c1[2]-c0[2])*t],tp=[b[0]+vx*size,b[1]+vy*size,b[2]+vz*size];
 gaQ(g,[[b[0]-ax*h,b[1]-ay*h,b[2]-az*h],[b[0]+ax*h,b[1]+ay*h,b[2]+az*h],[tp[0]+ax*h,tp[1]+ay*h,tp[2]+az*h],[tp[0]-ax*h,tp[1]-ay*h,tp[2]-az*h]],[fx/fl,fy/fl,fz/fl],c)}
 let BLG=null;
 function petalCard(g,c,s){const a=R()*6.283,t=R()*1.2,ra=[Math.cos(a),0,Math.sin(a)],ua=[-Math.sin(a)*Math.sin(t),Math.cos(t),Math.cos(a)*Math.sin(t)],h=s/2,col=g.bcol||[1,.82,.88];
@@ -124,13 +127,13 @@ const dirA=(a,e)=>[Math.cos(a)*Math.cos(e),Math.sin(e),Math.sin(a)*Math.cos(e)];
 function rootsFrom(W,r0,kind,uv=[1,.55]){const cfg={pine:[8,3.1,.55,2.3],spruce:[8,3,.5,2.7],krumm:[7,2.8,.45,1.9],juniper:[7,2.1,.36,1.5],oak:[9,3.8,.6,3.5],birch:[6,2.8,.35,2.4],palm:[16,4.2,.25,1.6],acacia:[8,3.6,.6,3.2],joshua:[5,2.5,.35,2.3],deadtree:[7,3.2,.5,2.7],treefern:[12,2,.2,1.5],cactus:[9,1.8,.26,1.15],agave:[10,1.6,.18,.9],shrub:[7,1.7,.3,.9]}[kind]||[6,2.4,.35,1.8],n=cfg[0]+((R()*2)|0),depth=cfg[3],collarP=[[0,-.9,0],[0,-.6,0],[0,-.25,0],[0,.1,0],[0,.72,0]],collarR=[r0*.24,r0*.46,r0*.9,r0*1.18,r0*.62];tubePath(W,collarP,collarR,10,uv,null,false);
 for(let i=0;i<n;i++){const a=i/n*6.283+(R()-.5)*.6,L=r0*cfg[1]*(.75+R()*.5),pts=[],rad=[];for(let k=0;k<=6;k++){const t=k/6,d=r0*.22+L*t,y=.09-.02*t-(depth-.07)*Math.pow(t,3.3),wob=Math.sin(t*5+i*2.1)*.08*L*t;pts.push([Math.cos(a)*d-Math.sin(a)*wob,y,Math.sin(a)*d+Math.cos(a)*wob]);rad.push(r0*cfg[2]*.52*Math.pow(1-t,.9)+.014)}tubePath(W,pts,rad,7,uv);if(L>1.2&&R()<.82){const sa=a+(R()-.5)*1.2,b=pts[3],e=[b[0]+Math.cos(sa)*L*.35,b[1]-.4-R()*.5,b[2]+Math.sin(sa)*L*.35];tube(W,b,e,rad[3]*.6,.014,5,uv)}}
 const tapCount=kind==='palm'?8:kind==='cactus'||kind==='agave'?6:4;for(let i=0;i<tapCount;i++){const a=i/tapCount*6.283+(R()-.5)*.3,reach=r0*(kind==='palm'?.9:kind==='cactus'?.42:.52)*(.85+R()*.3),tip=depth*(1.15+R()*.18),ca=Math.cos(a),sa=Math.sin(a),pts=[[ca*r0*.03,-.18,sa*r0*.03],[ca*reach*.34,-.3,sa*reach*.34],[ca*reach*.72,-tip*.58,sa*reach*.72],[ca*reach,-tip,sa*reach]],rad=[r0*.28,r0*.19,Math.max(.018,r0*.095),.014];tubePath(W,pts,rad,5,uv)}}
-function oakTree(){BLG=GA();BLG.bcol=[1,.8,.88];const W=GA(),L=GA(),ctr=[0,6,0,3.6],o={cards:4,size:1.05,c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr,droop:.25,bias:.12};let p=[0,0,0];{const pts=[[0,0,0]],rad=[.87],N=14,wx=(R()-.5)*.8,wz=(R()-.5)*.8;for(let i=1;i<=N;i++){const t=i/N;pts.push([wx*Math.sin(t*3)*.55+Math.sin(t*4+wx)*.04,4.2*t,wz*Math.sin(t*2.6)*.55+Math.cos(t*3+wz)*.04]);rad.push(.62*Math.pow(.5,t)+.25*Math.exp(-t*8))}rootsFrom(W,rad[0],'oak',[2.6,.68]);tubePath(W,pts,rad,10,[3.2,.9]);p=pts[N]}
+function oakTreeJs(){BLG=GA();BLG.bcol=[1,.8,.88];const W=GA(),L=GA(),ctr=[0,6,0,3.6],o={cards:4,size:1.05,c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr,droop:.25,bias:.12};let p=[0,0,0];{const pts=[[0,0,0]],rad=[.87],N=14,wx=(R()-.5)*.8,wz=(R()-.5)*.8;for(let i=1;i<=N;i++){const t=i/N;pts.push([wx*Math.sin(t*3)*.55+Math.sin(t*4+wx)*.04,4.2*t,wz*Math.sin(t*2.6)*.55+Math.cos(t*3+wz)*.04]);rad.push(.62*Math.pow(.5,t)+.25*Math.exp(-t*8))}rootsFrom(W,rad[0],'oak',[2.6,.68]);tubePath(W,pts,rad,10,[3.2,.9]);p=pts[N]}
 const n=5+(R()*3|0);for(let i=0;i<n;i++){const a=i/n*6.283+R()*.6,e=.5+R()*.45;grow(W,L,[p[0],p[1]-.3-R()*.4,p[2]],dirA(a,e),1.8+R()*.7,.2+R()*.05,0,4,o)}
 grow(W,L,p,[(R()-.5)*.3,1,(R()-.5)*.3],1.7,.19,0,4,o);const B=gaGeo(BLG);BLG=null;return[gaGeo(W),gaGeo(L),B]}
-function birchTree(){BLG=GA();BLG.bcol=[.96,.97,.82];const W=GA(),L=GA(),ctr=[0,6.5,0,2.4],o={cards:3,size:.8,c0:[.6,.7,.5],c1:[1.3,1.25,.9],ctr,droop:.5,bias:-.05};let p=[0,0,0];const lx=(R()-.5)*.5,lz=(R()-.5)*.5;{const pts=[],rad=[],N=14;for(let i=0;i<=N;i++){const t=i/N;pts.push([lx*1.8*t,8.1*t,lz*1.8*t]);rad.push(.16*(1-t*.7)+.05*Math.exp(-t*12))}rootsFrom(W,rad[0],'birch',[1.25,.62]);tubePath(W,pts,rad,8,[1.35,.78]);p=pts[N]}
+function birchTreeJs(){BLG=GA();BLG.bcol=[.96,.97,.82];const W=GA(),L=GA(),ctr=[0,6.5,0,2.4],o={cards:3,size:.8,c0:[.6,.7,.5],c1:[1.3,1.25,.9],ctr,droop:.5,bias:-.05};let p=[0,0,0];const lx=(R()-.5)*.5,lz=(R()-.5)*.5;{const pts=[],rad=[],N=14;for(let i=0;i<=N;i++){const t=i/N;pts.push([lx*1.8*t,8.1*t,lz*1.8*t]);rad.push(.16*(1-t*.7)+.05*Math.exp(-t*12))}rootsFrom(W,rad[0],'birch',[1.25,.62]);tubePath(W,pts,rad,8,[1.35,.78]);p=pts[N]}
 for(let i=0;i<7;i++){const y=3.2+R()*4.2,f=y/p[1];grow(W,L,[p[0]*f,y,p[2]*f],dirA(R()*6.283,.5+R()*.4),.9+R()*.5,.05,0,4,o)}
 grow(W,L,p,[0,1,0],.9,.05,0,3,o);const B=gaGeo(BLG);BLG=null;return[gaGeo(W),gaGeo(L),B]}
-function shrubTree(){BLG=GA();BLG.bcol=[1,.9,.6];const W=GA(),L=GA(),ctr=[0,.7,0,1.1],o={cards:3,size:.5,c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr,droop:.1,bias:.05};rootsFrom(W,.055,'shrub',[1,.35]);
+function shrubTreeJs(){BLG=GA();BLG.bcol=[1,.9,.6];const W=GA(),L=GA(),ctr=[0,.7,0,1.1],o={cards:3,size:.5,c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr,droop:.1,bias:.05};rootsFrom(W,.055,'shrub',[1,.35]);
 for(let i=0;i<7;i++)grow(W,L,[0,0,0],dirA(i/7*6.283+R()*.8,.7+R()*.5),.55+R()*.25,.025,0,3,o);const B=gaGeo(BLG);BLG=null;return[gaGeo(W),gaGeo(L),B]}
 /* pine: conical crown, drooping whorl branches with needle sprays attached along the wood, thin leader on top */
 function pineBranch(W,L,b,d,Rr,t,cbb){const cb=cbb||[1,1,1],dl=Math.hypot(d[0],d[1],d[2])||1,dd=[d[0]/dl,d[1]/dl,d[2]/dl],len=Rr,p1=[b[0]+dd[0]*len*.6,b[1]+dd[1]*len*.6,b[2]+dd[2]*len*.6],d2=[dd[0],dd[1]+.35,dd[2]],l2=Math.hypot(d2[0],d2[1],d2[2]),p2=[p1[0]+d2[0]/l2*len*.4,p1[1]+d2[1]/l2*len*.4,p1[2]+d2[2]/l2*len*.4];
@@ -158,7 +161,7 @@ const LEAF_PBR={generic:{nm:normFrom(LFT.image,1.05),rm:roughTex(LFT.image,.82)}
 function smoothNormals(g){const p=g.attributes.position,n=p.count,key=i=>Math.round(p.getX(i)*1e4)+','+Math.round(p.getY(i)*1e4)+','+Math.round(p.getZ(i)*1e4),acc=new Map();
 for(let i=0;i<n;i+=3){const ax=p.getX(i),ay=p.getY(i),az=p.getZ(i),ux=p.getX(i+1)-ax,uy=p.getY(i+1)-ay,uz=p.getZ(i+1)-az,vx=p.getX(i+2)-ax,vy=p.getY(i+2)-ay,vz=p.getZ(i+2)-az,nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;for(let k=0;k<3;k++){const kk=key(i+k),a=acc.get(kk)||[0,0,0];a[0]+=nx;a[1]+=ny;a[2]+=nz;acc.set(kk,a)}}
 const out=new Float32Array(n*3);for(let i=0;i<n;i++){const a=acc.get(key(i)),l=Math.hypot(a[0],a[1],a[2])||1;out[i*3]=a[0]/l;out[i*3+1]=a[1]/l;out[i*3+2]=a[2]/l}g.setAttribute('normal',new THREE.BufferAttribute(out,3))}
-function rockG(pk){const mm=pk=='basalt'?0:pk=='sand'?.25:1,pm=pk=='sand'?[1.4,.98,.68]:pk=='basalt'?[.34,.33,.34]:[1,1,1],planes=Array.from({length:(pk=='basalt'?9:6)+(R()*3|0)},()=>{const a=R()*6.283,b=Math.acos(R()*2-1);return[Math.sin(b)*Math.cos(a),Math.cos(b),Math.sin(b)*Math.sin(a),.5+R()*.4]});
+function rockGJs(pk){const mm=pk=='basalt'?0:pk=='sand'?.25:1,pm=pk=='sand'?[1.4,.98,.68]:pk=='basalt'?[.34,.33,.34]:[1,1,1],planes=Array.from({length:(pk=='basalt'?9:6)+(R()*3|0)},()=>{const a=R()*6.283,b=Math.acos(R()*2-1);return[Math.sin(b)*Math.cos(a),Math.cos(b),Math.sin(b)*Math.sin(a),.5+R()*.4]});
 const ph=R()*10,sx=.95+R()*.4,sy=.55+R()*.35,sz=.8+R()*.4,n3=(x,y,z)=>Math.sin(x*2.3+1.3+ph)*Math.sin(y*2.9+2.1+ph*.7)*Math.sin(z*2.1+3.3-ph*.5);
 const rad=(x,y,z)=>{const l=Math.hypot(x,y,z)||1;x/=l;y/=l;z/=l;let s=0;for(const[a,b,c,o]of planes){const d=a*x+b*y+c*z;if(d>.05)s+=Math.exp(-10*(o/d))}const r=s>0?Math.min(1.15,-Math.log(s)/10):1.1;return r*(1+.1*n3(x*2.2,y*2.2,z*2.2)+.05*n3(x*5,y*5,z*5)+.02*n3(x*11,y*11,z*11)+.012*n3(x*23,y*23,z*23)+.015*Math.sin(y*18+n3(x,y,z)*4))};
 const pos=(x,y,z)=>{const l=Math.hypot(x,y,z)||1,r=rad(x,y,z);return[x/l*r*sx,y/l*r*sy+.45,z/l*r*sz]};
@@ -197,7 +200,7 @@ const rot3=(v,tl,yw)=>{let x=v[0],y=v[1],z=v[2];const c=Math.cos(tl),s=Math.sin(
 function padG(g,c,sx,sy,tl,yw){const th=.07*sx*1.6,NI=10,NJ=6,o=g.P.length/3;for(let j=0;j<=NJ;j++){const ph=-1.5708+j/NJ*3.1416;for(let i=0;i<=NI;i++){const t=i/NI*6.2832,a=Math.cos(ph)*Math.cos(t),b=Math.sin(ph),d=Math.cos(ph)*Math.sin(t),p=rot3([a*sx,b*sy+sy,d*th],tl,yw),n=rot3([a/sx,b/sy,d/th],tl,yw),nl=Math.hypot(n[0],n[1],n[2])||1;gaV(g,[c[0]+p[0],c[1]+p[1],c[2]+p[2]],[n[0]/nl,n[1]/nl,n[2]/nl],[1,1,1],[i/NI*2,j/NJ*2])}}
 for(let j=0;j<NJ;j++)for(let i=0;i<NI;i++){const a=o+j*(NI+1)+i,b=a+1,cc=a+NI+1,d=cc+1;g.I.push(a,cc,b,b,cc,d)}}
 function pricklyTree(){const g=GA();function rec(c,tl,yw,s,d){padG(g,c,.55*s,.7*s,tl,yw);if(d>0){const n=2+(R()*2|0);for(let i=0;i<n;i++){const e=rot3([(R()-.5)*.8*.55*s,.7*s*2*.93,0],tl,yw);rec([c[0]+e[0],c[1]+e[1],c[2]+e[2]],tl+(R()-.5)*1.2,yw+(R()-.5)*1.6,s*.86,d-1)}}}rootsFrom(g,.24,'cactus',[1,.5]);rec([0,-.05,0],(R()-.5)*.5,R()*6.283,1,2);return gaGeo(g)}
-function acaciaTree(){const W=GA(),L=GA(),ctr=[0,5,0,6],o={cards:5,size:.85,c0:[.7,.75,.5],c1:[1.2,1.2,.85],ctr,droop:.15,bias:-.04};let p;
+function acaciaTreeJs(){const W=GA(),L=GA(),ctr=[0,5,0,6],o={cards:5,size:.85,c0:[.7,.75,.5],c1:[1.2,1.2,.85],ctr,droop:.15,bias:-.04};let p;
 {const pts=[],rad=[],N=12,wx=(R()-.5)*.8,wz=(R()-.5)*.8;for(let i=0;i<=N;i++){const t=i/N;pts.push([wx*t*t*1.5,-.2+3.8*t,wz*t*t*1.5]);rad.push(.38*(1-t*.55)+.2*Math.exp(-t*9))}rootsFrom(W,rad[0],'acacia',[2,.4]);tubePath(W,pts,rad,9,[2,.4]);p=pts[N]}
 const n=3+(R()*3|0);for(let i=0;i<n;i++){const a=i/n*6.283+R()*.8,e=.18+R()*.28;grow(W,L,[p[0],p[1]-.2-R()*.3,p[2]],dirA(a,e),2.3+R()*.8,.16+R()*.04,0,4,o)}return[gaGeo(W),gaGeo(L)]}
 function joshuaTree(){const W=GA(),L=GA(),tips=[];function br(p,d,len,r,dep){const q=[p[0]+d[0]*len,p[1]+d[1]*len,p[2]+d[2]*len];tube(W,p,q,r,r*.8,7,[1,.3]);if(dep==0){tips.push([q,d]);return}for(let i=0;i<2;i++){let nd=[d[0]+(R()-.5)*1.3,d[1]*.8+.55,d[2]+(R()-.5)*1.3];const nl=Math.hypot(nd[0],nd[1],nd[2])||1;nd=nd.map(v=>v/nl);br(q,nd,len*.72,r*.72,dep-1)}}
@@ -206,7 +209,7 @@ for(let i=0;i<3;i++){const a=i*2.1+R()*.6;br(p,[Math.cos(a)*.7,.75,Math.sin(a)*.
 tips.forEach(([q,d])=>{for(let k=0;k<46;k++){const a=R()*6.283,e=.2+R()*1.1;strip(L,q,[Math.cos(a)*Math.cos(e),Math.sin(e),Math.sin(a)*Math.cos(e)],.55+R()*.35,.045,.08,[.45+R()*.2,.62+R()*.2,.4],1)}for(let k=0;k<14;k++){const a=R()*6.283;strip(L,q,[Math.cos(a)*.5,-.9,Math.sin(a)*.5],.5+R()*.25,.04,.02,[.5,.4,.25],1)}});return[gaGeo(W),gaGeo(L)]}
 function agaveTree(){const W=GA(),L=GA();rootsFrom(W,.16,'agave',[1,.5]);for(let k=0;k<24;k++){const a=k*2.4+R()*.2,f=k/24,e=.15+.95*Math.pow(f,.7);strip(L,[0,.05,0],[Math.cos(a)*Math.cos(e),Math.sin(e),Math.sin(a)*Math.cos(e)],.85+(1-f)*.5+R()*.2,.17,.3+(1-f)*.3,[.5+R()*.15,.72+R()*.12,.68],2)}return[gaGeo(W),gaGeo(L)]}
 function sageTree(){const W=GA(),L=GA(),ctr=[0,.6,0,1],o={cards:3,size:.42,c0:[.6,.68,.5],c1:[1.05,1.08,.85],ctr,droop:.08,bias:.08};rootsFrom(W,.05,'shrub',[1,.35]);for(let i=0;i<9;i++)grow(W,L,[0,0,0],dirA(i/9*6.283+R()*.7,.8+R()*.45),.5+R()*.2,.02,0,3,o);return[gaGeo(W),gaGeo(L)]}
-function ashBushTree(){const W=GA(),L=GA(),ctr=[0,.6,0,1],o={cards:1,size:.34,c0:[.4,.44,.36],c1:[.75,.78,.62],ctr,droop:.1,bias:.1};rootsFrom(W,.05,'shrub',[1,.35]);for(let i=0;i<8;i++)grow(W,L,[0,0,0],dirA(i/8*6.283+R()*.8,.9+R()*.5),.55+R()*.25,.02,0,3,o);return[gaGeo(W),gaGeo(L)]}
+function ashBushTreeJs(){const W=GA(),L=GA(),ctr=[0,.6,0,1],o={cards:1,size:.34,c0:[.4,.44,.36],c1:[.75,.78,.62],ctr,droop:.1,bias:.1};rootsFrom(W,.05,'shrub',[1,.35]);for(let i=0;i<8;i++)grow(W,L,[0,0,0],dirA(i/8*6.283+R()*.8,.9+R()*.5),.55+R()*.25,.02,0,3,o);return[gaGeo(W),gaGeo(L)]}
 function deadTree(){const W=GA(),H=7+R()*5,lx=(R()-.5)*.6,lz=(R()-.5)*.6,px=t=>lx*Math.sin(t*2.2),pz=t=>lz*Math.sin(t*2.2);
 {const pts=[],rad=[],N=16;for(let i=0;i<=N;i++){const t=i/N;pts.push([px(t),-.3+(H+.3)*t*.97,pz(t)]);rad.push(.34*(1-t*.8)+.16*Math.exp(-t*12))}rootsFrom(W,rad[0],'deadtree',[2,.4]);tubePath(W,pts,rad,9,[2,.4])}
 function db(p,d,len,r,dep){const q=[p[0]+d[0]*len,p[1]+d[1]*len,p[2]+d[2]*len];tube(W,p,q,r,r*.6,5,[1,.3]);if(dep>0)for(let i=0;i<(R()<.6?2:1);i++){const s=.4+R()*.5;let nd=[d[0]+(R()-.5)*1.2,d[1]+(R()-.5)*.6,d[2]+(R()-.5)*1.2];const nl=Math.hypot(nd[0],nd[1],nd[2])||1;db([p[0]+(q[0]-p[0])*s,p[1]+(q[1]-p[1])*s,p[2]+(q[2]-p[2])*s],nd.map(v=>v/nl),len*.6,r*.6,dep-1)}}
@@ -244,6 +247,128 @@ const towerW=mergeG([[bxT(6,48,6,9,9).translate(0,24,0),shd,UB],[bxT(4,6,4,9,9).
 
 const TV=(fn,wo,lo)=>[0,1,2].flatMap(v=>{const[a,b]=fn();return[[a,{...wo,vi:v,vn:3}],[b,{...lo,vi:v,vn:3}]]});
 const TV3=(fn,wo,lo,bo)=>[0,1,2].flatMap(v=>{const[a,b,c]=fn();return[[a,{...wo,vi:v,vn:3}],[b,{...lo,vi:v,vn:3}],[c,{...bo,vi:v,vn:3}]]});
+/* ===== grown flora: space colonisation lives in the engine =====
+   The skeleton of every broadleaf tree comes from the C++ kernel, which grows
+   it with attraction points (Runions et al. 2007), sizes the limbs with da
+   Vinci's rule and hands back golden-angle leaf anchors. The JS side only turns
+   those anchors into the same leaf cards the rest of the studio uses, so the
+   materials, wind, shadows and instancing do not change at all. When the
+   artifact is older than the kernel the original builders run instead and the
+   trees are swapped in place as soon as the engine is ready. */
+const GROWN_CFG={
+ oak:{c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr:[0,6,0,3.6],bcol:[1,.8,.88],petal:1},
+ birch:{c0:[.6,.7,.5],c1:[1.3,1.25,.9],ctr:[0,6.5,0,2.4],bcol:[.96,.97,.82],petal:1},
+ shrub:{c0:[.66,.72,.6],c1:[1.15,1.15,1],ctr:[0,.7,0,1.1],bcol:[1,.9,.6],petal:1},
+ acacia:{c0:[.7,.75,.5],c1:[1.2,1.2,.85],ctr:[0,5,0,6],bcol:null,petal:0},
+ ashbush:{c0:[.4,.44,.36],c1:[.75,.78,.62],ctr:[0,.6,0,1],bcol:null,petal:0},
+ fern:{c0:[.44,.64,.3],c1:[.92,1.02,.55],ctr:[0,.28,0,.62],bcol:null,petal:0},
+ treefern:{c0:[.38,.6,.26],c1:[.86,1.0,.5],ctr:[0,1.6,0,1.15],bcol:null,petal:0}
+};
+const GROWN_JOBS=[];
+function grownTree(kind){
+ const f=window.FELandscapeFlora;if(!f||typeof f.tree!=='function')return null;
+ const cfg=GROWN_CFG[kind];if(!cfg)return null;
+ const t=f.tree(kind);if(!t||!t.wood||!t.leaf||!t.leaf.length)return null;
+ const L=GA(),a=t.leaf,st=t.leafStride||8;let B=null;
+ for(let i=0;i+st<=a.length;i+=st){
+  const b=[a[i]+(R()-.5)*.06,a[i+1]+(R()-.5)*.06,a[i+2]+(R()-.5)*.06];
+  /* Cards inherit the compliance and phase of the twig they sit on, so a leaf
+     cannot stay behind while its branch swings. Kernels older than the skeletal
+     wind export eight floats per leaf and those two channels stay at zero. */
+  L.sw=st>8?a[i+8]:0;L.phv=st>8?a[i+9]:0;
+  lcard(L,b,[a[i+3],a[i+4],a[i+5]],a[i+6],cfg.c0,cfg.c1,cfg.ctr,a[i+7]);
+  if(cfg.petal&&((i/st)|0)%2===0){if(!B){B=GA();B.bcol=cfg.bcol}petalCard(B,[b[0]+(R()-.5)*.25,b[1]+(R()-.5)*.25,b[2]+(R()-.5)*.25],a[i+6]*.3)}
+ }
+ L.sw=0;L.phv=0;
+ return cfg.petal?[t.wood,gaGeo(L),B?gaGeo(B):gaGeo(L)]:[t.wood,gaGeo(L)];
+}
+function treeBuilder(kind,legacy,per){
+ let job=GROWN_JOBS.find(j=>j.kind===kind);
+ if(!job)GROWN_JOBS.push(job={kind,per:per||3,legacy,parts:[]});
+ return ()=>{try{const g=grownTree(kind);if(g){if(job.parts.length<3)job.parts.push(g);return g}}catch(e){showErr('Grown '+kind+': '+e.message)}return legacy()};
+}
+const ROCK_GROWN={granite:'granite',sand:'sandstone',basalt:'basalt'};
+function rockBuilder(pk){
+ const key=pk||'rock',id=ROCK_GROWN[pk||'granite']||'granite';
+ let job=GROWN_JOBS.find(j=>j.kind===key);
+ if(!job)GROWN_JOBS.push(job={kind:key,per:1,rock:id,parts:[]});
+ try{const f=window.FELandscapeFlora,g=f&&typeof f.rock==='function'?f.rock(id):null;if(g){job.parts.push(g);return g}}catch(e){showErr('Grown rock: '+e.message)}
+ return rockGJs(pk);
+}
+/* Swap one InstancedMesh onto a grown geometry and keep the LOD twin, the
+   selection bounds and the procedural caveat honest about the new mesh. */
+function adoptGeometry(K,m,geo){
+ if(!m||!geo)return;
+ m.geometry=geo;
+ if(m.userData&&m.userData.lodGeom)m.userData.lodGeom=geo;
+ K.selectionBounds=null;K.selectionGrid=null;K.selectionGridDirty=true;
+}
+let grownTries=0;
+/* Re-grows the species that opt into the grown kernel: the cached parts for the
+   requested kinds are dropped and applyGrown fills them again. Rocks keep their
+   cached meshes, and instances keep their matrices, so a slider move only
+   replaces geometry. */
+/* A slider is debounced by the caller and lands here. Only the resident chunks
+   hold instances of a species, so this is the whole rebuild: the placements and
+   their matrices are never touched, only the shared grown geometry, and the
+   species are rebuilt a few at a time so a 120 Hz frame is not dropped. */
+let grownQueue=null,grownQueueAt=0;
+function stepGrownRebuild(){
+ if(!grownQueue)return;
+ const list=grownQueue,start=nowMs();
+ while(grownQueueAt<list.length){
+  applyGrown([list[grownQueueAt++]]);
+  if(nowMs()-start>3)break;
+ }
+ grownQueue=grownQueueAt<list.length?list:null;
+ if(grownQueue&&typeof requestAnimationFrame==='function')requestAnimationFrame(stepGrownRebuild);
+}
+function nowMs(){return typeof performance!=='undefined'&&performance.now?performance.now():Date.now()}
+function queueGrownRebuild(jobs){
+ grownQueue=jobs.slice();grownQueueAt=0;
+ if(typeof requestAnimationFrame==='function')requestAnimationFrame(stepGrownRebuild);
+ else{applyGrown();grownQueue=null}
+}
+function regrowFlora(kinds){
+ const list=Array.isArray(kinds)?kinds:null,touched=[];
+ for(const job of GROWN_JOBS){
+  if(job.rock)continue;
+  if(list&&!list.includes(job.kind))continue;
+  job.parts=[];touched.push(job);
+ }
+ if(touched.length)queueGrownRebuild(touched);
+ return touched.length;
+}
+window.__feRegrowFlora=regrowFlora;
+function applyGrown(jobs){
+ if(!GROWN_JOBS.length)return;
+ const list=jobs&&jobs.length?jobs:GROWN_JOBS;
+ let pending=0;
+ for(const job of list){
+  const K=KIND[job.kind];if(!K||!K.meshes||!K.meshes.length)continue;
+  if(job.rock){
+   for(let v=0;v<3;v++){
+    let g=job.parts[v];
+    if(!g){const f=window.FELandscapeFlora;g=f&&typeof f.rock==='function'?f.rock(job.rock):null;if(g)job.parts[v]=g}
+    if(!g){pending++;break}
+    adoptGeometry(K,K.meshes[v],g);
+   }
+  }else{
+   for(let v=0;v<3;v++){
+    let parts=job.parts[v];
+    if(!parts){parts=grownTree(job.kind);if(parts)job.parts[v]=parts}
+    if(!parts){pending++;break}
+    for(let s=0;s<job.per&&s<parts.length;s++)adoptGeometry(K,K.meshes[v*job.per+s],parts[s]);
+   }
+  }
+  if(K.lowMeshes)K.lowMeshes.forEach((low,i)=>{const m=K.meshes[i];if(m)low.geometry=m.userData&&m.userData.lodGeom?m.userData.lodGeom:m.geometry});
+ }
+ if(pending&&grownTries++<4)setTimeout(()=>{try{applyGrown()}catch(e){showErr('Grown flora: '+e.message)}},500);
+}
+/* terrain-main-01 builds lazy species from other blocks; it calls back here so a
+   species that appeared after the artifact finished loading is grown too. */
+window.__feGrowSpecies=applyGrown;
+try{const c=window.FELandscapeCore;if(c&&c.loading&&c.loading.then)c.loading.then(()=>{try{applyGrown()}catch(e){showErr('Grown flora: '+e.message)}})}catch(e){}
 function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,lodGeom:grassLowG}]],false);
 mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
 mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,lodGeom:tallGrassLowG}]],false);
@@ -251,11 +376,11 @@ mk('daisy',14000,flowerParts('daisy'),false);
 mk('tulip',12000,flowerParts('tulip'),false);
 mk('lavender',12000,flowerParts('lavender'),false);
 mk('pine',2000,TV(pineTree,{map:BT.pine,w:.0016,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.pine,ns:.55,rm:BR.pine},{map:NDT,cut:.35,ds:1,phys:1,nm:LEAF_PBR.needle.nm,ns:.3,rm:LEAF_PBR.needle.rm,roughness:.76,w:.0016,wf:.02}),true);
-mk('oak',1500,TV3(oakTree,{map:BT.oak,w:.0015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak},{map:OAKL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.oak.nm,ns:.28,rm:LEAF_PBR.oak.rm,roughness:.78,w:.0015,wf:.03,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0015,wf:.03,fx:'b',nt:1}),true);
-mk('birch',1500,TV3(birchTree,{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true);
+mk('oak',1500,TV3(treeBuilder('oak',oakTreeJs,3),{map:BT.oak,w:.0015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak},{map:OAKL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.oak.nm,ns:.28,rm:LEAF_PBR.oak.rm,roughness:.78,w:.0015,wf:.03,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0015,wf:.03,fx:'b',nt:1}),true);
+mk('birch',1500,TV3(treeBuilder('birch',birchTreeJs,3),{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true);
 mk('palm',1000,TV(palmTree,{map:BT.palm,w:.002,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.palm,ns:.55,rm:BR.palm},{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.0025,wf:.03}),true);
-mk('shrub',4000,TV3(shrubTree,{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true);
-mk('rock',1000,[0,1,2].map(v=>[rockG(),{nt:1,std:1,vi:v,vn:3}]),true);KIND.rock.vr=.7;
+mk('shrub',4000,TV3(treeBuilder('shrub',shrubTreeJs,3),{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true);
+mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),{nt:1,std:1,vi:v,vn:3}]),true);KIND.rock.vr=.7;
 mk('house',1500,[...[0,1,2].flatMap(v=>[[houseW,{pbr:HTV[v][2],map:HTV[v][0],em:HTV[v][1],bump:.5,vi:v,vn:3,sn:1,part:'wall'}],[houseR,{std:1,map:RFV[v],ds:1,bump:.8,vi:v,vn:3,sn:1,part:'roof'}]]),[houseB,{nt:1,sn:1,part:'base'}]],true);
 mk('block',500,[[blockW,{pbr:AT[2],map:AT[0],em:AT[1],bump:.5,sn:1,part:'shell'}],[blockB,{nt:1,sn:1,part:'base'}]],true);
 mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[midB,{nt:1,sn:1,part:'base'}]],true);
@@ -273,14 +398,21 @@ LZ('juniper',3000,()=>TV(juniperTree,bk('pine',.01),{map:NDT,cut:.35,ds:1,phys:1
 LZ('saguaro',1200,()=>SX(saguaroTree,{map:BT.cactus,nt:1,std:1,nm:BN.cactus,ns:.65,rm:BR.cactus}));
 LZ('barrel',2000,()=>SX(barrelTree,{map:BT.cactus,nt:1,std:1,nm:BN.cactus,ns:.65,rm:BR.cactus}));
 LZ('prickly',2000,()=>SX(pricklyTree,{map:BT.cactus,nt:1,std:1,nm:BN.cactus,ns:.65,rm:BR.cactus}));
-LZ('acacia',1200,()=>TV(acaciaTree,bk('oak',.002),{map:ACAL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.acacia.nm,ns:.28,rm:LEAF_PBR.acacia.rm,roughness:.8,w:.002,wf:.03}));
+LZ('acacia',1200,()=>TV(treeBuilder('acacia',acaciaTreeJs,2),bk('oak',.002),{map:ACAL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.acacia.nm,ns:.28,rm:LEAF_PBR.acacia.rm,roughness:.8,w:.002,wf:.03}));
 LZ('joshua',1200,()=>TV(joshuaTree,bk('oak',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.02}));
 LZ('agave',2000,()=>TV(agaveTree,bk('cactus',.004),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.004}));
 LZ('sage',3000,()=>TV(sageTree,bk('oak',.015),{map:SAGL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.sage.nm,ns:.28,rm:LEAF_PBR.sage.rm,roughness:.82,w:.015,wf:.025}));
-LZ('sandrock',800,()=>[0,1,2].map(v=>[rockG('sand'),{nt:1,std:1,det:1,vi:v,vn:3}]));
-LZ('basalt',1200,()=>[0,1,2].map(v=>[rockG('basalt'),{nt:1,std:1,det:1,vi:v,vn:3}]));
+LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),{nt:1,std:1,det:1,vi:v,vn:3}]));
+LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),{nt:1,std:1,det:1,vi:v,vn:3}]));
 LZ('deadtree',1200,()=>SX(deadTree,{map:BT.char,nt:1,std:1,nm:BN.char,ns:.65,rm:BR.char,w:.0016}));
-LZ('ashbush',3000,()=>TV(ashBushTree,bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
-LZ('treefern',1500,()=>TV(treeFernTree,bk('palm',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.03}));
-LZ('fern',3000,()=>TV(fernTree,bk('palm',.02),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.02,wf:0}));
+LZ('ashbush',3000,()=>TV(treeBuilder('ashbush',ashBushTreeJs,2),bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
+/* Ferns are the grammar species: `fernTree`/`treeFernTree` stay as the fallback
+   for an artifact without the kernel, but the fronds themselves are rewritten
+   from production rules in C++. */
+LZ('treefern',1500,()=>TV(treeBuilder('treefern',treeFernTree,2),bk('palm',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.03}));
+LZ('fern',3000,()=>TV(treeBuilder('fern',fernTree,2),bk('palm',.01),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.01,wf:.02}));
+/* The build routines run inside this try-block, so their const textures
+   are block scoped. Publish them so the realism module can re-synthesise
+   bark / leaf micro-structure into the very same canvases the meshes use. */
+window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL};
 }catch(e){MODELS_ERR=e;showErr('Models fallback: '+e.message);fallbackModels()}

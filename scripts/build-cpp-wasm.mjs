@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, statSync } from 'node:fs';
+
+const ARTIFACT = 'wasm/fe_core_engine.wasm';
 
 const CPP_SOURCES = [
   'cpp/src/fe_wasm_exports.cpp',
@@ -11,7 +13,10 @@ const CPP_SOURCES = [
   'cpp/src/fe_openworld.cpp',
   'cpp/src/fe_ocean.cpp',
   'cpp/src/fe_volumetrics.cpp',
-  'cpp/src/fe_modifiers.cpp'
+  'cpp/src/fe_modifiers.cpp',
+  'cpp/src/fe_surface.cpp',
+  'cpp/src/fe_flora.cpp',
+  'cpp/src/fe_climate.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -74,6 +79,9 @@ const REQUIRED_EXPORTS = [
   'fe_ow_hydro_set_grid',
   'fe_ow_hydro_trace',
   'fe_lod_classify',
+  'fe_lod_visible',
+  'fe_lod_visible_index_ptr',
+  'fe_lod_visible_tier_ptr',
   'fe_lod_out_ptr',
   'fe_ocean_field_ptr',
   'fe_ocean_configure',
@@ -96,7 +104,29 @@ const REQUIRED_EXPORTS = [
   'fe_mod_lattice_deform_ptr','fe_mod_lattice_apply','fe_mod_armature','fe_mod_shrinkwrap',
   'fe_anim_edit_key','fe_anim_delete_keys_in_range','fe_anim_move_keys_in_range',
   'fe_anim_duplicate_keys_in_range','fe_anim_catmull_rom',
-  'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress'
+  'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress',
+  /* Landscape surface realism: measured PBR + tileable micro-structure */
+  'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
+  'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo',
+  /* Flora realism: grown trees and ported rock meshes */
+  'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
+  'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
+  'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
+  'fe_flora_species_count','fe_flora_rock_kind_count',
+  /* Skeletal wind channels + the fern L-system (fe_flora.cpp) */
+  'fe_flora_sway_ptr','fe_flora_phase_ptr','fe_flora_leaf_stride',
+  'fe_flora_lsystem','fe_flora_lsystem_len','fe_flora_lsystem_word','fe_flora_lsystem_rules',
+  'fe_flora_lsystem_load','fe_flora_lsystem_run','fe_flora_lsystem_plant',
+  /* Climate & weather: seeded temperature / moisture / fronts / hazards */
+  'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
+  'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
+  'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
+  'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami',
+  'fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_ow_visible_count',
+  /* Time-sliced erosion (fe_landscape.cpp) */
+  'fe_erosion_begin','fe_erosion_set_region','fe_erosion_step','fe_erosion_dirty_ptr','fe_erosion_dirty_reset',
+  'fe_erosion_remaining','fe_erosion_total','fe_erosion_active','fe_erosion_cancel',
+  'fe_terrain_compute_normals_region'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
@@ -118,6 +148,18 @@ function findZigCompiler() {
   return null;
 }
 
+/* A source change that nobody compiled is the one failure this script must not
+ * hide: validating the previous artifact would ship code that is not in the
+ * repository. So when no compiler is available and a source is newer than the
+ * artifact, stop instead of printing a green check. */
+function staleSources() {
+  if (!existsSync(ARTIFACT)) return ['wasm/fe_core_engine.wasm is missing'];
+  const built = statSync(ARTIFACT).mtimeMs;
+  return CPP_SOURCES.filter((file) => {
+    try { return statSync(file).mtimeMs > built; } catch { return false; }
+  });
+}
+
 const zig = findZigCompiler();
 if (zig) {
   execFileSync(zig.cmd, [...zig.args, 'c++',
@@ -133,13 +175,38 @@ if (zig) {
     '-Wl,--export-memory',
     '-Wl,--export=__heap_base',
     '-Wl,--export=__wasm_call_ctors',
+    /* New kernels are named explicitly so the linker keeps them even when
+       nothing else references them inside the module. */
+    '-Wl,--export=fe_lod_visible',
+    '-Wl,--export=fe_erosion_begin',
+    '-Wl,--export=fe_erosion_set_region',
+    '-Wl,--export=fe_erosion_step',
+    '-Wl,--export=fe_erosion_dirty_ptr',
+    '-Wl,--export=fe_erosion_dirty_reset',
+    '-Wl,--export=fe_erosion_remaining',
+    '-Wl,--export=fe_erosion_total',
+    '-Wl,--export=fe_erosion_active',
+    '-Wl,--export=fe_erosion_cancel',
+    '-Wl,--export=fe_terrain_compute_normals_region',
+    '-Wl,--export=fe_ow_visible_count',
+    '-Wl,--export=fe_lod_visible_index_ptr',
+    '-Wl,--export=fe_lod_visible_tier_ptr',
     ...CPP_SOURCES,
     '-o', 'wasm/fe_core_engine.wasm'
   ], { stdio: 'inherit' });
   copyFileSync('wasm/fe_core_engine.wasm', 'fe_core_engine.wasm');
   console.log('Compiled C++20 Core Engine to wasm/fe_core_engine.wasm via Clang/Zig.');
-} else if (existsSync('wasm/fe_core_engine.wasm') && !existsSync('fe_core_engine.wasm')) {
-  copyFileSync('wasm/fe_core_engine.wasm', 'fe_core_engine.wasm');
+} else {
+  const stale = staleSources();
+  if (stale.length && !process.env.FE_ALLOW_STALE_CPP) {
+    throw new Error(
+      'No Zig compiler was found and these C++ sources are newer than the shipped artifact: ' +
+      stale.join(', ') + '.\nInstall one (pip install --break-system-packages ziglang, or zig in PATH) ' +
+      'so the engine can be rebuilt. Set FE_ALLOW_STALE_CPP=1 only to validate an artifact you know is current.'
+    );
+  }
+  if (stale.length) console.warn('warning: validating a stale fe_core_engine.wasm (' + stale.join(', ') + ' newer)');
+  if (!existsSync('fe_core_engine.wasm')) copyFileSync('wasm/fe_core_engine.wasm', 'fe_core_engine.wasm');
 }
 
 const wasmBytes = readFileSync('wasm/fe_core_engine.wasm');

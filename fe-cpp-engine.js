@@ -42,7 +42,10 @@
   const REQUIRED_KERNELS = Object.freeze({
     animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
     ocean: ['fe_ocean_configure', 'fe_ocean_update', 'fe_ocean_resolution'],
-    terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic'],
+    terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic', 'fe_erosion_begin', 'fe_erosion_step', 'fe_erosion_dirty_ptr', 'fe_lod_visible', 'fe_lod_visible_index_ptr', 'fe_lod_visible_tier_ptr'],
+    surface: ['fe_surface_pbr', 'fe_surface_detail', 'fe_water_optical'],
+    flora: ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_leaf_ptr', 'fe_flora_sway_ptr', 'fe_flora_phase_ptr', 'fe_flora_lsystem', 'fe_flora_lsystem_plant'],
+    climate: ['fe_climate_at', 'fe_climate_weather', 'fe_climate_biome'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
     modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
     simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']

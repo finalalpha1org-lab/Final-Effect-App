@@ -70,7 +70,7 @@ test('the sheet offers a hard refresh so a stale installed build can update',()=
  assert.ok(html.includes('id="ws-build-stamp"'),'the loaded build must be visible');
  assert.ok(/caches\.keys\(\)/.test(html)&&/serviceWorker\.getRegistrations\(\)/.test(html),'update clears caches and registrations');
  const sw=readFileSync('sw.js','utf8');
- assert.ok(sw.includes("'final-effect-cpp-v19'"),'bump the cache name whenever the shipped shell changes');
- assert.ok(!sw.includes("'final-effect-cpp-v18'"),'the previous cache name must be retired, not kept alongside');
- for(const file of ['fe_core_engine.wasm','terrain-main-01.js','terrain-main-09.js','open-world-generator.js','open-world.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
+ assert.ok(sw.includes("'final-effect-cpp-v27'"),'bump the cache name whenever the shipped shell changes');
+ assert.ok(!sw.includes("'final-effect-cpp-v26'"),'the previous cache name must be retired, not kept alongside');
+ for(const file of ['fe_core_engine.wasm','terrain-main-01.js','terrain-main-09.js','landscape-flora.js','landscape-weather.js','open-world-generator.js','open-world.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
 });

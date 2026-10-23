@@ -8,7 +8,28 @@
  function bind(instance){
   const x=instance.exports;
   const required=['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal'];
-  const optional=['fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_terrain_scatter_natural','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr'];
+  const optional=['fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_terrain_scatter_natural','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_ow_visible_count','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr',
+   /* Time-sliced erosion (fe_landscape.cpp) */
+   'fe_erosion_begin','fe_erosion_set_region','fe_erosion_step','fe_erosion_dirty_ptr','fe_erosion_dirty_reset',
+   'fe_erosion_remaining','fe_erosion_total','fe_erosion_active','fe_erosion_cancel','fe_terrain_compute_normals_region',
+   /* Surface realism (fe_surface.cpp): measured PBR + tileable micro-structure */
+   'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
+   'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo',
+   /* Flora realism (fe_flora.cpp): grown trees and ported rock meshes */
+   'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
+   'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
+   'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
+   'fe_flora_species_count','fe_flora_rock_kind_count',
+   /* Skeletal wind attributes + the fern grammar (fe_flora.cpp) */
+   'fe_flora_sway_ptr','fe_flora_phase_ptr','fe_flora_leaf_stride',
+   'fe_flora_lsystem','fe_flora_lsystem_len','fe_flora_lsystem_word','fe_flora_lsystem_rules',
+   'fe_flora_lsystem_load','fe_flora_lsystem_run','fe_flora_lsystem_plant',
+   /* Climate & weather (fe_climate.cpp): seeded temperature / moisture / fronts */
+   'fe_climate_init','fe_climate_ready','fe_climate_set_clock','fe_climate_set_season',
+   'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
+   'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
+   'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami',
+   'fe_climate_biome_grid'];
   const missing=required.filter(name=>typeof x[name]!=='function');
   if(missing.length)throw Error('Terrain C++ export missing: '+missing.join(', '));
   /* A partially stale/older artifact must not kill the whole landscape bridge:
@@ -116,6 +137,69 @@
    :ex.fe_terrain_erode_hydraulic(state.droplets,64,.05,.3,.3,.3,.01,4,2,(state.seed>>>0)||1);
   if(result<0){core.error='C++ erosion returned '+result;return false}
   state.heights.set(height);core.commands++;return true;
+ };
+ /* --- Live hydraulic erosion ------------------------------------------------
+    The kernel owns the run: seed, droplet cursor and dirty rectangle all live in
+    C++, so a frame only asks for the next slice and then reads back the rows that
+    slice touched. No allocation here — the two typed-array views are rebuilt only
+    when wasm memory grows, and the rectangle is written into a shared array. */
+ let eroBuf=null,eroRectView=null,eroHeightView=null,eroGridW=0;
+ function eroViews(){
+  if(eroBuf===ex.memory.buffer)return true;
+  if(typeof ex.fe_erosion_dirty_ptr!=='function')return false;
+  eroBuf=ex.memory.buffer;
+  eroRectView=new Uint16Array(eroBuf,ex.fe_erosion_dirty_ptr(),4);
+  eroGridW=ex.fe_terrain_get_grid_width();
+  eroHeightView=new Float32Array(eroBuf,ex.fe_terrain_get_height_ptr(),eroGridW*eroGridW);
+  return true;
+ }
+ core.erosionRect=[0,0,0,0];
+ core.erosionBegin=function(state){
+  if(!state||!state.heights){core.error='erosionBegin needs the height field';return false;}
+  if(!ensure(state.n,state.size)||typeof ex.fe_erosion_begin!=='function')return false;
+  if(!eroViews())return false;
+  /* The JS field is authoritative, exactly as it is for every other command:
+     a run never starts from whatever the kernel happened to hold. */
+  new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);
+  const r=ex.fe_erosion_begin(state.droplets,state.lifetime||64,.05,.3,.3,.3,.01,4,2,(state.seed>>>0)||1);
+  if(r<0){core.error='C++ live erosion returned '+r;return false}
+  core.commands++;return true;
+ };
+ core.erosionRegion=function(x,z,radius){
+  return typeof ex.fe_erosion_set_region==='function'&&ex.fe_erosion_set_region(x,z,radius)===0;
+ };
+ core.erosionStep=function(droplets){
+  return typeof ex.fe_erosion_step==='function'?ex.fe_erosion_step(droplets):-1;
+ };
+ core.erosionRemaining=function(){
+  return typeof ex.fe_erosion_remaining==='function'?ex.fe_erosion_remaining():0;
+ };
+ core.erosionActive=function(){
+  return typeof ex.fe_erosion_active==='function'&&ex.fe_erosion_active()===1;
+ };
+ core.erosionCancel=function(){if(typeof ex.fe_erosion_cancel==='function')ex.fe_erosion_cancel()};
+ /* Copies the cells the kernel touched into `out` and leaves the rectangle in
+    core.erosionRect. Returns false when nothing changed since the last read. */
+ core.erosionRead=function(out){
+  if(!eroViews())return false;
+  const r=eroRectView,x0=r[0],y0=r[1],x1=r[2],y1=r[3],w=eroGridW;
+  if(x0>x1||y0>y1||x1>=w||y1>=w)return false;
+  const dst=out,src=eroHeightView;
+  for(let j=y0;j<=y1;j++)for(let i=x0;i<=x1;i++){const k=j*w+i;dst[k]=src[k]}
+  core.erosionRect[0]=x0;core.erosionRect[1]=x1;core.erosionRect[2]=y0;core.erosionRect[3]=y1;
+  ex.fe_erosion_dirty_reset();
+  return true;
+ };
+ /* Normals for the uploaded rectangle only; identical formula to the full pass. */
+ core.normalsRegion=function(state){
+  if(typeof ex.fe_terrain_compute_normals_region!=='function'||!ensure(state.n,state.size))return false;
+  const w=state.n+1,x0=state.rect[0],x1=state.rect[1],z0=state.rect[2],z1=state.rect[3];
+  const src=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),w*w);
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=j*w+i;src[k]=state.heights[k]}
+  if(ex.fe_terrain_compute_normals_region(x0,x1,z0,z1)<0)return false;
+  const nrm=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_normal_ptr(),w*w*3),out=state.output;
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=(j*w+i)*3;out[k]=nrm[k];out[k+1]=nrm[k+1];out[k+2]=nrm[k+2]}
+  return true;
  };
  core.strata=function(state){
   if(!ensure(state.n,state.size))return false;
@@ -239,6 +323,28 @@
   const points=new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_ow_river_points_ptr(),total*2));
   return {count,meta,points,total};
  };
+ /* Compacted visible-instance list. Returns dense indices into the caller's
+   array plus a tier per entry, and allocates nothing once its buffer is big
+   enough. The frustum and the ground-cover density falloff are decided in the
+   core, so the bridge never loops over instances it will not draw. */
+ let visPtr=0,visBytes=0,visVpPtr=0;
+ const EMPTY_U32=new Uint32Array(0),EMPTY_U8=new Uint8Array(0);
+ core.lodVisible=function(state){
+  if(!core.ready||!state||!state.xyz||!state.vp||!core.has('fe_lod_visible'))return null;
+  const count=Math.min(state.xyz.length/3|0,state.count|0);
+  if(count<=0)return{count:0,indices:EMPTY_U32,tiers:EMPTY_U8};
+  const bytes=count*12;
+  if(bytes>visBytes){visPtr=ex.fe_malloc(bytes);visBytes=visPtr?bytes:visBytes}
+  if(!visPtr)return null;
+  if(!visVpPtr){visVpPtr=ex.fe_malloc(64);if(!visVpPtr)return null}
+  new Float32Array(ex.memory.buffer,visPtr,count*3).set(state.xyz.subarray(0,count*3));
+  new Float32Array(ex.memory.buffer,visVpPtr,16).set(state.vp);
+  const got=ex.fe_lod_visible(count,visPtr,visVpPtr,state.camX,state.camY,state.camZ,state.full,state.radius,state.margin,state.options|0);
+  if(got<0){core.error='Visible list returned '+got;return null}
+  return{count:got,
+   indices:new Uint32Array(ex.memory.buffer,ex.fe_lod_visible_index_ptr(),got),
+   tiers:new Uint8Array(ex.memory.buffer,ex.fe_lod_visible_tier_ptr(),got)};
+ };
  core.lodClassify=function(state){
   if(!core.ready||!state||!state.xyz)return null;
   const count=Math.min(state.xyz.length/3|0,state.count|0);
@@ -249,6 +355,243 @@
   const got=ex.fe_lod_classify(count,lodPtr,state.camX,state.camY,state.camZ,state.full,state.ground?1:0);
   if(got<0){core.error='LOD classification returned '+got;return null}
   return new Int8Array(new Int8Array(ex.memory.buffer,ex.fe_lod_out_ptr(),count));
+ };
+ /* ---- Surface realism (optional kernels; JS keeps a mirror in
+   landscape-realism.js so an older artifact still renders) ---- */
+ core.surfaceCount=function(){return core.has('fe_surface_count')?ex.fe_surface_count():0};
+ core.surfacePbr=function(surface,wet,age,lichen){
+  if(!core.has('fe_surface_pbr'))return null;
+  const n=8,ptr=ex.fe_malloc(n*4);
+  if(!ptr)return null;
+  if(ex.fe_surface_pbr(surface|0,+wet||0,+age||0,+lichen||0,ptr)!==1)return null;
+  return Array.from(new Float32Array(ex.memory.buffer,ptr,n));
+ };
+ core.surfaceDetail=function(kind,w,h,seed,strength){
+  if(!core.has('fe_surface_detail'))return null;
+  if(ex.fe_surface_detail(kind|0,w|0,h|0,(seed>>>0)||1,+strength||1)!==1)return null;
+  const count=ex.fe_surface_detail_size();
+  if(!count)return null;
+  /* Copy out of the static buffer: memory.buffer can be detached by growth. */
+  return new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_surface_detail_ptr(),count*4));
+ };
+ core.detailSize=function(){return core.has('fe_surface_detail_size')?ex.fe_surface_detail_size():0};
+ core.waterOptical=function(type){
+  if(!core.has('fe_water_optical'))return null;
+  const n=6,ptr=ex.fe_malloc(n*4);
+  if(!ptr)return null;
+  if(ex.fe_water_optical(type|0,ptr)!==1)return null;
+  return Array.from(new Float32Array(ex.memory.buffer,ptr,n));
+ };
+ core.windRoughness=function(mps){
+  return core.has('fe_surface_wind_roughness')?ex.fe_surface_wind_roughness(+mps||0):null;
+ };
+ core.snowAlbedo=function(base,age,impurity){
+  return core.has('fe_surface_snow_albedo')?ex.fe_surface_snow_albedo(+base||0,+age||0,+impurity||0):null;
+ };
+ /* ---- Flora (optional kernels; every caller falls back to the JS builder) --- */
+ function floraCopy(Ex){
+  const nv=Ex.fe_flora_vert_count(),ni=Ex.fe_flora_index_count(),nl=Ex.fe_flora_leaf_count();
+  const mem=Ex.memory.buffer;
+  const stride=typeof Ex.fe_flora_leaf_stride==='function'?Ex.fe_flora_leaf_stride()|0:8;
+  const out={
+   verts:nv,indices:ni,leaves:nl,leafStride:stride,
+   pos:new Float32Array(new Float32Array(mem,Ex.fe_flora_pos_ptr(),nv*3)),
+   nrm:new Float32Array(new Float32Array(mem,Ex.fe_flora_nrm_ptr(),nv*3)),
+   uv:new Float32Array(new Float32Array(mem,Ex.fe_flora_uv_ptr(),nv*2)),
+   col:new Float32Array(new Float32Array(mem,Ex.fe_flora_col_ptr(),nv*3)),
+   rnd:new Float32Array(new Float32Array(mem,Ex.fe_flora_rnd_ptr(),nv)),
+   cen:new Float32Array(new Float32Array(mem,Ex.fe_flora_cen_ptr(),nv*3)),
+   idx:new Uint32Array(new Uint32Array(mem,Ex.fe_flora_idx_ptr(),ni)),
+   leaf:new Float32Array(new Float32Array(mem,Ex.fe_flora_leaf_ptr(),nl*stride))
+  };
+  /* Skeletal wind: per-vertex compliance and branch phase. Older artifacts do
+     not have them, in which case the material keeps its height-only bend. */
+  if(typeof Ex.fe_flora_sway_ptr==='function')out.sway=new Float32Array(new Float32Array(mem,Ex.fe_flora_sway_ptr(),nv));
+  if(typeof Ex.fe_flora_phase_ptr==='function')out.phase=new Float32Array(new Float32Array(mem,Ex.fe_flora_phase_ptr(),nv));
+  return out;
+ }
+ core.floraTree=function(kind,seed,detail){
+  if(!core.has('fe_flora_tree'))return null;
+  if(ex.fe_flora_tree(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  if(!out.verts)return null;
+  const info=new Float32Array(8);
+  if(core.has('fe_flora_species_info')){
+   const ptr=ex.fe_malloc(32);
+   if(ptr){if(ex.fe_flora_species_info(kind|0,ptr)===1)info.set(new Float32Array(ex.memory.buffer,ptr,8));out.info=info}
+  }
+  return out;
+ };
+ /* Runtime shape controls: height and branch density, clamped in the kernel. */
+ core.floraSetShape=function(height,density){
+  if(!core.has('fe_flora_set_shape'))return 0;
+  return ex.fe_flora_set_shape(+height||1,+density||1);
+ };
+ /* Back to the built-in frond grammar. */
+ core.lsystemReset=function(){
+  if(!core.has('fe_flora_lsystem_reset'))return -1;
+  return ex.fe_flora_lsystem_reset();
+ };
+ core.floraRock=function(kind,seed,detail){
+  if(!core.has('fe_flora_rock'))return null;
+  if(ex.fe_flora_rock(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
+ };
+ /* Grammar symbols are ASCII, so the bridge never depends on TextEncoder /
+   TextDecoder being present in the host. */
+function lsBytes(str){const a=new Uint8Array(str.length);for(let i=0;i<str.length;i++)a[i]=str.charCodeAt(i)&255;return a}
+function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromCharCode(bytes[i]);return s}
+
+/* The grammar itself: expand the production rules in the kernel and hand the
+   resulting word back. Used by diagnostics and by the flora test suite. */
+ core.lsystem=function(iterations,seed){
+  if(!core.has('fe_flora_lsystem'))return null;
+  const n=ex.fe_flora_lsystem(iterations|0,(seed>>>0)||1);
+  let word='';
+  if(core.has('fe_flora_lsystem_word')&&core.has('fe_flora_lsystem_len')){
+   const len=ex.fe_flora_lsystem_len(),ptr=ex.fe_flora_lsystem_word();
+   if(ptr&&len>0)word=lsString(new Uint8Array(ex.memory.buffer,ptr,len));
+  }
+  return {symbols:n,rules:core.has('fe_flora_lsystem_rules')?ex.fe_flora_lsystem_rules():0,word};
+ };
+ /* Editable grammar: pack {axiom, rules:[{pre,alts}]} into the kernel's byte
+   layout, upload it, and expand it there. Nothing is rewritten in JS. */
+ core.lsystemLoad=function(spec){
+  if(!core.has('fe_flora_lsystem_load')||!spec)return -1;
+  const axiom=String(spec.axiom==null?'X':spec.axiom).slice(0,95);
+  const rules=(spec.rules||[]).slice(0,8);
+  let size=2+axiom.length;
+  const alts=[];
+  for(const r of rules){
+   const list=(r.alts||[]).slice(0,2).filter(a=>typeof a==='string');
+   alts.push(list);
+   size+=2;
+   for(const a of list)size+=1+Math.min(95,a.length);
+  }
+  if(!size)return -1;
+  const buf=new Uint8Array(size);let at=0;
+  buf[at++]=rules.length;buf[at++]=axiom.length;
+  buf.set(lsBytes(axiom),at);at+=axiom.length;
+  rules.forEach((r,i)=>{
+   buf[at++]=String(r.pre||'X').charCodeAt(0)&255;buf[at++]=alts[i].length;
+   for(const a of alts[i]){const t=a.slice(0,95);buf[at++]=t.length;buf.set(lsBytes(t),at);at+=t.length}
+  });
+  const ptr=ex.fe_malloc(size);
+  if(!ptr)return -1;
+  new Uint8Array(ex.memory.buffer,ptr,size).set(buf);
+  return ex.fe_flora_lsystem_load(ptr,size);
+ };
+ core.lsystemRun=function(iterations,seed){
+  if(!core.has('fe_flora_lsystem_run'))return null;
+  const n=ex.fe_flora_lsystem_run(iterations|0,(seed>>>0)||1);
+  if(n<0)return null;
+  const len=ex.fe_flora_lsystem_len(),ptr=ex.fe_flora_lsystem_word();
+  return {symbols:n,word:lsString(new Uint8Array(ex.memory.buffer,ptr,len))};
+ };
+ /* Grow a rosette from the uploaded rules (or the built-in frond grammar). */
+ core.lsystemPlant=function(o){
+  if(!core.has('fe_flora_lsystem_plant'))return null;
+  o=o||{};
+  const verts=ex.fe_flora_lsystem_plant(
+   (o.fronds===undefined?9:o.fronds)|0,
+   +(o.step===undefined?0.05:o.step),
+   +(o.tilt===undefined?0.6:o.tilt),
+   +(o.droop===undefined?0.03:o.droop),
+   +(o.leafSize===undefined?0.05:o.leafSize),
+   (o.iterations===undefined?3:o.iterations)|0,
+   (o.seed===undefined?1:o.seed)>>>0,
+   (o.detail===undefined?2:o.detail)|0);
+  if(verts<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
+ };
+ core.floraCounts=function(){
+  return {species:core.has('fe_flora_species_count')?ex.fe_flora_species_count():0,
+          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0};
+ };
+ /* ---- Climate & weather (optional kernels; the JS weather runs unchanged) --- */
+ let climatePtr=0;
+ function climateOut(n){
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  return Array.from(new Float32Array(ex.memory.buffer,climatePtr,n));
+ }
+ core.climateInit=function(seed,lat,baseC,humidity,continentality,wind){
+  return core.has('fe_climate_init')?ex.fe_climate_init(seed>>>0,lat,baseC,humidity,continentality,wind):0;
+ };
+ core.climateSetClock=function(hours){
+  return core.has('fe_climate_set_clock')?ex.fe_climate_set_clock(+hours||0):0;
+ };
+ core.climateSetSeason=function(t){
+  return core.has('fe_climate_set_season')?ex.fe_climate_set_season(+t||0):0;
+ };
+ core.climateStep=function(dtHours){
+  return core.has('fe_climate_step')?ex.fe_climate_step(+dtHours||0):0;
+ };
+ core.climateClock=function(){
+  return core.has('fe_climate_clock')?ex.fe_climate_clock():0;
+ };
+ core.climateSeaLevelTemp=function(hour){
+  return core.has('fe_climate_sea_level_temp')?ex.fe_climate_sea_level_temp(+hour||0):0;
+ };
+ core.climateSnowLine=function(hour){
+  return core.has('fe_climate_snow_line')?ex.fe_climate_snow_line(+hour||0):0;
+ };
+ core.climateWeather=function(){
+  if(!core.has('fe_climate_weather'))return null;
+  if(ex.fe_climate_weather(climatePtr||(climatePtr=ex.fe_malloc(64)))<1)return null;
+  return climateOut(10);
+ };
+ core.climateAt=function(x,z,altitude,hour){
+  if(!core.has('fe_climate_at'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_at(+x||0,+z||0,+altitude||0,+hour||0,climatePtr)<1)return null;
+  return climateOut(10);
+ };
+ core.climateBiome=function(tempC,moisture){
+  return core.has('fe_climate_biome')?ex.fe_climate_biome(+tempC||0,+moisture||0):-1;
+ };
+ core.climateBiomeOnSlope=function(tempC,moisture,slope){
+  return core.has('fe_climate_biome_on_slope')?ex.fe_climate_biome_on_slope(+tempC||0,+moisture||0,+slope||0):-1;
+ };
+ /* Whole-map biome classification, computed in the kernel. The caller owns the
+   heights; `n` is the vertex grid (n*n) and `size` the span in metres. The
+   scratch buffers are reused so repeated presses never mint new allocations. */
+ let biomeGrid={n:0,h:0,o:0};
+ core.climateBiomeGrid=function(heights,n,size,originX,originZ,hour){
+  if(!core.has('fe_climate_biome_grid')||!heights)return null;
+  const cells=(n|0)*(n|0);if(cells<4||heights.length<cells)return null;
+  if(biomeGrid.n!==cells){
+   const h=ex.fe_malloc(cells*4),o=ex.fe_malloc(cells);
+   if(!h||!o)return null;
+   biomeGrid={n:cells,h,o};
+  }
+  new Float32Array(ex.memory.buffer,biomeGrid.h,cells).set(heights.subarray?heights.subarray(0,cells):heights);
+  const got=ex.fe_climate_biome_grid(biomeGrid.h,n|0,+size||1,+originX||0,+originZ||0,+hour||0,biomeGrid.o);
+  if(got!==cells)return null;
+  return new Uint8Array(ex.memory.buffer,biomeGrid.o,cells);
+ };
+ core.climateBiomeCount=function(){
+  return core.has('fe_climate_biome_count')?ex.fe_climate_biome_count():0;
+ };
+ core.climateTornado=function(ef){
+  if(!core.has('fe_climate_tornado'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_tornado(+ef||0,climatePtr)<1)return null;
+  return climateOut(4);
+ };
+ core.climateTsunami=function(amplitude,depth){
+  if(!core.has('fe_climate_tsunami'))return null;
+  if(!climatePtr)climatePtr=ex.fe_malloc(64);
+  if(!climatePtr)return null;
+  if(ex.fe_climate_tsunami(+amplitude||0,+depth||0,climatePtr)<1)return null;
+  return climateOut(6);
+ };
+ core.climateRankine=function(r,coreRadius,vmax){
+  return core.has('fe_climate_rankine')?ex.fe_climate_rankine(+r||0,+coreRadius||0,+vmax||0):0;
  };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;
@@ -278,7 +621,7 @@ const BG=new THREE.Color(0x3d3d3d),grid=new THREE.GridHelper(200,200,0x000000,0x
 const sbx=new THREE.BoxHelper(undefined,0xffaa40);sbx.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(sbx);sbx.visible=false;scene.add(sbx);
 /* sky + water shaders */
 
-const U={clar:{value:1},hm2:{value:null},uTerrainOrigin:{value:new THREE.Vector2()},rain:{value:0},ov:{value:0},flash:{value:0},uTf:{value:-1e4},uTl:{value:18},uTa:{value:0},uTdx:{value:1},uTdz:{value:0},cov:{value:.5},hm:{value:null},wy:{value:0},ni:{value:0},t:{value:0},amp:{value:1.05},uChop:{value:waveChop},uWindDir:{value:new THREE.Vector2(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180))},uWindSpeed:{value:waterWindSpeed},uWavePeriod:{value:waterWavePeriod},uWaveScale:{value:waterWaveScale},uRoughness:{value:.24},uReflect:{value:1},uRefraction:{value:.35},uTurbidity:{value:.08},uTransparency:{value:1},uTurbidColor:{value:new THREE.Color(.16,.28,.3)},uFoamAmt:{value:.5},uFoamThreshold:{value:.78},uShoreFoam:{value:1},uCubeReflection:{value:null},top:{value:new THREE.Color()},hor:{value:new THREE.Color()},sun:{value:new THREE.Color()},sd:{value:new THREE.Vector3(0,1,0)},fd:{value:.004},fc:{value:scene.fog.color},deep:{value:new THREE.Color()},shal:{value:new THREE.Color()},uFFT0:{value:null},uFFT1:{value:null},uFFT2:{value:null},uFFTFoam:{value:(()=>{const t=new THREE.DataTexture(new Uint8Array([0,0,0,255]),1,1,THREE.RGBAFormat,THREE.UnsignedByteType);t.needsUpdate=true;return t})()},uFFTLen0:{value:256},uFFTLen1:{value:1024},uFFTLen2:{value:4096},uFFTSize:{value:128}};
+const U={clar:{value:1},hm2:{value:null},uTerrainOrigin:{value:new THREE.Vector2()},rain:{value:0},ov:{value:0},flash:{value:0},uTf:{value:-1e4},uTl:{value:18},uTa:{value:0},uTsF:{value:0},uTdx:{value:1},uTdz:{value:0},cov:{value:.5},hm:{value:null},wy:{value:0},ni:{value:0},t:{value:0},amp:{value:1.05},uChop:{value:waveChop},uWindDir:{value:new THREE.Vector2(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180))},uWindSpeed:{value:waterWindSpeed},uWavePeriod:{value:waterWavePeriod},uWaveScale:{value:waterWaveScale},uRoughness:{value:.24},uReflect:{value:1},uRefraction:{value:.35},uTurbidity:{value:.08},uTransparency:{value:1},uTurbidColor:{value:new THREE.Color(.16,.28,.3)},uFoamAmt:{value:.5},uFoamThreshold:{value:.78},uShoreFoam:{value:1},uCubeReflection:{value:null},top:{value:new THREE.Color()},hor:{value:new THREE.Color()},sun:{value:new THREE.Color()},sd:{value:new THREE.Vector3(0,1,0)},fd:{value:.004},fc:{value:scene.fog.color},deep:{value:new THREE.Color()},shal:{value:new THREE.Color()},uFFT0:{value:null},uFFT1:{value:null},uFFT2:{value:null},uFFTFoam:{value:(()=>{const t=new THREE.DataTexture(new Uint8Array([0,0,0,255]),1,1,THREE.RGBAFormat,THREE.UnsignedByteType);t.needsUpdate=true;return t})()},uFFTLen0:{value:256},uFFTLen1:{value:1024},uFFTLen2:{value:4096},uFFTSize:{value:128}};
 const SKYU=`uniform vec4 uSA[4],uSB[4],uMA[3],uMB[3],uMC[3],uPA[6],uPB[6],uPC[6],uPD[6],uPE[6],uCA[4],uCB[4],uAu,uSt;uniform vec3 uAuC1,uAuC2;uniform int uNS,uNM,uNP,uNC;uniform mat3 uRot;uniform float uQ;
 `;
 const SKYF=`float hs(vec2 p){vec3 p3=fract(vec3(p.xyx)*.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
@@ -366,7 +709,7 @@ const WATER_QUALITY=[{inner:[320,160],far:[320,64],reflection:128,interval:90,tr
 let WATER_OUTER_RADIUS=1400;
 function makeWaterGeometry(q){const cfg=WATER_QUALITY[q],theta=cfg.inner[0],near=cfg.inner[1],far=cfg.far[1],joinRadius=190,outerRadius=Math.max(1400,WATER_OUTER_RADIUS),innerStep=(joinRadius-.001)/near;let growthLow=1,growthHigh=1.2;for(let n=0;n<24;n++){const g=(growthLow+growthHigh)*.5,span=innerStep*(Math.pow(g,far)-1)/(g-1);if(span<outerRadius-joinRadius)growthLow=g;else growthHigh=g}const growth=(growthLow+growthHigh)*.5,rows=near+far+1,cols=theta+1,positions=new Float32Array(rows*cols*3),normals=new Float32Array(rows*cols*3),uvs=new Float32Array(rows*cols*2),indices=new Uint32Array((rows-1)*theta*6);for(let j=0;j<rows;j++){const k=j-near,radius=j===rows-1?outerRadius:j<=near?.001+innerStep*j:joinRadius+innerStep*(Math.pow(growth,k)-1)/(growth-1);for(let i=0;i<cols;i++){ const k=j*cols+i,a=i/theta*Math.PI*2,p=k*3;positions[p]=radius*Math.cos(a);positions[p+1]=0;positions[p+2]=-radius*Math.sin(a);normals[p+1]=1;uvs[k*2]=i/theta;uvs[k*2+1]=j/(rows-1)}}let ix=0;for(let j=0;j<rows-1;j++)for(let i=0;i<theta;i++){const a=j*cols+i,b=a+cols,d=a+1,c=b+1;indices[ix++]=a;indices[ix++]=b;indices[ix++]=d;indices[ix++]=b;indices[ix++]=c;indices[ix++]=d}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(positions,3));g.setAttribute('normal',new THREE.BufferAttribute(normals,3));g.setAttribute('uv',new THREE.BufferAttribute(uvs,2));g.setIndex(new THREE.BufferAttribute(indices,1));g.computeBoundingBox();g.computeBoundingSphere();return g}
 function setOpenWorldWaterRadius(active){const radius=active?Math.max(1400,Math.ceil(OW.config.sizeKm*500*Math.SQRT2+250)):1400;if(radius===WATER_OUTER_RADIUS)return;WATER_OUTER_RADIUS=radius;water.geometry.dispose();water.geometry=makeWaterGeometry(waterQuality);waterReflectionReady=false}
-const WH='uniform float t,amp,wy,uChop,uWindSpeed,uWavePeriod,uWaveScale,uTurbidity,uTransparency,uFoamAmt,uFoamThreshold,uShoreFoam,clar,rain;uniform vec2 uWindDir;uniform vec3 uTurbidColor,deep,shal,top,hor;uniform highp sampler2D hm,hm2,uFFT0,uFFT1,uFFT2,uFFTFoam;uniform vec2 uTerrainOrigin;uniform float uFFTLen0,uFFTLen1,uFFTLen2,uFFTSize;uniform float uTf,uTl,uTa,uTdx,uTdz;float waveHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}vec2 waveGrad(vec2 p){float a=waveHash(p)*6.2831853;return vec2(cos(a),sin(a));}float waveNoise(vec2 p,out vec2 ng){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f),du=6.*f*(1.-f),g00=waveGrad(i),g10=waveGrad(i+vec2(1.,0.)),g01=waveGrad(i+vec2(0.,1.)),g11=waveGrad(i+vec2(1.,1.));float n00=dot(g00,f),n10=dot(g10,f-vec2(1.,0.)),n01=dot(g01,f-vec2(0.,1.)),n11=dot(g11,f-vec2(1.,1.)),x0=mix(n00,n10,u.x),x1=mix(n01,n11,u.x),dx0=mix(g00.x,g10.x,u.x)+(n10-n00)*du.x,dx1=mix(g01.x,g11.x,u.x)+(n11-n01)*du.x,dy0=mix(g00.y,g10.y,u.x),dy1=mix(g01.y,g11.y,u.x);ng=vec2(mix(dx0,dx1,u.y),mix(dy0,dy1,u.y)+(x1-x0)*du.y)*.72;return .5+mix(x0,x1,u.y)*.72;}float fftHeight(vec4 q){return(q.r*2.-1.)*3.;}vec2 fftDisplace(vec4 q){return(q.gb*2.-1.)*2.;}float wvh(vec2 p,int N,out vec2 g,out vec2 horizontal){float footprint=max(1.5,length(p)*.085);vec2 uv0=p/uFFTLen0+.5,uv1=p/uFFTLen1+.5,uv2=p/uFFTLen2+.5;vec2 e=vec2(1./uFFTSize,0.);vec4 a0=texture2D(uFFT0,uv0),a1=texture2D(uFFT1,uv1),a2=texture2D(uFFT2,uv2);float f0=1.-smoothstep(90.,420.,footprint),f1=1.-smoothstep(520.,1900.,footprint),f2=1.;float h0=fftHeight(a0),h1=fftHeight(a1),h2=fftHeight(a2);float dh0x=fftHeight(texture2D(uFFT0,uv0+e))-h0,dh0z=fftHeight(texture2D(uFFT0,uv0+e.yx))-h0;float dh1x=fftHeight(texture2D(uFFT1,uv1+e))-h1,dh1z=fftHeight(texture2D(uFFT1,uv1+e.yx))-h1;float dh2x=fftHeight(texture2D(uFFT2,uv2+e))-h2,dh2z=fftHeight(texture2D(uFFT2,uv2+e.yx))-h2;g=vec2(dh0x*f0/uFFTLen0+dh1x*f1/uFFTLen1+dh2x/uFFTLen2,dh0z*f0/uFFTLen0+dh1z*f1/uFFTLen1+dh2z/uFFTLen2)*uFFTSize;horizontal=fftDisplace(a0)*f0+fftDisplace(a1)*f1+fftDisplace(a2);vec2 ng;float micro=waveNoise(p*.018*uWaveScale+uWindDir*t*.07,ng);g+=ng*.0007*uWaveScale;return h0*f0+h1*f1+h2+(micro-.5)*.035;}float h(vec2 p){vec2 g,offset;return wvh(p,8,g,offset);}float hv(vec2 p){vec2 g,offset;return wvh(p,8,g,offset);}float th2(vec2 p){p-=uTerrainOrigin;vec2 g=clamp((p+420.)/840.*256.,0.,255.999);vec2 i=floor(g),f=fract(g);vec2 u=(i+.5)/257.,o=vec2(1./257.,0.);float a=texture2D(hm2,u).r,b=texture2D(hm2,u+o).r,c=texture2D(hm2,u+o.yx).r,d=texture2D(hm2,u+o.xx).r;return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}float th1(vec2 p){p-=uTerrainOrigin;vec2 g=clamp((p+50.)/100.*128.,0.,127.999);vec2 i=floor(g),f=fract(g);vec2 u=(i+.5)/129.,o=vec2(1./129.,0.);float a=texture2D(hm,u).r,b=texture2D(hm,u+o).r,c=texture2D(hm,u+o.yx).r,d=texture2D(hm,u+o.xx).r;return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}float th(vec2 p){float k=smoothstep(46.,54.,max(abs(p.x),abs(p.y)));return mix(th1(p),th2(p),k);}float tsH(vec2 p){float d=dot(p,vec2(uTdx,uTdz))-uTf;float ds=d>0.?d*2.4:d*.6;float e=exp(-abs(ds)/uTl);float s=2.*e/(1.+e*e);float q=(d-2.2*uTl)/(1.5*uTl);float e2=exp(-abs(q));float s2=2.*e2/(1.+e2*e2);float dd=max(wy-th(p),0.);float sh=clamp(pow(36./max(dd,5.),.25),.85,1.7);return uTa*(s*s*sh-(d>0.?.38*s2*s2:0.));}varying vec3 w;varying vec3 waterWorldNormal;';
+const WH='uniform float t,amp,wy,uChop,uWindSpeed,uWavePeriod,uWaveScale,uTurbidity,uTransparency,uFoamAmt,uFoamThreshold,uShoreFoam,clar,rain;uniform vec2 uWindDir;uniform vec3 uTurbidColor,deep,shal,top,hor;uniform highp sampler2D hm,hm2,uFFT0,uFFT1,uFFT2,uFFTFoam;uniform vec2 uTerrainOrigin;uniform float uFFTLen0,uFFTLen1,uFFTLen2,uFFTSize;uniform float uTf,uTl,uTa,uTdx,uTdz,uTsF;float waveHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}vec2 waveGrad(vec2 p){float a=waveHash(p)*6.2831853;return vec2(cos(a),sin(a));}float waveNoise(vec2 p,out vec2 ng){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f),du=6.*f*(1.-f),g00=waveGrad(i),g10=waveGrad(i+vec2(1.,0.)),g01=waveGrad(i+vec2(0.,1.)),g11=waveGrad(i+vec2(1.,1.));float n00=dot(g00,f),n10=dot(g10,f-vec2(1.,0.)),n01=dot(g01,f-vec2(0.,1.)),n11=dot(g11,f-vec2(1.,1.)),x0=mix(n00,n10,u.x),x1=mix(n01,n11,u.x),dx0=mix(g00.x,g10.x,u.x)+(n10-n00)*du.x,dx1=mix(g01.x,g11.x,u.x)+(n11-n01)*du.x,dy0=mix(g00.y,g10.y,u.x),dy1=mix(g01.y,g11.y,u.x);ng=vec2(mix(dx0,dx1,u.y),mix(dy0,dy1,u.y)+(x1-x0)*du.y)*.72;return .5+mix(x0,x1,u.y)*.72;}float fftHeight(vec4 q){return(q.r*2.-1.)*3.;}vec2 fftDisplace(vec4 q){return(q.gb*2.-1.)*2.;}float wvh(vec2 p,int N,out vec2 g,out vec2 horizontal){float footprint=max(1.5,length(p)*.085);vec2 uv0=p/uFFTLen0+.5,uv1=p/uFFTLen1+.5,uv2=p/uFFTLen2+.5;vec2 e=vec2(1./uFFTSize,0.);vec4 a0=texture2D(uFFT0,uv0),a1=texture2D(uFFT1,uv1),a2=texture2D(uFFT2,uv2);float f0=1.-smoothstep(90.,420.,footprint),f1=1.-smoothstep(520.,1900.,footprint),f2=1.;float h0=fftHeight(a0),h1=fftHeight(a1),h2=fftHeight(a2);float dh0x=fftHeight(texture2D(uFFT0,uv0+e))-h0,dh0z=fftHeight(texture2D(uFFT0,uv0+e.yx))-h0;float dh1x=fftHeight(texture2D(uFFT1,uv1+e))-h1,dh1z=fftHeight(texture2D(uFFT1,uv1+e.yx))-h1;float dh2x=fftHeight(texture2D(uFFT2,uv2+e))-h2,dh2z=fftHeight(texture2D(uFFT2,uv2+e.yx))-h2;g=vec2(dh0x*f0/uFFTLen0+dh1x*f1/uFFTLen1+dh2x/uFFTLen2,dh0z*f0/uFFTLen0+dh1z*f1/uFFTLen1+dh2z/uFFTLen2)*uFFTSize;horizontal=fftDisplace(a0)*f0+fftDisplace(a1)*f1+fftDisplace(a2);vec2 ng;float micro=waveNoise(p*.018*uWaveScale+uWindDir*t*.07,ng);g+=ng*.0007*uWaveScale;return h0*f0+h1*f1+h2+(micro-.5)*.035;}float h(vec2 p){vec2 g,offset;return wvh(p,8,g,offset);}float hv(vec2 p){vec2 g,offset;return wvh(p,8,g,offset);}float th2(vec2 p){p-=uTerrainOrigin;vec2 g=clamp((p+420.)/840.*256.,0.,255.999);vec2 i=floor(g),f=fract(g);vec2 u=(i+.5)/257.,o=vec2(1./257.,0.);float a=texture2D(hm2,u).r,b=texture2D(hm2,u+o).r,c=texture2D(hm2,u+o.yx).r,d=texture2D(hm2,u+o.xx).r;return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}float th1(vec2 p){p-=uTerrainOrigin;vec2 g=clamp((p+50.)/100.*128.,0.,127.999);vec2 i=floor(g),f=fract(g);vec2 u=(i+.5)/129.,o=vec2(1./129.,0.);float a=texture2D(hm,u).r,b=texture2D(hm,u+o).r,c=texture2D(hm,u+o.yx).r,d=texture2D(hm,u+o.xx).r;return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}float th(vec2 p){float k=smoothstep(46.,54.,max(abs(p.x),abs(p.y)));return mix(th1(p),th2(p),k);}float tsH(vec2 p){float d=dot(p,vec2(uTdx,uTdz))-uTf;float ds=d>0.?d*2.4:d*.6;float e=exp(-abs(ds)/uTl);float s=2.*e/(1.+e*e);float q=(d-2.2*uTl)/(1.5*uTl);float e2=exp(-abs(q));float s2=2.*e2/(1.+e2*e2);float dd=max(wy-th(p),0.);float sh=clamp(pow(36./max(dd,5.),.25),.85,1.7);return uTa*(s*s*sh-(d>0.?.38*s2*s2:0.));}varying vec3 w;varying vec3 waterWorldNormal;';
 const waterMat=new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:U.uRoughness.value,clearcoat:.92,clearcoatRoughness:.06,transmission:Math.max(.001,U.uRefraction.value*U.uTransparency.value*WATER_QUALITY[waterQuality].transmission),transparent:false,opacity:1,depthWrite:true,side:THREE.DoubleSide});
 const FFT_LENGTHS=[256,1024,4096],FFT_RESOLUTION=[64,64,128,256],FFT_MAX_HEIGHT=3,FFT_MAX_DISPLACE=2;let tessendorfOcean=new TessendorfOceanBundle.TessendorfOcean({resolution:FFT_RESOLUTION[waterQuality]||128,lengths:FFT_LENGTHS,windSpeed:waterWindSpeed,windDirection:waterWindDir,seed:seed+37}),fftTextures=[],fftUpdateAt=0,fftErrorShown=false;
 function encodeTessendorfField(field){const src=field.data,out=new Uint8Array(src.length);for(let i=0;i<src.length;i+=4){out[i]=Math.round(cl(src[i]/(2*FFT_MAX_HEIGHT)+.5,0,1)*255);out[i+1]=Math.round(cl(src[i+1]/(2*FFT_MAX_DISPLACE)+.5,0,1)*255);out[i+2]=Math.round(cl(src[i+2]/(2*FFT_MAX_DISPLACE)+.5,0,1)*255);out[i+3]=255}return out}
@@ -379,9 +722,39 @@ function writeFoamTexture(tex,foam){const d=tex.image.data;for(let i=0,j=0;i<foa
 function clearFoamTexture(){if(fftFoamZeroed)return;const t=ensureFoamTexture(U.uFFTFoam.value&&U.uFFTFoam.value.image?U.uFFTFoam.value.image.width:1);t.image.data.fill(0);for(let i=3;i<t.image.data.length;i+=4)t.image.data[i]=255;t.needsUpdate=true;fftFoamZeroed=true}
 function makeFFTTexture(size){const t=new THREE.DataTexture(new Uint8Array(size*size*4),size,size,THREE.RGBAFormat,THREE.UnsignedByteType);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;t.flipY=false;t.needsUpdate=true;return t}
 function writeFFTTexture(tex,rgba){tex.image.data.set(rgba);tex.needsUpdate=true}
+/* ---- sea state from wind speed ---------------------------------------
+   The Gerstner and FFT spectra are both parameterised by wind speed, peak
+   period and wavelength, so the same three relations drive the sliders and the
+   climate wind. A fully developed sea:
+     H_s ~ 0.0025 U^2      (significant wave height, fetch-saturated)
+     T_p ~ 0.73 U          (peak period)
+     L   = g T_p^2 / 2pi   (peak wavelength)                            */
+function wavePhysicsForWind(speed){
+ const u=cl(Number.isFinite(+speed)?+speed:0,0,40),g=9.81,hs=cl(.0025*u*u,.02,2.6),period=cl(.73*u,2,16),length=g*period*period/(2*Math.PI);
+ return{wind:u,hs,period,length,chop:cl(.04+u*.017,0,.6)};
+}
+let waveAuto=false,waveAutoApplied=-1;
+function applyWavePhysics(speed){
+ const p=wavePhysicsForWind(speed);
+ waterWindSpeed=p.wind;U.uWindSpeed.value=p.wind;
+ ampUser=p.hs;U.amp.value=p.hs;
+ waterWavePeriod=p.period;U.uWavePeriod.value=p.period;
+ waveChop=p.chop;U.uChop.value=p.chop;
+ return p;
+}
+/* Runs once a frame: the climate is the source of truth only while the artist
+   has asked the sea to follow it. No slider is moved behind their back. */
+function stepWaveClimate(){
+ if(!waveAuto)return;
+ const wx=window.FELandscapeWeather;
+ const w=wx&&wx.state?+wx.state.wind:NaN;
+ if(!Number.isFinite(w)||Math.abs(w-waveAutoApplied)<.05)return;
+ waveAutoApplied=w;applyWavePhysics(w);
+}
+window.__feWavePhysics=wavePhysicsForWind;
 function updateTessendorfOcean(now,force=false){const interval=[110,90,65,50][waterQuality]||65;if(!force&&now-fftUpdateAt<interval)return;try{const lengths=FFT_LENGTHS.map(x=>x/Math.max(U.uWaveScale.value,.1));U.uFFTLen0.value=lengths[0];U.uFFTLen1.value=lengths[1];U.uFFTLen2.value=lengths[2];const resolution=FFT_RESOLUTION[waterQuality]||128,time=U.t.value*6/Math.max(U.uWavePeriod.value,.5),core=window.FELandscapeCore;let fields=null,size=resolution;const native=!!(core&&core.ready&&typeof core.oceanConfigure==='function'&&core.oceanConfigure(resolution,lengths,U.uWindSpeed.value,waterWindDir,seed+37)&&core.oceanUpdate(time,1,1,FFT_MAX_HEIGHT,FFT_MAX_DISPLACE));if(native)size=core.oceanResolution;else{tessendorfOcean.configure({resolution,lengths,windSpeed:U.uWindSpeed.value,windDirection:waterWindDir,seed:seed+37});fields=tessendorfOcean.update(time,{amplitude:1,choppiness:1})}if(!fftTextures.length||fftTextures[0].image.width!==size){fftTextures.forEach(t=>t.dispose());fftTextures=native?[makeFFTTexture(size),makeFFTTexture(size),makeFFTTexture(size)]:fields.map(makeTessendorfTexture);U.uFFT0.value=fftTextures[0];U.uFFT1.value=fftTextures[1];U.uFFT2.value=fftTextures[2]}if(native){for(let i=0;i<3;i++)writeFFTTexture(fftTextures[i],core.oceanCascadeRgba(i));const foam=typeof core.oceanCascadeFoam==='function'?core.oceanCascadeFoam(0):null;if(foam){writeFoamTexture(ensureFoamTexture(size),foam);fftFoamZeroed=false}else clearFoamTexture()}else{fields.forEach((f,i)=>writeTessendorfTexture(fftTextures[i],f));clearFoamTexture()}U.uFFTSize.value=size;fftUpdateAt=now;fftErrorShown=false}catch(e){if(!fftErrorShown){fftErrorShown=true;showErr('Tessendorf FFT ocean solver failed: '+(e?.message||e))}}}
 updateTessendorfOcean(performance.now(),true);
-waterMat.onBeforeCompile=shader=>{const refs=['t','amp','wy','uChop','uWindSpeed','uWavePeriod','uWaveScale','uWindDir','hm','hm2','uTf','uTl','uTa','uTdx','uTdz','uTurbidity','uTransparency','uTurbidColor','deep','shal','uFoamAmt','uFoamThreshold','uShoreFoam','clar','rain','top','hor','uFFT0','uFFT1','uFFT2','uFFTFoam','uFFTLen0','uFFTLen1','uFFTLen2','uFFTSize','uTerrainOrigin','uCubeReflection','uReflect'];for(const k of refs)shader.uniforms[k]=U[k];const shared='\n'+WH.replace('vec2 waveGrad(vec2 p){',RIPF+'\nvec2 waveGrad(vec2 p){')+'\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>'+shared).replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\nvec4 waterBaseWorld=modelMatrix*vec4(position,1.);float waterBaseDepth=max(wy-th(waterBaseWorld.xz),0.);vec2 waterGrad;vec2 waterHorizontal;float waterWave=wvh(waterBaseWorld.xz,8,waterGrad,waterHorizontal);float waterFade=smoothstep(.15,2.3,waterBaseDepth);objectNormal=normalize(vec3(-waterGrad.x*amp*waterFade,1.,-waterGrad.y*amp*waterFade));waterWorldNormal=normalize(mat3(modelMatrix)*objectNormal);').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.xz+=waterHorizontal*amp*uChop*waterFade;float waterRainHeight=rain>.01?length(rainRip(waterBaseWorld.xz)+rainRip(waterBaseWorld.xz*1.7+3.1)*.7)*rain*.06*smoothstep(.02,.7,waterBaseDepth):0.;transformed.y+=waterWave*amp*waterFade+tsH(waterBaseWorld.xz)+waterRainHeight;w=(modelMatrix*vec4(transformed,1.)).xyz;');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+shared+'\nuniform samplerCube uCubeReflection;uniform float uReflect;\n').replace('#include <color_fragment>','#include <color_fragment>\nfloat waterDepth=max(wy+tsH(w.xz)-th(w.xz),0.);float waterAtten=1.-exp(-waterDepth*(.12+uTurbidity*.9)/max(clar,.1));vec3 waterTint=mix(shal,deep,clamp(waterAtten,0.,1.));waterTint=mix(waterTint,uTurbidColor,clamp(uTurbidity*.38,0.,.8));vec2 waterGradF,waterHorizontalF;wvh(w.xz,8,waterGradF,waterHorizontalF);float waterSlope=length(waterGradF*amp);float crestFoam=smoothstep(uFoamThreshold,uFoamThreshold+.6,waterSlope*(.35+uWindSpeed*.045));float fftFoam=texture2D(uFFTFoam,vec2(w.xz/uFFTLen0+.5)).r;crestFoam=max(crestFoam,fftFoam);float waveSet=clamp(.55+.45*sin(t*1.05-dot(w.xz,uWindDir)*.22)+.18*sin(t*.41+dot(w.xz,vec2(-uWindDir.y,uWindDir.x))*.7),0.,1.);float runup=waveSet*waveSet*(3.-2.*waveSet);float shoreBandW=max(uShoreFoam,.05)*(.72+.6*runup)*(.6+.8*min(amp,2.));float shoreBand=1.-smoothstep(0.,max(shoreBandW,.02),waterDepth);float shoreLip=1.-smoothstep(0.,max(uShoreFoam*.3,.03),waterDepth);vec2 shoreGrad;float shoreLace=waveNoise(w.xz*.92+vec2(t*.2,-t*.16),shoreGrad)*.55+waveNoise(w.xz*2.4-uWindDir*t*.14,shoreGrad)*.45;float shoreFoam=(shoreBand*mix(.34,.86,runup)+shoreLip*runup*.5)*mix(.5,1.18,shoreLace)*smoothstep(0.,.02,waterDepth);float waterRainMask=clamp(rain,0.,1.)*mix(.55,1.,smoothstep(0.,1.6,waterDepth));vec2 rainColorRipples=rainRip(w.xz)+rainRip(w.xz*1.7+3.1)*.7;float rainRippleFoam=length(rainColorRipples)*waterRainMask*.22;float rainFoam=clamp(rain,0.,1.)*.06+rainRippleFoam;vec2 foamGrad;float foamNoise=waveNoise(w.xz*.17+uWindDir*t*.035,foamGrad);float foamMask=clamp((crestFoam*mix(.55,1.25,foamNoise)+shoreFoam*mix(.72,1.12,foamNoise)+rainFoam)*uFoamAmt,0.,.94);float waterFoam=foamMask;diffuseColor.rgb=mix(waterTint,vec3(.9,.96,.98),waterFoam);diffuseColor.a=1.;').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nvec3 waterTriW=pow(abs(normalize(waterWorldNormal)),vec3(4.));waterTriW/=max(dot(waterTriW,vec3(1.)),.001);vec2 waterTriGX,waterTriGY,waterTriGZ;float waterTriScale=.62*uWaveScale;float waterTriX=waveNoise(w.yz*waterTriScale+uWindDir*t*.025,waterTriGX),waterTriY=waveNoise(w.xz*waterTriScale+uWindDir*t*.025,waterTriGY),waterTriZ=waveNoise(w.xy*waterTriScale,waterTriGZ);waterTriGX*=waterTriScale;waterTriGY*=waterTriScale;waterTriGZ*=waterTriScale;float waterTriGrain=waterTriX*waterTriW.x+waterTriY*waterTriW.y+waterTriZ*waterTriW.z;roughnessFactor=clamp(roughnessFactor+(waterTriGrain-.5)*.055+uTurbidity*.08,.025,.98);').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nfloat waterNdotV=abs(dot(normalize(normal),normalize(vViewPosition)));float waterFresnel=.02+.98*pow(1.-clamp(waterNdotV,0.,1.),5.);vec3 waterTriGrad=vec3(0.,waterTriGX.x,waterTriGX.y)*waterTriW.x+vec3(waterTriGY.x,0.,waterTriGY.y)*waterTriW.y+vec3(waterTriGZ.x,waterTriGZ.y,0.)*waterTriW.z;vec3 waterRainNormal=vec3(rainColorRipples.x,0.,rainColorRipples.y)*waterRainMask*.9;vec3 waterMicroNormal=normalize(waterWorldNormal+vec3(-waterTriGrad.x*.11,0.,-waterTriGrad.z*.11)+waterRainNormal);normal=normalize(mat3(viewMatrix)*waterMicroNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <lights_fragment_end>','vec3 waterViewDir=normalize(cameraPosition-w);vec3 waterReflectDir=reflect(-waterViewDir,normalize(waterMicroNormal));vec3 waterCubeColor=textureCube(uCubeReflection,waterReflectDir).rgb;float waterViewFresnel=.02+.98*pow(1.-clamp(abs(dot(normalize(waterMicroNormal),waterViewDir)),0.,1.),5.);float waterCubeWeight=clamp(uReflect*(.2+.8*waterViewFresnel)*(1.-roughnessFactor*.35),0.,.95);reflectedLight.indirectSpecular=mix(reflectedLight.indirectSpecular,waterCubeColor,waterCubeWeight);reflectedLight.directSpecular*=.22;\n#include <lights_fragment_end>');};
+waterMat.onBeforeCompile=shader=>{const refs=['t','amp','wy','uChop','uWindSpeed','uWavePeriod','uWaveScale','uWindDir','hm','hm2','uTf','uTl','uTa','uTdx','uTdz','uTsF','uTurbidity','uTransparency','uTurbidColor','deep','shal','uFoamAmt','uFoamThreshold','uShoreFoam','clar','rain','top','hor','uFFT0','uFFT1','uFFT2','uFFTFoam','uFFTLen0','uFFTLen1','uFFTLen2','uFFTSize','uTerrainOrigin','uCubeReflection','uReflect'];for(const k of refs)shader.uniforms[k]=U[k];const shared='\n'+WH.replace('vec2 waveGrad(vec2 p){',RIPF+'\nvec2 waveGrad(vec2 p){')+'\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>'+shared).replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\nvec4 waterBaseWorld=modelMatrix*vec4(position,1.);float waterBaseDepth=max(wy-th(waterBaseWorld.xz),0.);vec2 waterGrad;vec2 waterHorizontal;float waterWave=wvh(waterBaseWorld.xz,8,waterGrad,waterHorizontal);float waterFade=smoothstep(.15,2.3,waterBaseDepth);float tsF=clamp(uTsF,0.,1.);vec2 windSlope=waterGrad*amp*waterFade*(1.-tsF*.85);vec2 tsSlope=vec2(0.);if(tsF>0.001){float tsE=2.;float tsHx=tsH(waterBaseWorld.xz+vec2(tsE,0.))-tsH(waterBaseWorld.xz);float tsHz=tsH(waterBaseWorld.xz+vec2(0.,tsE))-tsH(waterBaseWorld.xz);tsSlope=vec2(tsHx,tsHz)/tsE;}vec2 waterSlope=windSlope+tsSlope*tsF;objectNormal=normalize(vec3(-waterSlope.x,1.,-waterSlope.y));waterWorldNormal=normalize(mat3(modelMatrix)*objectNormal);').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.xz+=waterHorizontal*amp*uChop*waterFade;float waterRainHeight=rain>.01?length(rainRip(waterBaseWorld.xz)+rainRip(waterBaseWorld.xz*1.7+3.1)*.7)*rain*.06*smoothstep(.02,.7,waterBaseDepth):0.;transformed.y+=waterWave*amp*waterFade*(1.-tsF*.85)+tsH(waterBaseWorld.xz)*tsF+waterRainHeight*(1.-tsF*.7);w=(modelMatrix*vec4(transformed,1.)).xyz;');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+shared+'\nuniform samplerCube uCubeReflection;uniform float uReflect;\n').replace('#include <color_fragment>','#include <color_fragment>\nfloat waterDepth=max(wy+tsH(w.xz)-th(w.xz),0.);float waterAtten=1.-exp(-waterDepth*(.12+uTurbidity*.9)/max(clar,.1));vec3 waterTint=mix(shal,deep,clamp(waterAtten,0.,1.));waterTint=mix(waterTint,uTurbidColor,clamp(uTurbidity*.38,0.,.8));vec2 waterGradF,waterHorizontalF;wvh(w.xz,8,waterGradF,waterHorizontalF);float waterSlope=length(waterGradF*amp);float crestFoam=smoothstep(uFoamThreshold,uFoamThreshold+.6,waterSlope*(.35+uWindSpeed*.045));float fftFoam=texture2D(uFFTFoam,vec2(w.xz/uFFTLen0+.5)).r;crestFoam=max(crestFoam,fftFoam);float waveSet=clamp(.55+.45*sin(t*1.05-dot(w.xz,uWindDir)*.22)+.18*sin(t*.41+dot(w.xz,vec2(-uWindDir.y,uWindDir.x))*.7),0.,1.);float runup=waveSet*waveSet*(3.-2.*waveSet);float shoreBandW=max(uShoreFoam,.05)*(.72+.6*runup)*(.6+.8*min(amp,2.));float shoreBand=1.-smoothstep(0.,max(shoreBandW,.02),waterDepth);float shoreLip=1.-smoothstep(0.,max(uShoreFoam*.3,.03),waterDepth);vec2 shoreGrad;float shoreLace=waveNoise(w.xz*.92+vec2(t*.2,-t*.16),shoreGrad)*.55+waveNoise(w.xz*2.4-uWindDir*t*.14,shoreGrad)*.45;float shoreFoam=(shoreBand*mix(.34,.86,runup)+shoreLip*runup*.5)*mix(.5,1.18,shoreLace)*smoothstep(0.,.02,waterDepth);float waterRainMask=clamp(rain,0.,1.)*mix(.55,1.,smoothstep(0.,1.6,waterDepth));vec2 rainColorRipples=rainRip(w.xz)+rainRip(w.xz*1.7+3.1)*.7;float rainRippleFoam=length(rainColorRipples)*waterRainMask*.22;float rainFoam=clamp(rain,0.,1.)*.06+rainRippleFoam;vec2 foamGrad;float foamNoise=waveNoise(w.xz*.17+uWindDir*t*.035,foamGrad);float foamMask=clamp((crestFoam*mix(.55,1.25,foamNoise)+shoreFoam*mix(.72,1.12,foamNoise)+rainFoam)*uFoamAmt,0.,.94);float waterFoam=foamMask;diffuseColor.rgb=mix(waterTint,vec3(.9,.96,.98),waterFoam);diffuseColor.a=1.;').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nvec3 waterTriW=pow(abs(normalize(waterWorldNormal)),vec3(4.));waterTriW/=max(dot(waterTriW,vec3(1.)),.001);vec2 waterTriGX,waterTriGY,waterTriGZ;float waterTriScale=.62*uWaveScale;float waterTriX=waveNoise(w.yz*waterTriScale+uWindDir*t*.025,waterTriGX),waterTriY=waveNoise(w.xz*waterTriScale+uWindDir*t*.025,waterTriGY),waterTriZ=waveNoise(w.xy*waterTriScale,waterTriGZ);waterTriGX*=waterTriScale;waterTriGY*=waterTriScale;waterTriGZ*=waterTriScale;float waterTriGrain=waterTriX*waterTriW.x+waterTriY*waterTriW.y+waterTriZ*waterTriW.z;roughnessFactor=clamp(roughnessFactor+(waterTriGrain-.5)*.055+uTurbidity*.08,.025,.98);').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nfloat waterNdotV=abs(dot(normalize(normal),normalize(vViewPosition)));float waterFresnel=.02+.98*pow(1.-clamp(waterNdotV,0.,1.),5.);vec3 waterTriGrad=vec3(0.,waterTriGX.x,waterTriGX.y)*waterTriW.x+vec3(waterTriGY.x,0.,waterTriGY.y)*waterTriW.y+vec3(waterTriGZ.x,waterTriGZ.y,0.)*waterTriW.z;vec3 waterRainNormal=vec3(rainColorRipples.x,0.,rainColorRipples.y)*waterRainMask*.9;vec3 waterMicroNormal=normalize(waterWorldNormal+vec3(-waterTriGrad.x*.11,0.,-waterTriGrad.z*.11)+waterRainNormal);normal=normalize(mat3(viewMatrix)*waterMicroNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <lights_fragment_end>','vec3 waterViewDir=normalize(cameraPosition-w);vec3 waterReflectDir=reflect(-waterViewDir,normalize(waterMicroNormal));vec3 waterCubeColor=textureCube(uCubeReflection,waterReflectDir).rgb;float waterViewFresnel=.02+.98*pow(1.-clamp(abs(dot(normalize(waterMicroNormal),waterViewDir)),0.,1.),5.);float waterCubeWeight=clamp(uReflect*(.2+.8*waterViewFresnel)*(1.-roughnessFactor*.35),0.,.95);reflectedLight.indirectSpecular=mix(reflectedLight.indirectSpecular,waterCubeColor,waterCubeWeight);reflectedLight.directSpecular*=.22;\n#include <lights_fragment_end>');};
 waterMat.customProgramCacheKey=()=>'terrain-water-pbr-v9-triplanar-fft-foam-shore-sets';
 const water=new THREE.Mesh(makeWaterGeometry(waterQuality),waterMat);water.frustumCulled=false;water.visible=true;scene.add(water);water.name='Water Surface';
 const makeWaterReflectionTarget=()=>new THREE.WebGLCubeRenderTarget(WATER_QUALITY[waterQuality].reflection,{format:THREE.RGBFormat,generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter});let waterReflectionRT=makeWaterReflectionTarget();waterReflectionRT.texture.mapping=THREE.CubeReflectionMapping;U.uCubeReflection.value=waterReflectionRT.texture;const waterReflectionCam=new THREE.CubeCamera(.1,1600,waterReflectionRT);waterReflectionCam.name='Water Reflection Probe';scene.add(waterReflectionCam);waterMat.envMap=waterReflectionRT.texture;
@@ -397,7 +770,7 @@ const WATER_PROFILES=[
  {name:'Lagoon',deep:[.012,.25,.28],shallow:[.14,.72,.53],clarity:4.2,height:.22,scale:.72,speed:.62,period:6,chop:.06,roughness:.07,reflect:.82,refraction:.88,turbidity:.035,transparency:1,turbid:[.07,.4,.32],foam:.24,threshold:.9,shore:.55,wind:3,direction:20},
  {name:'Murky',deep:[.075,.072,.032],shallow:[.3,.24,.085],clarity:.45,height:.24,scale:.8,speed:.52,period:7,chop:.06,roughness:.86,reflect:.2,refraction:.08,turbidity:1,transparency:.12,turbid:[.32,.26,.09],foam:.06,threshold:.98,shore:.2,wind:2,direction:55}
 ];
-function setWater(i){const p=WATER_PROFILES[Number(i)];if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
+function setWater(i){const p=WATER_PROFILES[Number(i)];if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=(window.FELandscapeRealism&&window.FELandscapeRealism.waterRoughness)?window.FELandscapeRealism.waterRoughness(p):p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
 setWater(0);
 /* clouds */
 const cc=document.createElement('canvas');cc.width=cc.height=64;const cx=cc.getContext('2d'),gr=cx.createRadialGradient(32,32,0,32,32,32);
@@ -420,7 +793,7 @@ function owSurfaceTexture(def,i){const c=document.createElement('canvas');c.widt
 const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb));
 const OW_SURFACE_MAPS=OW_SURFACE_DEFS.map(owSurfaceTexture),OW_SURFACE_ROUGHNESS=OW_SURFACE_DEFS.map(x=>x.rough);
 const OW_SURFACE_ATLAS=(()=>{const tile=256,gutter=4,cell=tile+gutter*2,c=document.createElement('canvas');c.width=cell*4;c.height=cell*3;const x=c.getContext('2d');OW_SURFACE_MAPS.forEach((t,i)=>{const px=(i%4)*cell,py=Math.floor(i/4)*cell,img=t.image;x.drawImage(img,px+gutter,py+gutter,tile,tile);x.drawImage(img,0,0,1,tile,px,py+gutter,gutter,tile);x.drawImage(img,tile-1,0,1,tile,px+gutter+tile,py+gutter,gutter,tile);x.drawImage(img,0,0,tile,1,px+gutter,py,tile,gutter);x.drawImage(img,0,tile-1,tile,1,px+gutter,py+gutter+tile,tile,gutter)});const a=new THREE.CanvasTexture(c);a.wrapS=a.wrapT=THREE.ClampToEdgeWrapping;a.minFilter=THREE.LinearMipmapLinearFilter;a.magFilter=THREE.LinearFilter;a.anisotropy=Math.min(8,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in a)a.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;a.needsUpdate=true;return a})();
-const tm=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:mkNormal(),normalScale:new THREE.Vector2(.34,.34)});tm.userData.surfacePaintEnabled=true;tm.onBeforeCompile=shader=>{shader.uniforms.uTriGrass={value:TERRAIN_PBR.grass};shader.uniforms.uTriSoil={value:TERRAIN_PBR.soil};shader.uniforms.uTriRock={value:TERRAIN_PBR.rock};shader.uniforms.uTriSnow={value:TERRAIN_PBR.snow};shader.uniforms.uTriRough={value:TERRAIN_PBR.rough};shader.uniforms.uTriScale={value:.72};const pars='\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;uniform sampler2D uTriGrass,uTriSoil,uTriRock,uTriSnow,uTriRough;uniform float uTriScale;float triGray(sampler2D tex,vec3 p,vec3 w,float sc){return texture2D(tex,p.zy*sc).r*w.x+texture2D(tex,p.xz*sc).r*w.y+texture2D(tex,p.xy*sc).r*w.z;}\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;').replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainWorld=(modelMatrix*vec4(transformed,1.)).xyz;vTerrainNormal=normalize(mat3(modelMatrix)*objectNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+pars).replace('#include <color_fragment>','#include <color_fragment>\nvec3 tN=normalize(vTerrainNormal),tW=pow(abs(tN),vec3(4.));tW/=max(dot(tW,vec3(1.)),.001);vec3 tBase=diffuseColor.rgb;float tSlope=1.-abs(tN.y);float tRock=clamp(smoothstep(.24,.72,tSlope)*.9,0.,.9);float tSnow=smoothstep(.75,.94,min(tBase.r,min(tBase.g,tBase.b)));float tSand=clamp((tBase.r-tBase.b)*1.7,0.,.62)*(1.-tRock)*(1.-tSnow);float tGrass=max(0.,1.-tRock-tSnow-tSand);float dG=triGray(uTriGrass,vTerrainWorld,tW,uTriScale*1.7),dS=triGray(uTriSoil,vTerrainWorld,tW,uTriScale),dR=triGray(uTriRock,vTerrainWorld,tW,uTriScale*.55),dN=triGray(uTriSnow,vTerrainWorld,tW,uTriScale*1.15);float detail=(dG*tGrass+dS*tSand+dR*tRock+dN*tSnow);diffuseColor.rgb*=mix(1.,clamp(.68+detail*.42,.72,1.18),.78);').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nfloat tR=triGray(uTriRough,vTerrainWorld,tW,uTriScale*1.2);roughnessFactor=clamp(roughnessFactor+(tR-.82)*.24,.55,1.);').replace('#include <aomap_fragment>','#include <aomap_fragment>\nfloat tAO=triGray(uTriRough,vTerrainWorld,tW,uTriScale*.8);ambientOcclusion*=mix(.78,1.,clamp(tAO,.3,1.));')};tm.customProgramCacheKey=()=>'terrain-triplanar-pbr-v1';tm.color.setScalar(.9);
+const tm=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:mkNormal(),normalScale:new THREE.Vector2(.34,.34)});tm.userData.surfacePaintEnabled=true;tm.onBeforeCompile=shader=>{shader.uniforms.uTriGrass={value:TERRAIN_PBR.grass};shader.uniforms.uTriSoil={value:TERRAIN_PBR.soil};shader.uniforms.uTriRock={value:TERRAIN_PBR.rock};shader.uniforms.uTriSnow={value:TERRAIN_PBR.snow};shader.uniforms.uTriRough={value:TERRAIN_PBR.rough};shader.uniforms.uTriScale={value:.72};shader.uniforms.uSurfRough={value:new THREE.Vector4(.93,.97,.62,.46)};tm.userData.feShader=shader;const pars='\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;uniform sampler2D uTriGrass,uTriSoil,uTriRock,uTriSnow,uTriRough;uniform float uTriScale;uniform vec4 uSurfRough;float triGray(sampler2D tex,vec3 p,vec3 w,float sc){return texture2D(tex,p.zy*sc).r*w.x+texture2D(tex,p.xz*sc).r*w.y+texture2D(tex,p.xy*sc).r*w.z;}\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;').replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainWorld=(modelMatrix*vec4(transformed,1.)).xyz;vTerrainNormal=normalize(mat3(modelMatrix)*objectNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+pars).replace('#include <color_fragment>','#include <color_fragment>\nvec3 tN=normalize(vTerrainNormal),tW=pow(abs(tN),vec3(4.));tW/=max(dot(tW,vec3(1.)),.001);vec3 tBase=diffuseColor.rgb;float tSlope=1.-abs(tN.y);float tRock=clamp(smoothstep(.24,.72,tSlope)*.9,0.,.9);float tSnow=smoothstep(.75,.94,min(tBase.r,min(tBase.g,tBase.b)));float tSand=clamp((tBase.r-tBase.b)*1.7,0.,.62)*(1.-tRock)*(1.-tSnow);float tGrass=max(0.,1.-tRock-tSnow-tSand);float dG=triGray(uTriGrass,vTerrainWorld,tW,uTriScale*1.7),dS=triGray(uTriSoil,vTerrainWorld,tW,uTriScale),dR=triGray(uTriRock,vTerrainWorld,tW,uTriScale*.55),dN=triGray(uTriSnow,vTerrainWorld,tW,uTriScale*1.15);float detail=(dG*tGrass+dS*tSand+dR*tRock+dN*tSnow);diffuseColor.rgb*=mix(1.,clamp(.68+detail*.42,.72,1.18),.78);').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nfloat tR=triGray(uTriRough,vTerrainWorld,tW,uTriScale*1.2);roughnessFactor=clamp(roughnessFactor+(tR-.82)*.24,.55,1.);\n/* Measured roughness per surface instead of one value for the whole map:\n   fresh snow is glossy, loam is matte, granite sits between. The weights are\n   the same tGrass / tSand / tRock / tSnow masks the colour blend uses. */\nvec4 feSurfW=vec4(tGrass,tSand,tRock,tSnow);\nfeSurfW/=max(dot(feSurfW,vec4(1.)),1e-3);\nroughnessFactor=mix(roughnessFactor,clamp(dot(feSurfW,uSurfRough),.04,1.),.85);').replace('#include <aomap_fragment>','#include <aomap_fragment>\nfloat tAO=triGray(uTriRough,vTerrainWorld,tW,uTriScale*.8);ambientOcclusion*=mix(.78,1.,clamp(tAO,.3,1.));')};tm.customProgramCacheKey=()=>'terrain-triplanar-pbr-v2';tm.color.setScalar(.9);
 const ter=new THREE.Mesh(tg,tm);ter.receiveShadow=true;ter.castShadow=false;ter.frustumCulled=false;scene.add(ter);
 OW={active:false,generated:false,generating:false,config:{sizeKm:12,seed:42817,blend:.58,biomeMix:{hills:1,alpine:1,desert:1,volc:1},mountainHeight:48,waterCoverage:35,waterLevel:-28,vegetationDensity:.9},chunkSize:256,radius:1,chunks:new Map(),editStore:new Map(),queue:[],activeJob:null,token:0,lastCenterX:NaN,lastCenterZ:NaN,group:new THREE.Group(),savedScene:null,selected:null,history:[],redo:[],maxHistory:8,fallbackModels:new Map()};OW.group.name='Open World streamed chunks';OW.group.visible=false;scene.add(OW.group);window.__defaultOpenWorldGroup=OW.group;
 const PAL=[];
@@ -438,6 +811,61 @@ function upd(x0=0,x1=N,z0=0,z1=N){
  PA.needsUpdate=C.needsUpdate=hmTex.needsUpdate=tg.attributes.surfaceWeightsA.needsUpdate=tg.attributes.surfaceWeightsB.needsUpdate=tg.attributes.surfaceWeightsC.needsUpdate=true;
  if(window.FELandscapeCore.normals({n:N,size:S,heights:H,output:tg.attributes.normal.array}))tg.attributes.normal.needsUpdate=true;else tg.computeVertexNormals();
  tg.boundingSphere=tg.boundingBox=null;
+}
+/* The same refresh as upd(), but only the changed band goes to the GPU. A live
+   erosion run uploads a row band (position, colour, normal) instead of pushing the
+   heights, the colours, the normals, the three surface-weight attributes and the
+   height texture — measured in docs/PERFORMANCE.md. */
+/* Shader heightmap, one band at a time. `upd()` re-uploads the whole 513² float
+ texture (1 MB) because it is the one place that may change every row; a live
+ erosion slice only moved a rectangle, so the texture is patched through
+ gl.texSubImage2D with a 32-row scratch texture instead. */
+const HMB_ROWS=32;let hmBand=null,hmBandBuf=null;
+function updLiveHeight(z0,z1){
+ /* Rebuilt if the grid ever changes width, so a stale band can never be pasted
+    into a texture of a different size. */
+ if(!hmBand||!hmBandBuf||hmBandBuf.length!==W*HMB_ROWS){
+  hmBandBuf=new Float32Array(W*HMB_ROWS);
+  hmBand=new THREE.DataTexture(hmBandBuf,W,HMB_ROWS,THREE.RedFormat,THREE.FloatType);
+  hmBand.minFilter=hmBand.magFilter=THREE.NearestFilter;hmBand.generateMipmaps=false;hmBand.needsUpdate=true;
+ }
+ if(!ren||typeof ren.copyTextureToTexture!=='function')return 0;
+ let copies=0;
+ for(let end=z1;end>=z0;){
+  const start=Math.min(Math.max(z0,end-HMB_ROWS+1),W-HMB_ROWS);
+  hmBandBuf.set(H.subarray(start*W,(start+HMB_ROWS)*W));
+  ren.copyTextureToTexture({x:0,y:start},hmBand,hmTex);
+  copies++;end=start-1;
+ }
+ return copies;
+}
+function updLive(x0,x1,z0,z1){
+ const core=window.FELandscapeCore,rect=[x0,x1,z0,z1];
+ if(!core.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect,output:C.array}))
+  for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++)col(i,j);
+ /* Track how high the band reaches while it is being written, so the bounding
+    sphere is only rebuilt when the eroded ground actually grew past the one we
+    have — recomputing a 513² sphere on every upload would cost more than the
+    upload. Erosion mostly lowers ground, so this is nearly always free. */
+ let bandY=0;
+ for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++){const k=j*W+i,y=H[k];PA.setY(k,y);if(y>bandY)bandY=y}
+ const first=z0*W,count=(z1-z0+1)*W;
+ PA.updateRange.offset=first*3;PA.updateRange.count=count*3;PA.needsUpdate=true;
+ C.updateRange.offset=first*3;C.updateRange.count=count*3;C.needsUpdate=true;
+ const nrm=tg.attributes.normal;
+ if(core.normalsRegion({n:N,size:S,heights:H,rect,output:nrm.array})){
+  nrm.updateRange.offset=first*3;nrm.updateRange.count=count*3;nrm.needsUpdate=true;
+ }
+ updLiveHeight(z0,z1);
+ const seen=tg.userData.liveMaxY;
+ if(seen===undefined||bandY>seen){
+  tg.userData.liveMaxY=bandY;
+  tg.geometry.computeBoundingSphere();
+  /* One metre of pad: a later band can rise without crossing `seen` again, and
+     a sphere is allowed to be conservative. */
+  if(tg.geometry.boundingSphere)tg.geometry.boundingSphere.radius+=1;
+  tg.boundingBox=null;
+ }
 }
 let GENC=0;const PLC={mtn:0,base:0};
 function landRaw(x,z){const wx=(vn(x*.012+seed*.13+41,z*.012+seed*.07+13)-.5)*10,wz=(vn(x*.012+seed*.03+17,z*.012+seed*.17+61)-.5)*10;let n=0,a=.56,f=.026;for(let o=0;o<4;o++){n+=(vn((x+wx)*f+o*17,(z+wz)*f+o*11)-.5)*a;a*=.5;f*=2.05}let ridge=0,ra=.55,rf=.035;for(let o=0;o<4;o++){const q=vn((x+wx*.4)*rf+31+o*7,(z+wz*.4)*rf-17);ridge+=(1-Math.abs(q*2-1))*ra;ra*=.5;rf*=2.05}ridge=ridge/1.03125-.5;return n*hs*1.65+ridge*hs*.6+1.6}
@@ -487,23 +915,30 @@ const SHADOW_PROXY_STRIDE=8;
 function makeBotanicalShadowProxy(geometry,material,capacity,name){const proxy=new THREE.InstancedMesh(geometry,material,Math.max(1,capacity));proxy.instanceMatrix.setUsage(THREE.DynamicDrawUsage);proxy.instanceColor=new THREE.BufferAttribute(new Float32Array(Math.max(1,capacity)*3).fill(1),3);proxy.instanceColor.setUsage(THREE.DynamicDrawUsage);proxy.count=0;proxy.frustumCulled=false;proxy.castShadow=true;proxy.receiveShadow=false;proxy.layers.set(1);proxy.name=name;const depth=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,side:THREE.DoubleSide});depth.customProgramCacheKey=()=> 'foliage-shadow-wind-v1';depth.onBeforeCompile=s=>{s.uniforms.uT=WU;s.uniforms.uW=WW;s.vertexShader=s.vertexShader.replace('#include <common>','#include <common>\nuniform float uT,uW;').replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nfloat sw=sin(uT*.9+instanceMatrix[3].x*.12+instanceMatrix[3].z*.08);transformed.xz+=vec2(.8,.6)*position.y*position.y*sw*.012*uW;\n#endif')};proxy.customDepthMaterial=depth;return proxy}
 const LEAFV='float th_=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vTree=th_;float sdl=(vR*.8+.2*(1.-clamp(aCen.y/12.,0.,1.))+th_*.4)/1.4;float pf=0.;if(sdl<uShedS0)pf=1.;else if(sdl<uShedE)pf=clamp((uClk-(uShedT0+(sdl-uShedS0)/max(uShedR,1e-5)))/(8.0+vR*7.0),0.,1.);pf *= step(0.15, vR);vFall=pf;float gr=clamp(uGrow*1.5-vR*.5-th_*.3,0.,1.);vec3 off=transformed-aCen;if(pf>0.){float settle=smoothstep(.82,.995,pf);float ang=pf*(5.+vR*9.)+vR*30.+sin(uClk*1.2+vR*17.)*(1.-settle)*.12;float cA=cos(ang),sA=sin(ang);vec3 o2=vec3(off.x*cA-off.z*sA,off.y,off.x*sA+off.z*cA);float tl=sin(uClk*1.5+vR*20.+th_*6.)*.42*(1.-settle),cT=cos(tl),sT=sin(tl);o2=vec3(o2.x,o2.y*cT-o2.z*sT,o2.y*sT+o2.z*cT);vec3 C=aCen;float fallp=pf*pf*(3.-2.*pf);C.y=mix(C.y,.03,fallp)+sin(uClk*2.+vR*41.)*.08*pf*(1.-settle);float ws=clamp(uW,0.,3.);vec2 flutter=vec2(sin(uClk*1.8+vR*40.+th_),cos(uClk*1.4+vR*33.+th_))*(.05+.035*ws)*pf*(1.-settle);vec2 move=wd*ws*pf*.65+flutter;C.xz+=clamp(move,vec2(-3.),vec2(3.));o2*=mix(1.,.38,settle);o2.y*=mix(1.,.12,settle);transformed=C+o2;}else{transformed=aCen+off*gr;}\n';
 const NOLEAF='vTree=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vFall=0.;\n';
-function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w5'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;const fa=(a>=.0015&&a<.01)?a*18:0;
+/* Skeletal wind. `aSway` is baked by the flora kernel: 0 at the trunk collar,
+   1 at a terminal twig, and `aPhase` is accumulated down each branch path. The
+   bend therefore runs through the hierarchy — the trunk barely moves, a limb
+   swings as a unit, and two limbs of the same length swing out of step — which
+   a single height-squared law can never do. Geometry without the attributes
+   reads 0 and keeps the old behaviour exactly. */
+const SKEL='float skH=max(position.y,0.);float skA=aSway*aSway*clamp(skH*.34,.12,1.);float skW=.55+1.25*aSway;float skB=(sin(uT*skW+aPhase)+.42*sin(uT*skW*2.1+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
+function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w6'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;u.uRainK=FXU.rain;const fa=(a>=.0015&&a<.01)?a*18:0;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.||vR<vTs*.9)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF||vR<vTs)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
 if(fx.includes('a'))fr+='float at=clamp(uAut*1.35-vTree*.55+(vR-.5)*.25,0.,1.);float fam=fract(vTree*7.7);vec3 endc=fam<.35?vec3(1.6,.4,.2):(fam<.7?vec3(1.75,.9,.22):vec3(1.1,.62,.28));vec3 ac=mix(vec3(1.),vec3(1.45,1.3,.4),smoothstep(0.,.35,at));ac=mix(ac,endc,smoothstep(.35,.8,at));ac*=1.-.25*smoothstep(.85,1.,at)*fract(vR*3.3);diffuseColor.rgb*=ac;\n';if(fx.includes('g'))fr+='diffuseColor.rgb*=mix(vec3(1.),vec3(1.45,1.15,.55),uAut);\n';
 if(fx.includes('l'))fr+='diffuseColor.rgb+=diffuseColor.rgb*vec3(1.08,1.18,.72)*vBk*.52;\n';
 if(fx.includes('d'))fr+='diffuseColor.rgb*=1.-(1.-smoothstep(0.,1.4,vY))*.3;\n';
 if(fx.includes('w'))fr+='float vGr=1.-smoothstep(0.,1.6,vY);diffuseColor.rgb*=1.-vGr*.38;diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(.72,1.,.55),vGr*.45*step(.45,fract(vR*3.7)));\n';
 fr+='diffuseColor.rgb*=1.-uWet*.2;\ndiffuseColor.rgb=mix(diffuseColor.rgb,vec3(.93,.95,1.),clamp(vSn*uSnowK*1.4,0.,1.));\n';
-s.vertexShader='attribute float aRnd;attribute vec3 aCen;varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uT,uW,uTorS,uTorV,uSunI,uShed,uGrow,uShedS0,uShedT0,uShedR,uShedE,uClk;uniform vec3 uTor,uSunD;uniform vec2 uTorD;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vY=position.y;vSn=clamp(normal.y*1.25-.1,0.,1.);float py=max(position.y,0.);vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);float wv=position.y*position.y*uW;float sway=sin(uT*.9+dot(wp,wd)*.12)*.5+.5;transformed.xz+=wd*wv*'+(a*.8).toFixed(4)+'*gust*(.35+.65*sway);\n'+(fa?'float rd=length(position.xz);float fl=smoothstep(.4,2.8,rd)*smoothstep(1.,6.,position.y);float ph2=position.x*1.9+position.z*2.3+position.y*.7+wp.x*.31+wp.y*.17;transformed+=vec3(sin(uT*3.3+ph2),sin(uT*2.1+ph2*1.3)*.4,cos(uT*2.9+ph2*.9))*fl*'+fa.toFixed(4)+'*uW*(.4+gust);\n':'')+(a>0||wf>0||fx.includes('l')||fx.includes('g')||fx.includes('w')?'vec2 td=wp-uTor.xy;float tr=length(td)+.001;vec2 tn=td/tr;float vt=uTorV*uTorS*(tr<uTor.z?tr/uTor.z:pow(uTor.z/tr,.65));vec2 wv2=vec2(-tn.y,tn.x)*vt-tn*vt*.38+uTorD*uTorS*.6;float vs=length(wv2);float Dm=7.5*(1.-exp(-vs*vs/1444.));float pyn=py/9.;transformed.xz+=wv2/(vs+.001)*min(Dm*pyn*pyn*'+tk.toFixed(1)+',py*.8);transformed.xz+=vec2(sin(uT*11.+py*3.+wp.x),cos(uT*9.+py*2.7+wp.y))*.1*pow(clamp(vs/40.,0.,1.),1.5)*min(py,3.);vTs=clamp((vs-26.)/38.,0.,1.);\n':'vTs=0.;\n')+(fx.includes('s')?LEAFV:NOLEAF)+(fx.includes('l')?'vec3 leafN=normal;\n#ifdef USE_INSTANCING\nleafN=mat3(instanceMatrix)*leafN;\n#endif\nvec3 sunView=normalize(mat3(viewMatrix)*uSunD);vBk=pow(max(dot(-sunView,normalize(normalMatrix*leafN)),0.),1.6)*clamp(uSunI,0.,2.);\n':'vBk=0.;\n'));
-s.fragmentShader='varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uShed,uShedF,uAut,uSnowK,uBloom,uWet;\n'+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n'+fr)}}
-function depthFx(m,fx){if(!/[sSb]/.test(fx))return;m.customProgramCacheKey=()=>'dfx2'+fx;m.onBeforeCompile=s=>{s.uniforms.uShed=FXU.shed;s.uniforms.uShedF=FXU.shedF;s.uniforms.uBloom=FXU.bloom;s.uniforms.uGrow=FXU.grow;s.uniforms.uW=WW;s.uniforms.uShedS0=FXU.s0;s.uniforms.uShedT0=FXU.t0;s.uniforms.uShedR=FXU.sr;s.uniforms.uShedE=FXU.se;s.uniforms.uClk=FXU.clk;
+s.vertexShader='attribute float aRnd;attribute vec3 aCen;attribute float aSway;attribute float aPhase;varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uT,uW,uTorS,uTorV,uSunI,uShed,uGrow,uShedS0,uShedT0,uShedR,uShedE,uClk;uniform vec3 uTor,uSunD;uniform vec2 uTorD;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vY=position.y;vSn=clamp(normal.y*1.25-.1,0.,1.);float py=max(position.y,0.);vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);float wv=position.y*position.y*uW;float sway=sin(uT*.9+dot(wp,wd)*.12)*.5+.5;transformed.xz+=wd*wv*'+(a*.8).toFixed(4)+'*gust*(.35+.65*sway);\n'+(SKEL)+'\n'+(fa?'float rd=length(position.xz);float fl=smoothstep(.4,2.8,rd)*smoothstep(1.,6.,position.y);float ph2=position.x*1.9+position.z*2.3+position.y*.7+wp.x*.31+wp.y*.17;transformed+=vec3(sin(uT*3.3+ph2),sin(uT*2.1+ph2*1.3)*.4,cos(uT*2.9+ph2*.9))*fl*'+fa.toFixed(4)+'*uW*(.4+gust);\n':'')+(a>0||wf>0||fx.includes('l')||fx.includes('g')||fx.includes('w')?'vec2 td=wp-uTor.xy;float tr=length(td)+.001;vec2 tn=td/tr;float vt=uTorV*uTorS*(tr<uTor.z?tr/uTor.z:pow(uTor.z/tr,.65));vec2 wv2=vec2(-tn.y,tn.x)*vt-tn*vt*.38+uTorD*uTorS*.6;float vs=length(wv2);float Dm=7.5*(1.-exp(-vs*vs/1444.));float pyn=py/9.;transformed.xz+=wv2/(vs+.001)*min(Dm*pyn*pyn*'+tk.toFixed(1)+',py*.8);transformed.xz+=vec2(sin(uT*11.+py*3.+wp.x),cos(uT*9.+py*2.7+wp.y))*.1*pow(clamp(vs/40.,0.,1.),1.5)*min(py,3.);vTs=clamp((vs-26.)/38.,0.,1.);\n':'vTs=0.;\n')+(fx.includes('s')?LEAFV:NOLEAF)+(fx.includes('l')?'vec3 leafN=normal;\n#ifdef USE_INSTANCING\nleafN=mat3(instanceMatrix)*leafN;\n#endif\nvec3 sunView=normalize(mat3(viewMatrix)*uSunD);vBk=pow(max(dot(-sunView,normalize(normalMatrix*leafN)),0.),1.6)*clamp(uSunI,0.,2.);\n':'vBk=0.;\n'));
+s.fragmentShader='varying float vR,vSn,vTs,vBk,vY,vFall,vTree;uniform float uShed,uShedF,uAut,uSnowK,uBloom,uWet,uRainK;\n'+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n'+fr).replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\n/* Rain wets bark and stone: the PBR roughness falls and the sun glints off\n   upward faces. No particles are involved, only this one uniform. */\nroughnessFactor*=mix(1.,.55,clamp(uRainK,0.,1.));roughnessFactor=mix(roughnessFactor,roughnessFactor*.35,clamp(uRainK*vSn*1.3,0.,1.));')}}
+function depthFx(m,fx){if(!/[sSb]/.test(fx))return;m.customProgramCacheKey=()=>'dfx3'+fx;m.onBeforeCompile=s=>{s.uniforms.uShed=FXU.shed;s.uniforms.uShedF=FXU.shedF;s.uniforms.uBloom=FXU.bloom;s.uniforms.uGrow=FXU.grow;s.uniforms.uW=WW;s.uniforms.uT=WU;s.uniforms.uShedS0=FXU.s0;s.uniforms.uShedT0=FXU.t0;s.uniforms.uShedR=FXU.sr;s.uniforms.uShedE=FXU.se;s.uniforms.uClk=FXU.clk;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
-s.vertexShader='attribute float aRnd;attribute vec3 aCen;varying float vR,vFall,vTree;uniform float uShed,uGrow,uW,uShedS0,uShedT0,uShedR,uShedE,uClk;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vec2 wd=vec2(.8,.6);\n'+(fx.includes('s')?LEAFV:'vFall=0.;vTree=0.;')+'\n');
+s.vertexShader='attribute float aRnd;attribute vec3 aCen;attribute float aSway;attribute float aPhase;varying float vR,vFall,vTree;uniform float uShed,uGrow,uW,uT,uShedS0,uShedT0,uShedR,uShedE,uClk;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\n#ifdef USE_INSTANCING\nvec2 wp=vec2(instanceMatrix[3].x,instanceMatrix[3].z);\n#else\nvec2 wp=vec2(modelMatrix[3].x,modelMatrix[3].z);\n#endif\nvR=aRnd;vec2 wd=vec2(.8,.6);float gust=.6+.4*sin(dot(wp,wd)*.07-uT*.55)+.2*sin(dot(wp,vec2(-.6,.8))*.11+uT*.37);\n'+(SKEL)+'\n'+(fx.includes('s')?LEAFV:'vFall=0.;vTree=0.;')+'\n');
 s.fragmentShader='varying float vR,vFall,vTree;uniform float uShedF,uBloom;\n'+s.fragmentShader.replace('#include <alphatest_fragment>',fr+'#include <alphatest_fragment>')}}
 const TREE_SIZE_SCALE={pine:1.7,oak:1.75,birch:1.7,palm:1.65,spruce:1.7,krumm:1.4,juniper:1.4,acacia:1.7,joshua:1.65,deadtree:1.65},TREE_SIZE_MIN={palm:1.8,oak:1.2,birch:1.1},TREE_SIZE_MAX={palm:2.8};
 const SHADOW_LOW_DETAIL=new Set(['rock','sandrock','basalt','pine','oak','birch','palm','spruce','house','block','mid','tower']);
 function mk(n,max,parts,sh){const isLow=detail<=0,K=KIND[n]={list:[],max,size:TREE_SIZE_SCALE[n]||1,vr:.35,tint:[1,1,1],meshes:[],shadowMeshes:[],selectionGrid:null,selectionGridDirty:true,selectionBounds:null};const createInst=(g,material)=>{const m=new THREE.InstancedMesh(g,material,max);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceColor=new THREE.BufferAttribute(new Float32Array(max*3).fill(1),3);m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=0;m.frustumCulled=false;m.castShadow=isLow?SHADOW_LOW_DETAIL.has(n):!!sh;m.receiveShadow=!NO_SELF_SHADOW_RECEIVE.has(n);m.userData={pal:null,nt:null,vi:null,vn:null,part:null};return m};K.meshes=parts.map(([g,o={}],partIndex)=>{const P={vertexColors:true,side:o.ds?THREE.DoubleSide:THREE.FrontSide};if(o.map)P.map=o.map;if(o.cut)P.alphaTest=o.cut;let mt;if(o.ph){mt=new THREE.MeshPhongMaterial({...P,shininess:o.shn||30,specular:o.sp||0x222222});if(o.em){mt.emissive=new THREE.Color(1,1,1);mt.emissiveMap=o.em;mt.emissiveIntensity=0;BMAT.push(mt)}}else if(o.phys){if(o.nm){P.normalMap=o.nm;P.normalScale=new THREE.Vector2(o.ns||.45,o.ns||.45)}if(o.rm)P.roughnessMap=o.rm;if(o.bump){P.bumpMap=o.map;P.bumpScale=o.bump}mt=new THREE.MeshPhysicalMaterial({...P,roughness:o.roughness??.78,metalness:0,clearcoat:o.clearcoat??.1,clearcoatRoughness:o.clearcoatRoughness??.48});mt.envMapIntensity=o.env??.62}else if(o.pbr){mt=new THREE.MeshStandardMaterial({...P,roughness:1,metalness:1,roughnessMap:o.pbr,metalnessMap:o.pbr,bumpMap:o.map,bumpScale:o.bump||.5,emissive:new THREE.Color(1,1,1),emissiveMap:o.em,emissiveIntensity:0});mt.envMapIntensity=1.1;BMAT.push(mt)}else if(o.std){if(o.bump){P.bumpMap=o.map;P.bumpScale=o.bump}if(o.nm){P.normalMap=o.nm;P.normalScale=new THREE.Vector2(o.ns||1,o.ns||1)}if(o.rm)P.roughnessMap=o.rm;mt=new THREE.MeshStandardMaterial({...P,roughness:.93,metalness:0});mt.envMapIntensity=.72;if(o.det)injectDetail(mt,true)}else mt=new THREE.MeshLambertMaterial(P);if(o.w||o.sn)wind(mt,o.w||0,o.wf||0,(o.fx||'')+(o.cut&&o.map?'l':'')+(o.std&&!o.det&&!o.cut&&!o.sn?'w':'')+(o.pbr?'d':''),o.tk||1);const m=createInst(g,mt);m.name=n+' part '+partIndex+' high';m.userData={kind:n,pal:o.pal,nt:o.nt,vi:o.vi,vn:o.vn,part:o.part,lodGeom:o.lodGeom||null,sourceListIndices:[]};if(o.cut&&sh){const depth=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,map:o.map,alphaTest:o.cut,side:THREE.DoubleSide});depthFx(depth,o.fx||'');m.customDepthMaterial=depth}scene.add(m);return m});if(n==='grass'||n==='tallgrass')K.shadowMeshes=K.meshes.map((m,i)=>{const src=m,p=makeBotanicalShadowProxy(src.geometry,src.material,Math.ceil(max/SHADOW_PROXY_STRIDE),n+' shadow caster');scene.add(p);return p});return K}
-const FXU={s0:{value:0},t0:{value:0},sr:{value:.006},se:{value:0},clk:{value:0},grow:{value:1},lit:{value:0},treeMap:{value:null},shed:{value:0},shedF:{value:0},aut:{value:0},snowK:{value:0},bloom:{value:0},torS:{value:0},torV:{value:68},torD:{value:new THREE.Vector2()},sunD:U.sd,sunI:{value:1},tor:{value:new THREE.Vector3(0,0,10)},wet:{value:0}};
+const FXU={rain:{value:0},s0:{value:0},t0:{value:0},sr:{value:.006},se:{value:0},clk:{value:0},grow:{value:1},lit:{value:0},treeMap:{value:null},shed:{value:0},shedF:{value:0},aut:{value:0},snowK:{value:0},bloom:{value:0},torS:{value:0},torV:{value:68},torD:{value:new THREE.Vector2()},sunD:U.sd,sunI:{value:1},tor:{value:new THREE.Vector3(0,0,10)},wet:{value:0}};
 const DQ={leaf:1.6,seg:1.3,rock:1.3},DQP=[{leaf:.55,seg:.7,rock:.7},{leaf:1,seg:1,rock:1},{leaf:1.6,seg:1.3,rock:1.3},{leaf:2.4,seg:1.7,rock:1.7}],LZREG={};const LOD_FULL_KEY='final3d.lodFullDistance.v2';
 function storedLodFullDistance(){try{const v=Number(localStorage.getItem(LOD_FULL_KEY));return Number.isFinite(v)&&v>=250&&v<=2500?v:750}catch{return 750}}
 function setLodFullDistance(v){lodFullDistance=cl(Math.round(Number(v)||750),250,2500);try{localStorage.setItem(LOD_FULL_KEY,String(lodFullDistance))}catch{}lodPending=true;lodSettled=false;lodMotionAt=-1e9}
@@ -515,7 +950,7 @@ for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);
 buildEager();
 for(const k in saved){const K=KIND[k]||ensure(k);if(!K)continue;K.size=saved[k].size;K.vr=saved[k].vr;K.tint=saved[k].tint;K.list=saved[k].list;if(Math.max(saved[k].max||0,K.list.length)>K.max)growManualCapacity(k,Math.max(saved[k].max||0,K.list.length))}
 if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
-const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}}return KIND[k]}
+const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];window.__feFoliageLodDirty=true;if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}try{window.FELandscapeRealism&&window.FELandscapeRealism.refreshKind(k)}catch(e){}try{window.__feGrowSpecies&&window.__feGrowSpecies()}catch(e){}}return KIND[k]}
 const simple=(g,c)=>{const n=g.attributes.position.count,a=new Float32Array(n*3);for(let i=0;i<n;i++){a[i*3]=c[0];a[i*3+1]=c[1];a[i*3+2]=c[2]}g.setAttribute('color',new THREE.BufferAttribute(a,3));return g};
 let MODELS_ERR=null;
 function fallbackModels(){for(const k in KIND){[...KIND[k].meshes,...(KIND[k].lowMeshes||[]),...(KIND[k].shadowMeshes||[])].forEach(m=>scene.remove(m));delete KIND[k]}

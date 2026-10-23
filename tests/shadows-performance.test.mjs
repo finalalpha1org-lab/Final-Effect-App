@@ -14,7 +14,7 @@ test('directional sunlight casts real shadows onto terrain; rocks cast but do no
   assert.match(html,/sun\.shadow\.radius=\.8/,'keep directional shadows defined rather than overly diffuse');
   assert.match(html,/NO_SELF_SHADOW_RECEIVE/);
   assert.match(html,/m\.castShadow=isLow\?SHADOW_LOW_DETAIL\.has\(n\):!!sh/);
-  assert.match(html,/mk\('rock',1000,\[0,1,2\]\.map\(v=>\[rockG\(\),\{nt:1,std:1,vi:v,vn:3\}\]\),true\)/,'rocks must cast into the real directional shadow map');
+  assert.match(html,/mk\('rock',1000,\[0,1,2\]\.map\(v=>\[rockBuilder\(\),\{nt:1,std:1,vi:v,vn:3\}\]\),true\)/,'rocks must cast into the real directional shadow map');
   assert.match(html,/m\.receiveShadow=!NO_SELF_SHADOW_RECEIVE\.has\(n\)/);
   assert.match(html,/hemisphere\/environment lights.*fill only/i);
 });
