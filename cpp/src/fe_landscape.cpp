@@ -120,6 +120,46 @@ int32_t fe_terrain_scatter_batch(uint32_t count,float spread,uint32_t seed){
  }
  return int32_t(count);
 }
+/* Terrain-aware scatter candidates for ground cover: rejection-samples the
+   resident heightfield so candidates already respect the water margin and the
+   species slope limit, then thins them with a patch (clump) field. This keeps
+   the JS-side instance rules as the authority while giving the expensive cover
+   budgets (tens of thousands of grass/flowers) a natural patch structure
+   instead of a uniform square grid. */
+int32_t fe_terrain_scatter_natural(uint32_t count,float spread,uint32_t seed,
+                                   float water_level,float max_slope,
+                                   float clump,float patch_scale){
+ if(count<1||count>16384)return -1;
+ if(!finite(spread)||spread<=0||spread>100000)return -1;
+ if(!finite(water_level)||water_level<-5000||water_level>5000)return -1;
+ if(!finite(max_slope)||max_slope<=0||max_slope>50)return -1;
+ if(!finite(clump)||clump<0||clump>1)return -1;
+ if(!finite(patch_scale)||patch_scale<.5f||patch_scale>200)return -1;
+ uint32_t rng=seed?seed:0x9e3779b9u;
+ auto random=[&](){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return float(rng)/4294967296.f;};
+ uint32_t made=0,attempt=0;
+ const uint32_t maxAttempts=count*16u;
+ while(made<count&&attempt<maxAttempts){
+  attempt++;
+  const float x=(random()-.5f)*spread,z=(random()-.5f)*spread;
+  const float y=sample(H,x,z);
+  if(y<water_level+.25f)continue;
+  const float hx=(sample(H,x+1,z)-sample(H,x-1,z))*.5f;
+  const float hz=(sample(H,x,z+1)-sample(H,x,z-1))*.5f;
+  const float sl=sqrtf(hx*hx+hz*hz);
+  if(sl>max_slope)continue;
+  if(clump>0.f){
+   const float cn=noise(x/patch_scale+float(seed%97)*.37f,z/patch_scale-float(seed%53)*.21f,seed);
+   const float t=clampf((cn-.32f)/.36f,0.f,1.f);
+   const float keep=(1.f-clump)+clump*t*t*(3.f-2.f*t);
+   if(random()>keep)continue;
+  }
+  scatterOut[made*4]=x;scatterOut[made*4+1]=z;
+  scatterOut[made*4+2]=y;scatterOut[made*4+3]=sl;
+  made++;
+ }
+ return int32_t(made);
+}
 int32_t fe_terrain_apply_strata(float strata_height,float strata_strength,float tilt_x,float tilt_z,float warp_amp){
  if(!finite(strata_height)||strata_height<.05f||strata_height>500)return -1;
  if(!finite(strata_strength)||strata_strength<=0||strata_strength>1)return -1;

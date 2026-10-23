@@ -90,20 +90,28 @@ for(let j=0;j<samples;j++){const u=from?(j+.5)/samples:1,cx=from?from.x+dx*u:p.x
 function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debClear();occRebuild();const density=cl(scatterDensity,1,2.5),big=BTAB[biome].filter(([n])=>FP[n]>=1.8),bw=big.reduce((a,[,w])=>a+w,0),ph=n=>RK[n]?0:FP[n]>=.9?1:2,smallBudget=36000*density,grassMixBonus=Math.round(36000*density),tallGrassMixBonus=Math.round(42000*density),wildflowerMixBonus=Math.round(7000*density),flowers=new Set(['flower','daisy','tulip','lavender']),coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1,tab=BTAB[biome].filter(([n])=>!(FP[n]>=1.8)).map(([n,w])=>[n,Math.round(smallBudget*w*coverBoost(n))+(n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0)]).sort((a,b)=>ph(a[0])-ph(b[0]));
 const bigCount=Math.round(36000*bw*5*density),SCBUF=new Float32Array(SCATTER_BATCH*4);
 let uploaded=false;const pickBig=()=>{let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}return k};
-function scatterFill(count,pick){
+const COVER_KINDS=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);
+function scatterFill(count,pick,cover){
  const core=window.FELandscapeCore;let done=0;
  if(core&&core.ready&&core.scatterBegin&&core.scatterBatch){
   if(!uploaded)uploaded=!!core.scatterBegin({n:N,size:S,heights:H});
   if(uploaded){
-   while(done<count){const batch=Math.min(SCATTER_BATCH,count-done),got=core.scatterBatch({count:batch,spread:S*.96,seed:(Math.round((seed||0)*1000)+done+1)>>>0,output:SCBUF});
-    if(got!==batch)break;
+   /* Ground cover asks the core for terrain-filtered, clumped candidates so the
+      expensive grass/flower budgets land where they can actually grow. Every
+      other kind keeps the jittered-grid candidates. */
+   const natural=cover&&typeof core.scatterNatural==='function';
+   while(done<count){const batch=Math.min(SCATTER_BATCH,count-done),seedBatch=(Math.round((seed||0)*1000)+done+1)>>>0;
+    const got=natural
+      ?core.scatterNatural({count:batch,spread:S*.96,seed:seedBatch,water:wl,maxSlope:cover.maxSlope,clump:cover.clump,patch:cover.patch,output:SCBUF})
+      :core.scatterBatch({count:batch,spread:S*.96,seed:seedBatch,output:SCBUF});
+    if(!got)break;
     for(let i=0;i<got;i++){const o=i*4;add(pick(),SCBUF[o],SCBUF[o+1],1,0,false,SCBUF[o+2],SCBUF[o+3])}
-    done+=got}
+    done+=got;if(got<batch)break}
    if(done>=count)return}}
  for(let i=done;i<count;i++)add(pick(),(R()-.5)*S*.96,(R()-.5)*S*.96);
 }
 scatterFill(bigCount,pickBig);
-for(const[n,c]of tab)scatterFill(c,()=>n);
+for(const[n,c]of tab)scatterFill(c,()=>n,COVER_KINDS.has(n)?{maxSlope:(RULE[n]||[9])[0],clump:.25+scatterClustering*.45,patch:22}:null);
 if(kb)clearUnderB();for(const k in KIND)sync(k)}
 function resnap(){for(const k in KIND){KIND[k].list.forEach(o=>o.y=BLD[k]?bY(o.x,o.z,BLD[k]):hgt(o.x,o.z));sync(k)}}
 

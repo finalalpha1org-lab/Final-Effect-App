@@ -1868,7 +1868,7 @@
         name: 'Landscape & Ocean Kernels',
         ok: oceanOk && (present ? bound && degraded === 0 : true),
         detail: (oceanOk ? `Wave field 32² · ${(performance.now() - t0).toFixed(2)} ms · ` : 'Ocean kernel unavailable · ') +
-          (present ? (bound ? (degraded ? `${degraded} kernels on JS fallback` : 'Every terrain, Open World and ocean kernel bound') : 'Terrain bridge did not bind — JS fallback active') : 'Terrain bridge not part of this page')
+          (present ? (bound ? (degraded ? `${degraded} kernel${degraded===1?'':'s'} on JS fallback: ${land.missing.join(', ')}` : 'Every terrain, Open World and ocean kernel bound') : 'Terrain bridge did not bind — JS fallback active') : 'Terrain bridge not part of this page')
       });
     } catch (error) {
       results.push({ name: 'Landscape & Ocean Kernels', ok: false, detail: String(error.message || error) });

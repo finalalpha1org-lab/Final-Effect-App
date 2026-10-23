@@ -119,3 +119,49 @@ test('ocean updates are deterministic and evolve with time',()=>{
   for(let i=0;i<first.length;i+=4)diff=Math.max(diff,Math.abs(cascade(0)[i]-first[i]));
   assert.ok(diff>1e-3,'a different seed must build a different spectrum');
 });
+
+test('Jacobian foam marks folded crests and stays off in calm water',()=>{
+  assert.equal(typeof e.fe_ocean_get_cascade_foam_ptr,'function');
+  assert.equal(configure(128),0);
+  assert.equal(e.fe_ocean_update(3.2,0,1,MAX_HEIGHT,MAX_DISPLACE),128*128*4);
+  const flat=Float32Array.from(new Float32Array(e.memory.buffer,e.fe_ocean_get_cascade_foam_ptr(0),128*128));
+  assert.ok(flat.every(v=>v===0),'zero amplitude must stay glassy');
+  const coverage=()=>{
+    const foam=new Float32Array(e.memory.buffer,e.fe_ocean_get_cascade_foam_ptr(0),128*128);
+    let hot=0,max=0;
+    for(const v of foam){assert.ok(v>=0&&v<=1,'foam stays normalised');if(v>.2)hot++;if(v>max)max=v}
+    return {pct:hot/foam.length,max};
+  };
+  assert.equal(e.fe_ocean_update(3.2,1,1,MAX_HEIGHT,MAX_DISPLACE),128*128*4);
+  const normal=coverage();
+  assert.ok(normal.pct>.02&&normal.pct<.25,`whitecap coverage ${(normal.pct*100).toFixed(1)}%`);
+  assert.ok(normal.max>.5,'at least one crest must break');
+  assert.equal(e.fe_ocean_update(3.2,1,.25,MAX_HEIGHT,MAX_DISPLACE),128*128*4);
+  assert.ok(coverage().pct<normal.pct,'a calmer sea must break less often');
+  const first=Float32Array.from(new Float32Array(e.memory.buffer,e.fe_ocean_get_cascade_foam_ptr(0),128*128));
+  assert.equal(e.fe_ocean_update(3.2,1,.25,MAX_HEIGHT,MAX_DISPLACE),128*128*4);
+  assert.deepEqual(new Float32Array(e.memory.buffer,e.fe_ocean_get_cascade_foam_ptr(0),128*128),first,'foam is deterministic');
+  assert.equal(e.fe_ocean_get_cascade_foam_ptr(3),0);
+});
+
+test('the water shader samples the C++ foam field and the bridge exposes it',()=>{
+  const src=readFileSync('terrain-main-01.js','utf8');
+  assert.ok(src.includes('uFFTFoam'),'the foam sampler needs a uniform');
+  assert.ok(src.includes('texture2D(uFFTFoam,vec2(w.xz/uFFTLen0+.5))'),'the shader must sample the C++ foam at the cascade-0 scale');
+  assert.ok(src.includes('core.oceanCascadeFoam'));
+  assert.ok(src.includes("'terrain-water-pbr-v9-triplanar-fft-foam-shore-sets'"),'the program cache key must change with the shader');
+  assert.ok(src.includes('clearFoamTexture()'),'the JS fallback must not keep stale foam');
+});
+
+test('shore foam widens with wave sets and stays tied to the live sliders',()=>{
+  const src=readFileSync('terrain-main-01.js','utf8');
+  assert.ok(src.includes('float waveSet=clamp(.55+.45*sin(t*1.05-dot(w.xz,uWindDir)*.22)'),'a travelling wave set pulses the run-up');
+  assert.ok(src.includes('float shoreBandW=max(uShoreFoam,.05)*(.72+.6*runup)*(.6+.8*min(amp,2.));'),'the band widens with the slab and the swell');
+  assert.ok(src.includes('float shoreBand=1.-smoothstep(0.,max(shoreBandW,.02),waterDepth);'),'the band is depth driven, not a flat plateau');
+  assert.ok(src.includes('float shoreLip=1.-smoothstep(0.,max(uShoreFoam*.3,.03),waterDepth);'),'a bright lip marks the waterline');
+  assert.ok(src.includes('shoreFoam=(shoreBand*mix(.34,.86,runup)+shoreLip*runup*.5)'),'the two bands combine');
+  assert.ok(src.includes('*mix(.5,1.18,shoreLace)*smoothstep(0.,.02,waterDepth);'),'lace breaks the band and it fades at the very edge');
+  for(const slider of ['uFoamAmt','uFoamThreshold','uShoreFoam'])
+    assert.ok(src.includes("'"+slider+"'"),slider+' must stay a live uniform');
+  assert.ok(src.includes('foamMask=clamp((crestFoam*mix(.55,1.25,foamNoise)+shoreFoam'),'shore foam still feeds the shared foam mask');
+});

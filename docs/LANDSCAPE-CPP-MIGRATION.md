@@ -113,7 +113,21 @@ Terrain-tab button next to hydraulic and thermal erosion and is undoable.
 height, slope) from the resident heightfield. Auto-scatter now asks the C++ core
 for candidates in 4096-point batches and only runs the biome/occupancy/instance
 rules in JS; if the core is unavailable the original pure-JS random placement is
-used unchanged. Measured on a 257² grid (Node 22, sandbox CPU): 40 ns per
+used unchanged.
+
+`fe_terrain_scatter_natural(count, spread, seed, water_level, max_slope, clump,
+patch_scale)` is the ground-cover variant: it rejection-samples the resident
+heightfield so a candidate is only accepted above the water margin and under the
+species slope limit, then thins the accepted points through a value-noise patch
+field (`clump` comes from the Grove-clustering slider, 22 m patches). The six
+cover kinds (grass, tall grass, flower, daisy, tulip, lavender) use it; trees,
+shrubs and rocks keep the jittered grid because their occupancy rules depend on
+per-species footprints that stay in JS. Rejection is budget-bounded (16× the
+requested count), seeded, and returns a short count instead of failing, so the
+JS loop fills the remainder. Measured on the same 257² grid: about 6 % of an
+8192-point clumped request is rejected on a 20° slope, and quadrat analysis over
+an 8×8 grid shows the clumped field spreading ≈2.5× wider than the uniform grid
+at 2000 points, i.e. visible groves rather than an even carpet. Measured on a 257² grid (Node 22, sandbox CPU): 40 ns per
 candidate in C++ versus 161 ns in JS for the same bilinear height + central
 difference slope, i.e. ≈8 ms versus ≈32 ms for 200k candidates. That is only the
 sampling stage - instancing, tinting and occupancy still dominate total scatter
@@ -173,8 +187,26 @@ normalises the surface. Kernel outputs:
   samples, encoded exactly like the JS shader packing.
 - `fe_ocean_ifft2d_f32(real, imag, n)` — the shared inverse transform.
 
+The inverse transform precomputes twiddle factors per resolution and the
+configure step stores one unit wave direction per cell, so the per-frame loops do
+no trigonometric work. Foam is a C++ Jacobian pass: `fe_ocean_get_cascade_foam_ptr(i)`
+returns a 0–1 field that marks folded crests, using an adaptive per-frame
+mean/σ threshold (`z0 = 2.05 − 0.65 · strength`, with strength from choppiness
+and wind) because a fixed threshold produced no foam at any tested amplitude.
+The shader samples cascade 0 through `uFFTFoam` and takes
+`max(analytic crest foam, C++ foam)`.
+
+The shore band is a depth-driven sheet, not a fixed plateau: a travelling wave
+set (`sin(t·1.05 − k·uWindDir)`, plus a slower cross-set) drives a smoothstep
+run-up that widens the band with `uShoreFoam` and the live amplitude, adds a
+bright waterline lip and is broken by two octaves of lace noise before it feeds
+the shared foam mask. Foam amount, Crest threshold and Shore foam width remain
+live uniforms, and the water program cache key moved to
+`terrain-water-pbr-v9-triplanar-fft-foam-shore-sets` so a cached shader cannot
+hide the change.
+
 The bridge (`FELandscapeCore.oceanConfigure / oceanUpdate / oceanCascade /
-oceanCascadeRgba`) drives `updateTessendorfOcean`, which keeps its per-quality
+oceanCascadeRgba / oceanCascadeFoam`) drives `updateTessendorfOcean`, which keeps its per-quality
 update interval and its minified JS bundle as the fallback. Parity is pinned by
 `tests/ocean-cpp.test.mjs`: all three cascades are compared with
 `tessendorf-ocean.js` for three configurations, and the packed bytes are
@@ -185,6 +217,12 @@ compared with the JS encoder.
 | 64² | 2.7 ms | 57.7 ms | ≈21× faster |
 | 128² | 12.5 ms | 277.6 ms | ≈22× faster |
 | 256² | 58.0 ms | 1245.4 ms | ≈21× faster |
+
+A later interleaved A/B run against the previous C++ build (twiddles + cached
+wave directions, foam excluded) measured 2.54 → 1.73 ms at 64² (1.46×),
+11.10 → 7.86 ms at 128² (1.41×) and 56.07 → 40.74 ms at 256² (1.38×). The
+Jacobian foam pass was added after that measurement and is not included in
+those numbers.
 
 Max deviation from the reference is 4e-7 on amplitudes around 1.5 (float32
 storage rounding) and the packed RGBA8 bytes match exactly. CPU numbers only.
@@ -197,8 +235,21 @@ is listed in `FELandscapeCore.missing`, and falls back per subsystem instead of
 failing the whole bridge. The on-device benchmark now includes a "Landscape &
 Ocean Kernels" row that runs a 32² ocean update inside the engine and names any
 kernel that is missing, so an older cached wasm shows exactly which subsystem is
-degraded rather than reporting a generic failure.
+degraded rather than reporting a generic failure. Since a single new optional
+kernel (for example `fe_terrain_scatter_natural`) makes `missing` non-empty, the
+self-test row lists the kernel names in its detail line - "2 kernels on JS
+fallback: fe_ocean_update, fe_lod_classify" - and its own test stubs a partial
+bridge to pin that wording.
+
+A degraded row after an app update therefore means the page is running against a
+stale cached `fe_core_engine.wasm`, not that the kernel is broken. The service
+worker cache name moved to `final-effect-cpp-v3` in the same change as the new
+kernel, so a normal reload re-precaches the matching wasm; `refreshAppCache()` in
+the ⚙ sheet clears caches and service-worker registrations for an install that is
+still stuck.
 
 Still JS: worker message passing, chunk mesh/instance buffer construction and the
 GPU uploads themselves (three.js buffers and WebGL calls cannot move into wasm),
-and the plant-placement solver inside `createChunkJob`.
+the occupancy/capacity rules that accept or reject a scatter candidate, and the
+plant-placement solver inside `createChunkJob`. The ocean math, its foam field,
+strata and both scatter candidate generators are C++.

@@ -67,6 +67,8 @@ double oceanHr[OCEAN_MAX_CELLS], oceanHi[OCEAN_MAX_CELLS];
 double oceanXr[OCEAN_MAX_CELLS], oceanXi[OCEAN_MAX_CELLS];
 double oceanZr[OCEAN_MAX_CELLS], oceanZi[OCEAN_MAX_CELLS];
 float oceanData[OCEAN_CASCADES][OCEAN_MAX_CELLS * 4];
+float oceanDirX[OCEAN_MAX_CELLS], oceanDirZ[OCEAN_MAX_CELLS];
+float oceanFoam[OCEAN_CASCADES][OCEAN_MAX_CELLS];
 uint8_t oceanRgba[OCEAN_MAX_CELLS * 4];
 
 uint32_t oceanResolution = 0, oceanCellCount = 0;
@@ -77,6 +79,27 @@ uint32_t oceanSeed = 7;
 
 bool finite(float x) { return isfinitef(x); }
 bool finiteDouble(double x) { return x == x && x < 1e300 && x > -1e300; }
+
+/* Twiddle tables: cos/sin of +2pi*c/len for every stage of every transform of
+   the same size. The phase angles are identical to the ones computed inline
+   before, so results stay bit-comparable, but the trig calls drop from
+   n/2*log2(n) per transform to n-1 per size. */
+double twiddleRe[OCEAN_MAX_RES], twiddleIm[OCEAN_MAX_RES];
+uint32_t twiddleN = 0;
+void buildTwiddles(uint32_t n) {
+  if (twiddleN == n) return;
+  const double TAU = 6.283185307179586476925286766559;
+  uint32_t k = 0;
+  for (uint32_t len = 2; len <= n; len <<= 1) {
+    const double ang = TAU / double(len);
+    for (uint32_t c = 0; c < (len >> 1); c++) {
+      twiddleRe[k] = dCos(ang * double(c));
+      twiddleIm[k] = dSin(ang * double(c));
+      k++;
+    }
+  }
+  twiddleN = n;
+}
 
 void fft1d(double* re, double* im, uint32_t n, uint32_t stride, bool inverse) {
   for (uint32_t i = 1, l = 0; i < n; i++) {
@@ -89,12 +112,14 @@ void fft1d(double* re, double* im, uint32_t n, uint32_t stride, bool inverse) {
       const double ti = im[a]; im[a] = im[b]; im[b] = ti;
     }
   }
+  buildTwiddles(n);
+  uint32_t tw = 0;
   for (uint32_t len = 2; len <= n; len <<= 1) {
-    const double ang = (inverse ? 1.0 : -1.0) * 6.283185307179586476925286766559 / double(len);
     const uint32_t half = len >> 1;
     for (uint32_t start = 0; start < n; start += len) {
       for (uint32_t c = 0; c < half; c++) {
-        const double wr = dCos(ang * double(c)), wi = dSin(ang * double(c));
+        const double wr = twiddleRe[tw + c];
+        const double wi = inverse ? twiddleIm[tw + c] : -twiddleIm[tw + c];
         const uint32_t a = (start + c) * stride, b = (start + c + half) * stride;
         const double xr = wr * re[b] - wi * im[b];
         const double xi = wr * im[b] + wi * re[b];
@@ -102,6 +127,7 @@ void fft1d(double* re, double* im, uint32_t n, uint32_t stride, bool inverse) {
         re[a] += xr; im[a] += xi;
       }
     }
+    tw += half;
   }
   if (inverse) {
     for (uint32_t i = 0; i < n; i++) { re[i * stride] /= double(n); im[i * stride] /= double(n); }
@@ -160,6 +186,49 @@ void buildSpectrum(uint32_t cascade) {
     }
   }
 }
+/* Jacobian foam: where the displaced surface folds over itself the 2x2
+   Jacobian of the horizontal displacement drops below 1 and the water breaks
+   into whitecaps. Derivatives are per world unit (n / cascade length).
+
+   The threshold is adaptive (per-frame mean/standard deviation of J) so the
+   whitecap coverage stays believable across amplitudes instead of vanishing or
+   flooding the surface when the gain changes. Choppiness and wind scale both
+   the coverage and the strength. */
+float oceanJ[OCEAN_MAX_CELLS];
+void computeFoam(uint32_t cascade, uint32_t n, float amplitude, float choppiness) {
+  const float* d = oceanData[cascade];
+  float* out = oceanFoam[cascade];
+  const uint32_t cells = n * n;
+  if (amplitude <= 0.f) { for (uint32_t s = 0; s < cells; s++) out[s] = 0.f; return; }
+  const double per = double(n) / double(oceanLengths[cascade]);
+  double sum = 0.0, sum2 = 0.0;
+  for (uint32_t s = 0; s < cells; s++) {
+    const uint32_t ix = s % n, iz = s / n;
+    const uint32_t xm = iz * n + (ix + n - 1) % n, xp = iz * n + (ix + 1) % n;
+    const uint32_t zm = ((iz + n - 1) % n) * n + ix, zp = ((iz + 1) % n) * n + ix;
+    const double dxdx = (double(d[xp * 4 + 1]) - double(d[xm * 4 + 1])) * .5 * per;
+    const double dzdx = (double(d[xp * 4 + 2]) - double(d[xm * 4 + 2])) * .5 * per;
+    const double dxdz = (double(d[zp * 4 + 1]) - double(d[zm * 4 + 1])) * .5 * per;
+    const double dzdz = (double(d[zp * 4 + 2]) - double(d[zm * 4 + 2])) * .5 * per;
+    const double J = (1.0 + dxdx) * (1.0 + dzdz) - dxdz * dzdx;
+    oceanJ[s] = float(J);
+    sum += J; sum2 += J * J;
+  }
+  const double mean = sum / double(cells);
+  double variance = sum2 / double(cells) - mean * mean;
+  const double stddev = variance > 1e-12 ? dSqrt(variance) : 0.0;
+  const double wind = double(oceanWindSpeed) / 14.0;
+  double strength = (.35 + .65 * double(choppiness)) * (wind < .45 ? .45 : (wind > 1.4 ? 1.4 : wind));
+  strength = strength > 1.0 ? 1.0 : (strength < 0.0 ? 0.0 : strength);
+  const double z0 = 2.05 - .65 * strength;
+  for (uint32_t s = 0; s < cells; s++) {
+    if (stddev < 1e-6) { out[s] = 0.f; continue; }
+    const double z = (mean - double(oceanJ[s])) / stddev;
+    double f = (z - z0) * 2.2 * strength;
+    f = f < 0.0 ? 0.0 : (f > 1.0 ? 1.0 : f);
+    out[s] = float(f * f * (3.0 - 2.0 * f));
+  }
+}
 } // namespace
 
 extern "C" {
@@ -185,6 +254,16 @@ int32_t fe_ocean_configure(uint32_t resolution, float len0, float len1, float le
   oceanWindDirection = wind_dir_deg * 3.14159265358979323846f / 180.f;
   oceanSeed = seed;
   for (uint32_t c = 0; c < OCEAN_CASCADES; c++) buildSpectrum(c);
+  /* Normalised wave vectors only depend on the sample index, not the cascade,
+     so they are built once per configure instead of per cell per frame. */
+  for (uint32_t s = 0; s < oceanCellCount; s++) {
+    const uint32_t ix = s % resolution, iz = s / resolution;
+    const double gx = double(ix <= resolution / 2 ? int32_t(ix) : int32_t(ix) - int32_t(resolution));
+    const double gz = double(iz <= resolution / 2 ? int32_t(iz) : int32_t(iz) - int32_t(resolution));
+    const double mag = dSqrt(gx * gx + gz * gz);
+    if (mag > 1e-8) { oceanDirX[s] = float(gx / mag); oceanDirZ[s] = float(gz / mag); }
+    else { oceanDirX[s] = 0.f; oceanDirZ[s] = 0.f; }
+  }
   return 0;
 }
 
@@ -214,12 +293,8 @@ int32_t fe_ocean_update(float time_sec, float amplitude, float choppiness,
       const double X = -double(h0r[o]) * sn - double(h0i[o]) * c;
       oceanHr[s] = E + D;
       oceanHi[s] = P + X;
-      const uint32_t ix = s % n, iz = s / n;
-      const double gx = double(ix <= n / 2 ? int32_t(ix) : int32_t(ix) - int32_t(n)) * 6.283185307179586476925286766559 / length;
-      const double gz = double(iz <= n / 2 ? int32_t(iz) : int32_t(iz) - int32_t(n)) * 6.283185307179586476925286766559 / length;
-      const double mag = dSqrt(gx * gx + gz * gz);
-      if (mag > 1e-8) {
-        const double wx = gx / mag, wz = gz / mag;
+      const double wx = double(oceanDirX[s]), wz = double(oceanDirZ[s]);
+      if (wx != 0.0 || wz != 0.0) {
         oceanXr[s] = oceanHi[s] * wx * chop;
         oceanXi[s] = -oceanHr[s] * wx * chop;
         oceanZr[s] = oceanHi[s] * wz * chop;
@@ -250,8 +325,13 @@ int32_t fe_ocean_update(float time_sec, float amplitude, float choppiness,
       data[s * 4 + 2] = float(oceanZr[s] * norm);
       data[s * 4 + 3] = 1.f;
     }
+    computeFoam(cascade, n, amplitude, choppiness);
   }
   return int32_t(cells * 4);
+}
+
+float* fe_ocean_get_cascade_foam_ptr(uint32_t cascade_idx) {
+  return cascade_idx < OCEAN_CASCADES ? oceanFoam[cascade_idx] : nullptr;
 }
 
 uint8_t* fe_ocean_get_cascade_rgba8_ptr(uint32_t cascade_idx) {

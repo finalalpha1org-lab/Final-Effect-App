@@ -563,6 +563,17 @@ FE_EXPORT int32_t  fe_terrain_erode_thermal(
 );
 
 /* Tilted / Warped Sedimentary Strata & Canyon Outcrop Terracing */
+/* Terrain-aware natural scatter candidates (water/slope filtered, clumped) */
+FE_EXPORT int32_t  fe_terrain_scatter_natural(
+  uint32_t count,
+  float spread,
+  uint32_t seed,
+  float water_level,
+  float max_slope,
+  float clump,
+  float patch_scale
+);
+
 FE_EXPORT int32_t  fe_terrain_apply_strata(
   float strata_height,
   float strata_strength,
@@ -667,6 +678,7 @@ FE_EXPORT int32_t  fe_ocean_update(
 FE_EXPORT float*   fe_ocean_field_ptr(void);
 FE_EXPORT uint32_t fe_ocean_resolution(void);
 FE_EXPORT uint8_t* fe_ocean_get_cascade_rgba8_ptr(uint32_t cascade_idx);
+FE_EXPORT float*   fe_ocean_get_cascade_foam_ptr(uint32_t cascade_idx);
 FE_EXPORT float*   fe_ocean_get_cascade_float4_ptr(uint32_t cascade_idx);
 FE_EXPORT int32_t  fe_ocean_ifft2d_f32(float* real, float* imag, uint32_t n);
 
