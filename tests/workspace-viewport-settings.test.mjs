@@ -9,7 +9,8 @@ test('viewport chrome never advertises the engine implementation',()=>{
  assert.ok(!/C\+\+20|C\+\+|WASM|Rust\//.test(markup),'rendered markup must not name the engine stack');
  assert.ok(!html.includes('id="tb-cpp-badge"'),'the old engine badge is gone from the timeline bar');
  assert.ok(!html.includes('Test C++')&&html.includes('data-ico="flask"')&&html.includes('Run Benchmark'),'the benchmark entry point uses a neutral label and an SVG icon');
- assert.ok(html.includes('<span id="tb-status-badge">Physics: starting…</span>'));
+ assert.ok(!html.includes('id="tb-status-badge"'),'no solver/readiness pill is rendered in the viewport chrome');
+ assert.ok(!markup.includes('timeline-right-info'),'the old badge container is gone from the timeline header');
  assert.ok(!bridge.includes('C++ Engine ·')&&!bridge.includes('tb-cpp-badge'));
 });
 
@@ -69,7 +70,7 @@ test('the sheet offers a hard refresh so a stale installed build can update',()=
  assert.ok(html.includes('id="ws-build-stamp"'),'the loaded build must be visible');
  assert.ok(/caches\.keys\(\)/.test(html)&&/serviceWorker\.getRegistrations\(\)/.test(html),'update clears caches and registrations');
  const sw=readFileSync('sw.js','utf8');
- assert.ok(sw.includes("'final-effect-cpp-v16'"),'bump the cache name whenever the shipped shell changes');
- assert.ok(!sw.includes("'final-effect-cpp-v15'"),'the previous cache name must be retired, not kept alongside');
+ assert.ok(sw.includes("'final-effect-cpp-v17'"),'bump the cache name whenever the shipped shell changes');
+ assert.ok(!sw.includes("'final-effect-cpp-v16'"),'the previous cache name must be retired, not kept alongside');
  for(const file of ['fe_core_engine.wasm','terrain-main-01.js','terrain-main-09.js','open-world-generator.js','open-world.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
 });

@@ -5,50 +5,53 @@ import {readFileSync} from 'node:fs';
 
 const html = readFileSync('index.html','utf8');
 const bridge = readFileSync('fe-cpp-engine.js','utf8');
+const simulation = readFileSync('simulationCore.js','utf8');
 
-function badgeHarness(initialText){
-  const badge = {textContent:initialText, _observers:[]};
-  const document = {
-    getElementById: id => (id === 'tb-status-badge' ? badge : null)
-  };
-  class MutationObserver {
-    constructor(cb){ this.cb = cb; this.targets = []; }
-    observe(target){ this.targets.push(target); badge._observers.push(this); }
-    disconnect(){}
+function removalHarness({exists = true, siblings = 1} = {}){
+  const state = {badgeRemoved:false};
+  const host = { childElementCount: siblings, removed:false, remove(){ this.removed = true; } };
+  let badge = null;
+  if (exists) {
+    badge = {
+      id:'tb-status-badge',
+      textContent:'Physics: C++/WASM v3 ready',
+      closest(){ return host; },
+      remove(){ state.badgeRemoved = true; }
+    };
   }
-  const ctx = vm.createContext({window:{}, document, MutationObserver, console, String, RegExp});
-  const code = html.slice(html.indexOf('function sanitizePhysicsBadge'), html.indexOf('watchPhysicsBadge();') + 'watchPhysicsBadge();'.length);
-  vm.runInContext(code, ctx);
-  return {badge, ctx};
+  const document = { getElementById: id => (id === 'tb-status-badge' ? badge : null) };
+  const ctx = vm.createContext({ window:{}, document, console, String, Number, Math });
+  const start = html.indexOf('function removePhysicsBadgeFromDom');
+  const end = html.indexOf('removePhysicsBadgeFromDom();', start) + 'removePhysicsBadgeFromDom();'.length;
+  vm.runInContext(html.slice(start,end), ctx);
+  return { host, state };
 }
 
-test('an implementation label never survives on the physics badge',()=>{
-  const cases = [
-    ['Physics: C++/WASM v3 ready','Physics: ready'],
-    ['Physics: C++20/WASM v3 (XPBD) ready','Physics: ready'],
-    ['Physics · 2 active','Physics · 2 active'],
-    ['Physics: starting…','Physics: starting…'],
-    ['Physics unavailable','Physics unavailable']
-  ];
-  for(const [input,expected] of cases){
-    const {badge} = badgeHarness(input);
-    assert.equal(badge.textContent, expected, `${input} must render as ${expected}`);
-    assert.doesNotMatch(badge.textContent, /C\+\+|WASM|WebAssembly|Rust\//, 'no engine names reach the viewport chrome');
-  }
+test('the viewport renders no solver or readiness pill at all',()=>{
+  const markup = html.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<!--[\s\S]*?-->/g,'');
+  assert.ok(!markup.includes('tb-status-badge'), 'no badge element ships in the timeline header');
+  assert.ok(!markup.includes('timeline-right-info'), 'the badge container is gone too');
+  assert.ok(!/#tb-status-badge\s*\{/.test(html), 'its styling is removed, not orphaned');
+  assert.ok(!/Physics:ready|Physics: ready|Physics: starting/.test(markup), 'the header carries no readiness text');
+  assert.ok(!/C\+\+20|C\+\+|WASM|Rust\//.test(markup), 'rendered markup never names the engine stack');
 });
 
-test('the guard keeps watching the badge after other scripts rewrite it',()=>{
-  const {badge} = badgeHarness('Physics: starting…');
-  assert.equal(badge._observers.length >= 1, true, 'a MutationObserver is attached');
-  badge.textContent = 'Physics: C++/WASM v3 ready';
-  badge._observers[0].cb();
-  assert.equal(badge.textContent, 'Physics: ready', 'a late write is scrubbed');
+test('an installed shell with the old pill is cleaned up on boot',()=>{
+  const solo = removalHarness({exists:true, siblings:1});
+  assert.equal(solo.host.removed, true, 'a container holding only the pill is removed');
+
+  const shared = removalHarness({exists:true, siblings:3});
+  assert.equal(shared.state.badgeRemoved, true, 'a shared container keeps its other children, the pill goes');
+
+  const clean = removalHarness({exists:false});
+  assert.equal(clean.host.removed, false, 'a clean page is left alone');
+  assert.ok(html.includes('window.removePhysicsBadgeFromDom = removePhysicsBadgeFromDom'));
 });
 
-test('solver internals stay available for diagnostics only',()=>{
+test('the solver bridge no longer writes status text into the page',()=>{
+  assert.ok(simulation.includes("getElementById?.('tb-status-badge')"), 'the bridge only looks the id up to delete it');
+  assert.ok(!/badge\.textContent\s*=/.test(simulation), 'nothing writes badge text any more');
+  assert.ok(simulation.includes("backendLabel: this.isCppBackend ? 'C++20/WASM v3"), 'solver details stay in diagnostics');
   assert.ok(bridge.includes('document.body.dataset.engineReady'), 'engine state stays on the body dataset');
   assert.ok(!/tb-status-badge[\s\S]{0,200}(C\+\+|WASM)/.test(bridge), 'the bridge never writes an engine label');
-  assert.ok(html.includes('window.sanitizePhysicsBadge = sanitizePhysicsBadge'));
-  assert.ok(html.includes('window.watchPhysicsBadge = watchPhysicsBadge'));
-  assert.ok(html.includes('watchPhysicsBadge();'), 'the guard starts with the page');
 });

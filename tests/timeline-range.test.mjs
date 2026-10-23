@@ -36,14 +36,14 @@ function rangeHarness({end = 250, keys = [], bakeEnd = 0, currentFrame = 0} = {}
     String,
     timelineConfig:{
       currentFrame, startFrame:0, endFrame:end, fps:30, isPlaying:false,
-      isMinimized:false, snapToKeys:true, isScrubbing:false, playAccumulator:0,
+      isMinimized:false, snapToKeys:true, loopRange:false, isScrubbing:false, playAccumulator:0,
       _physicsDirty:false
     },
     renderTimelineRulerCanvas(){ renders.count++; },
     timelineKeyFrames(){ return keys; },
     getActiveObjectMesh(){ return bakeEnd ? {userData:{simBake:{frameEnd:bakeEnd}}} : null; }
   });
-  const code = slice('const TIMELINE_HARD_MAX','function toggleTimelineMinimize');
+  const code = slice('const TIMELINE_FRAME_LIMIT','function toggleTimelineMinimize');
   vm.runInContext(code,ctx);
   return {ctx,inputs,renders};
 }
@@ -64,10 +64,36 @@ test('250 frames is a starting window, not a ceiling',()=>{
   assert.equal(ctx.timelineConfig.endFrame,900);
 });
 
-test('the range is clamped to the hard guard instead of to 250',()=>{
+test('the timeline is unlimited: there is no frame ceiling',()=>{
+  const {ctx} = rangeHarness({end:250});
+  for(const length of [1200, 10000, 250000, 5_000_000]){
+    ctx.applyTimelineRange(0, length);
+    assert.equal(ctx.timelineConfig.endFrame, length, `${length} frames is allowed`);
+  }
+  ctx.setTimelineEndFrame(Number.MAX_SAFE_INTEGER);
+  assert.equal(ctx.timelineConfig.endFrame, Number.MAX_SAFE_INTEGER, 'only the safe-integer guard applies');
+  assert.ok(!/TIMELINE_HARD_MAX/.test(readFileSync('index.html','utf8')), 'the old 10000-frame cap is gone');
+});
+
+test('playback extends the axis instead of stopping, unless looping is on',()=>{
+  const {ctx} = rangeHarness({end:250});
+  assert.equal(ctx.timelineConfig.loopRange, false, 'unlimited playback is the default');
+  ctx.growTimelineForFrame(480);
+  assert.equal(ctx.timelineConfig.endFrame, 500, 'the axis grows in 50-frame pages');
+  ctx.growTimelineForFrame(120);
+  assert.equal(ctx.timelineConfig.endFrame, 500, 'frames already inside the range do not shrink it');
+  assert.equal(ctx.toggleTimelineLoop(), true);
+  assert.equal(ctx.timelineConfig.loopRange, true, 'looping can be turned on explicitly');
+});
+
+test('the range stays sane without a hard guard',()=>{
   const {ctx} = rangeHarness({end:250});
   ctx.applyTimelineRange(0,999999);
-  assert.equal(ctx.timelineConfig.endFrame,10000,'the hard guard caps the range');
+  assert.equal(ctx.timelineConfig.endFrame,999999,'a large range is accepted');
+  ctx.applyTimelineRange(0,Number.NaN);
+  assert.equal(ctx.timelineConfig.endFrame,999999,'NaN cannot poison the axis');
+  ctx.applyTimelineRange(0,Number.POSITIVE_INFINITY);
+  assert.equal(ctx.timelineConfig.endFrame,999999,'infinity is rejected and the previous range kept');
   ctx.applyTimelineRange(-50,0);
   assert.equal(ctx.timelineConfig.startFrame,0,'the timeline never starts below zero');
   assert.equal(ctx.timelineConfig.endFrame,1,'end > start is preserved');
@@ -108,6 +134,9 @@ test('the animation sheet exposes the range controls',()=>{
   assert.ok(body.includes('onclick="extendTimelineRange(50)"'),'a one-tap extend button exists on the phone');
   assert.ok(body.includes('onclick="fitTimelineRangeToKeys()"'));
   assert.ok(body.includes('id="anim-range-status"'));
+  assert.ok(body.includes('id="anim-loop-btn"'),'the loop toggle lives with the range controls');
+  assert.ok(body.includes('onclick="toggleTimelineLoop()"'));
+  assert.ok(!/id="anim-range-end"[^>]*max=/.test(body),'the end field has no artificial maximum');
   assert.ok(html.includes('window.applyTimelineRange = applyTimelineRange'));
   assert.ok(html.includes('window.extendTimelineRange = extendTimelineRange'));
   assert.ok(html.includes('window.fitTimelineRangeToKeys = fitTimelineRangeToKeys'));

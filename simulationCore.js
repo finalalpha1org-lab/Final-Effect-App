@@ -710,21 +710,12 @@
       };
     }
 
+    /* There is no solver badge in the viewport: simulation state is exposed
+       through getSolverDiagnostics() and the ⚙ diagnostics sheet only. This
+       clears the pill an older shell may still have cached. */
     updateStatusBadge() {
-      const badge = global.document?.getElementById('tb-status-badge');
-      if (!badge) return;
-      if (this.loadError) { badge.textContent = 'Physics unavailable'; return; }
-      if (!this.wasm) { badge.textContent = 'Physics: starting…'; return; }
-      const records = [...this.simMeshes.values()];
-      const failed = records.find(record => record.status === 'error');
-      const active = records.filter(record => record.status === 'running').length;
-      /* The viewport shows a plain readiness state; solver details stay in
-         getSolverDiagnostics() for debugging. */
-      badge.textContent = failed
-        ? `Physics error · ${failed.type}`
-        : active
-          ? `Physics · ${active} active`
-          : 'Physics: ready';
+      const stale = global.document?.getElementById?.('tb-status-badge');
+      if (stale?.remove) stale.remove();
     }
 
     getSimKey(type) {
