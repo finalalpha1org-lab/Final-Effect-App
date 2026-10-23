@@ -11,7 +11,12 @@
   const optional=['fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_terrain_scatter_natural','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr',
    /* Surface realism (fe_surface.cpp): measured PBR + tileable micro-structure */
    'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
-   'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo'];
+   'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo',
+   /* Flora realism (fe_flora.cpp): grown trees and ported rock meshes */
+   'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
+   'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
+   'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
+   'fe_flora_species_count','fe_flora_rock_kind_count'];
   const missing=required.filter(name=>typeof x[name]!=='function');
   if(missing.length)throw Error('Terrain C++ export missing: '+missing.join(', '));
   /* A partially stale/older artifact must not kill the whole landscape bridge:
@@ -285,6 +290,44 @@
  core.snowAlbedo=function(base,age,impurity){
   return core.has('fe_surface_snow_albedo')?ex.fe_surface_snow_albedo(+base||0,+age||0,+impurity||0):null;
  };
+ /* ---- Flora (optional kernels; every caller falls back to the JS builder) --- */
+ function floraCopy(Ex){
+  const nv=Ex.fe_flora_vert_count(),ni=Ex.fe_flora_index_count(),nl=Ex.fe_flora_leaf_count();
+  const mem=Ex.memory.buffer;
+  return {
+   verts:nv,indices:ni,leaves:nl,
+   pos:new Float32Array(new Float32Array(mem,Ex.fe_flora_pos_ptr(),nv*3)),
+   nrm:new Float32Array(new Float32Array(mem,Ex.fe_flora_nrm_ptr(),nv*3)),
+   uv:new Float32Array(new Float32Array(mem,Ex.fe_flora_uv_ptr(),nv*2)),
+   col:new Float32Array(new Float32Array(mem,Ex.fe_flora_col_ptr(),nv*3)),
+   rnd:new Float32Array(new Float32Array(mem,Ex.fe_flora_rnd_ptr(),nv)),
+   cen:new Float32Array(new Float32Array(mem,Ex.fe_flora_cen_ptr(),nv*3)),
+   idx:new Uint32Array(new Uint32Array(mem,Ex.fe_flora_idx_ptr(),ni)),
+   leaf:new Float32Array(new Float32Array(mem,Ex.fe_flora_leaf_ptr(),nl*8))
+  };
+ }
+ core.floraTree=function(kind,seed,detail){
+  if(!core.has('fe_flora_tree'))return null;
+  if(ex.fe_flora_tree(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  if(!out.verts)return null;
+  const info=new Float32Array(8);
+  if(core.has('fe_flora_species_info')){
+   const ptr=ex.fe_malloc(32);
+   if(ptr){if(ex.fe_flora_species_info(kind|0,ptr)===1)info.set(new Float32Array(ex.memory.buffer,ptr,8));out.info=info}
+  }
+  return out;
+ };
+ core.floraRock=function(kind,seed,detail){
+  if(!core.has('fe_flora_rock'))return null;
+  if(ex.fe_flora_rock(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
+ };
+ core.floraCounts=function(){
+  return {species:core.has('fe_flora_species_count')?ex.fe_flora_species_count():0,
+          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0};
+ };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;
 })(globalThis);
@@ -550,7 +593,7 @@ for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);
 buildEager();
 for(const k in saved){const K=KIND[k]||ensure(k);if(!K)continue;K.size=saved[k].size;K.vr=saved[k].vr;K.tint=saved[k].tint;K.list=saved[k].list;if(Math.max(saved[k].max||0,K.list.length)>K.max)growManualCapacity(k,Math.max(saved[k].max||0,K.list.length))}
 if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
-const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}try{window.FELandscapeRealism&&window.FELandscapeRealism.refreshKind(k)}catch(e){}}return KIND[k]}
+const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}try{window.FELandscapeRealism&&window.FELandscapeRealism.refreshKind(k)}catch(e){}try{window.__feGrowSpecies&&window.__feGrowSpecies()}catch(e){}}return KIND[k]}
 const simple=(g,c)=>{const n=g.attributes.position.count,a=new Float32Array(n*3);for(let i=0;i<n;i++){a[i*3]=c[0];a[i*3+1]=c[1];a[i*3+2]=c[2]}g.setAttribute('color',new THREE.BufferAttribute(a,3));return g};
 let MODELS_ERR=null;
 function fallbackModels(){for(const k in KIND){[...KIND[k].meshes,...(KIND[k].lowMeshes||[]),...(KIND[k].shadowMeshes||[])].forEach(m=>scene.remove(m));delete KIND[k]}

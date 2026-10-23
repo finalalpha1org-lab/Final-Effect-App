@@ -118,9 +118,15 @@ previous textures and one warning is logged. The reward for that is that
 `REQUIRED_KERNELS.surface` in `fe-cpp-engine.js` now flags such an artifact as
 stale in the Performance Benchmark sheet, so the repair path can fix it.
 
+## See also
+
+`docs/FLORA.md` — the grown tree/rock kernel that feeds these materials
+(space colonisation, da Vinci radii, golden-angle leaf anchors).
+
 ## Verification
 
 ```bash
-node --test tests/landscape-realism.test.mjs   # 13 tests
-npm test                                       # 297 tests
+node --test tests/landscape-realism.test.mjs   # 14 tests
+node --test tests/landscape-flora.test.mjs     # 8 tests
+npm test                                       # 309 tests
 ```

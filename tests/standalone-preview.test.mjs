@@ -49,3 +49,24 @@ test('standalone terrain embeds the C++ WASM before the studio so frame-one terr
   assert.throws(()=>createStandaloneTerrainHtml(src,{...helpers,cppWasmBase64:'</script>'}),/Unsafe closing script marker in embedded terrain WASM/);
   assert.ok(build.includes('writeFileSync("build/client/Terrain_system_.html"'),'the served terrain page also receives the embedded WASM');
 });
+
+test('inlined helper code keeps replacement patterns literal',()=>{
+  /* Minified sources contain `$&`, `$'` and `` $` `` naturally. Only a function
+     replacement keeps them literal — a string replacement would splice the
+     matched <script> tag into the middle of the inlined code. */
+  const payload = "var a=1;$&$`$'$$;window.Flora={};";
+  const src='<script src="./landscape-flora.js"></script><script>window.mainReady=true;</script>';
+  const out=createStandaloneTerrainHtml(src,{landscapeFlora:payload});
+  assert.ok(out.includes(payload),'$& / $\' / $` inside a helper must survive inlining verbatim');
+  assert.equal((out.match(/<script\b/g)||[]).length,2,'the helper must not duplicate its own script tag');
+  assert.ok(out.indexOf('window.Flora={};')<out.indexOf('window.mainReady=true;'),'the helper stays in document order');
+});
+
+test('the standalone terrain inlines the landscape realism and flora helpers',()=>{
+  assert.ok(build.includes('landscapeFlora: readFileSync("build/client/landscape-flora.js"'));
+  assert.ok(build.includes('landscapeRealism: readFileSync("build/client/landscape-realism.js"'));
+  const src='<script src="./landscape-realism.js"></script><script src="./landscape-flora.js"></script>';
+  const out=createStandaloneTerrainHtml(src,{landscapeRealism:'window.Realism={};',landscapeFlora:'window.Flora={};'});
+  assert.ok(out.includes('window.Realism={};')&&out.includes('window.Flora={};'));
+  assert.doesNotMatch(out,/<script src="\.\/landscape-(realism|flora)\.js"/);
+});

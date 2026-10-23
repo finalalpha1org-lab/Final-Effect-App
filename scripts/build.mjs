@@ -42,6 +42,7 @@ if (hasPublicDir) {
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
     "landscape-realism.js",
+    "landscape-flora.js",
     "fe_core_engine.wasm",
     "manifest.webmanifest",
     "sw.js",
@@ -74,6 +75,7 @@ const minifiableJs = [
   "simulationCore.js",
   "fe-cpp-engine.js",
   "landscape-realism.js",
+  "landscape-flora.js",
 ];
 
 async function minifyInlineScripts(html, label) {
@@ -125,6 +127,8 @@ const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, 
   scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
   tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
   openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
+  landscapeRealism: readFileSync("build/client/landscape-realism.js", "utf8"),
+  landscapeFlora: readFileSync("build/client/landscape-flora.js", "utf8"),
   terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),
   openWorldAddon: readFileSync("build/client/open-world.js", "utf8"),
   cppWasmBase64,

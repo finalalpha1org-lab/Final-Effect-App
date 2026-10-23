@@ -12,7 +12,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_ocean.cpp',
   'cpp/src/fe_volumetrics.cpp',
   'cpp/src/fe_modifiers.cpp',
-  'cpp/src/fe_surface.cpp'
+  'cpp/src/fe_surface.cpp',
+  'cpp/src/fe_flora.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -100,7 +101,12 @@ const REQUIRED_EXPORTS = [
   'fe_anim_sample_object','fe_anim_sample_channel','fe_anim_bake_samples','fe_sim_bake_compress',
   /* Landscape surface realism: measured PBR + tileable micro-structure */
   'fe_surface_pbr','fe_surface_count','fe_surface_detail','fe_surface_detail_ptr',
-  'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo'
+  'fe_surface_detail_size','fe_water_optical','fe_surface_wind_roughness','fe_surface_snow_albedo',
+  /* Flora realism: grown trees and ported rock meshes */
+  'fe_flora_tree','fe_flora_rock','fe_flora_vert_count','fe_flora_index_count','fe_flora_leaf_count',
+  'fe_flora_pos_ptr','fe_flora_nrm_ptr','fe_flora_uv_ptr','fe_flora_col_ptr','fe_flora_rnd_ptr',
+  'fe_flora_cen_ptr','fe_flora_idx_ptr','fe_flora_leaf_ptr','fe_flora_species_info',
+  'fe_flora_species_count','fe_flora_rock_kind_count'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the

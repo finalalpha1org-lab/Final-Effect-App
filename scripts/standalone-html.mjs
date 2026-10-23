@@ -1,6 +1,6 @@
-export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
+export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,landscapeRealism,landscapeFlora,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
+  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],['landscape-realism.js',landscapeRealism],['landscape-flora.js',landscapeFlora],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
   for(const [name,source] of helpers){
     const tag=`<script src="./${name}"></script>`;
@@ -13,12 +13,15 @@ export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterS
     if(!provided)throw new Error(`Missing standalone helper: ${name}`);
     if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
     if(count!==1)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
-    out=out.replace(tag,`<script>\n${source}\n</script>`);
+    /* A function replacement, not a string: minified sources can contain `$&`,
+       `$'` or `` $` `` and String.replace would expand those as match patterns,
+       splicing a script tag into the middle of the inlined code. */
+    out=out.replace(tag,()=>`<script>\n${source}\n</script>`);
   }
   if(cppWasmBase64){
     if(String(cppWasmBase64).toLowerCase().includes('</script'))throw new Error('Unsafe closing script marker in embedded terrain WASM');
     const bootstrap=`<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(String(cppWasmBase64).replace(/<\/script/gi,'<\\/script'))};</script>`;
-    out=out.includes('<head>')?out.replace('<head>','<head>\n'+bootstrap):bootstrap+out;
+    out=out.includes('<head>')?out.replace('<head>',()=>'<head>\n'+bootstrap):bootstrap+out;
   }
   return out;
 }
@@ -113,7 +116,7 @@ export function createStandaloneAppHtml(html, {
     if (count !== 1) throw new Error(`Expected exactly one ${name} reference, found ${count}`);
     const prefix = !injectedBootstrap ? (bootstrapScript + '\n') : '';
     injectedBootstrap = true;
-    out = out.replace(tag, `${prefix}<script>\n${source}\n</script>`);
+    out = out.replace(tag, () => `${prefix}<script>\n${source}\n</script>`);
   }
   return out;
 }
