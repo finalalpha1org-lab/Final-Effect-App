@@ -24,6 +24,12 @@ other modifier. Nothing is a hidden constant.
 | `Ambient` | 0.15 | 0-1 | uniform fill light inside the smoke |
 | `Extinction` | 1 | 0.2-3 | optical density multiplier |
 | `Emission` | 1.3 | 0-3 | fire radiance multiplier |
+| `Detail Contrast` | 1 | 0.2-3 | pivots the baked tile around its mean |
+| `Fire Tint` | Natural | Natural / Amber / Blue / Green | multiplies the Planckian ramp |
+| `Temporal Blend` | 0.55 | 0-0.95 | mass-preserving temporal filter on the C++ field |
+| `Volume Source` | Live Simulation | Live / Baked Library | live solver or baked clip |
+| `Library Variant` | Fire | Fire / Smoke / Steam | which baked clip plays |
+| `Library Motion` | 1 | 0.2-3 | playback speed of the baked clip |
 
 `Volume Quality` writes a starting point into the other fields (the
 `VOLUME_QUALITY_PRESETS` table) **and leaves them editable**; it is not a
@@ -81,10 +87,25 @@ The raymarcher reads it three times in `detailField()` and drives `uNoise`,
 - stepping advances `uTime` and `syncVolumeUniforms()` propagates edits without
   rebuilding the material.
 
+## Temporal filter and the baked library
+
+`fe_vol_set_temporal(0-0.95)` folds the previous accepted frame into the new
+one. The blend dims a fast plume, so the kernel restores the total density
+afterwards (scale clamped to 0.85-1.15): only the shape is smoothed, the
+brightness is not. Tests assert both the shimmer drop (>= 25%) and the preserved
+mass.
+
+`volume-library.bin` is baked by `scripts/bake-volume-library.mjs` from the same
+wasm solver: three loops (Fire / Smoke / Steam), 20³, 12 frames, two bytes per
+cell (density, temperature), 576 KB. `volume-library.js` parses it, packs every
+frame x slice into one RGBA atlas and exposes a ping-pong clock, so a short clip
+never snaps from the last frame to the first. In `Baked Library` mode the solver
+is not stepped at all - the shader blends two frames.
+
 ## Not in this phase
 
-- Temporal accumulation (TAA) and the baked "cinema library" of canonical sims.
+- Render-target TAA (history buffer + reprojection). The temporal filter above
+  smooths the *field*, not the final image.
 - Adaptive per-frame budget that lowers `Volume Steps` under load.
-- An offline baker for the library; today the tile is generated at boot.
 
 Those remain marked experimental and are not presented as finished.

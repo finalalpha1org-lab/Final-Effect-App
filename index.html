@@ -1800,10 +1800,65 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   #camera-sheet,#light-sheet,#modifiers-sheet,#animation-sheet{height:62dvh;max-height:68dvh}
   #nav-gizmo-wrapper{transform:scale(0.84);transform-origin:top left}
 }
+/* ============================================================
+   FE design system
+   One icon set (fe-icons.js), one surface language, one radius
+   scale. Everything below is additive: existing selectors keep
+   working, the new tokens only refine spacing, colour and type.
+   ============================================================ */
+:root{
+  --fe-ink:#eef2ff;
+  --fe-muted:#98a5c4;
+  --fe-line:rgba(148,163,184,.16);
+  --fe-line-strong:rgba(148,163,184,.28);
+  --fe-surface:rgba(255,255,255,.045);
+  --fe-surface-2:rgba(255,255,255,.075);
+  --fe-accent:#7c8cff;
+  --fe-accent-2:#22d3ee;
+  --fe-radius:16px;
+  --fe-shadow:0 18px 40px -26px rgba(2,6,23,.95);
+}
+::selection{background:rgba(124,140,255,.35);color:#fff}
+:focus-visible{outline:2px solid rgba(124,140,255,.7);outline-offset:2px;border-radius:10px}
+
+/* Icons inherit type colour and baseline, so a label with an icon keeps the
+   same rhythm as a plain one. */
+.ico-wrap{display:inline-flex;align-items:center;justify-content:center;line-height:0;vertical-align:-.16em;color:inherit;flex:none}
+.ico-wrap>.ico{display:block;width:1em;height:1em}
+button .ico-wrap, .tag .ico-wrap{pointer-events:none}
+
+/* ---------- Home ---------- */
+#home .home-tabs-bar{gap:8px;border-bottom:1px solid var(--fe-line);padding-bottom:10px}
+#home .home-tab{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:12px;background:rgba(255,255,255,.028);border:1px solid transparent;color:var(--fe-muted);font-weight:600;font-size:13px;transition:background .18s ease,color .18s ease,border-color .18s ease}
+#home .home-tab .ico-wrap{font-size:16px}
+#home .home-tab:hover{color:var(--fe-ink);background:rgba(255,255,255,.055)}
+#home .home-tab.active{color:#e2e6ff;background:rgba(124,140,255,.14);border-color:rgba(124,140,255,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+#home-title-row p{color:var(--fe-muted)}
+#home-grid{gap:12px}
+#home-grid .card{position:relative;overflow:hidden;align-items:center;gap:14px;border-radius:var(--fe-radius);padding:16px 16px 16px 18px;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));border:1px solid var(--fe-line);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),var(--fe-shadow);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}
+#home-grid .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--c,#6366f1),transparent);opacity:.9}
+#home-grid .card:hover{transform:translateY(-2px);border-color:var(--fe-line-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 22px 44px -26px rgba(2,6,23,1)}
+#home-grid .card:active{transform:translateY(0) scale(.995)}
+#home-grid .card>i.card-ico{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;flex:none;color:var(--c,#94a3b8);background:radial-gradient(120% 120% at 28% 18%,rgba(255,255,255,.18),rgba(255,255,255,.03));border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+#home-grid .card>i.card-ico .ico{width:22px;height:22px}
+#home-grid .card>span>b{display:block;font-size:15px;font-weight:650;letter-spacing:.01em;color:var(--fe-ink)}
+#home-grid .card>span>small{display:block;margin-top:3px;font-size:12.5px;color:var(--fe-muted)}
+#home-grid .tag{font-size:11px;font-weight:600;letter-spacing:.02em;padding:4px 9px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid var(--fe-line);color:var(--fe-muted);display:inline-flex;align-items:center;gap:5px}
+#home-grid .card.locked{opacity:.9}
+#home-grid .card.locked .tag{color:#c7d2fe;border-color:rgba(129,140,248,.3);background:rgba(99,102,241,.12)}
+.recent-empty-icon{display:grid;place-items:center;color:var(--fe-accent)}
+.install-app-btn,.settings-btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;font-weight:650}
+.settings-btn .ico-wrap{font-size:18px}
+/* ---------- Sheets and panels ---------- */
+.global-settings-icon{display:grid;place-items:center;color:var(--fe-accent)}
+.diagnostics-body,.render-modal-grid{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.35) transparent}
+.export-modal-close{display:inline-flex;align-items:center;justify-content:center}
 </style>
 </head>
 <body>
+<script src="fe-icons.js"></script>
 <script src="volume-atlas.js"></script>
+<script src="volume-library.js"></script>
 <script src="simulationCore.js"></script>
 <script src="modifier-engine.js"></script>
 <script src="fe-cpp-engine.js"></script>
@@ -1820,7 +1875,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
         <p>All-Platform Mobile & Desktop Creation Suite — Choose a studio to start.</p>
       </div>
       <div class="home-actions-group">
-        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Measure animation, sculpt, touch and path-tracing speed on this device">🧪 Run Benchmark</button>
+        <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Measure animation, sculpt, touch and path-tracing speed on this device"><i class="ico" data-ico="flask"></i> Run Benchmark</button>
         <button class="settings-btn" id="btn-global-settings" aria-label="Global Settings" title="Global Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"></circle>
@@ -1833,29 +1888,29 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
     <!-- Home Navigation Tabs -->
     <div class="home-tabs-bar">
       <button class="home-tab active" id="tab-btn-studios" onclick="switchHomeTab('studios')">
-        <span>🏠</span><span>Home</span>
+        <i class="ico" data-ico="home"></i><span>Home</span>
       </button>
       <button class="home-tab" id="tab-btn-recent" onclick="switchHomeTab('recent')">
-        <span>📂</span><span>Recent Projects</span>
+        <i class="ico" data-ico="folder"></i><span>Recent Projects</span>
       </button>
     </div>
 
     <!-- Studios Grid (Tab 1) -->
     <div id="home-grid">
-      <button class="card" style="--c:#6366f1" data-open="core"><i>🧊</i><span><b>Workspace (3D Animation)</b><small>Objects, scene and animation</small></span><span class="tag">Open</span></button>
-      <button class="card" style="--c:#34d399" data-open="landscape"><i>🏞️</i><span><b>Landscaping Studio</b><small>Terrain, water and foliage</small></span><span class="tag">Open</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="Video Editor"><i>🎬</i><span><b>Video Editor</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#fb923c" data-locked="VFX Studio"><i>💥</i><span><b>VFX Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="Sculpting Studio"><i>🗿</i><span><b>Sculpting Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#f472b6" data-locked="Character Studio"><i>🎭</i><span><b>Character Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#fbbf24" data-locked="Shader Studio"><i>🎨</i><span><b>Shader Studio</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
-      <button class="card locked" style="--c:#475569" data-locked="2D Animation"><i>🖼️</i><span><b>2D Animation</b><small>In development / Coming later</small></span><span class="tag">🔒 Locked</span></button>
+      <button class="card" style="--c:#6366f1" data-open="core"><i class="card-ico" data-ico="cube"></i><span><b>3D Workspace</b><small>Objects, scene and animation</small></span><span class="tag">Open</span></button>
+      <button class="card" style="--c:#34d399" data-open="landscape"><i class="card-ico" data-ico="landscape"></i><span><b>Landscaping Studio</b><small>Terrain, water and foliage</small></span><span class="tag">Open</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="Video Editor"><i class="card-ico" data-ico="film"></i><span><b>Video Editor</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#fb923c" data-locked="VFX Studio"><i class="card-ico" data-ico="bolt"></i><span><b>VFX Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="Sculpting Studio"><i class="card-ico" data-ico="skull"></i><span><b>Sculpting Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#f472b6" data-locked="Character Studio"><i class="card-ico" data-ico="masks"></i><span><b>Character Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#fbbf24" data-locked="Shader Studio"><i class="card-ico" data-ico="palette"></i><span><b>Shader Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
+      <button class="card locked" style="--c:#475569" data-locked="2D Animation"><i class="card-ico" data-ico="image"></i><span><b>2D Animation</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
     </div>
 
     <!-- Recent Projects Section (Tab 2) -->
     <div id="recent-projects-section" style="display:none; max-width:900px; width:100%;">
       <div id="recent-empty-state" class="recent-empty-card">
-        <div class="recent-empty-icon">📂</div>
+        <div class="recent-empty-icon"><i class="ico" data-ico="folder" data-size="34"></i></div>
         <h3>No Recent Projects</h3>
         <p>Make changes to any studio scene or project to automatically save them here.</p>
         <button class="btn btn-primary" onclick="switchHomeTab('studios')" style="margin-top:14px;padding:8px 18px;font-weight:600;">Return to Home Studio</button>
@@ -1870,16 +1925,16 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   <div class="global-settings-card" onclick="event.stopPropagation()">
     <header class="global-settings-header">
       <div class="global-settings-title">
-        <span class="global-settings-icon">⚙</span>
+        <span class="global-settings-icon"><i class="ico" data-ico="gear" data-size="20"></i></span>
         <div><strong>Application Settings</strong><small>One place for Workspace and all active studios</small></div>
       </div>
-      <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings">✕</button>
+      <button class="global-settings-close" id="btn-close-global-settings" onclick="closeGlobalSettingsModal()" aria-label="Close Settings"><i class="ico" data-ico="close"></i></button>
     </header>
     <div class="global-settings-body">
       <!-- 1. Viewport & 3D Workspace -->
       <div class="settings-section">
         <div class="settings-section-title">
-          <span>🧊</span> Viewport & 3D Workspace
+          <i class="ico" data-ico="cube"></i> Viewport & 3D Workspace
         </div>
         <div class="setting-item">
           <div class="setting-label">
@@ -3070,7 +3125,7 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
    ========================================================= */
 const BACK=['@core','🧊','Return to Workspace'];
 const STUDIOS={
-  core:{title:'Workspace (3D Animation)',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
+  core:{title:'3D Workspace',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
     modes:[['object','Object Mode'],['edit','Edit Mode'],['sculpt','Sculpt Mode'],['vpaint','Vertex Paint'],['wpaint','Weight Paint'],['tpaint','Texture Paint']],
     tools:[
       ['add','➕','Add 3D'],
@@ -3091,7 +3146,7 @@ const STUDIOS={
 };
 
 const HOME_WORKSPACES = [
-  { id: 'core', title: 'Workspace (3D Animation)', icon: '🧊', accent: '#6366f1', desc: 'Objects, scene and animation', locked: false },
+  { id: 'core', title: '3D Workspace', icon: '🧊', accent: '#6366f1', desc: 'Objects, scene and animation', locked: false },
   { id: 'landscape', title: 'Landscaping Studio', icon: '🏞️', accent: '#34d399', desc: 'Terrain, water and foliage', locked: false },
   { id: 'video', title: 'Video Editor', icon: '🎬', accent: '#475569', desc: 'Video editing and timeline tools', locked: true },
   { id: 'vfx', title: 'VFX Studio', icon: '💥', accent: '#fb923c', desc: 'Particles, fire and smoke', locked: true },
@@ -9278,6 +9333,12 @@ const modifiersData = {
       ["Ambient","range",0,1,.15,.01,{advanced:true}],
       ["Extinction","range",.2,3,1,.05,{advanced:true}],
       ["Emission","range",0,3,1.3,.05,{advanced:true}],
+      ["Detail Contrast","range",.2,3,1,.05,{advanced:true}],
+      ["Fire Tint","select",["Natural","Amber","Blue","Green"],{advanced:true}],
+      ["Temporal Blend","range",0,.95,.55,.05,{advanced:true}],
+      ["Volume Source","select",["Live Simulation","Baked Library"],{advanced:true}],
+      ["Library Variant","select",["Fire","Smoke","Steam"],{advanced:true}],
+      ["Library Motion","range",.2,3,1,.05,{advanced:true}],
       ["Time Scale","range",0.1,4,1,0.1],
       ["Gravity","range",-20,20,9.8,0.1],
 
@@ -10347,9 +10408,9 @@ function applyFluidPreset(mod, presetName) {
 /* Volume render quality presets: a starting point for the knobs below, not a
    lock. Every value stays editable afterwards. */
 const VOLUME_QUALITY_PRESETS = {
-  Mobile:    { "Volume Steps": 32, "Detail": .8,  "Detail Scale": 2.2, "Detail Speed": .5,  "Self Shadow": .7, "Scatter Samples": 1, "Ambient": .18, "Extinction": 1,   "Emission": 1.2 },
-  Balanced:  { "Volume Steps": 48, "Detail": 1,   "Detail Scale": 2.5, "Detail Speed": .6,  "Self Shadow": 1,  "Scatter Samples": 2, "Ambient": .15, "Extinction": 1,   "Emission": 1.3 },
-  Cinematic: { "Volume Steps": 64, "Detail": 1.35,"Detail Scale": 3.1, "Detail Speed": .7,  "Self Shadow": 1,  "Scatter Samples": 3, "Ambient": .2,  "Extinction": 1.15,"Emission": 1.5 }
+  Mobile:    { "Volume Steps": 32, "Detail": .8,  "Detail Scale": 2.2, "Detail Speed": .5,  "Self Shadow": .7, "Scatter Samples": 1, "Ambient": .18, "Extinction": 1,   "Emission": 1.2, "Detail Contrast": 1,   "Temporal Blend": .7 },
+  Balanced:  { "Volume Steps": 48, "Detail": 1,   "Detail Scale": 2.5, "Detail Speed": .6,  "Self Shadow": 1,  "Scatter Samples": 2, "Ambient": .15, "Extinction": 1,   "Emission": 1.3, "Detail Contrast": 1,   "Temporal Blend": .55 },
+  Cinematic: { "Volume Steps": 64, "Detail": 1.35,"Detail Scale": 3.1, "Detail Speed": .7,  "Self Shadow": 1,  "Scatter Samples": 3, "Ambient": .2,  "Extinction": 1.15,"Emission": 1.5, "Detail Contrast": 1.15,"Temporal Blend": .4 }
 };
 function applyVolumeQualityPreset(mod, preset) {
   const cfg = VOLUME_QUALITY_PRESETS[preset] || VOLUME_QUALITY_PRESETS.Balanced;
@@ -10655,13 +10716,13 @@ function renderModifierStack() {
             const liquidOnly = ["Type", "Domain Type", "Liquid Preset", "Viscosity", "Surface Tension", "Pressure", "Damping", "Vorticity Confinement", "Resolution", "Surface Resolution", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!liquidOnly.includes(label)) return;
           } else if (domainType === "Fire") {
-            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireOnly = ["Type", "Domain Type", "Fire Preset", "Flame Height", "Heat Emission", "Vorticity Confinement", "Fuel", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireOnly.includes(label)) return;
           } else if (domainType === "Smoke") {
-            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const smokeOnly = ["Type", "Domain Type", "Smoke Preset", "Smoke Density", "Dissipation Rate", "Buoyancy", "Expansion Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!smokeOnly.includes(label)) return;
           } else if (domainType === "Fire + Smoke") {
-            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
+            const fireSmokeOnly = ["Type", "Domain Type", "Fire & Smoke Preset", "Flame Height", "Heat Emission", "Smoke Density", "Dissipation Rate", "Vorticity Confinement", "Resolution", "Volume Solver", "Volume Quality", "Volume Steps", "Detail", "Detail Scale", "Detail Speed", "Self Shadow", "Scatter Samples", "Ambient", "Extinction", "Emission", "Detail Contrast", "Fire Tint", "Temporal Blend", "Volume Source", "Library Variant", "Library Motion", "Time Scale", "Gravity", "Internal Inflow", "Inflow Rate"];
             if (!fireSmokeOnly.includes(label)) return;
           }
         } else if (type === "Flow") {

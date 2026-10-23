@@ -1395,7 +1395,13 @@ uniform vec3 uBoxMin, uBoxMax, uSunDir;
 uniform vec2 uTiles, uAtlasSize;
 uniform float uGrid, uDensityScale, uTempScale, uSigma, uFireGain, uSmokeGain, uSteps;
 uniform float uDetail, uDetailScale, uDetailSpeed, uTime, uSelfShadow, uAmbient, uEmission, uExtinction;
+uniform float uDetailContrast;
+uniform vec3 uFireTint;
 uniform int uScatter;
+/* Baked "cinema" set: frames x slices tiled in one atlas, two frames blended. */
+uniform sampler2D uLibAtlas;
+uniform vec2 uLibTiles, uLibSize;
+uniform float uLibGrid, uLibA, uLibB, uLibBlend, uLibMix;
 varying vec3 vWorld;
 vec2 atlasUv(vec2 xy, float slice){
   float tx = mod(slice, uTiles.x);
@@ -1429,6 +1435,22 @@ float densityAt(vec3 uvw){
   if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.z < 0.0 || uvw.x > 1.0 || uvw.y > 1.0 || uvw.z > 1.0) return 0.0;
   return max(sampleField(uvw).x, 0.0);
 }
+vec2 libUv(float tile, vec2 xy){
+  float tx = mod(tile, uLibTiles.x);
+  float ty = floor(tile / uLibTiles.x);
+  vec2 texel = xy * (uLibGrid - 1.0) + 0.5;
+  return (vec2(tx, ty) * uLibGrid + texel) / uLibSize;
+}
+vec2 libField(vec3 uvw){
+  float s = clamp(uvw.z, 0.0, 1.0) * (uLibGrid - 1.0);
+  float s0 = floor(s), t = s - s0;
+  float s1 = min(s0 + 1.0, uLibGrid - 1.0);
+  vec2 a0 = texture2D(uLibAtlas, libUv(uLibA * uLibGrid + s0, uvw.xy)).rg;
+  vec2 a1 = texture2D(uLibAtlas, libUv(uLibA * uLibGrid + s1, uvw.xy)).rg;
+  vec2 b0 = texture2D(uLibAtlas, libUv(uLibB * uLibGrid + s0, uvw.xy)).rg;
+  vec2 b1 = texture2D(uLibAtlas, libUv(uLibB * uLibGrid + s1, uvw.xy)).rg;
+  return mix(mix(a0, a1, t), mix(b0, b1, t), uLibBlend);
+}
 /* Three scrolling reads of the baked tile: billows, wisps and a slow mask.
    The grid is only 24-28 cells tall, so this is where small detail comes from. */
 float detailField(vec3 uvw){
@@ -1438,7 +1460,9 @@ float detailField(vec3 uvw){
   float a = texture2D(uNoise, vec2(q.x * 0.31 + drift * 0.07, q.z * 0.31 - drift * 0.11) + uvw.y * 0.37).r;
   float b = texture2D(uNoise, vec2(q.z * 0.67 - drift * 0.05, q.y * 0.67 + drift * 0.09) + uvw.x * 0.23).g;
   float c = texture2D(uNoise, vec2(q.y * 1.13 + drift * 0.13, q.x * 1.13 - drift * 0.04)).b;
-  return clamp(a * 0.55 + b * 0.32 + c * 0.26, 0.0, 1.6);
+  float n = a * 0.55 + b * 0.32 + c * 0.26;
+  /* Contrast pivots around the tile mean, so 1.0 is the untouched pattern. */
+  return clamp((n - 0.5) * clamp(uDetailContrast, 0.2, 3.0) + 0.5, 0.0, 1.6);
 }
 void main(){
   vec3 ro = cameraPosition;
@@ -1461,6 +1485,10 @@ void main(){
     vec3 uvw = (ro + rd * t - uBoxMin) / (uBoxMax - uBoxMin);
     if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.z < 0.0 || uvw.x > 1.0 || uvw.y > 1.0 || uvw.z > 1.0) continue;
     vec2 field = sampleField(uvw);
+    if (uLibMix > 0.0) {
+      vec2 baked = libField(uvw) * vec2(uDensityScale, uTempScale);
+      field = mix(field, baked, clamp(uLibMix, 0.0, 1.0));
+    }
     float dens = max(field.x, 0.0);
     float temp = max(field.y, 0.0);
     float heat = smoothstep(0.18, 1.6, temp);
@@ -1483,7 +1511,7 @@ void main(){
       shade += densityAt(uvw + uSunDir * (0.03 + float(s) * 0.035)) * (0.75 - float(s) * 0.15);
     }
     float light = mix(1.0, exp(-shade * uDensityScale * 1.7), clamp(uSelfShadow, 0.0, 1.0));
-    vec3 fireCol = blackbody(heat);
+    vec3 fireCol = blackbody(heat) * uFireTint;
     vec3 smokeCol = mix(vec3(0.26, 0.28, 0.32), vec3(0.64, 0.66, 0.7), clamp(dens * uDensityScale, 0.0, 1.0));
     vec3 emission = fireCol * fire * (1.3 + 1.1 * light) * uEmission
                   + smokeCol * smoke * (0.10 + 0.55 * light + uAmbient);
@@ -1526,7 +1554,17 @@ void main(){
           uScatter: { value: v.scatter },
           uAmbient: { value: v.ambient },
           uExtinction: { value: v.extinction },
-          uEmission: { value: v.emission }
+          uEmission: { value: v.emission },
+          uLibAtlas: { value: v.library ? v.library.texture : v.noise },
+          uLibTiles: { value: new THREE.Vector2(v.library ? v.library.atlas.tilesX : 1, v.library ? v.library.atlas.tilesY : 1) },
+          uLibSize: { value: new THREE.Vector2(v.library ? v.library.atlas.width : 1, v.library ? v.library.atlas.height : 1) },
+          uLibGrid: { value: v.library ? v.library.atlas.grid : 1 },
+          uLibA: { value: 0 },
+          uLibB: { value: 0 },
+          uLibBlend: { value: 0 },
+          uLibMix: { value: v.library ? 1 : 0 },
+          uDetailContrast: { value: v.detailContrast },
+          uFireTint: { value: volumeTint(v.fireTint) }
         },
         vertexShader: shaders.vertexShader,
         fragmentShader: shaders.fragmentShader,
@@ -1554,6 +1592,33 @@ void main(){
         y: 0.08,
         z: clamp((((box[2] + box[5]) * 0.5) - box[2]) / spanZ, 0.1, 0.9)
       };
+    }
+
+    /* Resolve the requested baked variant, packing its atlas once per process.
+       Returns null (and starts the download) when the binary is not there yet,
+       so the live solver simply keeps running. */
+    volumeLibraryVariant(params, isFire, isSmoke) {
+      const data = global.FEVolumeLibraryData;
+      const lib = global.FEVolumeLibrary;
+      if (!data || !lib) { loadVolumeLibrary(); return null; }
+      const fallbackName = isSmoke && !isFire ? 'Smoke' : 'Fire';
+      const variant = lib.find(data, String(params['Library Variant'] || fallbackName)) || lib.find(data, fallbackName);
+      if (!variant) return null;
+      const cache = this.libraryTextures || (this.libraryTextures = new Map());
+      const key = `${variant.name}:${variant.grid}:${variant.frames}`;
+      let entry = cache.get(key);
+      if (!entry) {
+        const atlas = lib.packAtlas(variant);
+        const texture = new THREE.DataTexture(atlas.data, atlas.width, atlas.height, THREE.RGBAFormat);
+        texture.magFilter = THREE.LinearFilter;
+        texture.minFilter = THREE.LinearFilter;
+        texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.generateMipmaps = false;
+        texture.needsUpdate = true;
+        entry = { atlas, texture, variant };
+        cache.set(key, entry);
+      }
+      return { atlas: entry.atlas, texture: entry.texture, variant: entry.variant, motion: clamp(number(params, 'Library Motion', 1), 0.2, 3) };
     }
 
     createVolumeSimulation(mesh, params, record) {
@@ -1585,8 +1650,11 @@ void main(){
       const heatEmission = clamp(number(params, 'Heat Emission', 1.2), 0.2, 3);
       const smokeDensity = clamp(number(params, 'Smoke Density', 1), 0.1, 3);
       const dissipation = clamp(number(params, 'Dissipation Rate', 0.15), 0.01, 1);
+      const library = String(params['Volume Source'] || 'Live Simulation') === 'Baked Library'
+        ? this.volumeLibraryVariant(params, isFire, isSmoke) : null;
       record.volume = {
         exports, grid, data, texture, layout: info,
+        library,
         densityScale: 0.8, tempScale: 2.2,
         accum: 0, stepInterval: 1 / 30,
         timeScale: clamp(number(params, 'Time Scale', 1), 0.1, 4),
@@ -1609,7 +1677,10 @@ void main(){
         ambient: clamp(number(params, 'Ambient', 0.15), 0, 1),
         extinction: clamp(number(params, 'Extinction', 1), 0.2, 3),
         emission: clamp(number(params, 'Emission', 1.3), 0, 3),
-        quality: String(params['Volume Quality'] || 'Balanced')
+        quality: String(params['Volume Quality'] || 'Balanced'),
+        detailContrast: clamp(number(params, 'Detail Contrast', 1), 0.2, 3),
+        fireTint: String(params['Fire Tint'] || 'Natural'),
+        temporal: clamp(number(params, 'Temporal Blend', 0), 0, 0.95)
       };
       record.kind = 'volume';
       const material = this.volumeMaterial(record, isFire, isSmoke, box);
@@ -1640,11 +1711,27 @@ void main(){
     stepVolumeSimulation(record, dt) {
       const v = record.volume;
       if (!v) return;
+      /* Baked mode never touches the solver: it only advances the two frame
+         indices the shader blends. */
+      if (v.library) {
+        v.time = (v.time + dt * v.library.motion) % 3600;
+        const material = record.visual && record.visual.material;
+        const frame = global.FEVolumeLibrary ? global.FEVolumeLibrary.frameAt(v.library.variant, v.time, 1) : { a: 0, b: 0, blend: 0 };
+        if (material && material.uniforms) {
+          const u = material.uniforms;
+          if (u.uTime) u.uTime.value = v.time;
+          if (u.uLibA) u.uLibA.value = frame.a;
+          if (u.uLibB) u.uLibB.value = frame.b;
+          if (u.uLibBlend) u.uLibBlend.value = frame.blend;
+        }
+        return;
+      }
       v.accum = Math.min(v.accum + dt * v.timeScale, 0.12);
       if (v.accum < v.stepInterval) return;
       const stepDt = Math.min(v.accum, 0.05);
       v.accum = 0;
       v.time = (v.time + stepDt) % 3600;
+      if (typeof v.exports.fe_vol_set_temporal === 'function') v.exports.fe_vol_set_temporal(v.temporal);
       this.seedVolumeSource(record, stepDt);
       const rc = v.exports.fe_vol_step(stepDt, v.buoyancy, v.vorticity, v.dissipation, v.cooling, v.iterations);
       if (rc < 0) {
@@ -2251,6 +2338,7 @@ void main(){
   }
 
   function domainTypeHasFire(type) { return type === 'Fire' || type === 'Fire + Smoke'; }
+  try { loadVolumeLibrary(); } catch (_) {}
 
   /* ---- Baked detail-noise tile -----------------------------------------
      The core owns this pattern: fe_vol_noise_generate() fills a seamless RGBA
@@ -2297,12 +2385,36 @@ void main(){
   /* Volume Quality only moves the cell budget; the look itself stays editable
      through the individual knobs below. Mobile never exceeds 20³, Cinematic may
      reach 32³ on a desktop tier, and a 4-core machine keeps the 24³ ceiling. */
+  function volumeTint(name) {
+    const tints = {
+      Natural: [1, 1, 1],
+      Amber: [1.18, 0.82, 0.52],
+      Blue: [0.55, 0.78, 1.3],
+      Green: [0.62, 1.22, 0.72]
+    };
+    return new THREE.Vector3(...(tints[name] || tints.Natural));
+  }
   function volumeGridCeiling(params, coarse, cores) {
     const quality = String(params['Volume Quality'] || 'Balanced');
     const base = coarse || cores <= 4 ? 24 : 28;
     if (quality === 'Mobile') return Math.min(base, 20);
     if (quality === 'Cinematic' && base > 20) return Math.min(32, base + 4);
     return base;
+  }
+  /* The baked library is optional: a missing file just keeps the live solver.
+     It is fetched once, parsed with the pure volume-library.js reader. */
+  let volumeLibraryPromise = null;
+  function loadVolumeLibrary() {
+    if (global.FEVolumeLibraryData) return Promise.resolve(global.FEVolumeLibraryData);
+    if (volumeLibraryPromise) return volumeLibraryPromise;
+    const lib = global.FEVolumeLibrary;
+    if (!lib || typeof global.fetch !== 'function') return Promise.resolve(null);
+    volumeLibraryPromise = global.fetch('./volume-library.bin')
+      .then((response) => (response && response.ok !== false ? response.arrayBuffer() : null))
+      .then((buffer) => (buffer ? lib.parse(buffer) : null))
+      .then((data) => { if (data) global.FEVolumeLibraryData = data; return data; })
+      .catch(() => null);
+    return volumeLibraryPromise;
   }
   function volumeNoiseTexture() {
     if (volumeNoiseCache) return volumeNoiseCache;

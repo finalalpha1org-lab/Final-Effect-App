@@ -32,6 +32,10 @@ static float HX = 0.f, HY = 0.f, HZ = 0.f;
 static float FU[VFACES], FV[VFACES], FW[VFACES];   /* face velocities */
 static float AU[VFACES], AV[VFACES], AW[VFACES];   /* advection scratch */
 static float den[VCELLS], tem[VCELLS], prs[VCELLS], divf[VCELLS], tmp[VCELLS], prs2[VCELLS];
+/* Previous accepted frame, used by the temporal filter. Two extra fields are
+   cheap next to the solver arrays and give the shader a calmer field. */
+static float denPrev[VCELLS], temPrev[VCELLS];
+static float temporalAmount = 0.f;
 static float cvx[VCELLS], cvy[VCELLS], cvz[VCELLS];
 static float crl[VCELLS * 3];
 
@@ -433,6 +437,7 @@ FE_EXPORT int32_t fe_vol_init(uint32_t nx, uint32_t ny, uint32_t nz) {
   HX = 1.f / float(nx); HY = 1.f / float(ny); HZ = 1.f / float(nz);
   for (uint32_t n = 0; n < VCELLS; ++n) { den[n] = 0.f; tem[n] = 0.f; prs[n] = 0.f; divf[n] = 0.f; tmp[n] = 0.f; prs2[n] = 0.f; cvx[n] = 0.f; cvy[n] = 0.f; cvz[n] = 0.f; crl[n * 3] = crl[n * 3 + 1] = crl[n * 3 + 2] = 0.f; }
   for (uint32_t n = 0; n < VFACES; ++n) { FU[n] = FV[n] = FW[n] = AU[n] = AV[n] = AW[n] = 0.f; }
+  for (uint32_t n = 0; n < VCELLS; ++n) { denPrev[n] = 0.f; temPrev[n] = 0.f; }
   meshVertCount = meshIdxCount = 0;
   stats[0] = stats[1] = stats[2] = stats[3] = stats[4] = stats[5] = 0.f;
   return 0;
@@ -504,10 +509,41 @@ FE_EXPORT int32_t fe_vol_step(float dt, float buoyancy, float vorticity, float d
       if (tem[n] < 1e-5f) tem[n] = 0.f;
     }
   }
+  /* Temporal filter: an exponential moving average of the accepted field.
+     amount = 0 keeps every step as-is; higher values trade a little lag for a
+     much calmer surface (the shimmer of a 20-28 cell grid is the main tell). */
+  const float keep = temporalAmount <= 0.f ? 0.f : temporalAmount;
+  if (keep > 0.f) {
+    /* Mass-preserving low pass: blending toward the previous frame dims a fast
+       plume, so the total is restored afterwards. Only the shape is smoothed. */
+    float total = 0.f, blended = 0.f;
+    for (uint32_t n = 0; n < NX * NY * NZ; ++n) {
+      total += den[n];
+      den[n] = lerpf(den[n], denPrev[n], keep);
+      blended += den[n];
+      tem[n] = lerpf(tem[n], temPrev[n], keep);
+    }
+    const float scale = blended > 1e-6f ? clampf(total / blended, 0.85f, 1.15f) : 1.f;
+    for (uint32_t n = 0; n < NX * NY * NZ; ++n) {
+      den[n] *= scale;
+      denPrev[n] = den[n];
+      temPrev[n] = tem[n];
+    }
+  } else {
+    for (uint32_t n = 0; n < NX * NY * NZ; ++n) { denPrev[n] = den[n]; temPrev[n] = tem[n]; }
+  }
   rebuildCenterVelocity();
   accumulateStats(before, after);
   return 0;
 }
+
+/* 0..0.95: how much of the previous frame is folded into each new one. */
+FE_EXPORT int32_t fe_vol_set_temporal(float amount) {
+  if (!isfinitef(amount)) return -1;
+  temporalAmount = clampf(amount, 0.f, 0.95f);
+  return 0;
+}
+FE_EXPORT float fe_vol_temporal(void) { return temporalAmount; }
 
 FE_EXPORT float* fe_vol_density_ptr() { return den; }
 FE_EXPORT float* fe_vol_temperature_ptr() { return tem; }

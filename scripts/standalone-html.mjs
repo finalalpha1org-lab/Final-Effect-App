@@ -1,12 +1,17 @@
-export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
+export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
+  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
   for(const [name,source] of helpers){
-    if(typeof source!=='string'||!source)throw new Error(`Missing standalone helper: ${name}`);
-    if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
     const tag=`<script src="./${name}"></script>`;
     const count=out.split(tag).length-1;
+    const provided=typeof source==='string'&&source.length>0;
+    if(count===0){
+      if(provided)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
+      continue; /* optional helper the page never asks for */
+    }
+    if(!provided)throw new Error(`Missing standalone helper: ${name}`);
+    if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
     if(count!==1)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
     out=out.replace(tag,`<script>\n${source}\n</script>`);
   }
@@ -20,6 +25,9 @@ export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,t
 
 export function createStandaloneAppHtml(html, {
   volumeAtlas,
+  feIcons,
+  volumeLibrary,
+  volumeLibraryBase64 = '',
   simulationCore,
   modifierEngine,
   feCppEngine,
@@ -50,6 +58,7 @@ export function createStandaloneAppHtml(html, {
   window.__FE_STANDALONE__ = true;
   window.__FE_CPP_WASM_BASE64__ = ${safeJson(cppWasmBase64 || '')};
   window.__FE_SIM_WASM_BASE64__ = ${safeJson(simWasmBase64 || '')};
+  window.__FE_VOLUME_LIBRARY_B64__ = ${safeJson(volumeLibraryBase64 || '')};
   window.__FE_TERRAIN_STANDALONE_HTML__ = ${safeJson(terrainStandaloneHtml || '')};
 
   function b64ToBytes(b64) {
@@ -66,6 +75,10 @@ export function createStandaloneAppHtml(html, {
       var bytesA = b64ToBytes(window.__FE_CPP_WASM_BASE64__);
       return Promise.resolve(new Response(bytesA.buffer, { status: 200, headers: { 'Content-Type': 'application/wasm' } }));
     }
+    if (urlStr.indexOf('volume-library.bin') !== -1 && window.__FE_VOLUME_LIBRARY_B64__) {
+      var bytesC = b64ToBytes(window.__FE_VOLUME_LIBRARY_B64__);
+      return Promise.resolve(new Response(bytesC.buffer, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }));
+    }
     if (urlStr.indexOf('simulation_solver.wasm') !== -1 && window.__FE_SIM_WASM_BASE64__) {
       var bytesB = b64ToBytes(window.__FE_SIM_WASM_BASE64__);
       return Promise.resolve(new Response(bytesB.buffer, { status: 200, headers: { 'Content-Type': 'application/wasm' } }));
@@ -77,17 +90,24 @@ export function createStandaloneAppHtml(html, {
 
   let out = html.replace('<link rel="manifest" href="./manifest.webmanifest">', '');
   const helpers = [
+    ['fe-icons.js', feIcons],
     ['volume-atlas.js', volumeAtlas],
+    ['volume-library.js', volumeLibrary],
     ['simulationCore.js', simulationCore],
     ['modifier-engine.js', modifierEngine],
     ['fe-cpp-engine.js', feCppEngine]
   ];
   let injectedBootstrap = false;
   for (const [name, source] of helpers) {
-    if (typeof source !== 'string' || !source) throw new Error(`Missing standalone app helper: ${name}`);
-    if (source.toLowerCase().includes('</script')) throw new Error(`Unsafe closing script marker in ${name}`);
     const tag = `<script src="${name}"></script>`;
     const count = out.split(tag).length - 1;
+    const provided = typeof source === 'string' && source.length > 0;
+    if (count === 0) {
+      if (provided) throw new Error(`Expected exactly one ${name} reference, found ${count}`);
+      continue; /* optional helper the page does not use */
+    }
+    if (!provided) throw new Error(`Missing standalone app helper: ${name}`);
+    if (source.toLowerCase().includes('</script')) throw new Error(`Unsafe closing script marker in ${name}`);
     if (count !== 1) throw new Error(`Expected exactly one ${name} reference, found ${count}`);
     const prefix = !injectedBootstrap ? (bootstrapScript + '\n') : '';
     injectedBootstrap = true;

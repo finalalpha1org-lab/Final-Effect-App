@@ -26,6 +26,7 @@ if (hasPublicDir) {
 } else {
   const staticAssets = [
     "index.html",
+    "fe-icons.js",
     "Terrain_system_.html",
     "celestial-math.js",
     "scatter-spacing.js",
@@ -34,6 +35,8 @@ if (hasPublicDir) {
     "open-world.js",
     "modifier-engine.js",
     "volume-atlas.js",
+    "volume-library.js",
+    "volume-library.bin",
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
@@ -56,6 +59,7 @@ if (hasPublicDir) {
 const terrainMainFiles=Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).padStart(2,"0")}.js`);
 const minifiableJs = [
   "celestial-math.js",
+  "fe-icons.js",
   "scatter-spacing.js",
   "tessendorf-ocean.js",
   "open-world-generator.js",
@@ -63,6 +67,7 @@ const minifiableJs = [
   "open-world.js",
   "modifier-engine.js",
   "volume-atlas.js",
+  "volume-library.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
 ];
@@ -111,6 +116,7 @@ if (!optimizedTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
 }
 
 const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {
+  feIcons: readFileSync("build/client/fe-icons.js", "utf8"),
   celestialMath: readFileSync("build/client/celestial-math.js", "utf8"),
   scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
   tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
@@ -125,11 +131,14 @@ const standaloneAppHtml = createStandaloneAppHtml(
   readFileSync(srcPath("index.html"), "utf8"),
   {
     volumeAtlas: readFileSync(srcPath("volume-atlas.js"), "utf8"),
+    feIcons: readFileSync(srcPath("fe-icons.js"), "utf8"),
+    volumeLibrary: readFileSync(srcPath("volume-library.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),
     feCppEngine: readFileSync(srcPath("fe-cpp-engine.js"), "utf8"),
     cppWasmBase64,
     simWasmBase64,
+    volumeLibraryBase64: readFileSync(srcPath("volume-library.bin")).toString("base64"),
     terrainStandaloneHtml: standaloneTerrainHtml,
   }
 );

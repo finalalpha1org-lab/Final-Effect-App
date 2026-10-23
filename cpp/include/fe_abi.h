@@ -581,6 +581,11 @@ FE_EXPORT float*    fe_vol_surface_normals_ptr(void);
 FE_EXPORT uint32_t* fe_vol_surface_indices_ptr(void);
 FE_EXPORT uint32_t  fe_vol_surface_index_count(void);
 
+/* Temporal filter applied to the accepted density / temperature fields.
+   0 disables it, 0.95 is the softest setting. */
+FE_EXPORT int32_t   fe_vol_set_temporal(float amount);
+FE_EXPORT float     fe_vol_temporal(void);
+
 /* Seamless detail-noise tile for the volume shader (RGBA8, size x size).
    size 16..128, octaves 1..6; returns 0 ok / -3 invalid size. */
 FE_EXPORT int32_t   fe_vol_noise_generate(uint32_t size, uint32_t seed, uint32_t octaves);

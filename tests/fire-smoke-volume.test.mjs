@@ -39,6 +39,8 @@ function boot(cppExports,device={}){
   sandbox.FE={engines:{core:{sc:scene}},toast(){}};
   const atlasCtx={};vm.createContext(atlasCtx);vm.runInContext(readFileSync('volume-atlas.js','utf8'),atlasCtx);
   sandbox.FEVolumeAtlas=atlasCtx.FEVolumeAtlas;
+  const libCtx={};vm.createContext(libCtx);vm.runInContext(readFileSync('volume-library.js','utf8'),libCtx);
+  sandbox.FEVolumeLibrary=libCtx.FEVolumeLibrary;
   if(cppExports)sandbox.FECppEngine={ready:true,exports:cppExports};
   vm.createContext(sandbox);
   vm.runInContext(readFileSync('simulationCore.js','utf8'),sandbox);
@@ -234,4 +236,82 @@ test('stepping advances the animation clock and re-syncs the live knobs',()=>{
   engine.syncVolumeUniforms(rec);
   assert.equal(u.uDetail.value,0.25,'editing a knob updates the material without a rebuild');
   assert.equal(u.uEmission.value,0.5);
+});
+
+test('Baked Library plays the baked frames and leaves the solver alone',()=>{
+  const {engine,sandbox}=boot(cpp);
+  sandbox.FEVolumeLibraryData=sandbox.FEVolumeLibrary.parse(readFileSync('volume-library.bin'));
+  const look={...params,'Volume Source':'Baked Library','Library Variant':'Smoke','Library Motion':1.5};
+  const rec={bounds:[0,0,0,2,3,2],domainType:'Fire + Smoke',role:'Domain',params:look,status:'running'};
+  assert.equal(engine.createVolumeSimulation(null,look,rec),true);
+  assert.ok(rec.volume.library,'the baked variant is resolved');
+  assert.equal(rec.volume.library.variant.name,'Smoke');
+  const u=rec.visual.material.uniforms;
+  assert.equal(u.uLibMix.value,1,'the shader reads the baked field');
+  assert.equal(u.uLibGrid.value,20);
+  assert.equal(u.uLibAtlas.value.width,320,'the atlas holds 12 frames x 20 slices');
+  assert.equal(rec.visual.material.fragmentShader.includes('libField'),true);
+  rec.visual.material.uniforms.uLibA.value=-1;
+  engine.stepVolumeSimulation(rec,0.1);
+  assert.ok(rec.volume.time>0,'the clip clock advances');
+  assert.ok(u.uLibA.value>=0,'frame A is driven by the clock');
+  assert.ok(u.uLibBlend.value>=0&&u.uLibBlend.value<=1,'the two frames cross-fade');
+  assert.equal(u.uTime.value,rec.volume.time);
+});
+
+test('a missing library keeps the live solver instead of going black',()=>{
+  const {engine}=boot(cpp);
+  const look={...params,'Volume Source':'Baked Library'};
+  const rec={bounds:[0,0,0,2,3,2],domainType:'Fire + Smoke',role:'Domain',params:look,status:'running'};
+  assert.equal(engine.createVolumeSimulation(null,look,rec),true);
+  assert.equal(rec.volume.library,null,'no data means no library');
+  assert.equal(rec.visual.material.uniforms.uLibMix.value,0);
+  assert.equal(rec.kind,'volume','the live volume path still runs');
+});
+
+test('Temporal Blend lowers frame-to-frame shimmer in the C++ field',async()=>{
+  const measure=async(temporal)=>{
+    const {instance:{exports:ex}}=await WebAssembly.instantiate(wasm,{});
+    ex.fe_vol_init(20,20,20);
+    ex.fe_vol_set_temporal(temporal);
+    const cells=20**3;
+    let previous=null,total=0,samples=0;
+    for(let f=0;f<26;f++){
+      ex.fe_vol_source(0.5,0.08,0.5,0.15,7,0.5,0.6);
+      ex.fe_vol_step(1/30,1.4,2.4,0.45,1.1,20);
+      if(f>8){
+        const den=new Float32Array(ex.memory.buffer,ex.fe_vol_density_ptr(),cells).slice();
+        if(previous){
+          let sum=0;
+          for(let i=0;i<cells;i++) sum+=Math.abs(den[i]-previous[i]);
+          total+=sum/cells; samples++;
+        }
+        previous=den;
+      }
+    }
+    return {shimmer:total/samples,field:previous};
+  };
+  const live=await measure(0);
+  const calm=await measure(0.85);
+  assert.ok(live.shimmer>0,'the raw field moves every frame');
+  assert.ok(calm.shimmer<live.shimmer*0.75,'the temporal filter calms the surface');
+  let liveMass=0,calmMass=0;
+  for(let i=0;i<live.field.length;i++){liveMass+=live.field[i];calmMass+=calm.field[i];}
+  assert.ok(calmMass>liveMass*0.6,'the filter does not eat the plume');
+  assert.equal(cpp.fe_vol_set_temporal(-1),0,'negative values clamp instead of throwing');
+  assert.equal(cpp.fe_vol_temporal(),0,'the shared instance is back to zero');
+});
+
+test('Detail Contrast and Fire Tint are real shader controls',()=>{
+  const {engine}=boot(cpp);
+  const look={...params,'Detail Contrast':2.2,'Fire Tint':'Blue'};
+  const rec={bounds:[0,0,0,2,3,2],domainType:'Fire',role:'Domain',params:look,status:'running'};
+  assert.equal(engine.createVolumeSimulation(null,look,rec),true);
+  const u=rec.visual.material.uniforms;
+  assert.equal(u.uDetailContrast.value,2.2);
+  assert.ok(Math.abs(u.uFireTint.value.z-1.3)<1e-6,'Blue pushes the blue channel');
+  assert.ok(Math.abs(u.uFireTint.value.x-0.55)<1e-6);
+  const shader=rec.visual.material.fragmentShader;
+  assert.ok(shader.includes('uDetailContrast'),'contrast pivots the tile around 0.5');
+  assert.ok(shader.includes('blackbody(heat) * uFireTint'),'the tint multiplies the Planckian ramp');
 });
