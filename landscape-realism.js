@@ -182,7 +182,9 @@
     const data = b.surfaceDetail(id === undefined ? 0 : id, width, height, seed >>> 0, strength);
     if (!data) return null;
     const entry = { kind, width, height, data };
-    if (state.cache.size >= 32) state.cache.delete(state.cache.keys().next().value);
+    /* Each buffer is one to four megabytes of floats. Every job consumes its
+       own map once, so a small LRU is enough and keeps a phone's heap flat. */
+    if (state.cache.size >= 6) state.cache.delete(state.cache.keys().next().value);
     state.cache.set(key, entry);
     return entry;
   }
@@ -263,13 +265,16 @@
     return true;
   }
 
-  /* Multiplies an existing colour canvas by cavity shading. The untouched
-     pixels are cached so re-running (settings changes) never compounds. */
+  /* Multiplies an existing colour canvas by cavity shading. The buffer may be
+     smaller than the canvas (bark is 256x512 but its micro-structure is
+     generated at half size to keep the boot sweep cheap), so texels are
+     point sampled. The untouched pixels are cached, which is why re-running on
+     a settings change never compounds the darkening. */
   function shadeColour(texture, buffer, opts) {
     const canvas = texture && texture.image;
     if (!canvas || !canvas.getContext) return false;
-    const width = buffer.width, height = buffer.height;
-    if (!targetSize(canvas, width, height)) return false;
+    const width = canvas.width, height = canvas.height;
+    if (!width || !height) return false;
     const ctx = canvas.getContext('2d');
     if (!canvas.__feOriginal || canvas.__feOriginal.width !== width || canvas.__feOriginal.height !== height) {
       canvas.__feOriginal = ctx.getImageData(0, 0, width, height);
@@ -278,15 +283,20 @@
     const out = ctx.createImageData(width, height);
     const depth = opts && opts.depth !== undefined ? opts.depth : 0.34;
     const tint = (opts && opts.tint) || [1, 1, 1];
-    const data = buffer.data;
-    for (let i = 0, n = width * height; i < n; i++) {
-      const nz = clamp(data[i * 4 + 2], 0, 1);
-      const ao = 1 - depth + depth * Math.pow(nz, 1.5);
-      const o = i * 4;
-      out.data[o] = clamp(src.data[o] * ao * tint[0], 0, 255);
-      out.data[o + 1] = clamp(src.data[o + 1] * ao * tint[1], 0, 255);
-      out.data[o + 2] = clamp(src.data[o + 2] * ao * tint[2], 0, 255);
-      out.data[o + 3] = src.data[o + 3];
+    const bw = buffer.width, bh = buffer.height, data = buffer.data;
+    const scaleX = bw / width, scaleY = bh / height;
+    for (let y = 0; y < height; y++) {
+      const sy = Math.min(bh - 1, Math.floor(y * scaleY));
+      for (let x = 0; x < width; x++) {
+        const sx = Math.min(bw - 1, Math.floor(x * scaleX));
+        const nz = clamp(data[(sy * bw + sx) * 4 + 2], 0, 1);
+        const ao = 1 - depth + depth * Math.pow(nz, 1.5);
+        const o = (y * width + x) * 4;
+        out.data[o] = clamp(src.data[o] * ao * tint[0], 0, 255);
+        out.data[o + 1] = clamp(src.data[o + 1] * ao * tint[1], 0, 255);
+        out.data[o + 2] = clamp(src.data[o + 2] * ao * tint[2], 0, 255);
+        out.data[o + 3] = src.data[o + 3];
+      }
     }
     ctx.putImageData(out, 0, 0);
     mark(texture);
@@ -398,7 +408,7 @@
         const normal = tex.BN && tex.BN[key];
         const rough = tex.BR && tex.BR[key];
         jobs.push(() => {
-          const buf = detail(cfg[0], 256, 512, 31 + cfg[1] * 17, cfg[0] === 'moss' ? 0.85 : 1.3);
+          const buf = detail(cfg[0], 128, 256, 31 + cfg[1] * 17, cfg[0] === 'moss' ? 0.85 : 1.3);
           if (!buf) return;
           /* Cactus skin is waxy and nearly smooth — only a fine pore texture. */
           shadeColour(colour, buf, { depth: cfg[0] === 'moss' ? 0.12 : 0.4 });
@@ -415,7 +425,7 @@
         const entry = leaf[key];
         if (!entry) continue;
         jobs.push(() => {
-          const buf = detail('leaf', 256, 256, 83, key === 'petal' ? 0.4 : 0.95);
+          const buf = detail('leaf', 128, 128, 83, key === 'petal' ? 0.4 : 0.95);
           if (!buf) return;
           if (entry.nm) paintNormal(entry.nm, buf);
           if (entry.rm) paintRough(entry.rm, buf);

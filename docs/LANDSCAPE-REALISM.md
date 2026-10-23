@@ -67,11 +67,17 @@ The generator is fully periodic: every noise lattice frequency is an integer
 and the Worley cells wrap, so a 256² tile is seamless in both axes. A 256² tile
 costs 28–102 ms on the CPU (bark at 256×512 is the most expensive), therefore:
 
-* every map is generated **once** and cached in `FELandscapeRealism.state.cache`;
+* every map is generated **once**; a six-entry LRU keeps the reuse path cheap
+  without holding tens of megabytes of floats on a phone;
 * jobs run **one per animation frame** through `upgrade()`, so the studio does
   not hitch on a phone;
 * `fe_surface_detail` rejects sizes above 512 px (the static buffer is
   `512 × 512 × 4` floats).
+* resolution follows how close the material is ever seen: terrain detail and
+  snow at 256², bark micro-structure at 128 × 256 (sampled up to the 256 × 512
+  colour canvas, which stays full resolution), leaf veining and biome tiles at
+  128². That keeps the boot sweep at roughly 0.7 s of CPU spread one job per
+  frame instead of 2 s with a 100 ms hitch.
 
 ## User settings
 
