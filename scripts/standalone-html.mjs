@@ -1,12 +1,15 @@
-export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
+export function createStandaloneTerrainHtml(html,{celestialMath,scatterSpacing,realWorldTerrain,tessendorf,openWorld,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
+  const helpers=[['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['real-world-terrain.js',realWorldTerrain],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
   for(const [name,source] of helpers){
-    if(typeof source!=='string'||!source)throw new Error(`Missing standalone helper: ${name}`);
-    if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
     const tag=`<script src="./${name}"></script>`;
     const count=out.split(tag).length-1;
+    /* A page may legitimately omit an optional helper (older terrain builds had
+       no real-world module); only insist on sources for tags that exist. */
+    if(count===0&&(typeof source!=='string'||!source))continue;
+    if(typeof source!=='string'||!source)throw new Error(`Missing standalone helper: ${name}`);
+    if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
     if(count!==1)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
     out=out.replace(tag,`<script>\n${source}\n</script>`);
   }

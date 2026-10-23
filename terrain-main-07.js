@@ -41,7 +41,41 @@ G(sl('Brush radius',2,20,1,br.r,v=>br.r=v),sl('Density',1,30,1,br.den,v=>br.den=
 chips([['l','Level ground: '+(cityLvl?'on':'off')],['r','Roads: '+(cityRoad?'on':'off')],['t','Tap to place: '+(cityTap?'on':'off')]],0,v=>{if(v=='l')cityLvl=!cityLvl;else if(v=='r')cityRoad=!cityRoad;else{cityTap=!cityTap;setNav()}}),
 btn('🏙 Generate City at view center',()=>genCity({x:oc.target.x,z:oc.target.z})),...plantCtl(),
 btn('Clear all buildings',()=>{push();for(const q in BLD){KIND[q].list=[];sync(q)}})];
+/* --- Real-world terrain: Google Elevation -> C++ DEM resample --------------
+   Experimental. The key is the user's own, kept in this browser only. ------- */
+const RW={lat:6.0535,lon:80.2210,km:4,exag:1,samples:65};
+function rwInput(id,label,step,extra){const i=el(`<input id="${id}" type="number" step="${step}" ${extra||''} style="width:100%;box-sizing:border-box;background:#111421;border:1px solid #2b3147;border-radius:7px;color:#e2e8f0;padding:7px 8px;font-size:12px">`);i.setAttribute('aria-label',label);return i}
+function rwPanel(){
+ const keyInput=el('<input id="rw-key" type="password" autocomplete="off" spellcheck="false" placeholder="Google Maps API key (stored on this device only)" style="grid-column:1/-1;width:100%;box-sizing:border-box;background:#111421;border:1px solid #2b3147;border-radius:7px;color:#e2e8f0;padding:7px 8px;font-size:12px">');
+ try{keyInput.value=localStorage.getItem('fe_gmaps_key')||''}catch(e){}
+ const lat=rwInput('rw-lat','Latitude','0.0001',`value="${RW.lat}"`),lon=rwInput('rw-lon','Longitude','0.0001',`value="${RW.lon}"`),km=rwInput('rw-km','Span in kilometres','0.5',`min="0.2" max="60" value="${RW.km}"`),ex=rwInput('rw-exag','Vertical exaggeration','0.1',`min="0.5" max="5" value="${RW.exag}"`);
+ const grid=el('<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>');
+ grid.append(keyInput,lat,lon,km,ex);
+ return el(`<div style="display:flex;flex-direction:column;gap:7px;border:1px solid #2b3147;border-radius:10px;padding:9px;background:#0f1220">
+  <div class="hint" style="margin:0"><b>🌍 Real-world terrain</b> · <span style="color:#fbbf24">Experimental</span><br>Fetches a Google Elevation heightfield and resamples it in the core at true metric scale. Nothing is uploaded; the key never leaves this device.</div>
+  ${grid.outerHTML}
+ </div>`);
+}
+function rwRead(){
+ const v=id=>{const n=document.getElementById(id);return n?n.value:''};
+ const key=String(v('rw-key')||'').trim();if(key)try{localStorage.setItem('fe_gmaps_key',key)}catch(e){}
+ RW.lat=parseFloat(v('rw-lat'));RW.lon=parseFloat(v('rw-lon'));RW.km=parseFloat(v('rw-km'))||4;RW.exag=Math.min(5,Math.max(.5,parseFloat(v('rw-exag'))||1));
+ return key;
+}
+function fetchRealWorldTerrain(){
+ const key=rwRead();
+ if(!key)return msg('Add a Google Maps API key — restrict it to your own domain');
+ if(!isFinite(RW.lat)||!isFinite(RW.lon))return msg('Enter a latitude and longitude');
+ if(!window.RealWorldTerrain)return msg('Real-world terrain module is not loaded');
+ msg('Requesting '+RW.samples+' elevation rows…');
+ window.RealWorldTerrain.fetchDem({key,lat:RW.lat,lon:RW.lon,spanM:RW.km*1000,samples:RW.samples,onProgress:(d,t)=>msg('Elevation rows '+d+'/'+t)})
+  .then(r=>{const native=applyRealWorldDem(r.dem,r.width,r.height,{spanM:r.spanM,referenceM:0,exaggeration:RW.exag});msg('Real terrain '+(r.max-r.min).toFixed(0)+' m relief over '+RW.km+' km · 1 unit = '+(r.spanM/S).toFixed(1)+' m · '+(native?'C++ resample':'JS resample'));})
+  .catch(e=>msg('Real terrain failed: '+((e&&e.message)||e)));
+}
 PN.import=()=>[el('<div class="hint">Bring a real-world 3D map or city into the landscape: GLB / GLTF / OBJ models, or a heightmap image. Live Google 3D Tiles must be streamed by your host app, which can send a GLB here.</div>'),
+rwPanel(),
+chips([['loc','📍 Use my location'],['a','33²'],['b','65²'],['c','97²']],'b',v=>{rwRead();if(v==='loc'){if(!navigator.geolocation)return msg('Geolocation is not available');navigator.geolocation.getCurrentPosition(p=>{const la=document.getElementById('rw-lat'),lo=document.getElementById('rw-lon');if(la)la.value=p.coords.latitude.toFixed(5);if(lo)lo.value=p.coords.longitude.toFixed(5);msg('Location filled — tap Fetch real terrain')},()=>msg('Could not read your location'));return}RW.samples=v==='a'?33:v==='c'?97:65;msg('Elevation grid '+RW.samples+'² — each row is one API request')}),
+btn('🛰 Fetch real terrain (Google Elevation)',fetchRealWorldTerrain),
 fileBtn('🏙 Import 3D model / city (GLB, GLTF, OBJ)','',importModel),
 G(sl('Heightmap relief (m)',5,80,1,dem,v=>dem=v)),fileBtn('🗻 Import heightmap image (PNG / JPG)','image/*',importHeightmap),
 ...(mapRoot?[Object.assign(el('<div class="hint"></div>'),{textContent:'Imported: '+mapName}),G(sl('Model size',.1,4,.05,mapK,v=>{mapK=v;fitMap()}),sl('Raise / lower',-20,40,.5,mapY,v=>{mapY=v;fitMap()}),sl('Rotate',0,360,5,mapR,v=>{mapR=v;fitMap()})),chips([['f','▭ Flatten terrain under model'],['x','🗑 Remove model']],0,v=>v=='f'?flattenUnder():rmMap())]:[])];

@@ -562,6 +562,17 @@ FE_EXPORT int32_t  fe_terrain_erode_thermal(
   float slump_rate
 );
 
+/* Real-world DEM resample: metres above reference -> resident heightfield */
+FE_EXPORT int32_t  fe_terrain_apply_dem(
+  const float* dem,
+  uint32_t dem_w,
+  uint32_t dem_h,
+  float real_span_m,
+  float reference_m,
+  float vertical_exaggeration,
+  float base_offset
+);
+
 /* Tilted / Warped Sedimentary Strata & Canyon Outcrop Terracing */
 FE_EXPORT int32_t  fe_terrain_apply_strata(
   float strata_height,

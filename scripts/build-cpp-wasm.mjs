@@ -60,6 +60,7 @@ const REQUIRED_EXPORTS = [
   'fe_terrain_scatter_out_ptr',
   'fe_terrain_scatter_batch',
   'fe_terrain_apply_strata',
+  'fe_terrain_apply_dem',
   'fe_ow_height_ptr',
   'fe_ow_surface_ptr',
   'fe_ow_set_params',

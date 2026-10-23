@@ -8,7 +8,7 @@
  function bind(instance){
   const x=instance.exports;
   const required=['fe_terrain_compute_normals','fe_terrain_brush_stroke','fe_terrain_erode_brush','fe_terrain_generate_layered','fe_terrain_compute_colors','fe_terrain_set_palette','fe_terrain_set_paint_colors','fe_terrain_erode_hydraulic','fe_terrain_erode_thermal'];
-  const optional=['fe_terrain_apply_strata','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr'];
+  const optional=['fe_terrain_apply_strata','fe_terrain_apply_dem','fe_terrain_scatter_out_ptr','fe_terrain_scatter_batch','fe_ow_set_params','fe_ow_height_at','fe_ow_biome_weights_at','fe_ow_height_grid','fe_ow_surface_grid','fe_ow_plan_chunks','fe_ow_hydro_set_grid','fe_ow_hydro_trace','fe_lod_classify','fe_lod_out_ptr','fe_ow_height_ptr','fe_ow_surface_ptr','fe_ow_plan_cells_ptr','fe_ow_plan_distance_ptr','fe_ow_river_meta_ptr','fe_ow_river_points_ptr','fe_ow_hydro_input_ptr','fe_ocean_field_ptr','fe_ocean_resolution','fe_ocean_configure','fe_ocean_update','fe_ocean_get_cascade_float4_ptr','fe_ocean_get_cascade_rgba8_ptr'];
   const missing=required.filter(name=>typeof x[name]!=='function');
   if(missing.length)throw Error('Terrain C++ export missing: '+missing.join(', '));
   /* A partially stale/older artifact must not kill the whole landscape bridge:
@@ -125,6 +125,20 @@
   if(result<0){core.error='C++ strata returned '+result;return false}
   state.heights.set(height);core.commands++;return true;
  };
+ core.applyDem=function(state){
+  if(!core.ready||!ex||typeof ex.fe_terrain_apply_dem!=='function')return false;
+  if(!ensure(state.n,state.size))return false;
+  const bytes=state.dem.length*4;
+  const ptr=ex.fe_malloc(bytes);
+  if(!ptr)return false;
+  const view=new Float32Array(ex.memory.buffer,ptr,state.dem.length);
+  view.set(state.dem);
+  const result=ex.fe_terrain_apply_dem(ptr,state.demW,state.demH,state.spanM,state.refM||0,state.exaggeration||1,state.offset||0);
+  if(result<0){core.error='C++ DEM resample returned '+result;return false}
+  const out=new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length);
+  if(typeof state.heights.set==='function')state.heights.set(out);else for(let i=0;i<out.length;i++)state.heights[i]=out[i];
+  core.commands++;return true;
+};
  core.scatterBegin=function(state){
   if(!ensure(state.n,state.size))return false;
   new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);
