@@ -17,6 +17,12 @@ buffers, so there is no intermediate copy on either side.
 | `fe_mod_set_counts(v, t)` | declares the incoming mesh size |
 | `fe_mod_counts_ptr` | `[vertex_count, triangle_count]` after a kernel |
 | `fe_mod_normals_ptr` | recalculated area-weighted normals |
+| `fe_mod_matrix_ptr` | 16-float column-major relative matrix (target/rig space) |
+| `fe_mod_target_begin(v,t)` + pointers | optional target mesh for shrinkwrap / surface deform |
+| `fe_mod_sd_bind` / `_upload` / `_apply` + `_ordinal/_bary/_scalars/_tris` pointers | barycentric surface-deform binding |
+| `fe_mod_lattice_cage` / `_alloc` / `_apply` + rest/deform pointers | Bernstein FFD cage and evaluator |
+| `fe_mod_armature` | heat-weighted dual-quaternion / LBS skinning |
+| `fe_mod_shrinkwrap(mode, offset)` | on-surface / above-surface / outside-surface projection |
 | kernels | `fe_mod_weld`, `_smooth`, `_mirror`, `_solidify`, `_displace`, `_wave`, `_cast`, `_twist`, `_array`, `_subdivide`, `_decimate` |
 
 Return codes: `0` ok, `-1` no session, `-2` capacity exceeded, `-3` invalid
@@ -41,6 +47,10 @@ synchronous step, so it may own the full 24 MB scratch arena while it runs.
 | Array | per-copy translation + Y rotation, attribute replication |
 | Subdivision | 4-1 midpoint split, welded, Loop vertex rule relaxation |
 | Decimate | vertex clustering at a bisected grid resolution, optional boundary lock |
+| Lattice | Bernstein free-form deformation; cage fitted to mesh bounds, rest vs deformed control points |
+| Armature | smoothstep heat weights down the bone chain; dual-quaternion blend (Preserve Volume) or LBS |
+| Shrinkwrap | exact nearest-triangle projection with AABB rejection; On Surface / Above Surface / Outside Surface |
+| Surface Deform | nearest-triangle bind → barycentric weights + normal offset + scale ratio, re-evaluated against the live target |
 
 Everything above is driven from `src/modifier-geometry.mjs`, which is bundled
 into `modifier-engine.js`. Each exported modifier first calls
@@ -73,10 +83,15 @@ while every kernel parameter is still reachable. Wired settings:
 ## Still JS
 
 Bevel (hull + concave crease relaxation), Boolean (CSG solid), Triangulate
-(upload-friendly non-indexed conversion), Wireframe (strut builder), Shrinkwrap
-(BVH projection), Lattice (Bernstein FFD), Armature (skin bending) and Surface
-Deform (binding) still run their JS implementations. Cloth, Soft Body, Fluid and
-Collision never leave the simulation core.
+(upload-friendly non-indexed conversion), Wireframe (strut builder) and Weighted
+Normal (angle-weighted corner accumulation) still run their JS implementations
+and are the next kernels to move. Cloth, Soft Body, Fluid and Collision never
+leave the simulation core.
+
+The JS shrinkwrap reference now scans every triangle instead of trusting a
+3-cell spatial hash. The old hash could stop at a face that was merely *near*
+the query cell, so an interior vertex could snap to the wrong side of a sphere;
+the C++ path always scanned exactly, and the reference now agrees with it.
 
 ## Known limits
 

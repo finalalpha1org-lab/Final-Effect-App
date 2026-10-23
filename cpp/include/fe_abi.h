@@ -825,6 +825,45 @@ FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, fl
 FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels);
 FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
 
+/* ---- Session deformation kernels: FFD lattice, armature skinning, surface
+ * deform and shrinkwrap. JS only copies buffers; all vertex maths runs here.
+ *
+ * The editor uploads the deforming mesh into the modifier session, uploads an
+ * optional target mesh and a 4x4 relative matrix, then calls one kernel.
+ * Return codes match the session kernels above (0 ok, -1 missing session,
+ * -2 capacity, -3 invalid input, -4 empty result).
+ */
+FE_EXPORT uint32_t fe_mod_matrix_ptr(void);        /* 16 floats, column-major */
+FE_EXPORT uint32_t fe_mod_target_counts_ptr(void); /* [vertex_count, tri_count] */
+FE_EXPORT uint32_t fe_mod_target_pos_ptr(void);    /* vertex_count * 3 */
+FE_EXPORT uint32_t fe_mod_target_idx_ptr(void);    /* tri_count * 3 */
+FE_EXPORT int32_t  fe_mod_target_begin(uint32_t vert_count, uint32_t tri_count);
+
+/* Barycentric surface deform: bind the session mesh to the target surface. */
+FE_EXPORT int32_t  fe_mod_sd_bind(void);
+/* Restore a previously bound surface-deform state for the session mesh. */
+FE_EXPORT int32_t  fe_mod_sd_upload(uint32_t vert_count, uint32_t tri_count);
+FE_EXPORT int32_t  fe_mod_sd_apply(float strength);
+FE_EXPORT uint32_t fe_mod_sd_ordinal_ptr(void); /* u32 per vertex */
+FE_EXPORT uint32_t fe_mod_sd_bary_ptr(void);    /* 3 floats per vertex */
+FE_EXPORT uint32_t fe_mod_sd_scalars_ptr(void); /* [normal_offset, ref_scale] per vertex */
+FE_EXPORT uint32_t fe_mod_sd_tris_ptr(void);    /* compact triangle list, 3 u32 each */
+FE_EXPORT uint32_t fe_mod_sd_tri_count(void);
+
+/* Bernstein free-form-deformation lattice cage + evaluator. */
+FE_EXPORT int32_t  fe_mod_lattice_cage(uint32_t nx, uint32_t ny, uint32_t nz, float pad_ratio);
+FE_EXPORT int32_t  fe_mod_lattice_alloc(uint32_t point_count);
+FE_EXPORT uint32_t fe_mod_lattice_rest_ptr(void);   /* (nx+1)(ny+1)(nz+1) * 3 */
+FE_EXPORT uint32_t fe_mod_lattice_deform_ptr(void); /* (nx+1)(ny+1)(nz+1) * 3 */
+FE_EXPORT int32_t  fe_mod_lattice_apply(uint32_t nx, uint32_t ny, uint32_t nz, float strength);
+
+/* Heat-weighted dual-quaternion armature skinning around the mesh mid joint. */
+FE_EXPORT int32_t  fe_mod_armature(float influence, int32_t preserve_volume, float bend_deg, float twist_deg);
+
+/* Nearest-surface / above-surface / outside-surface shrinkwrap projection.
+ * mode: 0 = On Surface, 1 = Above Surface, 2 = Outside Surface. */
+FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset);
+
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 FE_EXPORT int32_t  fe_geo_qem_decimate(
   const float* in_pos_xyz,

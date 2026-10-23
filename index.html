@@ -787,6 +787,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   overflow-y: hidden;
   cursor: ew-resize;
   scrollbar-width: thin;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 #timeline-ruler-canvas {
   display: block;
@@ -2418,10 +2421,16 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="settings-section-title"><span>📊</span> Performance</div>
         <div class="ws-perf-row">
           <div class="ws-stat"><span id="ws-perf-fps">--</span><small>FPS</small></div>
+          <div class="ws-stat"><span id="ws-perf-raf">--</span><small>Display</small></div>
           <div class="ws-stat"><span id="ws-perf-ms">--</span><small>Frame time</small></div>
           <div class="ws-stat"><span id="ws-perf-tier">Auto</span><small>Quality</small></div>
           <div class="ws-stat"><span id="ws-perf-dpr">--</span><small>Resolution</small></div>
+          <div class="ws-stat"><span id="ws-perf-cpu">--</span><small>CPU frame</small></div>
+          <div class="ws-stat"><span id="ws-perf-submit">--</span><small>Render submit</small></div>
+          <div class="ws-stat"><span id="ws-perf-draws">--</span><small>Draw calls</small></div>
+          <div class="ws-stat"><span id="ws-perf-tris">--</span><small>Triangles</small></div>
         </div>
+        <div class="setting-label" style="margin:0 0 10px"><span>Active pipeline</span><small id="ws-perf-mode">--</small></div>
         <div class="setting-item">
           <div class="setting-label"><span>Quality tier</span><small>Adjusts resolution and shadows to hold a steady frame rate</small></div>
           <select class="setting-select" id="ws-quality">
@@ -2430,6 +2439,10 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
             <option value="2">Medium</option>
             <option value="3">High</option>
           </select>
+        </div>
+        <div class="setting-item">
+          <div class="setting-label"><span>High Refresh Mode</span><small>For 90–120 Hz screens: 1.5× render scale, temporal AA paused, lighter shadows</small></div>
+          <label class="setting-toggle"><input type="checkbox" id="ws-high-refresh"><span class="setting-toggle-slider"></span></label>
         </div>
       </div>
       <div class="settings-section">
@@ -3080,6 +3093,9 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           <button class="tb-btn" id="tb-prev-btn" title="Previous Frame (Left Arrow)" onclick="stepTimelineFrame(-1)">◀</button>
           <button class="tb-btn" id="tb-next-btn" title="Next Frame (Right Arrow)" onclick="stepTimelineFrame(1)">▶</button>
           <button class="tb-btn" id="tb-last-btn" title="Jump to End Frame" onclick="jumpTimelineToFrame(timelineConfig.endFrame)">⏭</button>
+          <button class="tb-btn" id="tb-prev-key-btn" title="Previous Keyframe" onclick="jumpTimelineToKey(-1)">◀◆</button>
+          <button class="tb-btn" id="tb-next-key-btn" title="Next Keyframe" onclick="jumpTimelineToKey(1)">◆▶</button>
+          <button class="tb-btn active" id="tb-snap-btn" title="Snap scrubbing to keyframes" aria-pressed="true" onclick="toggleTimelineSnap()">SNAP</button>
           <button class="tb-btn" id="tb-insert-key-btn" title="Insert keyframe on the active object" onclick="FECppEngine.insertKeyframeForActive('locrotscale')" style="color:#fbbf24;border-color:rgba(245,158,11,0.45);">◆ Key</button>
           
           <div class="tb-field">
@@ -3101,6 +3117,8 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
               <option value="25">25</option>
               <option value="30" selected>30</option>
               <option value="60">60</option>
+              <option value="90">90</option>
+              <option value="120">120</option>
             </select>
           </div>
           <button class="tb-btn tb-bake-btn" id="tb-rebake-btn" title="Reset & Re-bake Physics Simulation" onclick="rebakePhysicsSimulation()">↻ Bake Sim</button>
@@ -3216,9 +3234,10 @@ try {
 }
 
 const APP_SETTINGS_KEY='fe_global_settings_v1';
-const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,taa:true,taaBlend:0.12,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
+const DEFAULT_GLOBAL_SETTINGS={grid:true,shadows:true,gizmo:true,taa:true,taaBlend:0.12,highRefresh:false,exposure:1.25,sensitivity:1,undoLimit:100,autoSave:true,autoSaveMinutes:2};
 function loadGlobalSettings(){try{const saved=JSON.parse(localStorage.getItem(APP_SETTINGS_KEY)||'{}');return{...DEFAULT_GLOBAL_SETTINGS,...saved,undoLimit:Math.min(1000,Math.max(1,Math.round(Number(saved.undoLimit)||100))),autoSaveMinutes:[2,5,10,60].includes(Number(saved.autoSaveMinutes))?Number(saved.autoSaveMinutes):2}}catch{return{...DEFAULT_GLOBAL_SETTINGS}}}
 let GLOBAL_SETTINGS=loadGlobalSettings();
+window.__feHighRefresh = !!GLOBAL_SETTINGS.highRefresh;
 const initialGizmo=document.getElementById('nav-gizmo-wrapper');if(initialGizmo)initialGizmo.style.display=GLOBAL_SETTINGS.gizmo?'flex':'none';
 
 /* build home cards + studio screens */
@@ -3553,13 +3572,37 @@ function syncGlobalSettingsUI() {
 window.syncGlobalSettingsUI = syncGlobalSettingsUI;
 /* ---------------- Viewport settings sheet (workspace gear) ---------------- */
 const WS_TIERS = ['Low', 'Medium', 'High'];
+/* Idle rAF sample: the only honest way to learn what the display can do
+   before the workspace starts submitting heavy frames. */
+(function measureIdleDisplayHz() {
+  if (typeof requestAnimationFrame !== 'function') return;
+  let first = 0, frames = 0;
+  const tick = now => {
+    if (!first) first = now;
+    frames++;
+    if (frames < 72) { requestAnimationFrame(tick); return; }
+    const hz = (frames - 1) * 1000 / Math.max(1, now - first);
+    const known = Number(window.__feDisplayHz) || 0;
+    if (hz > known) window.__feDisplayHz = Math.round(hz);
+  };
+  requestAnimationFrame(tick);
+})();
+
 function renderWorkspacePerf(stats) {
   if (!stats) return;
   const put = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
   put('ws-perf-fps', String(Math.max(0, Math.round(stats.fps || 0))));
+  const loopHz = window.__feRafFps || 0;
+  const panelHz = window.__feDisplayHz || 0;
+  put('ws-perf-raf', panelHz ? String(panelHz) : (loopHz ? String(Math.round(loopHz)) : '--'));
   put('ws-perf-ms', (stats.avgMs || 0).toFixed(1) + ' ms');
   put('ws-perf-tier', stats.tierLabel || WS_TIERS[stats.tier] || 'Auto');
   put('ws-perf-dpr', (stats.dpr || 1).toFixed(2) + 'x');
+  put('ws-perf-cpu', stats.cpuMs ? stats.cpuMs.toFixed(1) + ' ms' : '--');
+  put('ws-perf-submit', stats.renderMs ? stats.renderMs.toFixed(1) + ' ms' : '--');
+  put('ws-perf-draws', stats.drawCalls ? String(stats.drawCalls) : '--');
+  put('ws-perf-tris', stats.triangles ? (stats.triangles >= 1000 ? (stats.triangles / 1000).toFixed(1) + 'k' : String(stats.triangles)) : '--');
+  put('ws-perf-mode', `${stats.taa ? 'Temporal AA' : 'Direct render'} · ${stats.shadowRes || 1024}² shadows`);
 }
 function syncWorkspaceSettingsUI() {
   const mirror = (dstId, srcId, prop) => {
@@ -3571,6 +3614,8 @@ function syncWorkspaceSettingsUI() {
   mirror('ws-grid', 'set-grid');
   mirror('ws-shadows', 'set-shadows');
   mirror('ws-taa', 'set-taa');
+  const hrToggle = document.getElementById('ws-high-refresh');
+  if (hrToggle) hrToggle.checked = !!GLOBAL_SETTINGS.highRefresh;
   const taaBlend = document.getElementById('ws-taa-blend');
   if (taaBlend) taaBlend.value = String(GLOBAL_SETTINGS.taaBlend ?? 0.12);
   const taaBlendVal = document.getElementById('ws-taa-blend-val');
@@ -3630,6 +3675,36 @@ window.fepdateWorkspacePerf = function (stats) {
   const sheet = document.getElementById('workspace-settings-sheet');
   if (sheet && !sheet.hidden) renderWorkspacePerf(stats);
 };
+function applyHighRefreshMode(on) {
+  const eng = FE.engines?.core;
+  if (!eng) return;
+  /* Resolution changes only here, and only between two sharp scales. */
+  if (eng.r && typeof eng.r.getPixelRatio === 'function' && typeof eng.r.setPixelRatio === 'function') {
+    const cap = on ? 1.5 : 2;
+    const pr = Math.min(Math.max(window.devicePixelRatio || 1, 1), cap);
+    if (Math.abs(eng.r.getPixelRatio() - pr) > 0.01) {
+      eng.r.setPixelRatio(pr);
+      const vp = document.getElementById('viewport-core');
+      if (vp && vp.clientWidth && vp.clientHeight) eng.r.setSize(vp.clientWidth, vp.clientHeight, false);
+      if (eng.taa?.reset) eng.taa.reset();
+    }
+  }
+  const light = eng.d || eng.blenderLight?.light;
+  if (light?.shadow) {
+    const size = on ? 1024 : 2048;
+    if (light.shadow.mapSize.x !== size) {
+      light.shadow.mapSize.set(size, size);
+      if (light.shadow.map) { light.shadow.map.dispose(); light.shadow.map = null; }
+    }
+  }
+  if (eng.r?.shadowMap) {
+    eng.r.shadowMap.type = on ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    eng.r.shadowMap.needsUpdate = true;
+  }
+  if (eng.taa) eng.taa.setEnabled(!on && GLOBAL_SETTINGS.taa !== false);
+}
+window.applyHighRefreshMode = applyHighRefreshMode;
+
 function initWorkspaceSettingsEvents() {
   if (window.__feWorkspaceSettingsBound) return;
   window.__feWorkspaceSettingsBound = true;
@@ -3650,6 +3725,19 @@ function initWorkspaceSettingsEvents() {
   if (wsTaaBlend) wsTaaBlend.addEventListener('input', () => { const out = document.getElementById('ws-taa-blend-val'); if (out) out.textContent = Number(wsTaaBlend.value).toFixed(2); });
   forward('ws-gizmo', 'set-gizmo', 'change');
   forward('ws-quality', 'set-gpu-tier', 'change');
+  const highRefresh = document.getElementById('ws-high-refresh');
+  if (highRefresh) {
+    highRefresh.checked = !!GLOBAL_SETTINGS.highRefresh;
+    highRefresh.addEventListener('change', () => {
+      GLOBAL_SETTINGS.highRefresh = highRefresh.checked;
+      window.__feHighRefresh = highRefresh.checked;
+      persistGlobalSettings();
+      applyHighRefreshMode(highRefresh.checked);
+      FE.toast(highRefresh.checked
+        ? 'High Refresh Mode on — 1.5× scale, AA paused, lighter shadows'
+        : 'High Refresh Mode off — full quality');
+    });
+  }
   forward('ws-exposure', 'set-exposure', 'input');
   forward('ws-sensitivity', 'set-sensitivity', 'input');
   const exposure = document.getElementById('ws-exposure');
@@ -7093,7 +7181,10 @@ FE.register('core',{
     r.setSize(w,h,false);
     r.shadowMap.enabled=GLOBAL_SETTINGS.shadows; 
     r.shadowMap.type=THREE.PCFSoftShadowMap;
-    r.shadowMap.autoUpdate = true;
+    /* Shadow maps cost a second scene pass; a static scene only needs them
+       refreshed on alternate frames. The loop below drives needsUpdate. */
+    r.shadowMap.autoUpdate = false;
+    r.shadowMap.needsUpdate = true;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = GLOBAL_SETTINGS.exposure||1.25;
 
@@ -7115,7 +7206,9 @@ FE.register('core',{
     const d=new THREE.DirectionalLight(0xfff3e0, 2.4); 
     d.position.set(16, 22, 14); 
     d.castShadow=true; 
-    d.shadow.mapSize.set(2048, 2048);
+    /* Phones start at 1024² and let the governor raise it when frame time allows. */
+    const startShadowRes=(navigator.maxTouchPoints||0)>1?1024:2048;
+    d.shadow.mapSize.set(startShadowRes, startShadowRes);
     d.shadow.bias = -0.0001;
     d.shadow.normalBias = 0.035;
     
@@ -7562,6 +7655,15 @@ FE.register('core',{
       this._lastViewportFrame=frameStart;
       const frameInterval=frameStart-previous;
 
+      /* Raw display refresh estimate, independent of the C++ governor EMA. */
+      if(!this._rafTimes)this._rafTimes=[];
+      this._rafTimes.push(frameStart);
+      while(this._rafTimes.length>2&&frameStart-this._rafTimes[0]>1000)this._rafTimes.shift();
+      if(this._rafTimes.length>1){
+        const first=this._rafTimes[0];
+        window.__feRafFps=(this._rafTimes.length-1)*1000/Math.max(1,frameStart-first);
+      }
+
 
       // Real-time physics simulation update
       if (typeof stepPhysicsSimulations === 'function') {
@@ -7570,17 +7672,26 @@ FE.register('core',{
 
       const physicsEnd=performance.now();
 
-      // Step timeline if playing
-      if (typeof timelineConfig !== 'undefined' && timelineConfig.isPlaying) {
+      // Step timeline if playing (accumulator keeps the rate exact on 120 Hz panels)
+      if (typeof timelineConfig !== 'undefined' && timelineConfig.isPlaying && !timelineConfig.isScrubbing) {
         const now = performance.now();
-        const frameTime = 1000 / (timelineConfig.fps || 30);
-        if (now - timelineConfig.lastFrameTime >= frameTime) {
-          timelineConfig.lastFrameTime = now;
-          let nextFrame = timelineConfig.currentFrame + 1;
+        const last = timelineConfig.lastFrameTime || now;
+        const elapsed = Math.max(0, Math.min(250, now - last));
+        timelineConfig.lastFrameTime = now;
+        const fps = timelineConfig.fps || 30;
+        timelineConfig.playAccumulator = (timelineConfig.playAccumulator || 0) + elapsed * fps / 1000;
+        const steps = Math.floor(timelineConfig.playAccumulator);
+        if (steps > 0) {
+          timelineConfig.playAccumulator -= steps;
+          const firstFrame = timelineConfig.startFrame;
+          const span = Math.max(1, timelineConfig.endFrame - firstFrame + 1);
+          let nextFrame = timelineConfig.currentFrame + steps;
+          let wrapped = false;
           if (nextFrame > timelineConfig.endFrame) {
-            nextFrame = timelineConfig.startFrame;
-            if (typeof resetAllPhysicsSimulations === 'function') resetAllPhysicsSimulations();
+            nextFrame = firstFrame + ((nextFrame - firstFrame) % span);
+            wrapped = true;
           }
+          if (wrapped && typeof resetAllPhysicsSimulations === 'function') resetAllPhysicsSimulations();
           if (typeof setTimelineCurrentFrame === 'function') {
             setTimelineCurrentFrame(nextFrame);
           }
@@ -7605,8 +7716,9 @@ FE.register('core',{
         this.oc.update();
       }
 
-      // Dynamic continuous autofocus if enabled
-      const afCheck = document.getElementById('cam-autofocus');
+      // Dynamic continuous autofocus if enabled (cached: this runs every frame)
+      if (this._afCheck === undefined) this._afCheck = document.getElementById('cam-autofocus');
+      const afCheck = this._afCheck;
       if (afCheck && afCheck.checked && this.sceneCamera && this.cube) {
         const dist = this.sceneCamera.position.distanceTo(this.cube.position);
         const fDist = document.getElementById('cam-focus-distance');
@@ -7633,7 +7745,7 @@ FE.register('core',{
         if (isCameraView) {
           this.blenderCam.position.copy(this.sceneCamera.position);
           this.blenderCam.quaternion.copy(this.sceneCamera.quaternion);
-          if (!isTransformSliderInteracting) {
+          if (!isTransformSliderInteracting && (this._slideSyncTick = (this._slideSyncTick || 0) + 1) % 3 === 0) {
             syncCameraSlidersFromScene();
           }
         } else if (activeObject === 'camera') {
@@ -7660,14 +7772,23 @@ FE.register('core',{
         try { this.taa = window.FE_TAA.create(this.r, { blend: GLOBAL_SETTINGS.taaBlend || 0.12 }); } catch (_) { this.taa = null; }
       }
       if (this.taa) {
-        this.taa.setEnabled(GLOBAL_SETTINGS.taa !== false);
+        const wantTaa = GLOBAL_SETTINGS.taa !== false && !GLOBAL_SETTINGS.highRefresh && this._autoTaa !== false;
+        if (this.taa.enabled !== wantTaa) this.taa.setEnabled(wantTaa);
         this.taa.setBlend(GLOBAL_SETTINGS.taaBlend || 0.12);
         if (this._taaCam !== activeCam) { this._taaCam = activeCam; this.taa.reset(); }
+      }
+      if (this._highRefreshApplied !== !!GLOBAL_SETTINGS.highRefresh) {
+        this._highRefreshApplied = !!GLOBAL_SETTINGS.highRefresh;
+        applyHighRefreshMode(this._highRefreshApplied);
+      }
+      if (this.r.shadowMap.autoUpdate === false) {
+        this._shadowTick = (this._shadowTick || 0) + 1;
+        if (this._shadowTick % 2 === 0) this.r.shadowMap.needsUpdate = true;
       }
       if (this.taa && this.taa.enabled && this.taa.ok) this.taa.render(this.sc, activeCam);
       else this.r.render(this.sc, activeCam);
 
-      if (!isCameraView && this.viewHelper) {
+      if (!isCameraView && this.viewHelper && GLOBAL_SETTINGS.gizmo !== false) {
         this.viewHelper.update();
         this.viewHelper.render();
       }
@@ -8036,7 +8157,8 @@ function updateDoFFilter() {
     filters.push(`blur(${mbSpread.toFixed(1)}px)`);
   }
 
-  canvas.style.filter = filters.length > 0 ? filters.join(' ') : 'none';
+  const nextFilter = filters.length > 0 ? filters.join(' ') : 'none';
+  if (canvas.style.filter !== nextFilter) canvas.style.filter = nextFilter;
 }
 
 function triggerAutofocus() {
@@ -9032,6 +9154,10 @@ const timelineConfig = window.timelineConfig = {
   fps: 30,
   isPlaying: false,
   isMinimized: false,
+  snapToKeys: true,
+  isScrubbing: false,
+  playAccumulator: 0,
+  _physicsDirty: false,
   lastFrameTime: performance.now()
 };
 
@@ -9053,6 +9179,8 @@ window.toggleTimelineMinimize = toggleTimelineMinimize;
 
 function toggleTimelinePlay() {
   timelineConfig.isPlaying = !timelineConfig.isPlaying;
+  timelineConfig.playAccumulator = 0;
+  timelineConfig.lastFrameTime = performance.now();
   const playBtn = document.getElementById('tb-play-btn');
   if (playBtn) {
     playBtn.textContent = timelineConfig.isPlaying ? '⏸' : '▶';
@@ -9078,26 +9206,52 @@ function stepTimelineFrame(delta) {
 }
 window.stepTimelineFrame = stepTimelineFrame;
 
-function setTimelineCurrentFrame(frame) {
+function hasActivePhysicsSims() {
+  const scene = FE.engines?.core?.sc;
+  if (!scene) return false;
+  for (const child of scene.children) {
+    if (child.userData?.clothSim || child.userData?.softBodySim || child.userData?.fluidSim) return true;
+  }
+  return false;
+}
+
+function seekTimelinePhysics(frame = timelineConfig.currentFrame) {
+  timelineConfig._physicsDirty = false;
+  if (!hasActivePhysicsSims()) return;
+  resetAllPhysicsSimulations();
+  const steps = Math.max(0, Math.min(600, Math.round(frame - timelineConfig.startFrame)));
+  const dt = 1 / (timelineConfig.fps || 30);
+  for (let i = 0; i < steps; i++) stepPhysicsSimulations(dt);
+}
+
+function setTimelineCurrentFrame(frame, options = {}) {
   const oldFrame = timelineConfig.currentFrame;
-  timelineConfig.currentFrame = Math.max(0, Math.min(10000, frame));
-  
+  const target = Math.round(Number(frame) || 0);
+  const low = options.clampRange ? timelineConfig.startFrame : 0;
+  const high = options.clampRange ? timelineConfig.endFrame : 10000;
+  timelineConfig.currentFrame = Math.max(low, Math.min(high, target));
+
   const frameInput = document.getElementById('tb-current-frame-input');
   if (frameInput && document.activeElement !== frameInput) {
     frameInput.value = timelineConfig.currentFrame;
   }
 
-  // If scrubbing backward to 0, reset physics state
-  if (timelineConfig.currentFrame === 0 || timelineConfig.currentFrame < oldFrame) {
-    resetAllPhysicsSimulations();
-  }
-
-  // Step physics simulation forward to current frame if advancing
-  if (timelineConfig.currentFrame > oldFrame) {
-    const dt = 1 / timelineConfig.fps;
-    for (let f = oldFrame; f < timelineConfig.currentFrame; f++) {
-      stepPhysicsSimulations(dt);
+  /* While the user drags the ruler we only move the playhead; baking 250
+     physics steps per pointermove is what made scrubbing stutter. */
+  if (options.scrub) {
+    timelineConfig._physicsDirty = true;
+  } else if (hasActivePhysicsSims()) {
+    if (timelineConfig.currentFrame < oldFrame) {
+      resetAllPhysicsSimulations();
+      const steps = Math.max(0, Math.min(600, timelineConfig.currentFrame - timelineConfig.startFrame));
+      const dt = 1 / (timelineConfig.fps || 30);
+      for (let f = 0; f < steps; f++) stepPhysicsSimulations(dt);
+    } else if (timelineConfig.currentFrame > oldFrame) {
+      const steps = Math.min(600, timelineConfig.currentFrame - oldFrame);
+      const dt = 1 / (timelineConfig.fps || 30);
+      for (let f = 0; f < steps; f++) stepPhysicsSimulations(dt);
     }
+    timelineConfig._physicsDirty = false;
   }
 
   renderTimelineRulerCanvas();
@@ -9128,15 +9282,70 @@ function rebakePhysicsSimulation() {
 }
 window.rebakePhysicsSimulation = rebakePhysicsSimulation;
 
-/* ---- Timeline Canvas Ruler Renderer ---- */
+/* ---- Timeline Canvas Ruler Renderer (fixed axis + moving playhead) ---- */
+const TIMELINE_RULER_PAD = 12;
+function timelineFrameMetrics(widthPx) {
+  const startFrame = Math.max(0, Number(timelineConfig.startFrame) || 0);
+  const endFrame = Math.max(startFrame + 1, Number(timelineConfig.endFrame) || 250);
+  const pad = TIMELINE_RULER_PAD;
+  const plotW = Math.max(24, (widthPx || 600) - pad * 2);
+  const frameToX = frame => pad + ((frame - startFrame) / (endFrame - startFrame)) * plotW;
+  const xToFrame = x => startFrame + ((x - pad) / plotW) * (endFrame - startFrame);
+  return { startFrame, endFrame, pad, plotW, frameToX, xToFrame };
+}
+function timelineFrameToX(frame, widthPx) {
+  const canvas = document.getElementById('timeline-ruler-canvas');
+  return timelineFrameMetrics(widthPx || canvas?.clientWidth || 600).frameToX(frame);
+}
+window.timelineFrameToX = timelineFrameToX;
+
+let timelineKeyCache = { stamp: -1, objId: '', frames: [], at: 0 };
+function timelineKeyFrames() {
+  try {
+    const api = window.FECppEngine;
+    if (!api?.ready || typeof api.listDistinctKeyFramesForObject !== 'function') return [];
+    const objId = window.FE?.getActiveObjectId?.() || 'cube';
+    const stamp = api.exports?.fe_anim_get_total_keyframes?.() ?? 0;
+    const now = performance.now();
+    if (timelineKeyCache.stamp === stamp && timelineKeyCache.objId === objId && now - timelineKeyCache.at < 250) {
+      return timelineKeyCache.frames;
+    }
+    const frames = api.listDistinctKeyFramesForObject(objId) || [];
+    timelineKeyCache = { stamp, objId, frames, at: now };
+    return frames;
+  } catch (_) { return []; }
+}
+
+function snapTimelineFrame(frame, pixelTolerance = 8) {
+  const rounded = Math.round(frame);
+  if (!timelineConfig.snapToKeys) return rounded;
+  const keys = timelineKeyFrames();
+  if (!keys.length) return rounded;
+  const canvas = document.getElementById('timeline-ruler-canvas');
+  const metrics = timelineFrameMetrics(canvas?.clientWidth || 600);
+  const framesPerPx = (metrics.endFrame - metrics.startFrame) / metrics.plotW;
+  const tolerance = Math.min(2, Math.max(0.75, pixelTolerance * framesPerPx));
+  let best = rounded, bestDist = tolerance + 1e-6;
+  for (const key of keys) {
+    const dist = Math.abs(key - frame);
+    if (dist < bestDist) { bestDist = dist; best = key; }
+  }
+  return Math.round(best);
+}
+
+function positionTimelinePlayhead(x) {
+  const playhead = document.getElementById('timeline-playhead');
+  if (playhead) playhead.style.left = `${x}px`;
+}
+
 function renderTimelineRulerCanvas() {
   const canvas = document.getElementById('timeline-ruler-canvas');
   if (!canvas) return;
   const container = canvas.parentElement;
   if (!container) return;
 
-  const w = container.clientWidth || 600;
-  const h = container.clientHeight || 52;
+  const w = Math.max(1, container.clientWidth || 600);
+  const h = Math.max(1, container.clientHeight || 52);
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -9145,99 +9354,158 @@ function renderTimelineRulerCanvas() {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
+  const m = timelineFrameMetrics(w);
   ctx.fillStyle = '#0e1017';
   ctx.fillRect(0, 0, w, h);
 
-  const curFrame = timelineConfig.currentFrame;
-  const startFrame = timelineConfig.startFrame;
-  const endFrame = timelineConfig.endFrame;
-  const centerX = w * 0.5;
-  const frameSpacing = 14;
+  const span = m.endFrame - m.startFrame;
+  const rawStep = span / 10;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(1, rawStep))));
+  const nice = [1, 2, 5, 10].find(k => k * magnitude >= rawStep) || 10;
+  const majorStep = Math.max(1, Math.round(nice * magnitude));
+  const minorStep = Math.max(1, Math.round(majorStep / 5));
 
-  const rangeStartX = centerX + (startFrame - curFrame) * frameSpacing;
-  const rangeEndX = centerX + (endFrame - curFrame) * frameSpacing;
-
-  ctx.fillStyle = 'rgba(99, 102, 241, 0.12)';
-  ctx.fillRect(Math.max(0, rangeStartX), 0, Math.min(w, rangeEndX - rangeStartX), h);
-
-  ctx.strokeStyle = '#6366f1';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  if (rangeStartX >= 0 && rangeStartX <= w) { ctx.moveTo(rangeStartX, 0); ctx.lineTo(rangeStartX, h); }
-  if (rangeEndX >= 0 && rangeEndX <= w) { ctx.moveTo(rangeEndX, 0); ctx.lineTo(rangeEndX, h); }
-  ctx.stroke();
-
-  const minVisibleFrame = Math.floor(curFrame - (w * 0.5) / frameSpacing) - 5;
-  const maxVisibleFrame = Math.ceil(curFrame + (w * 0.5) / frameSpacing) + 5;
-
-  ctx.fillStyle = '#64748b';
   ctx.font = '10px monospace';
   ctx.textAlign = 'center';
+  ctx.lineWidth = 1;
 
-  for (let f = Math.max(0, minVisibleFrame); f <= maxVisibleFrame; f++) {
-    const x = centerX + (f - curFrame) * frameSpacing;
-    if (x < -20 || x > w + 20) continue;
-
-    if (f % 10 === 0) {
-      ctx.strokeStyle = '#475569';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 16); ctx.stroke();
-      ctx.fillText(f.toString(), x, 28);
-    } else if (f % 5 === 0) {
-      ctx.strokeStyle = '#334155';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 10); ctx.stroke();
-    } else {
-      ctx.strokeStyle = '#1e293b';
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 5); ctx.stroke();
-    }
+  /* Minor ticks */
+  ctx.strokeStyle = '#1e293b';
+  for (let f = Math.ceil(m.startFrame / minorStep) * minorStep; f <= m.endFrame; f += minorStep) {
+    if (f % majorStep === 0) continue;
+    const x = m.frameToX(f);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 6); ctx.stroke();
   }
 
+  /* Major ticks + labels */
+  for (let f = Math.ceil(m.startFrame / majorStep) * majorStep; f <= m.endFrame; f += majorStep) {
+    const x = m.frameToX(f);
+    ctx.strokeStyle = '#475569';
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 16); ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.fillText(String(f), x, 30);
+  }
+
+  /* Range bounds */
+  ctx.strokeStyle = '#6366f1';
+  for (const f of [m.startFrame, m.endFrame]) {
+    const x = m.frameToX(f);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+
+  /* Physics sim tracks stay pinned to the bar's bottom edge */
   const eng = FE.engines?.core;
   if (eng && eng.sc) {
-    let trackY = 38;
+    let trackY = h - 6;
     eng.sc.children.forEach(child => {
-      if (child.userData.clothSim) {
-        ctx.fillStyle = '#ec4899';
-        ctx.fillRect(rangeStartX, trackY, Math.max(2, rangeEndX - rangeStartX), 3);
-      } else if (child.userData.softBodySim) {
-        ctx.fillStyle = '#06b6d4';
-        ctx.fillRect(rangeStartX, trackY, Math.max(2, rangeEndX - rangeStartX), 3);
-      } else if (child.userData.fluidSim) {
-        ctx.fillStyle = '#3b82f6';
-        ctx.fillRect(rangeStartX, trackY, Math.max(2, rangeEndX - rangeStartX), 3);
-      }
+      if (child.userData.clothSim) { ctx.fillStyle = '#ec4899'; ctx.fillRect(m.pad, trackY, m.plotW, 3); }
+      else if (child.userData.softBodySim) { ctx.fillStyle = '#06b6d4'; ctx.fillRect(m.pad, trackY, m.plotW, 3); }
+      else if (child.userData.fluidSim) { ctx.fillStyle = '#3b82f6'; ctx.fillRect(m.pad, trackY, m.plotW, 3); }
     });
   }
+
+  positionTimelinePlayhead(m.frameToX(timelineConfig.currentFrame));
 }
 window.renderTimelineRulerCanvas = renderTimelineRulerCanvas;
 
-function handleRulerPointer(e) {
+function timelineFrameAtClientX(clientX) {
   const container = document.getElementById('timeline-ruler-container');
-  if (!container) return;
+  if (!container) return timelineConfig.currentFrame;
   const rect = container.getBoundingClientRect();
-  const offsetX = e.clientX - rect.left;
-  const frameSpacing = 14;
-  const frameDiff = (offsetX - rect.width * 0.5) / frameSpacing;
-  const targetFrame = Math.round(timelineConfig.currentFrame + frameDiff);
-  setTimelineCurrentFrame(Math.max(0, targetFrame));
+  const m = timelineFrameMetrics(rect.width || 600);
+  const x = Math.max(m.pad, Math.min(m.pad + m.plotW, clientX - rect.left));
+  return m.xToFrame(x);
+}
+
+function applyTimelineScrub(clientX) {
+  /* Absolute mapping: the pointer position always means the same frame, so the
+     old "currentFrame + delta" feedback loop (which made the ruler jump back
+     and forth) can no longer happen. */
+  const frame = snapTimelineFrame(timelineFrameAtClientX(clientX));
+  setTimelineCurrentFrame(frame, { scrub: true, clampRange: true });
+}
+
+function pauseTimelineForScrub() {
+  if (!timelineConfig.isPlaying) return;
+  timelineConfig.isPlaying = false;
+  timelineConfig.playAccumulator = 0;
+  const playBtn = document.getElementById('tb-play-btn');
+  if (playBtn) { playBtn.textContent = '▶'; playBtn.classList.remove('active'); }
+}
+
+function handleRulerPointer(e) {
+  if (!e || typeof e.clientX !== 'number') return;
+  applyTimelineScrub(e.clientX);
 }
 window.handleRulerPointer = handleRulerPointer;
 
-let isScrubbingTimeline = false;
+let timelineScrubPointer = null;
 function initTimelineRulerInteractions() {
   const container = document.getElementById('timeline-ruler-container');
-  if (!container) return;
+  if (!container || container.dataset.scrubBound) return;
+  container.dataset.scrubBound = '1';
 
   container.addEventListener('pointerdown', (e) => {
-    isScrubbingTimeline = true;
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    pauseTimelineForScrub();
+    timelineConfig.isScrubbing = true;
+    timelineConfig._physicsDirty = true;
+    timelineScrubPointer = e.pointerId;
+    try { container.setPointerCapture(e.pointerId); } catch (_) {}
     handleRulerPointer(e);
   });
-  window.addEventListener('pointermove', (e) => {
-    if (isScrubbingTimeline) handleRulerPointer(e);
+
+  container.addEventListener('pointermove', (e) => {
+    if (timelineScrubPointer === null || e.pointerId !== timelineScrubPointer) return;
+    handleRulerPointer(e);
   });
-  window.addEventListener('pointerup', () => {
-    isScrubbingTimeline = false;
-  });
+
+  const endScrub = (e) => {
+    if (timelineScrubPointer === null) return;
+    if (e && e.pointerId !== undefined && e.pointerId !== timelineScrubPointer) return;
+    timelineScrubPointer = null;
+    timelineConfig.isScrubbing = false;
+    try { container.releasePointerCapture?.(e.pointerId); } catch (_) {}
+    if (timelineConfig._physicsDirty) seekTimelinePhysics(timelineConfig.currentFrame);
+  };
+  container.addEventListener('pointerup', endScrub);
+  container.addEventListener('pointercancel', endScrub);
+  container.addEventListener('lostpointercapture', endScrub);
 }
+
+function jumpTimelineToKey(direction) {
+  const keys = timelineKeyFrames();
+  if (!keys.length) { FE.toast('No keyframes on this object'); return; }
+  const current = timelineConfig.currentFrame;
+  let target;
+  if (direction > 0) {
+    target = keys.find(k => k > current + 1e-3);
+  } else {
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (keys[i] < current - 1e-3) { target = keys[i]; break; }
+    }
+  }
+  if (target === undefined) {
+    FE.toast(direction > 0 ? 'No next keyframe' : 'No previous keyframe');
+    return;
+  }
+  pauseTimelineForScrub();
+  setTimelineCurrentFrame(target, { clampRange: true });
+  FE.toast(`Keyframe @ Frame ${target}`);
+}
+window.jumpTimelineToKey = jumpTimelineToKey;
+
+function toggleTimelineSnap(force) {
+  timelineConfig.snapToKeys = typeof force === 'boolean' ? force : !timelineConfig.snapToKeys;
+  const btn = document.getElementById('tb-snap-btn');
+  if (btn) {
+    btn.classList.toggle('active', timelineConfig.snapToKeys);
+    btn.setAttribute('aria-pressed', timelineConfig.snapToKeys ? 'true' : 'false');
+  }
+  FE.toast(timelineConfig.snapToKeys ? 'Scrub snapping: keyframes' : 'Scrub snapping: off');
+}
+window.toggleTimelineSnap = toggleTimelineSnap;
 
 /* =========================================================
    PHYSICS & SIMULATION ENGINE (Cloth, Soft Body, Fluid)
@@ -9314,10 +9582,10 @@ window.addEventListener('keydown', (e) => {
     toggleTimelinePlay();
   } else if (e.code === 'ArrowLeft') {
     e.preventDefault();
-    stepTimelineFrame(-1);
+    if (e.shiftKey) jumpTimelineToKey(-1); else stepTimelineFrame(-1);
   } else if (e.code === 'ArrowRight') {
     e.preventDefault();
-    stepTimelineFrame(1);
+    if (e.shiftKey) jumpTimelineToKey(1); else stepTimelineFrame(1);
   }
 });
 

@@ -1066,8 +1066,10 @@
 
       const eng = window.FE?.engines?.core;
       if (eng?.r && !this.renderState.isRendering && !this.renderState.isSequenceRendering) {
-        // Keep a stable native-resolution viewport; tier changes must not blur editing.
-        const sharpDpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 2);
+        // Keep a stable, sharp viewport. High Refresh Mode deliberately trades
+        // some super-sampling for frame rate, never sub-native resolution.
+        const sharpCap = window.__feHighRefresh ? 1.5 : 2;
+        const sharpDpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), sharpCap);
         const curPr = eng.r.getPixelRatio();
         if (Math.abs(curPr - sharpDpr) > 0.01) {
           eng.r.setPixelRatio(sharpDpr);
@@ -1076,8 +1078,9 @@
             eng.r.setSize(vp.clientWidth, vp.clientHeight, false);
           }
         }
-        if (eng.d?.shadow?.mapSize && eng.d.shadow.mapSize.x !== shadowRes) {
-          eng.d.shadow.mapSize.set(shadowRes, shadowRes);
+        const shadowTarget = window.__feHighRefresh ? Math.min(shadowRes, 1024) : shadowRes;
+        if (eng.d?.shadow?.mapSize && eng.d.shadow.mapSize.x !== shadowTarget) {
+          eng.d.shadow.mapSize.set(shadowTarget, shadowTarget);
           if (eng.d.shadow.map) {
             eng.d.shadow.map.dispose();
             eng.d.shadow.map = null;
@@ -1085,14 +1088,51 @@
         }
       }
 
+      /* Auto quality may drop temporal AA when the device is already GPU-bound;
+         the resolution stays sharp so the viewport never turns blurry. */
+      if (eng?.taa && GLOBAL_SETTINGS.taa !== false && !GLOBAL_SETTINGS.highRefresh) {
+        const qualitySel = document.getElementById('ws-quality');
+        const isAuto = !qualitySel || qualitySel.value === '0';
+        /* Single source of truth for the RAF loop. Hysteresis prevents the
+           classic auto-quality ping-pong: TAA off raises the frame rate, the
+           higher tier would switch it back on, the frame rate drops again. */
+        if (!isAuto) {
+          eng._autoTaa = true;
+          eng._autoTaaGood = 0;
+        } else if (tier === 0) {
+          eng._autoTaa = false;
+          eng._autoTaaGood = 0;
+        } else if (eng._autoTaa === false) {
+          eng._autoTaaGood = (eng._autoTaaGood || 0) + 1;
+          if (eng._autoTaaGood >= 4) { eng._autoTaa = true; eng._autoTaaGood = 0; }
+        }
+      }
+
+      const vm = eng?.viewportMetrics || {};
       const perfStats = {
         fps: Math.min(120, Math.round(fps)),
         avgMs,
         tier,
         tierLabel: tier === 0 ? 'Low' : tier === 1 ? 'Medium' : 'High',
         dpr: recDpr,
-        shadowRes
+        shadowRes,
+        cpuMs: Number(vm.cpuMs || 0),
+        renderMs: Number(vm.renderSubmitMs || 0),
+        physicsMs: Number(vm.physicsMs || 0),
+        drawCalls: Number(vm.drawCalls || 0),
+        triangles: Number(vm.triangles || 0),
+        taa: !!eng?.taa?.enabled && !!eng?.taa?.ok
       };
+      /* One-time hint: the panel is clearly capable of more than 60 Hz. */
+      try {
+        if (!window.__feRefreshHinted && (window.__feDisplayHz || 0) >= 90 && !GLOBAL_SETTINGS.highRefresh &&
+            !localStorage.getItem('fe_high_refresh_hint')) {
+          window.__feRefreshHinted = true;
+          localStorage.setItem('fe_high_refresh_hint', '1');
+          window.FE?.toast?.('This display runs above 85 Hz — enable High Refresh Mode in ⚙ for smoother motion');
+        }
+      } catch (_) {}
+
       window.FEWorkspacePerf = perfStats;
       window.fepdateWorkspacePerf?.(perfStats);
       const settingsPerfLabel = document.getElementById('cpp-perf-live-readout');
@@ -1402,8 +1442,8 @@
     /* 1. Wrap setTimelineCurrentFrame so C++ Animation evaluates on every scrub/play/render step */
     const origSetFrame = window.setTimelineCurrentFrame;
     if (typeof origSetFrame === 'function' && !origSetFrame._cppWrapped) {
-      const wrapped = function (frame) {
-        origSetFrame(frame);
+      const wrapped = function (frame, options) {
+        origSetFrame(frame, options);
         FECppEngine.evaluateSceneAtFrame(Number(window.timelineConfig?.currentFrame || frame || 0));
         const sheet = document.getElementById('animation-sheet');
         if (sheet && sheet.style.display !== 'none') {
@@ -1431,8 +1471,11 @@
         const centerX = canvas.width * 0.5;
         const spacing = 14;
         const y = canvas.height - 9;
+        const project = typeof window.timelineFrameToX === 'function'
+          ? kf => window.timelineFrameToX(kf, canvas.width)
+          : kf => centerX + (kf - curF) * spacing;
         for (const kf of frames) {
-          const x = centerX + (kf - curF) * spacing;
+          const x = project(kf);
           if (x < -10 || x > canvas.width + 10) continue;
           ctx.fillStyle = Math.abs(kf - curF) < 0.5 ? '#fde047' : '#f59e0b';
           ctx.strokeStyle = '#0f172a';
@@ -1504,12 +1547,23 @@
         const u = Math.max(0, Math.min(1, (ev.clientX - rect.left - padL) / plotW));
         const startF = Number(window.timelineConfig?.startFrame || 0);
         const endF = Math.max(startF + 1, Number(window.timelineConfig?.endFrame || 250));
-        const target = Math.round(startF + u * (endF - startF));
-        if (typeof window.setTimelineCurrentFrame === 'function') window.setTimelineCurrentFrame(target);
+        const raw = Math.round(startF + u * (endF - startF));
+        const target = typeof window.snapTimelineFrame === 'function' ? window.snapTimelineFrame(raw, 6) : raw;
+        if (typeof window.setTimelineCurrentFrame === 'function') {
+          window.setTimelineCurrentFrame(target, { scrub: true, clampRange: true });
+        }
       };
       dopeCanvas.addEventListener('pointerdown', ev => { dragging = true; scrubDope(ev); });
       window.addEventListener('pointermove', ev => { if (dragging) scrubDope(ev); });
-      window.addEventListener('pointerup', () => { dragging = false; });
+      const endDopeScrub = () => {
+        if (!dragging) return;
+        dragging = false;
+        if (window.timelineConfig?._physicsDirty && typeof window.seekTimelinePhysics === 'function') {
+          window.seekTimelinePhysics(window.timelineConfig.currentFrame);
+        }
+      };
+      window.addEventListener('pointerup', endDopeScrub);
+      window.addEventListener('pointercancel', endDopeScrub);
     }
 
     /* 6. Bind Sculpt/Paint strokes + C++ Touch Gesture + Mobile Double-Tap Focus on #canvas-core */

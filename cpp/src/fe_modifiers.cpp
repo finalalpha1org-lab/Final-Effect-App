@@ -19,8 +19,9 @@ namespace {
 
 using namespace fe;
 
-/* Keep 6 MB of the shared scratch arena free for other subsystems. */
-constexpr uint32_t MOD_ARENA_BUDGET = 18u * 1024u * 1024u;
+/* Deformation kernels can additionally request a target mesh, a binding and an
+ * FFD cage, so keep 2 MB of the 24 MB arena as headroom instead of 6 MB. */
+constexpr uint32_t MOD_ARENA_BUDGET = 22u * 1024u * 1024u;
 constexpr uint32_t MOD_MAX_VERTS = 131072u;
 constexpr uint32_t MOD_MAX_TRIS = 262144u;
 
@@ -53,6 +54,22 @@ struct ModSession {
   uint32_t* outIdx = nullptr;
   float* nrm = nullptr;
   uint32_t* counts = nullptr;
+  /* Deformation kernels share the session arena: 4x4 relative matrix, an
+   * optional target mesh, the surface-deform binding and the FFD cage. */
+  float* matrix = nullptr;
+  float* tgtPos = nullptr;
+  uint32_t* tgtIdx = nullptr;
+  float* tgtWorld = nullptr;
+  uint32_t* tgtCounts = nullptr;
+  uint32_t* sdOrd = nullptr;
+  float* sdBary = nullptr;
+  float* sdScalars = nullptr;
+  uint32_t* sdTris = nullptr;
+  uint32_t sdBound = 0;
+  uint32_t sdTriN = 0;
+  float* latRest = nullptr;
+  float* latDef = nullptr;
+  uint32_t latN = 0;
 };
 
 ModSession g_s;
@@ -329,6 +346,454 @@ int32_t loopRelax() {
   return 0;
 }
 
+
+/* =========================================================================
+ * Deformation kernels: FFD lattice, dual-quaternion armature, surface deform
+ * and shrinkwrap. All per-vertex maths lives here; JS only marshals buffers.
+ * ========================================================================= */
+
+/* Column-major 4x4 matrix matching THREE.Matrix4.elements. */
+struct Mat4 { float e[16]; };
+
+inline Mat4 matIdentity() {
+  Mat4 m{};
+  m.e[0] = m.e[5] = m.e[10] = m.e[15] = 1.0f;
+  return m;
+}
+
+inline Mat4 matMultiply(const Mat4& a, const Mat4& b) {
+  Mat4 o{};
+  for (uint32_t c = 0; c < 4u; ++c) {
+    for (uint32_t r = 0; r < 4u; ++r) {
+      float sum = 0.0f;
+      for (uint32_t k = 0; k < 4u; ++k) sum += a.e[k * 4u + r] * b.e[c * 4u + k];
+      o.e[c * 4u + r] = sum;
+    }
+  }
+  return o;
+}
+
+inline Vec3 matPoint(const Mat4& m, const Vec3& p) {
+  return {
+    m.e[0] * p.x + m.e[4] * p.y + m.e[8] * p.z + m.e[12],
+    m.e[1] * p.x + m.e[5] * p.y + m.e[9] * p.z + m.e[13],
+    m.e[2] * p.x + m.e[6] * p.y + m.e[10] * p.z + m.e[14]
+  };
+}
+
+Mat4 sessionMatrix() {
+  Mat4 m = matIdentity();
+  if (g_s.matrix) for (uint32_t i = 0; i < 16u; ++i) m.e[i] = g_s.matrix[i];
+  return m;
+}
+
+void transformTargetWorld() {
+  const uint32_t verts = g_s.tgtCounts ? g_s.tgtCounts[0] : 0u;
+  if (!verts || !g_s.tgtPos || !g_s.tgtWorld) return;
+  const Mat4 m = sessionMatrix();
+  for (uint32_t i = 0; i < verts; ++i) writePos(g_s.tgtWorld, i, matPoint(m, readPos(g_s.tgtPos, i)));
+}
+
+/* Ericson, Real-Time Collision Detection: closest point on a triangle. */
+Vec3 closestPointTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+  const Vec3 ab = b - a, ac = c - a, ap = p - a;
+  const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+  if (d1 <= 0.0f && d2 <= 0.0f) return a;
+  const Vec3 bp = p - b;
+  const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+  if (d3 >= 0.0f && d4 <= d3) return b;
+  const float vc = d1 * d4 - d3 * d2;
+  if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+    const float denom = d1 - d3;
+    return a + ab * (absf(denom) > 1e-20f ? d1 / denom : 0.0f);
+  }
+  const Vec3 cp = p - c;
+  const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+  if (d6 >= 0.0f && d5 <= d6) return c;
+  const float vb = d5 * d2 - d1 * d6;
+  if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+    const float denom = d2 - d6;
+    return a + ac * (absf(denom) > 1e-20f ? d2 / denom : 0.0f);
+  }
+  const float va = d3 * d6 - d5 * d4;
+  if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+    const float denom = (d4 - d3) + (d5 - d6);
+    return b + (c - b) * (absf(denom) > 1e-20f ? (d4 - d3) / denom : 0.0f);
+  }
+  const float denom = va + vb + vc;
+  if (absf(denom) < 1e-20f) return a;
+  const float inv = 1.0f / denom;
+  return a + ab * (vb * inv) + ac * (vc * inv);
+}
+
+/* Three.js Triangle.getBarycoord ordering: returns (weight_a, weight_b, weight_c). */
+Vec3 barycentricCoords(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+  const Vec3 v0 = c - a, v1 = b - a, v2 = p - a;
+  const float d00 = dot(v0, v0), d01 = dot(v0, v1), d02 = dot(v0, v2);
+  const float d11 = dot(v1, v1), d12 = dot(v1, v2);
+  const float denom = d00 * d11 - d01 * d01;
+  if (absf(denom) < 1e-20f) return {1.0f, 0.0f, 0.0f};
+  const float inv = 1.0f / denom;
+  const float u = (d11 * d02 - d01 * d12) * inv;
+  const float v = (d00 * d12 - d01 * d02) * inv;
+  return {1.0f - u - v, v, u};
+}
+
+inline float powi(float x, uint32_t n) {
+  float r = 1.0f;
+  for (uint32_t i = 0; i < n; ++i) r *= x;
+  return r;
+}
+
+float bernstein(uint32_t n, uint32_t i, float t) {
+  t = clampf(t, 0.0f, 1.0f);
+  float binom = 1.0f;
+  for (uint32_t k = 1; k <= i; ++k) binom *= static_cast<float>(n - k + 1u) / static_cast<float>(k);
+  return binom * powi(1.0f - t, n - i) * powi(t, i);
+}
+
+/* Squared distance from p to the triangle AABB for broadphase rejection. */
+inline float triangleBoxDistanceSq(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+  const float loX = minf(a.x, minf(b.x, c.x)), hiX = maxf(a.x, maxf(b.x, c.x));
+  const float loY = minf(a.y, minf(b.y, c.y)), hiY = maxf(a.y, maxf(b.y, c.y));
+  const float loZ = minf(a.z, minf(b.z, c.z)), hiZ = maxf(a.z, maxf(b.z, c.z));
+  const float dx = p.x < loX ? loX - p.x : (p.x > hiX ? p.x - hiX : 0.0f);
+  const float dy = p.y < loY ? loY - p.y : (p.y > hiY ? p.y - hiY : 0.0f);
+  const float dz = p.z < loZ ? loZ - p.z : (p.z > hiZ ? p.z - hiZ : 0.0f);
+  return dx * dx + dy * dy + dz * dz;
+}
+
+inline uint32_t readTriIndex(const uint32_t* idx, uint32_t tri, uint32_t corner) {
+  return idx ? idx[tri * 3u + corner] : tri * 3u + corner;
+}
+
+int32_t latticeCageFromBounds(uint32_t nx, uint32_t ny, uint32_t nz, float padRatio) {
+  nx = nx < 1u ? 1u : (nx > 4u ? 4u : nx);
+  ny = ny < 1u ? 1u : (ny > 4u ? 4u : ny);
+  nz = nz < 1u ? 1u : (nz > 4u ? 4u : nz);
+  if (g_s.vc == 0) return -4;
+  const Box b = meshBounds(g_s.inPos, g_s.vc);
+  const Vec3 size = b.size();
+  float pad = length(size) * (padRatio > 0.0f ? padRatio : 0.04f);
+  if (pad < 0.04f) pad = 0.04f;
+  const uint32_t points = (nx + 1u) * (ny + 1u) * (nz + 1u);
+  float* rest = modArray<float>(points * 3u);
+  float* def = modArray<float>(points * 3u);
+  if (!rest || !def) return -2;
+  uint32_t w = 0;
+  for (uint32_t k = 0; k <= nz; ++k) {
+    const float tz = static_cast<float>(k) / static_cast<float>(nz);
+    for (uint32_t j = 0; j <= ny; ++j) {
+      const float ty = static_cast<float>(j) / static_cast<float>(ny);
+      for (uint32_t i = 0; i <= nx; ++i) {
+        const float tx = static_cast<float>(i) / static_cast<float>(nx);
+        rest[w++] = b.lo.x - pad + (size.x + pad * 2.0f) * tx;
+        rest[w++] = b.lo.y - pad + (size.y + pad * 2.0f) * ty;
+        rest[w++] = b.lo.z - pad + (size.z + pad * 2.0f) * tz;
+      }
+    }
+  }
+  for (uint32_t i = 0; i < points * 3u; ++i) def[i] = rest[i];
+  g_s.latRest = rest;
+  g_s.latDef = def;
+  g_s.latN = points;
+  return static_cast<int32_t>(points);
+}
+
+int32_t latticeApply(uint32_t nx, uint32_t ny, uint32_t nz, float strength) {
+  if (!g_s.latRest || !g_s.latDef) return -3;
+  nx = nx < 1u ? 1u : (nx > 4u ? 4u : nx);
+  ny = ny < 1u ? 1u : (ny > 4u ? 4u : ny);
+  nz = nz < 1u ? 1u : (nz > 4u ? 4u : nz);
+  const uint32_t points = (nx + 1u) * (ny + 1u) * (nz + 1u);
+  if (points != g_s.latN) return -3;
+  Box b;
+  for (uint32_t i = 0; i < points; ++i) b.expand(readPos(g_s.latRest, i));
+  const Vec3 size(
+    maxf(b.hi.x - b.lo.x, 1e-5f),
+    maxf(b.hi.y - b.lo.y, 1e-5f),
+    maxf(b.hi.z - b.lo.z, 1e-5f)
+  );
+  const Mat4 m = sessionMatrix();
+  float* defWorld = modArray<float>(points * 3u);
+  if (!defWorld) return -2;
+  for (uint32_t i = 0; i < points; ++i) writePos(defWorld, i, matPoint(m, readPos(g_s.latDef, i)));
+  const float blend = clampf(strength, 0.0f, 2.0f);
+  for (uint32_t v = 0; v < g_s.vc; ++v) {
+    const Vec3 p = readPos(g_s.inPos, v);
+    const float u = clampf((p.x - b.lo.x) / size.x, 0.0f, 1.0f);
+    const float w = clampf((p.y - b.lo.y) / size.y, 0.0f, 1.0f);
+    const float t = clampf((p.z - b.lo.z) / size.z, 0.0f, 1.0f);
+    float fx = 0.0f, fy = 0.0f, fz = 0.0f;
+    for (uint32_t k = 0; k <= nz; ++k) {
+      const float bz = bernstein(nz, k, t);
+      for (uint32_t j = 0; j <= ny; ++j) {
+        const float by = bernstein(ny, j, w);
+        for (uint32_t i = 0; i <= nx; ++i) {
+          const float weight = bernstein(nx, i, u) * by * bz;
+          const uint32_t id = (i + (nx + 1u) * (j + (ny + 1u) * k)) * 3u;
+          fx += defWorld[id] * weight;
+          fy += defWorld[id + 1u] * weight;
+          fz += defWorld[id + 2u] * weight;
+        }
+      }
+    }
+    writePos(g_s.outPos, v, Vec3(
+      p.x + (fx - p.x) * blend,
+      p.y + (fy - p.y) * blend,
+      p.z + (fz - p.z) * blend
+    ));
+  }
+  computeNormals(g_s.outPos, g_s.inIdx, g_s.vc, g_s.tc, g_s.nrm);
+  return commit(g_s.vc, g_s.tc);
+}
+
+int32_t armatureApply(float influence, int32_t preserveVolume, float bendDeg, float twistDeg) {
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v) return -4;
+  const float inf = clampf(influence, 0.0f, 1.0f);
+  if (inf <= 1e-6f) {
+    for (uint32_t i = 0; i < v; ++i) writePos(g_s.outPos, i, readPos(g_s.inPos, i));
+    computeNormals(g_s.outPos, g_s.inIdx, v, t, g_s.nrm);
+    return commit(v, t);
+  }
+  const Box b = meshBounds(g_s.inPos, v);
+  const float minY = b.lo.y, maxY = b.hi.y;
+  const float spanY = maxf(maxY - minY, 1e-4f);
+  const float midY = minY + spanY * 0.5f;
+  const Vec3 center = b.center();
+
+  const float bendRad = bendDeg * kDeg2Rad * inf;
+  const float twistRad = twistDeg * kDeg2Rad * inf;
+
+  Mat4 pivotToOrigin = matIdentity();
+  pivotToOrigin.e[12] = -center.x;
+  pivotToOrigin.e[13] = -midY;
+  pivotToOrigin.e[14] = -center.z;
+  Mat4 originToPivot = matIdentity();
+  originToPivot.e[12] = center.x;
+  originToPivot.e[13] = midY;
+  originToPivot.e[14] = center.z;
+  Mat4 bend = matIdentity();
+  bend.e[0] = cosf(bendRad);  bend.e[1] = sinf(bendRad);
+  bend.e[4] = -sinf(bendRad); bend.e[5] = cosf(bendRad);
+  Mat4 twist = matIdentity();
+  twist.e[0] = cosf(twistRad); twist.e[2] = -sinf(twistRad);
+  twist.e[8] = sinf(twistRad); twist.e[10] = cosf(twistRad);
+
+  const Mat4 bone = matMultiply(
+    sessionMatrix(),
+    matMultiply(
+      matMultiply(originToPivot, bend),
+      matMultiply(twist, pivotToOrigin)
+    )
+  );
+
+  const float* e = bone.e;
+  const float trace = e[0] + e[5] + e[10];
+  float qx, qy, qz, qw;
+  if (trace > 0.0f) {
+    const float s = 0.5f / sqrtf(trace + 1.0f);
+    qw = 0.25f / s; qx = (e[6] - e[9]) * s; qy = (e[8] - e[2]) * s; qz = (e[1] - e[4]) * s;
+  } else if (e[0] > e[5] && e[0] > e[10]) {
+    const float s = 2.0f * sqrtf(1.0f + e[0] - e[5] - e[10]);
+    qw = (e[6] - e[9]) / s; qx = 0.25f * s; qy = (e[4] + e[1]) / s; qz = (e[8] + e[2]) / s;
+  } else if (e[5] > e[10]) {
+    const float s = 2.0f * sqrtf(1.0f + e[5] - e[0] - e[10]);
+    qw = (e[8] - e[2]) / s; qx = (e[4] + e[1]) / s; qy = 0.25f * s; qz = (e[9] + e[6]) / s;
+  } else {
+    const float s = 2.0f * sqrtf(1.0f + e[10] - e[0] - e[5]);
+    qw = (e[1] - e[4]) / s; qx = (e[8] + e[2]) / s; qy = (e[9] + e[6]) / s; qz = 0.25f * s;
+  }
+  {
+    const float qLen = sqrtf(qx * qx + qy * qy + qz * qz + qw * qw);
+    const float inv = qLen > 1e-8f ? 1.0f / qLen : 1.0f;
+    qx *= inv; qy *= inv; qz *= inv; qw *= inv;
+    if (qw < 0.0f) { qx = -qx; qy = -qy; qz = -qz; qw = -qw; }
+  }
+  const float tx = e[12], ty = e[13], tz = e[14];
+  const float dqx = 0.5f * (tx * qw + ty * qz - tz * qy);
+  const float dqy = 0.5f * (-tx * qz + ty * qw + tz * qx);
+  const float dqz = 0.5f * (tx * qy - ty * qx + tz * qw);
+  const float dqw = 0.5f * (-tx * qx - ty * qy - tz * qz);
+
+  for (uint32_t i = 0; i < v; ++i) {
+    const Vec3 p = readPos(g_s.inPos, i);
+    const float tNorm = clampf((p.y - minY) / spanY, 0.0f, 1.0f);
+    const float w1 = tNorm * tNorm * (3.0f - 2.0f * tNorm);
+    const float w0 = 1.0f - w1;
+    if (!preserveVolume) {
+      const Vec3 moved = matPoint(bone, p);
+      writePos(g_s.outPos, i, lerpv(p, moved, w1));
+      continue;
+    }
+    float rx = qx * w1, ry = qy * w1, rz = qz * w1, rw = w0 + qw * w1;
+    float ex = dqx * w1, ey = dqy * w1, ez = dqz * w1, ew = dqw * w1;
+    const float n = sqrtf(rx * rx + ry * ry + rz * rz + rw * rw);
+    const float invN = 1.0f / (n > 1e-8f ? n : 1.0f);
+    rx *= invN; ry *= invN; rz *= invN; rw *= invN;
+    ex *= invN; ey *= invN; ez *= invN; ew *= invN;
+    const float btx = 2.0f * (-ew * rx + ex * rw - ey * rz + ez * ry);
+    const float bty = 2.0f * (-ew * ry + ex * rz + ey * rw - ez * rx);
+    const float btz = 2.0f * (-ew * rz - ex * ry + ey * rx + ez * rw);
+    const float ix = rw * p.x + ry * p.z - rz * p.y;
+    const float iy = rw * p.y + rz * p.x - rx * p.z;
+    const float iz = rw * p.z + rx * p.y - ry * p.x;
+    const float iw = -rx * p.x - ry * p.y - rz * p.z;
+    writePos(g_s.outPos, i, Vec3(
+      ix * rw + iw * -rx + iy * -rz - iz * -ry + btx,
+      iy * rw + iw * -ry + iz * -rx - ix * -rz + bty,
+      iz * rw + iw * -rz + ix * -ry - iy * -rx + btz
+    ));
+  }
+  computeNormals(g_s.outPos, g_s.inIdx, v, t, g_s.nrm);
+  return commit(v, t);
+}
+
+int32_t shrinkwrapApply(uint32_t mode, float offset) {
+  if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx || !g_s.tgtWorld) return -3;
+  const uint32_t tv = g_s.tgtCounts[0], tt = g_s.tgtCounts[1];
+  if (tv < 3u || tt == 0u) return -3;
+  transformTargetWorld();
+
+  float* normals = modArray<float>(tt * 3u);
+  float* scales = modArray<float>(tt);
+  if (!normals || !scales) return -2;
+  uint32_t validTris = 0;
+  for (uint32_t tri = 0; tri < tt; ++tri) {
+    const uint32_t ia = g_s.tgtIdx[tri * 3u], ib = g_s.tgtIdx[tri * 3u + 1u], ic = g_s.tgtIdx[tri * 3u + 2u];
+    if (ia >= tv || ib >= tv || ic >= tv) { scales[tri] = 0.0f; continue; }
+    const Vec3 a = readPos(g_s.tgtWorld, ia), b = readPos(g_s.tgtWorld, ib), c = readPos(g_s.tgtWorld, ic);
+    const Vec3 cr = cross(b - a, c - a);
+    const float len = length(cr);
+    if (len <= 1e-10f) { scales[tri] = 0.0f; continue; }
+    writePos(normals, tri, cr * (1.0f / len));
+    scales[tri] = sqrtf(len * 0.5f);
+    validTris++;
+  }
+  if (!validTris) return -4;
+
+  for (uint32_t v = 0; v < g_s.vc; ++v) {
+    const Vec3 q = readPos(g_s.inPos, v);
+    float bestD = 1e30f;
+    Vec3 best{0.0f, 0.0f, 0.0f};
+    uint32_t bestTri = 0xFFFFFFFFu;
+    for (uint32_t tri = 0; tri < tt; ++tri) {
+      if (scales[tri] <= 0.0f) continue;
+      const Vec3 a = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u]);
+      const Vec3 b = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 1u]);
+      const Vec3 c = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 2u]);
+      if (triangleBoxDistanceSq(q, a, b, c) > bestD) continue;
+      const Vec3 cp = closestPointTriangle(q, a, b, c);
+      const float d = length_sq(q - cp);
+      if (d < bestD) { bestD = d; best = cp; bestTri = tri; }
+    }
+    if (bestTri == 0xFFFFFFFFu) { writePos(g_s.outPos, v, q); continue; }
+    Vec3 n = readPos(normals, bestTri);
+    const Vec3 delta = q - best;
+    if (mode == 2u && dot(delta, n) < 0.0f) n = n * -1.0f;
+    if (mode == 1u) {
+      if (dot(delta, n) < offset) writePos(g_s.outPos, v, best + n * offset);
+      else writePos(g_s.outPos, v, q);
+    } else {
+      writePos(g_s.outPos, v, best + n * offset);
+    }
+  }
+  computeNormals(g_s.outPos, g_s.inIdx, g_s.vc, g_s.tc, g_s.nrm);
+  return commit(g_s.vc, g_s.tc);
+}
+
+int32_t surfaceDeformBind() {
+  if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx || !g_s.tgtWorld) return -3;
+  const uint32_t tv = g_s.tgtCounts[0], tt = g_s.tgtCounts[1];
+  if (tv < 3u || tt == 0u || g_s.vc == 0u) return -3;
+  transformTargetWorld();
+
+  uint32_t* triList = modArray<uint32_t>(tt * 3u);
+  float* triNormals = modArray<float>(tt * 3u);
+  float* triScale = modArray<float>(tt);
+  if (!triList || !triNormals || !triScale) return -2;
+  uint32_t kept = 0;
+  for (uint32_t tri = 0; tri < tt; ++tri) {
+    const uint32_t ia = g_s.tgtIdx[tri * 3u], ib = g_s.tgtIdx[tri * 3u + 1u], ic = g_s.tgtIdx[tri * 3u + 2u];
+    if (ia >= tv || ib >= tv || ic >= tv) continue;
+    const Vec3 a = readPos(g_s.tgtWorld, ia), b = readPos(g_s.tgtWorld, ib), c = readPos(g_s.tgtWorld, ic);
+    const Vec3 cr = cross(b - a, c - a);
+    const float len = length(cr);
+    if (len <= 1e-10f) continue;
+    triList[kept * 3u] = ia; triList[kept * 3u + 1u] = ib; triList[kept * 3u + 2u] = ic;
+    writePos(triNormals, kept, cr * (1.0f / len));
+    triScale[kept] = sqrtf(len * 0.5f);
+    kept++;
+  }
+  if (kept == 0u) return -4;
+
+  uint32_t* ord = modArray<uint32_t>(g_s.vc);
+  float* bary = modArray<float>(g_s.vc * 3u);
+  float* scalars = modArray<float>(g_s.vc * 2u);
+  if (!ord || !bary || !scalars) return -2;
+
+  for (uint32_t v = 0; v < g_s.vc; ++v) {
+    const Vec3 q = readPos(g_s.inPos, v);
+    float bestD = 1e30f;
+    Vec3 best{0.0f, 0.0f, 0.0f};
+    uint32_t bestTri = 0u;
+    for (uint32_t k = 0; k < kept; ++k) {
+      const Vec3 a = readPos(g_s.tgtWorld, triList[k * 3u]);
+      const Vec3 b = readPos(g_s.tgtWorld, triList[k * 3u + 1u]);
+      const Vec3 c = readPos(g_s.tgtWorld, triList[k * 3u + 2u]);
+      if (triangleBoxDistanceSq(q, a, b, c) > bestD) continue;
+      const Vec3 cp = closestPointTriangle(q, a, b, c);
+      const float d = length_sq(q - cp);
+      if (d < bestD) { bestD = d; best = cp; bestTri = k; }
+    }
+    const Vec3 bc = barycentricCoords(best, readPos(g_s.tgtWorld, triList[bestTri * 3u]),
+      readPos(g_s.tgtWorld, triList[bestTri * 3u + 1u]), readPos(g_s.tgtWorld, triList[bestTri * 3u + 2u]));
+    const Vec3 n = readPos(triNormals, bestTri);
+    ord[v] = bestTri;
+    bary[v * 3u] = bc.x; bary[v * 3u + 1u] = bc.y; bary[v * 3u + 2u] = bc.z;
+    scalars[v * 2u] = dot(q - best, n);
+    scalars[v * 2u + 1u] = maxf(triScale[bestTri], 1e-5f);
+  }
+
+  g_s.sdOrd = ord; g_s.sdBary = bary; g_s.sdScalars = scalars;
+  g_s.sdTris = triList; g_s.sdTriN = kept; g_s.sdBound = g_s.vc;
+  return 0;
+}
+
+int32_t surfaceDeformApply(float strength) {
+  if (!g_s.sdOrd || !g_s.sdBary || !g_s.sdScalars || !g_s.sdTris) return -3;
+  if (g_s.sdBound != g_s.vc || g_s.sdTriN == 0u) return -3;
+  if (!g_s.tgtCounts || !g_s.tgtWorld) return -3;
+  transformTargetWorld();
+  const float blend = clampf(strength, 0.0f, 1.0f);
+  for (uint32_t v = 0; v < g_s.vc; ++v) {
+    const uint32_t t = g_s.sdOrd[v];
+    if (t >= g_s.sdTriN) { writePos(g_s.outPos, v, readPos(g_s.inPos, v)); continue; }
+    const Vec3 a = readPos(g_s.tgtWorld, g_s.sdTris[t * 3u]);
+    const Vec3 b = readPos(g_s.tgtWorld, g_s.sdTris[t * 3u + 1u]);
+    const Vec3 c = readPos(g_s.tgtWorld, g_s.sdTris[t * 3u + 2u]);
+    Vec3 n = cross(b - a, c - a);
+    const float len = length(n);
+    const float refScale = maxf(g_s.sdScalars[v * 2u + 1u], 1e-5f);
+    const float curScale = len > 1e-10f ? sqrtf(len * 0.5f) : refScale;
+    if (len > 1e-10f) n = n * (1.0f / len); else n = Vec3(0.0f, 1.0f, 0.0f);
+    const float ratio = clampf(curScale / refScale, 0.25f, 4.0f);
+    const float bu = g_s.sdBary[v * 3u], bv = g_s.sdBary[v * 3u + 1u], bw = g_s.sdBary[v * 3u + 2u];
+    const float off = g_s.sdScalars[v * 2u] * ratio;
+    const Vec3 target(
+      a.x * bu + b.x * bv + c.x * bw + n.x * off,
+      a.y * bu + b.y * bv + c.y * bw + n.y * off,
+      a.z * bu + b.z * bv + c.z * bw + n.z * off
+    );
+    const Vec3 p = readPos(g_s.inPos, v);
+    writePos(g_s.outPos, v, lerpv(p, target, blend));
+  }
+  computeNormals(g_s.outPos, g_s.inIdx, g_s.vc, g_s.tc, g_s.nrm);
+  return commit(g_s.vc, g_s.tc);
+}
+
+
 } // namespace
 
 extern "C" {
@@ -336,6 +801,11 @@ extern "C" {
 FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, uint32_t has_uv) {
   g_s.ready = false;
   g_s.hasUv = has_uv != 0;
+  g_s.matrix = nullptr;
+  g_s.tgtPos = nullptr; g_s.tgtIdx = nullptr; g_s.tgtWorld = nullptr; g_s.tgtCounts = nullptr;
+  g_s.sdOrd = nullptr; g_s.sdBary = nullptr; g_s.sdScalars = nullptr; g_s.sdTris = nullptr;
+  g_s.sdBound = 0; g_s.sdTriN = 0;
+  g_s.latRest = nullptr; g_s.latDef = nullptr; g_s.latN = 0;
   if (vert_capacity == 0 || tri_capacity == 0) return -3;
   if (vert_capacity > MOD_MAX_VERTS || tri_capacity > MOD_MAX_TRIS) return -2;
 
@@ -345,7 +815,7 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
   bytes += static_cast<uint64_t>(uvCap) * 4u * 2u;
   bytes += static_cast<uint64_t>(t) * 3u * 4u * 2u;
   bytes += 8u;
-  if (bytes > MOD_ARENA_BUDGET - 8u * 1024u * 1024u) return -2;
+  if (bytes > MOD_ARENA_BUDGET - 2u * 1024u * 1024u) return -2;
 
   fe_arena_reset();
   g_mod_used = 0;
@@ -361,7 +831,12 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
   g_s.outIdx = modArray<uint32_t>(t * 3u);
   g_s.nrm = modArray<float>(v * 3u);
   g_s.counts = modArray<uint32_t>(2u);
-  if (!g_s.inPos || !g_s.inUv || !g_s.inIdx || !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts) {
+  g_s.matrix = modArray<float>(16u);
+  if (g_s.matrix) {
+    for (uint32_t i = 0; i < 16u; ++i) g_s.matrix[i] = 0.0f;
+    g_s.matrix[0] = 1.0f; g_s.matrix[5] = 1.0f; g_s.matrix[10] = 1.0f; g_s.matrix[15] = 1.0f;
+  }
+  if (!g_s.inPos || !g_s.inUv || !g_s.inIdx || !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts || !g_s.matrix) {
     g_s.ready = false;
     return -2;
   }
@@ -884,5 +1359,123 @@ FE_EXPORT int32_t fe_mod_decimate(float ratio, int32_t preserve_boundary) {
   if (outV == 0 || outT == 0) return -4;
   return commit(outV, outT);
 }
+
+/* =========================================================================
+ * Exported deformation kernel entry points
+ * ========================================================================= */
+
+FE_EXPORT uint32_t fe_mod_matrix_ptr(void) {
+  return g_s.matrix ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.matrix)) : 0u;
+}
+
+FE_EXPORT int32_t fe_mod_target_begin(uint32_t vert_count, uint32_t tri_count) {
+  if (!g_s.ready) return -1;
+  if (vert_count < 3u || tri_count == 0u) return -3;
+  if (vert_count > MOD_MAX_VERTS || tri_count > MOD_MAX_TRIS) return -2;
+  float* pos = modArray<float>(vert_count * 3u);
+  uint32_t* idx = modArray<uint32_t>(tri_count * 3u);
+  float* world = modArray<float>(vert_count * 3u);
+  uint32_t* counts = modArray<uint32_t>(2u);
+  if (!pos || !idx || !world || !counts) return -2;
+  g_s.tgtPos = pos;
+  g_s.tgtIdx = idx;
+  g_s.tgtWorld = world;
+  g_s.tgtCounts = counts;
+  counts[0] = vert_count;
+  counts[1] = tri_count;
+  return 0;
+}
+
+FE_EXPORT uint32_t fe_mod_target_counts_ptr(void) {
+  return g_s.tgtCounts ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtCounts)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_target_pos_ptr(void) {
+  return g_s.tgtPos ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtPos)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_target_idx_ptr(void) {
+  return g_s.tgtIdx ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtIdx)) : 0u;
+}
+
+FE_EXPORT int32_t fe_mod_lattice_cage(uint32_t nx, uint32_t ny, uint32_t nz, float pad_ratio) {
+  if (!g_s.ready) return -1;
+  return latticeCageFromBounds(nx, ny, nz, pad_ratio);
+}
+
+FE_EXPORT int32_t fe_mod_lattice_alloc(uint32_t point_count) {
+  if (!g_s.ready) return -1;
+  if (point_count < 2u || point_count > 4096u) return -3;
+  float* rest = modArray<float>(point_count * 3u);
+  float* def = modArray<float>(point_count * 3u);
+  if (!rest || !def) return -2;
+  g_s.latRest = rest;
+  g_s.latDef = def;
+  g_s.latN = point_count;
+  return 0;
+}
+
+FE_EXPORT uint32_t fe_mod_lattice_rest_ptr(void) {
+  return g_s.latRest ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.latRest)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_lattice_deform_ptr(void) {
+  return g_s.latDef ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.latDef)) : 0u;
+}
+
+FE_EXPORT int32_t fe_mod_lattice_apply(uint32_t nx, uint32_t ny, uint32_t nz, float strength) {
+  if (!g_s.ready) return -1;
+  return latticeApply(nx, ny, nz, strength);
+}
+
+FE_EXPORT int32_t fe_mod_armature(float influence, int32_t preserve_volume, float bend_deg, float twist_deg) {
+  if (!g_s.ready) return -1;
+  return armatureApply(influence, preserve_volume, bend_deg, twist_deg);
+}
+
+FE_EXPORT int32_t fe_mod_shrinkwrap(uint32_t mode, float offset) {
+  if (!g_s.ready) return -1;
+  return shrinkwrapApply(mode, offset);
+}
+
+FE_EXPORT int32_t fe_mod_sd_bind(void) {
+  if (!g_s.ready) return -1;
+  return surfaceDeformBind();
+}
+
+FE_EXPORT int32_t fe_mod_sd_upload(uint32_t vert_count, uint32_t tri_count) {
+  if (!g_s.ready) return -1;
+  if (vert_count == 0u || tri_count == 0u) return -3;
+  if (vert_count != g_s.vc) return -3;
+  if (vert_count > MOD_MAX_VERTS || tri_count > MOD_MAX_TRIS) return -2;
+  uint32_t* ord = modArray<uint32_t>(vert_count);
+  float* bary = modArray<float>(vert_count * 3u);
+  float* scalars = modArray<float>(vert_count * 2u);
+  uint32_t* tris = modArray<uint32_t>(tri_count * 3u);
+  if (!ord || !bary || !scalars || !tris) return -2;
+  g_s.sdOrd = ord;
+  g_s.sdBary = bary;
+  g_s.sdScalars = scalars;
+  g_s.sdTris = tris;
+  g_s.sdBound = vert_count;
+  g_s.sdTriN = tri_count;
+  return 0;
+}
+
+FE_EXPORT int32_t fe_mod_sd_apply(float strength) {
+  if (!g_s.ready) return -1;
+  return surfaceDeformApply(strength);
+}
+
+FE_EXPORT uint32_t fe_mod_sd_ordinal_ptr(void) {
+  return g_s.sdOrd ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.sdOrd)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_sd_bary_ptr(void) {
+  return g_s.sdBary ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.sdBary)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_sd_scalars_ptr(void) {
+  return g_s.sdScalars ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.sdScalars)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_sd_tris_ptr(void) {
+  return g_s.sdTris ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.sdTris)) : 0u;
+}
+FE_EXPORT uint32_t fe_mod_sd_tri_count(void) { return g_s.sdTriN; }
 
 } // extern "C"
