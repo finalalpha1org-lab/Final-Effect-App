@@ -182,3 +182,96 @@ test('the studio boots from the saved document before it generates the world', (
   assert.ok(panel.includes('pagehide'), 'an unload flushes a pending save');
   assert.ok(sw.includes("'final-effect-cpp-v24'"), 'the cache is bumped whenever the shipped shell changes');
 });
+
+test('a partial biome mix is merged, and the grown-flora settings survive the trip', () => {
+  const { context, calls } = boot();
+  const doc = {
+    app: 'final-effect', kind: 'landscape-settings', version: 1,
+    studio: { seed: 5, floraHeight: 1.4, floraDensity: 0.7, floraRules: 'X -> F[+X]F[-X]+X', waveAuto: true },
+    openWorld: { sizeKm: 20, biomeMix: { hills: 1.6 } },
+    climate: { wind: 11 }
+  };
+  vm.runInContext(`applyStudioConfig(${JSON.stringify(doc)})`, context);
+  assert.equal(context.OW.config.sizeKm, 20);
+  assert.equal(context.OW.config.biomeMix.hills, 1.6, 'the named influence is applied');
+  assert.equal(context.OW.config.biomeMix.alpine, 1, 'and the three it does not mention are untouched');
+  assert.equal(context.OW.config.biomeMix.volc, 1);
+  assert.equal(calls.restored.length, 1);
+  assert.equal(calls.restored[0].floraHeight, 1.4, 'the grown-flora sliders reach the restore path');
+  assert.equal(calls.restored[0].floraRules, 'X -> F[+X]F[-X]+X', 'so does the grammar text');
+  assert.equal(calls.restored[0].waveAuto, true, 'and the sea-follows-the-weather switch');
+
+  /* The live capture and restore in the studio carry the same three fields. */
+  const capture = readFileSync('terrain-main-04.js', 'utf8');
+  for (const key of ['floraHeight', 'floraDensity', 'floraRules', 'waveAuto']) {
+    assert.ok(capture.includes(key), `${key} is captured and restored by the studio itself`);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* World size: a streamed bound, not an allocation                     */
+/* ------------------------------------------------------------------ */
+
+function worldContext() {
+  const source = readFileSync('terrain-main-03.js', 'utf8');
+  const block = source.slice(source.indexOf('function owChunkBytes'), source.indexOf('window.__feWorldMemory'));
+  const calls = { disposed: 0, refreshed: 0, radius: 0, status: [] };
+  const chunk = (cx, cz, n = 65) => ({
+    key: cx + ',' + cz, cx, cz, size: 256, segments: n - 1,
+    heights: new Float32Array(n * n), surfaceWeights: new Float32Array(n * n * 12),
+    group: { parent: null }, terrain: { geometry: { dispose() {} } }, foliageMeshes: []
+  });
+  const context = {
+    console, Math, Number, String, Object, Array,
+    cl: (v, a, b) => Math.min(b, Math.max(a, v)),
+    OW: {
+      active: true, chunkSize: 256, config: { sizeKm: 12 }, currentConfig: { sizeKm: 12 },
+      chunks: new Map(), editStore: new Map(), lastCenterX: 3, lastCenterZ: 3
+    },
+    owValidChunk(cx, cz) {
+      const half = context.OW.config.sizeKm * 500, edge = 128;
+      return Math.abs(cx * 256) - edge <= half && Math.abs(cz * 256) - edge <= half;
+    },
+    owDisposeChunk(c) { calls.disposed++; context.OW.editStore.set(c.key, { cx: c.cx, cz: c.cz, heights: c.heights, surfaceWeights: c.surfaceWeights }); },
+    owRefresh(force) { calls.refreshed++; calls.force = force; },
+    setOpenWorldWaterRadius() { calls.radius++; },
+    owStatus(text) { calls.status.push(text); }
+  };
+  context.window = context;
+  context.__chunk = chunk;
+  context.__calls = calls;
+  vm.createContext(context);
+  vm.runInContext(block, context);
+  return context;
+}
+
+test('a bigger world streams further without using more memory', () => {
+  const ctx = worldContext();
+  for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) ctx.OW.chunks.set(cx + ',' + cz, ctx.__chunk(cx, cz));
+  const before = ctx.owMemory();
+  assert.equal(before.chunks, 9);
+  assert.equal(before.bytes, 9 * (65 * 65 * 4 + 65 * 65 * 12 * 4), 'the resident set is the nine chunks, nothing else');
+
+  assert.equal(ctx.owSetWorldSize(50), true);
+  assert.equal(ctx.OW.config.sizeKm, 50);
+  assert.equal(ctx.__calls.disposed, 0, 'growing keeps the chunks you are standing on');
+  assert.equal(ctx.__calls.refreshed, 1, 'the streamer is asked to fill the new ring');
+  assert.equal(ctx.__calls.force, true);
+  assert.equal(ctx.__calls.radius, 1, 'the water plane is re-sized, not re-allocated by area');
+  assert.deepEqual(ctx.owMemory(), before, 'a 50 km world costs exactly what a 12 km world cost');
+
+  assert.equal(ctx.owSetWorldSize(60), false, 'a value outside the range is not a change');
+  ctx.OW.chunks.set('5,0', ctx.__chunk(5, 0));
+  assert.equal(ctx.owSetWorldSize(0), true, 'zero clamps to the 1 km minimum');
+  assert.equal(ctx.OW.config.sizeKm, 1);
+  assert.equal(ctx.__calls.disposed, 1, 'shrinking disposes only the chunks now outside the edge');
+  assert.equal(ctx.OW.chunks.size, 9, 'the resident ring survives');
+  assert.equal(ctx.OW.editStore.size, 1, 'the edited chunk moves to the edit store rather than leaking');
+  assert.match(ctx.__calls.status.join(' '), /World size 1 km/);
+});
+
+test('the sheet routes world size through the streamer and says what it costs', () => {
+  assert.match(panel, /owSetWorldSize\(v\)/, 'the slider calls the streamer instead of writing the field');
+  assert.match(panel, /larger world streams further instead of using more memory/, 'the sheet explains the bound');
+  assert.match(readFileSync('terrain-main-03.js', 'utf8'), /window\.__feWorldMemory=owMemory/, 'the memory report is reachable for diagnostics');
+});

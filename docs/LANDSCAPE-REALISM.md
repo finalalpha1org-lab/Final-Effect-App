@@ -132,5 +132,5 @@ across a reload.
 ```bash
 node --test tests/landscape-realism.test.mjs   # 14 tests
 node --test tests/landscape-flora.test.mjs     # 18 tests
-npm test                                       # 341 tests
+npm test                                       # 351 tests
 ```

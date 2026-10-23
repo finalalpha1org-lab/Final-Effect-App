@@ -304,6 +304,22 @@ function adoptGeometry(K,m,geo){
  K.selectionBounds=null;K.selectionGrid=null;K.selectionGridDirty=true;
 }
 let grownTries=0;
+/* Re-grows the species that opt into the grown kernel: the cached parts for the
+   requested kinds are dropped and applyGrown fills them again. Rocks keep their
+   cached meshes, and instances keep their matrices, so a slider move only
+   replaces geometry. */
+function regrowFlora(kinds){
+ const list=Array.isArray(kinds)?kinds:null;
+ let touched=0;
+ for(const job of GROWN_JOBS){
+  if(job.rock)continue;
+  if(list&&!list.includes(job.kind))continue;
+  job.parts=[];touched++;
+ }
+ if(touched)applyGrown();
+ return touched;
+}
+window.__feRegrowFlora=regrowFlora;
 function applyGrown(){
  if(!GROWN_JOBS.length)return;
  let pending=0;

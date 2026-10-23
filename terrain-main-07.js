@@ -26,14 +26,15 @@ plants:()=>[chips([['paint','🖌 Paint mode'],['select','👆 Tap model to edit
 el(`<div class="hint">Foliage and trees keep the selected geometry at all viewing distances. ${OW.active?'Open World keeps plants chunk-local and enforces a 12,000-instance-per-species safety cap per active chunk.':'Manual placement has no fixed instance-count cap; device memory is the practical limit.'} Paint mode adds foliage without removing earlier plants. Painting only adds; use Erase to remove earlier plants. Select & edit mode edits or replaces only the tapped plant.</div>`),
 G(sl('Brush radius',2,20,1,br.r,v=>br.r=v),sl('Brush density',1,30,1,br.den,v=>br.den=v),sl('Shallow-water grass depth (m)',.5,3,.1,shallowBrushDepth,v=>{shallowBrushDepth=v;try{localStorage.setItem('final3d.coastalGrassDepth.v1',String(v))}catch{}}),sl('Min tree spacing (auto-scatter)',0,4,.1,br.minGap,v=>br.minGap=v)),
 G(sl('Auto-scatter density ×',1,2.5,.05,scatterDensity,v=>scatterDensity=v),sl('Grove clustering',0,1,.05,scatterClustering,v=>scatterClustering=v)),
-el(`<div class="hint">Foliage bases follow terrain; brush painting adds without removing prior plants. Manual foliage can be painted across dry terrain, including beach sand and steep slopes; grass/tall grass also paints shallow seabed up to ${shallowBrushDepth.toFixed(1)} m. Deep water stays excluded; auto-scatter stays on land. Min tree spacing applies only to auto-scatter.</div>`),...plantCtl(),chips([['spring','🌱 Spring'],['summer','☀️ Summer'],['autumn','🍂 Autumn'],['winter','❄️ Winter']],season,setSeason),
+el(`<div class="hint">Foliage bases follow terrain; brush painting adds without removing prior plants. Manual foliage can be painted across dry terrain, including beach sand and steep slopes; grass/tall grass also paints shallow seabed up to ${shallowBrushDepth.toFixed(1)} m. Deep water stays excluded; auto-scatter stays on land. Min tree spacing applies only to auto-scatter.</div>`),...floraGrowthControls(),...plantCtl(),chips([['spring','🌱 Spring'],['summer','☀️ Summer'],['autumn','🍂 Autumn'],['winter','❄️ Winter']],season,setSeason),
 btn(OW.active?'🌱 Add natural scatter to loaded chunks':'🌱 Auto-scatter (natural)',()=>{push();if(OW.active)OW.scatterActive();else scatter(1)}),
 btn('Clear all foliage',()=>{push();selectedFoliage=null;foliageSelectMode=false;ring.visible=false;updateFoliageGlow();if(OW.active)OW.clearAllFoliage();else for(const k in KIND){KIND[k].list=[];sync(k)}setNav();build()})],
 sky:()=>[el('<div class="hint">Day/night cycle · orbiting suns, moons and planets share this clock</div>'),chips([['cycle',SKY.cycle.on?'Auto day/night: on':'Auto day/night: off']],0,()=>{SKY.cycle.on=!SKY.cycle.on;SKY.cycle.lastUpdate=0;updSky()}),G(sl('Day length (hours)',1,168,1,SKY.cycle.length/3600,v=>{SKY.cycle.length=v*3600}),sl('Cycle speed ×',.1,5,.1,SKY.cycle.speed,v=>{SKY.cycle.speed=v}),sl('Time of day',0,24,.1,tod,v=>{tod=v;updSky()}),sl('Sun angle',0,360,5,az,v=>{az=v;updSky()}),sl('Fog',0,20,.5,fogD*1000,v=>{fogD=v/1e3;updSky()})),...lightingCtl()],
 quality:()=>qualityCtl(),
 water:()=>[el('<div class="hint">WebGL/PBR MeshPhysical water: a three-cascade Tessendorf ocean uses the Phillips wind spectrum, gravity dispersion and CPU inverse 2D FFTs feed GPU vertex displacement. Ocean, Lagoon and Murky have distinct absorption colors, turbidity, roughness, reflection, refraction and wave profiles. World-space triplanar micro-normal/roughness detail, Fresnel, shoreline foam and dynamic CubeCamera environment reflections of the terrain, foliage and objects add surface detail. It is spectral ocean synthesis, not a full Navier–Stokes/CFD solver or a guarantee of photographic realism on every device.</div>'),chips([[0,'Ocean'],[1,'Lagoon'],[2,'Murky'],['v',water.visible?'👁 Shown':'Hidden']],wp,v=>v=='v'?water.visible=!water.visible:setWater(v)),
-G(sl('Level',OW.active?-80:-6,8,.1,wl,v=>{wl=v;wlUserSet=true;if(OW.active){OW.config.waterLevel=v;if(OW.currentConfig)OW.currentConfig.waterLevel=v}water.position.y=v;U.wy.value=v;upd()}),sl('Wave height',0,2.5,.05,ampUser,v=>{ampUser=v;U.amp.value=v}),sl('Wave speed',0,5,.1,wspd,v=>wspd=v),sl('Wave chop',0,.6,.02,waveChop,v=>{waveChop=v;U.uChop.value=v}),sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Water clarity',.3,5,.1,U.clar.value,v=>U.clar.value=v)),
-G(sl('Wave period (s)',2,18,.1,waterWavePeriod,v=>{waterWavePeriod=v;U.uWavePeriod.value=v}),sl('Wave scale ×',.4,2,.05,waterWaveScale,v=>{waterWaveScale=v;U.uWaveScale.value=v}),sl('Wind speed (m/s)',0,30,.5,waterWindSpeed,v=>{waterWindSpeed=v;U.uWindSpeed.value=v*windUser}),sl('Wind direction °',0,360,1,waterWindDir,v=>{waterWindDir=v;U.uWindDir.value.set(Math.cos(v*Math.PI/180),Math.sin(v*Math.PI/180))})),
+G(sl('Level',OW.active?-80:-6,8,.1,wl,v=>{wl=v;wlUserSet=true;if(OW.active){OW.config.waterLevel=v;if(OW.currentConfig)OW.currentConfig.waterLevel=v}water.position.y=v;U.wy.value=v;upd()}),sl('Wave height',0,2.5,.05,ampUser,v=>{ampUser=v;U.amp.value=v;waveAuto=false;updateSeaState()}),sl('Wave speed',0,5,.1,wspd,v=>wspd=v),sl('Wave chop',0,.6,.02,waveChop,v=>{waveChop=v;U.uChop.value=v;updateSeaState()}),sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Water clarity',.3,5,.1,U.clar.value,v=>U.clar.value=v)),
+G(sl('Wave period (s)',2,18,.1,waterWavePeriod,v=>{waterWavePeriod=v;U.uWavePeriod.value=v;waveAuto=false;updateSeaState()}),sl('Wave scale ×',.4,2,.05,waterWaveScale,v=>{waterWaveScale=v;U.uWaveScale.value=v}),sl('Wind speed (m/s)',0,30,.5,waterWindSpeed,v=>{waterWindSpeed=v;U.uWindSpeed.value=v*windUser;waveAuto=false;updateSeaState()}),sl('Wind direction °',0,360,1,waterWindDir,v=>{waterWindDir=v;U.uWindDir.value.set(Math.cos(v*Math.PI/180),Math.sin(v*Math.PI/180))})),
+el(`<div class="hint" id="fe-sea-state">${seaStateText()}</div>`),chips([['auto','Waves follow the weather']],waveAuto?'auto':'',v=>{waveAuto=!waveAuto;waveAutoApplied=-1;if(waveAuto){stepWaveClimate();msg('Waves now follow the climate wind')}else msg('Waves keep their own wind speed')}),el('<div class="hint">A fully developed sea: the height, the period and the wavelength are all derived from the same wind speed, so the sliders and the spectrum cannot disagree.</div>'),
 G(waterColorField('Shallow color',U.shal),waterColorField('Deep color',U.deep)),
 G(sl('Turbidity',0,1,.01,U.uTurbidity.value,v=>U.uTurbidity.value=v),sl('Transparency',0,1,.01,U.uTransparency.value,v=>U.uTransparency.value=v),sl('Surface roughness',.02,1,.01,U.uRoughness.value,v=>U.uRoughness.value=v),sl('Reflection intensity',0,1.5,.05,U.uReflect.value,v=>U.uReflect.value=v),sl('Refraction strength',0,1,.05,U.uRefraction.value,v=>U.uRefraction.value=v)),
 G(sl('Foam amount',0,1.5,.05,U.uFoamAmt.value,v=>U.uFoamAmt.value=v),sl('Crest threshold',.55,.98,.01,U.uFoamThreshold.value,v=>U.uFoamThreshold.value=v),sl('Shore foam width',.1,2,.05,U.uShoreFoam.value,v=>U.uShoreFoam.value=v)),
@@ -104,6 +105,11 @@ return o};
 {const _pt=PN.terrain;PN.terrain=()=>{const region=PLAN.landed,context=region?[el(`<div class="hint">Planet surface: ${region.c.kind} biome · ${Math.abs(region.lat).toFixed(1)}° ${region.lat>=0?'N':'S'}, ${Math.abs(region.lon).toFixed(1)}° ${region.lon>=0?'E':'W'} · seed ${Math.round(PLAN.seed)}</div>`),chips([['orbit','🪐 Return to planet orbit']],0,()=>{setTab('planet');planetEnter()})]:[];function runMapErosion(mode){const core=window.FELandscapeCore;if(!core.ready){showErr('C++ terrain engine is still loading');return}const ok=mode==='strata'?core.strata({n:N,size:S,heights:H,height:9,strength:.55,tiltX:.03,tiltZ:.012,warp:7}):core.erode({mode,n:N,size:S,heights:H,seed:(Math.round(seed*1000)+1)>>>0,droplets:12000,iterations:24,talus:Math.tan(.6),slump:.5});if(!ok){showErr('C++ erosion failed: '+(core.error||'unknown'));return}upd();msg('Whole-map '+(mode==='strata'?'strata terracing':mode==='thermal'?'thermal erosion':'hydraulic erosion')+' completed in C++');if(tab=='terrain')build()}
 return[...context,chips([['p','🪐 Create a whole planet']],0,()=>setTab('planet')),..._pt(),chips([['hydro','💧 Hydraulic erosion'],['thermal','⛰ Thermal erosion'],['strata','🪨 Strata terraces']],0,runMapErosion),el('<div class="hint">Whole-map erosion and strata terracing run in the C++ core. They modify terrain height and can be undone.</div>'),el('<div class="hint">Studio settings · every slider, the open-world setup and the climate are saved automatically as one JSON document and come back after a reload.</div>'),chips([['exp','Export settings JSON'],['imp','Load settings from JSON']],0,v=>{if(v==='exp')exportStudioSettings();else importStudioSettings()})]}}
 $('#cls').onclick=()=>$('#bw').click();
+function seaStateText(){
+ const p=wavePhysicsForWind(waterWindSpeed);
+ return`Wind ${p.wind.toFixed(1)} m/s · significant wave height ${ampUser.toFixed(2)} m · peak period ${waterWavePeriod.toFixed(1)} s · wavelength ${p.length.toFixed(0)} m`;
+}
+function updateSeaState(){const el=document.getElementById('fe-sea-state');if(el)el.textContent=seaStateText()}
 function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
 /* ---- studio settings: one JSON document -------------------------------
    Every landscape sheet writes straight into a live variable, so until now a
@@ -142,8 +148,10 @@ function applyStudioConfig(doc){
   if(Number.isFinite(doc.studio.seed))window.__feStartupSeed=doc.studio.seed;
   if(doc.openWorld&&typeof doc.openWorld==='object'){
     const c=OW.config;
-    for(const k in c)if(Object.prototype.hasOwnProperty.call(doc.openWorld,k)&&typeof doc.openWorld[k]===typeof c[k])c[k]=doc.openWorld[k];
-    if(doc.openWorld.biomeMix&&typeof doc.openWorld.biomeMix==='object')Object.assign(c.biomeMix,doc.openWorld.biomeMix);
+    for(const k in c){if(k==='biomeMix')continue;if(!Object.prototype.hasOwnProperty.call(doc.openWorld,k))continue;if(typeof doc.openWorld[k]===typeof c[k])c[k]=doc.openWorld[k]}
+    /* The biome mix is merged, never replaced: a document that names one
+       influence must not silently zero the other three. */
+    if(doc.openWorld.biomeMix&&typeof doc.openWorld.biomeMix==='object')for(const k in c.biomeMix)if(Number.isFinite(doc.openWorld.biomeMix[k]))c.biomeMix[k]=doc.openWorld.biomeMix[k];
   }
   const wx=window.FELandscapeWeather;
   if(wx&&doc.climate&&typeof doc.climate==='object'){
@@ -280,7 +288,7 @@ function applyClimateBiomes(){
   return {cells:total,tally,kept};
 }
 
-PN.openworld=()=>{const c=OW.config;return[el('<div class="hint">Separate seeded terrain streamed as 256 m chunks around the camera. Only a 3×3 neighborhood is active; deterministic chunks and edited terrain are retained independently of the normal island. Hills, Alpine, Desert and Volcano biomes blend naturally. Existing sky, weather, water, quality and foliage tools remain shared.</div>'),G(sl('World size (km)',1,50,1,c.sizeKm,v=>c.sizeKm=v),sl('Seed',1,999999,1,c.seed,v=>c.seed=v)),G(sl('Hills influence ×',0,2,.05,c.biomeMix.hills,v=>c.biomeMix.hills=v),sl('Alpine influence ×',0,2,.05,c.biomeMix.alpine,v=>c.biomeMix.alpine=v),sl('Desert influence ×',0,2,.05,c.biomeMix.desert,v=>c.biomeMix.desert=v),sl('Volcano influence ×',0,2,.05,c.biomeMix.volc,v=>c.biomeMix.volc=v)),G(sl('Natural biome blend',0,1,.05,c.blend,v=>c.blend=v),sl('Mountain height',0,100,1,c.mountainHeight,v=>c.mountainHeight=v),sl('Water coverage',0,100,1,c.waterCoverage,v=>c.waterCoverage=v),sl('Sea level (m)',-100,0,1,c.waterLevel,v=>c.waterLevel=v),sl('Vegetation density ×',0,2.5,.05,c.vegetationDensity,v=>c.vegetationDensity=v)),el('<div class="hint">World presets · all four biome systems remain available</div>'),chips([['temperate','Temperate'],['desert','Desert'],['alpine','Alpine'],['island','Island']],'',v=>{if(v==='temperate')Object.assign(c,{blend:.68,biomeMix:{hills:1.4,alpine:.9,desert:.55,volc:.4},mountainHeight:42,waterCoverage:28,waterLevel:-24,vegetationDensity:.95});else if(v==='desert')Object.assign(c,{blend:.42,biomeMix:{hills:.5,alpine:.2,desert:1.9,volc:.55},mountainHeight:35,waterCoverage:18,waterLevel:-26,vegetationDensity:.75});else if(v==='alpine')Object.assign(c,{blend:.35,biomeMix:{hills:.55,alpine:1.9,desert:.2,volc:.8},mountainHeight:82,waterCoverage:32,waterLevel:-28,vegetationDensity:.8});else Object.assign(c,{blend:.58,biomeMix:{hills:1.2,alpine:.55,desert:1.2,volc:.55},mountainHeight:48,waterCoverage:56,waterLevel:-32,vegetationDensity:.9})}),el('<div class="hint">Climate biomes · your painted layers stay exactly as they are until you apply the climate map. The action is undoable.</div>'),chips([['all','Apply to all ground'],['free','Fill unpainted ground only']],climateApplyMode,v=>{climateApplyMode=v}),btn('<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" style="vertical-align:-2px"><path d="M2 13c2-1 4-1.6 6-1.6S12.2 12 14 13"/><path d="M2.6 9.2c1.9-.9 3.9-1.4 5.4-1.4s3.5.5 5.4 1.4"/><path d="M4.6 5.6C5.6 4.2 7 3.4 8 3.4s2.4.8 3.4 2.2"/></svg> Apply Climate Biomes',()=>applyClimateBiomes()),el(`<div class="hint" id="owstatus">${OW.active?(OW.generating?'Streaming chunks…':OW.chunks.size+' chunks loaded'):OW.generated?'World generated · press Enter to resume':'Ready to generate'}</div>`),...(OW.active?[btn('🌿 Foliage & scatter settings',()=>setTab('plants'))]:[]),btn(OW.active?'Regenerate Open World Map':OW.generated?'Enter Open World':'Generate Open World Map',()=>OW.start()),btn('Return to default terrain',()=>{OW.deactivate();setTab('terrain')})]};
+PN.openworld=()=>{const c=OW.config;return[el('<div class="hint">Separate seeded terrain streamed as 256 m chunks around the camera. Only a 3×3 neighborhood is active; deterministic chunks and edited terrain are retained independently of the normal island. Hills, Alpine, Desert and Volcano biomes blend naturally. Existing sky, weather, water, quality and foliage tools remain shared.</div>'),G(sl('World size (km)',1,50,1,c.sizeKm,v=>{if(typeof owSetWorldSize==='function')owSetWorldSize(v);else c.sizeKm=v}),sl('Seed',1,999999,1,c.seed,v=>c.seed=v)),el('<div class="hint">Only the chunks around you are held in memory, so a larger world streams further instead of using more memory.</div>'),G(sl('Hills influence ×',0,2,.05,c.biomeMix.hills,v=>c.biomeMix.hills=v),sl('Alpine influence ×',0,2,.05,c.biomeMix.alpine,v=>c.biomeMix.alpine=v),sl('Desert influence ×',0,2,.05,c.biomeMix.desert,v=>c.biomeMix.desert=v),sl('Volcano influence ×',0,2,.05,c.biomeMix.volc,v=>c.biomeMix.volc=v)),G(sl('Natural biome blend',0,1,.05,c.blend,v=>c.blend=v),sl('Mountain height',0,100,1,c.mountainHeight,v=>c.mountainHeight=v),sl('Water coverage',0,100,1,c.waterCoverage,v=>c.waterCoverage=v),sl('Sea level (m)',-100,0,1,c.waterLevel,v=>c.waterLevel=v),sl('Vegetation density ×',0,2.5,.05,c.vegetationDensity,v=>c.vegetationDensity=v)),el('<div class="hint">World presets · all four biome systems remain available</div>'),chips([['temperate','Temperate'],['desert','Desert'],['alpine','Alpine'],['island','Island']],'',v=>{if(v==='temperate')Object.assign(c,{blend:.68,biomeMix:{hills:1.4,alpine:.9,desert:.55,volc:.4},mountainHeight:42,waterCoverage:28,waterLevel:-24,vegetationDensity:.95});else if(v==='desert')Object.assign(c,{blend:.42,biomeMix:{hills:.5,alpine:.2,desert:1.9,volc:.55},mountainHeight:35,waterCoverage:18,waterLevel:-26,vegetationDensity:.75});else if(v==='alpine')Object.assign(c,{blend:.35,biomeMix:{hills:.55,alpine:1.9,desert:.2,volc:.8},mountainHeight:82,waterCoverage:32,waterLevel:-28,vegetationDensity:.8});else Object.assign(c,{blend:.58,biomeMix:{hills:1.2,alpine:.55,desert:1.2,volc:.55},mountainHeight:48,waterCoverage:56,waterLevel:-32,vegetationDensity:.9})}),el('<div class="hint">Climate biomes · your painted layers stay exactly as they are until you apply the climate map. The action is undoable.</div>'),chips([['all','Apply to all ground'],['free','Fill unpainted ground only']],climateApplyMode,v=>{climateApplyMode=v}),btn('<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" style="vertical-align:-2px"><path d="M2 13c2-1 4-1.6 6-1.6S12.2 12 14 13"/><path d="M2.6 9.2c1.9-.9 3.9-1.4 5.4-1.4s3.5.5 5.4 1.4"/><path d="M4.6 5.6C5.6 4.2 7 3.4 8 3.4s2.4.8 3.4 2.2"/></svg> Apply Climate Biomes',()=>applyClimateBiomes()),el(`<div class="hint" id="owstatus">${OW.active?(OW.generating?'Streaming chunks…':OW.chunks.size+' chunks loaded'):OW.generated?'World generated · press Enter to resume':'Ready to generate'}</div>`),...(OW.active?[btn('🌿 Foliage & scatter settings',()=>setTab('plants'))]:[]),btn(OW.active?'Regenerate Open World Map':OW.generated?'Enter Open World':'Generate Open World Map',()=>OW.start()),btn('Return to default terrain',()=>{OW.deactivate();setTab('terrain')})]};
 const TABS=[['terrain','⛰','Terrain'],['openworld','🌍','Open World'],['planet','🪐','Planet'],['plants','🌲','Foliage'],['city','🏙','City'],['quality','✨','Quality'],['sky','☀️','Lighting'],['skyx','🌌','Sky'],['water','🌊','Water'],['weather','⛈','Weather'],['obj','🪑','Objects'],['import','🌍','Import']];
 TABS.forEach(([id,i,l])=>{const b=el(`<button class="tab" data-id="${id}"><i>${i}</i>${l}</button>`);b.onclick=()=>setTab(id);$('#tabs').append(b)});
 const brushTab=()=>OW?.active?(bt=='terrain'||bt=='openworld'||bt=='plants'): (bt=='terrain'||bt=='plants'||bt=='city'&&!cityTap);
@@ -310,3 +318,109 @@ function importToGrid(){let d,js;const getJson=()=>js||(js=JSON.stringify(d));tr
 $('#imp').onclick=importToGrid;
 $('#cp').onclick=()=>{const t=$('#exp');t.focus();t.select();t.setSelectionRange(0,1e9);try{navigator.clipboard.writeText(t.value)}catch(e){}try{document.execCommand('copy')}catch(e){}};
 $('#cl').onclick=()=>$('#ov').hidden=true;
+
+/* ---- grown geometry: shape sliders and the fern rule editor -------------
+   The core grows the trees (space colonisation) and the ferns (a real
+   L-system). Both are runtime parameters: height and branch density scale a
+   copy of the species table, and the grammar text is parsed here, packed into
+   the kernel's byte layout and rewritten in the kernel. No rule is ever
+   rewritten in JavaScript. */
+const FLORA_DEFAULT_GRAMMAR='X -> F[+X]F[-X]+X | F[-X]F[+X]-X\nF -> FF';
+const FLORA_SYMBOLS='FX+-&^/[]';
+let floraRuleText='',floraRegrowTimer=0;
+function floraShapeState(){const f=window.FELandscapeFlora;return f&&f.shape?f.shape:{height:1,density:1}}
+function queueFloraRegrow(){
+  if(floraRegrowTimer)clearTimeout(floraRegrowTimer);
+  floraRegrowTimer=setTimeout(()=>{
+    floraRegrowTimer=0;
+    if(typeof window.__feRegrowFlora==='function')window.__feRegrowFlora(['oak','birch','acacia','shrub','ashbush','deadtree','fern','treefern']);
+  },220);
+}
+function setFloraShape(height,density){
+  const f=window.FELandscapeFlora;
+  if(!f||typeof f.setShape!=='function')return;
+  const s=floraShapeState();
+  f.setShape(height===null?s.height:height,density===null?s.density:density);
+  queueFloraRegrow();
+  queueStudioConfigSave();
+}
+/* `X -> F[+X]F[-X]+X | F[-X]F[+X]-X`, one production per line, `|` for the
+   second alternative, an optional `axiom: X` line. */
+function parseGrammar(text){
+  const lines=String(text==null?'':text).split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&l.charAt(0)!=='#');
+  if(!lines.length)throw Error('Add at least one production');
+  let axiom='X';
+  const rules=[];
+  for(const line of lines){
+    const clean=line.replace(/\u2192/g,'->').replace(/=/g,'->');
+    if(/^axiom\s*:/i.test(clean)){axiom=clean.split(':')[1].trim();continue}
+    const parts=clean.split('->');
+    if(parts.length!==2)throw Error('"'+line+'" needs one -> between the two sides');
+    const pre=parts[0].trim();
+    if(pre.length!==1)throw Error('The left side must be a single symbol, not "'+pre+'"');
+    if(FLORA_SYMBOLS.indexOf(pre)<0)throw Error('"'+pre+'" is not a symbol the turtle draws');
+    const alts=parts[1].split('|').map(a=>a.trim()).filter(Boolean);
+    if(!alts.length)throw Error('The right side of '+pre+' is empty');
+    for(const alt of alts)for(const ch of alt)if(FLORA_SYMBOLS.indexOf(ch)<0)throw Error('"'+ch+'" is not a symbol the turtle draws');
+    rules.push({pre,alts});
+  }
+  for(const ch of axiom)if(FLORA_SYMBOLS.indexOf(ch)<0)throw Error('"'+ch+'" is not a symbol the turtle draws');
+  return {axiom,rules};
+}
+function loadGrammar(text,regrow){
+  const spec=parseGrammar(text);
+  const core=window.FELandscapeCore;
+  if(!core||!core.ready||typeof core.lsystemLoad!=='function')throw Error('The grown-flora core is still loading');
+  const accepted=core.lsystemLoad(spec);
+  if(accepted<1)throw Error('The core rejected that rule set');
+  const word=typeof core.lsystemRun==='function'?core.lsystemRun(3,7):null;
+  if(regrow!==false&&typeof window.__feRegrowFlora==='function')window.__feRegrowFlora(['fern','treefern']);
+  return {rules:accepted,symbols:word?word.symbols:0};
+}
+function floraGrowthControls(){
+  const shape=floraShapeState();
+  const ta=el('<textarea class="grammar" spellcheck="false" aria-label="Fern grammar"></textarea>');
+  ta.value=floraRuleText||FLORA_DEFAULT_GRAMMAR;
+  ta.oninput=()=>{floraRuleText=ta.value};
+  const msg=el('<div class="hint" id="fe-grammar-status">One production per line · the rewrite runs in the core</div>');
+  const apply=btn('Apply grammar',()=>{
+    try{
+      const r=loadGrammar(ta.value);
+      floraRuleText=ta.value;
+      window.__feFloraRuleText=floraRuleText;
+      msg.textContent='Grammar applied · '+r.rules+' production'+(r.rules===1?'':'s')+' · '+r.symbols+' symbols after three passes';
+    }catch(error){msg.textContent=String((error&&error.message)||error)}
+    queueStudioConfigSave();
+  });
+  const reset=btn('Restore built-in grammar',()=>{
+    floraRuleText=FLORA_DEFAULT_GRAMMAR;
+    ta.value=FLORA_DEFAULT_GRAMMAR;
+    window.__feFloraRuleText=floraRuleText;
+    const f=window.FELandscapeFlora;
+    if(f&&typeof f.resetRules==='function')f.resetRules();
+    if(typeof window.__feRegrowFlora==='function')window.__feRegrowFlora(['fern','treefern']);
+    msg.textContent='Built-in frond grammar restored';
+    queueStudioConfigSave();
+  });
+  const row=el('<div class="row"></div>');
+  row.append(apply,reset);
+  return[
+    el('<div class="hint">Grown geometry · tree height and branch density rebuild the grown species; the grammar below rewrites the ferns. Foliage never repaints the ground.</div>'),
+    G(sl('Tree height ×',.5,1.8,.05,shape.height,v=>setFloraShape(v,null)),sl('Branch density ×',.4,1.6,.05,shape.density,v=>setFloraShape(null,v))),
+    el('<div class="hint">Fern grammar · symbols F X + - &amp; ^ / [ ]</div>'),
+    ta,row,msg
+  ];
+}
+window.__feLoadGrammar=loadGrammar;
+window.__feFloraDefaultGrammar=FLORA_DEFAULT_GRAMMAR;
+(function applyStoredGrammar(){
+  const c=window.FELandscapeCore;
+  if(!c)return;
+  const run=()=>{
+    const text=window.__fePendingGrammar;
+    if(!text||text===FLORA_DEFAULT_GRAMMAR)return;
+    try{loadGrammar(text,false);floraRuleText=text;window.__feFloraRuleText=text}catch(error){}
+  };
+  if(c.loading&&typeof c.loading.then==='function')c.loading.then(run,run);
+  else setTimeout(run,0);
+})();

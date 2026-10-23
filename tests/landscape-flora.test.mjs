@@ -500,3 +500,84 @@ test('a runaway grammar is clamped by the kernel budgets, never by luck', async 
   const flat = core.lsystemPlant({ fronds: 1, step: 0.01, tilt: 0.6, droop: 0.05, leafSize: 0.05, iterations: 1, seed: 2, detail: 1 });
   assert.ok(flat && flat.verts > 0, 'a low budget call still returns geometry');
 });
+
+/* ------------------------------------------------------------------ */
+/* Runtime shape controls and the editable grammar                     */
+/* ------------------------------------------------------------------ */
+
+test('the shape sliders scale the grown species and clamp at the kernel', async () => {
+  const { core } = await bootBridge();
+  const height = (kind, seed) => {
+    const m = core.floraTree(kind, seed, 2);
+    let hi = 0;
+    for (let i = 0; i < m.verts; i++) hi = Math.max(hi, m.pos[i * 3 + 1]);
+    return { h: hi, verts: m.verts };
+  };
+  const base = height(0, 7);
+  core.floraSetShape(1.5, 1.4);
+  const tall = height(0, 7);
+  assert.ok(tall.h > base.h * 1.3, `1.5x height should grow the oak (${base.h.toFixed(2)} -> ${tall.h.toFixed(2)})`);
+  assert.ok(tall.verts > base.verts, 'more branch density must add geometry');
+  core.floraSetShape(0.6, 0.6);
+  const small = height(0, 7);
+  assert.ok(small.h < base.h * 0.75, 'the slider shrinks the plant too');
+  assert.ok(small.verts < base.verts);
+  /* The kernel owns the limits, so a wild slider value cannot blow a buffer. */
+  assert.equal(core.floraSetShape(99, 99), 250, 'height clamps to 2.5x');
+  assert.equal(core.floraSetShape(-5, 0), 30, 'height clamps to 0.3x');
+  core.floraSetShape(1, 1);
+  assert.ok(Math.abs(height(0, 7).h - base.h) < 1e-3, 'back to the species table');
+});
+
+test('an uploaded grammar rewrites in the kernel and drives the ferns', async () => {
+  const { core } = await bootBridge();
+  const fern = () => core.floraTree(6, 7, 2);
+  const before = fern().verts;
+  const accepted = core.lsystemLoad({
+    axiom: 'X',
+    rules: [{ pre: 'X', alts: ['F[+X][-X]FX'] }, { pre: 'F', alts: ['F'] }]
+  });
+  assert.equal(accepted, 2, 'both productions are accepted');
+  const word = core.lsystemRun(3, 7);
+  assert.equal(word.symbols, 131, 'the rewrite happens in the kernel');
+  assert.equal(word.word.includes('X'), true);
+  assert.notEqual(fern().verts, before, 'the fern species grows from the uploaded grammar');
+  assert.equal(core.lsystemReset(), 0, 'the built-in grammar comes back');
+  assert.equal(fern().verts, before);
+  assert.equal(core.lsystemRun(3, 7), null, 'and there is no uploaded rule set any more');
+});
+
+test('the sheet validates grammar text before anything reaches the kernel', () => {
+  const panel = readFileSync('terrain-main-07.js', 'utf8');
+  const block = panel.slice(panel.indexOf('const FLORA_DEFAULT_GRAMMAR'), panel.indexOf('window.__feLoadGrammar'));
+  const context = {
+    console, Error, String, Number, Math, setTimeout,
+    FELandscapeCore: { ready: false, loading: Promise.resolve() },
+    FELandscapeFlora: { shape: { height: 1, density: 1 }, setShape() {}, resetRules() {} },
+    el: () => ({}), btn: () => ({}), sl: () => ({}), G: () => ({}),
+    queueStudioConfigSave() {}
+  };
+  vm.createContext(context);
+  context.window = context;
+  vm.runInContext(block, context);
+  const parse = (text) => vm.runInContext(`parseGrammar(${JSON.stringify(text)})`, context);
+
+  const spec = parse('X -> F[+X]F[-X]+X | F[-X]F[+X]-X\nF -> FF');
+  assert.equal(spec.axiom, 'X');
+  assert.equal(spec.rules.length, 2);
+  assert.equal(spec.rules[1].pre, 'F', 'the second production is the doubling rule');
+  assert.equal(spec.rules[1].alts.length, 1);
+  assert.equal(spec.rules[1].alts[0], 'FF');
+  assert.equal(parse('# comment\naxiom: F\nF -> F[+F]F').axiom, 'F', 'comments and an axiom line are supported');
+  assert.equal(parse('X \u2192 F[+X]F[-X]').rules[0].pre, 'X', 'the arrow may be typed as a unicode arrow');
+  for (const bad of ['', 'X F F', 'G -> FF', 'X -> FG', 'XY -> FF', 'X -> ']) {
+    assert.throws(() => parse(bad), /./, `"${bad}" must be refused`);
+  }
+  /* The panel ships the editor, both actions and the two shape sliders. */
+  assert.match(panel, /textarea class="grammar"/, 'the sheet has a rule editor');
+  assert.match(panel, /Apply grammar/, 'and an explicit apply action');
+  assert.match(panel, /Restore built-in grammar/, 'and a way back');
+  assert.match(panel, /sl\('Tree height ×'/, 'tree height is a runtime control');
+  assert.match(panel, /sl\('Branch density ×'/, 'so is branch density');
+  assert.match(panel, /__feRegrowFlora/, 'applying a control rebuilds the grown species');
+});

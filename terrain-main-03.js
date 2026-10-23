@@ -63,6 +63,41 @@ function owLoadChunk(cx,cz,generatedData=null){const key=owKey(cx,cz);if(OW.chun
 function owCenter(){if(exploreMode==='first'&&walkRig)return{x:walkRig.position.x,z:walkRig.position.z};if(exploreMode==='heli')return{x:heliX,z:heliZ};return{x:oc.target.x,z:oc.target.z}}
 function owFindSpawn(){const cfg=owHeightConfig(),sea=cfg.seaLevel,half=OW.config.sizeKm*500,maxRadius=Math.max(0,Math.min(5000,half-OW.chunkSize*.5));let best={x:0,z:0,y:OpenWorldGenerator.heightAt(0,0,cfg)};for(let radius=0;radius<=maxRadius;radius+=256){const count=radius?Math.max(8,Math.ceil(2*Math.PI*radius/256)):1;for(let i=0;i<count;i++){const a=2*Math.PI*i/count,x=radius*Math.cos(a),z=radius*Math.sin(a),y=OpenWorldGenerator.heightAt(x,z,cfg);if(y>best.y)best={x,z,y};if(y<sea+20)continue;let dry=0;for(const dz of [-256,0,256])for(const dx of [-256,0,256])if(OpenWorldGenerator.heightAt(x+dx,z+dz,cfg)>sea+8)dry++;if(dry>=7)return{x,z,y}}}return best}
 function owValidChunk(cx,cz){const half=OW.config.sizeKm*500,edge=OW.chunkSize*.5;return Math.abs(cx*OW.chunkSize)-edge<=half&&Math.abs(cz*OW.chunkSize)-edge<=half}
+/* World size is a bound on the streamed grid, not an allocation. Only the 3x3
+   neighbourhood of 256 m chunks is ever resident, so a 50 km world costs the
+   same memory as a 1 km one: what changes is how far you can walk before the
+   edge, not how much is held. Changing it therefore re-streams; it never grows
+   a buffer by area, which is the out-of-memory path this had to avoid. */
+function owChunkBytes(c){return (c.heights?c.heights.length*4:0)+(c.surfaceWeights?c.surfaceWeights.length*4:0)}
+function owMemory(){
+ let bytes=0;
+ for(const c of OW.chunks.values())bytes+=owChunkBytes(c);
+ for(const s of OW.editStore.values())bytes+=owChunkBytes(s)+96;
+ return{chunks:OW.chunks.size,edits:OW.editStore.size,bytes};
+}
+function owSetWorldSize(km){
+ const asked=Number(km),next=cl(Math.round(Number.isFinite(asked)?asked:OW.config.sizeKm),1,50);
+ if(next===OW.config.sizeKm)return false;
+ OW.config.sizeKm=next;
+ if(OW.currentConfig)OW.currentConfig.sizeKm=next;
+ if(!OW.active)return true;
+ const half=next*500;
+ for(const key of [...OW.editStore.keys()]){
+  const v=OW.editStore.get(key);
+  if(Math.abs(v.cx*OW.chunkSize)>half||Math.abs(v.cz*OW.chunkSize)>half)OW.editStore.delete(key);
+ }
+ for(const [key,c] of [...OW.chunks]){
+  if(owValidChunk(c.cx,c.cz))continue;
+  owDisposeChunk(c);OW.chunks.delete(key);
+ }
+ OW.lastCenterX=OW.lastCenterZ=NaN;
+ setOpenWorldWaterRadius(true);
+ owRefresh(true);
+ owStatus('World size '+next+' km \u00b7 '+OW.chunks.size+' chunks resident');
+ return true;
+}
+window.__feWorldSize=owSetWorldSize;
+window.__feWorldMemory=owMemory;
 function owStatus(text){const n=document.getElementById('owstatus');if(n)n.textContent=text}
 function owPump(token){if(token!==OW.token||!OW.active)return;if(!OW.activeJob&&!OW.queue.length){OW.generating=false;if(OW.waterMapsDirty){OW.waterMapsDirty=false;updateOpenWorldWaterHeightMaps()}owStatus('Ready · '+OW.chunks.size+' terrain chunks loaded · '+[...OW.chunks.values()].reduce((n,c)=>n+Object.values(c.plants).reduce((a,b)=>a+b.length,0),0).toLocaleString()+' plants');return}try{if(!OW.activeJob){const next=OW.queue.shift();if(OW.editStore.has(next.key)){owLoadChunk(next.cx,next.cz);requestAnimationFrame(()=>owPump(token));return}OW.activeJob={...next,job:OpenWorldGenerator.createChunkJob(owChunkConfig(next.cx,next.cz))}}const current=OW.activeJob,result=current.job.step(8,1024);if(result.done){OW.activeJob=null;owLoadChunk(current.cx,current.cz,result.chunk);OW.generated=true;owStatus('Loaded '+current.key+' · '+OW.chunks.size+' chunks active, '+OW.queue.length+' queued')}else owStatus('Generating '+current.key+' · '+result.phase+' '+Math.round(result.progress*100)+'%')}catch(e){console.error('Open World chunk generation failed:',e);owStatus('Generation error: '+(e?.message||e));OW.activeJob=null;OW.generating=false;return}requestAnimationFrame(()=>owPump(token))}
 function owRefresh(force=false){if(!OW?.active)return;const p=owCenter(),half=OW.config.sizeKm*500,x=cl(p.x,-half,half),z=cl(p.z,-half,half),cx=Math.floor((x+OW.chunkSize*.5)/OW.chunkSize),cz=Math.floor((z+OW.chunkSize*.5)/OW.chunkSize);if(!force&&cx===OW.lastCenterX&&cz===OW.lastCenterZ)return;OW.lastCenterX=cx;OW.lastCenterZ=cz;const desired=new Set(),jobs=[],planCore=window.FELandscapeCore&&window.FELandscapeCore.ready&&typeof window.FELandscapeCore.owPlan==='function'?window.FELandscapeCore.owPlan({cx,cz,radius:OW.radius,chunkSize:OW.chunkSize,worldHalf:half}):null;

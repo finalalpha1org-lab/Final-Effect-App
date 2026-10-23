@@ -27,6 +27,8 @@ The web shell's own viewport preferences keep their existing key
     "wl": -6, "ampUser": 1.4, "wspd": 0.9, "waterWavePeriod": 8.2,
     "clarity": 0.8, "foam": 0.35, "tod": 14.5, "az": 120, "cov": 0.4,
     "fogD": 0.004, "windUser": 1.2, "season": "autumn",
+    "waveAuto": false, "floraHeight": 1.2, "floraDensity": 1,
+    "floraRules": "X -> F[+X]F[-X]+X | F[-X]F[+X]-X\nF -> FF",
     "sky": "{\"…\":…}", "wx": "{\"rainT\":0.2,…}"
   },
   "openWorld": {
@@ -44,7 +46,16 @@ The web shell's own viewport preferences keep their existing key
 
 `studio` is exactly the snapshot the undo system already took
 (`captureStudioSettings()`), so the settings and the undo history can never
-disagree about what a control means.
+disagree about what a control means. Three of those fields are new and worth
+naming:
+
+* `waveAuto` — whether the sea was following the climate wind. Restored off if
+  it was off, so a session never silently starts re-parameterising the water.
+* `floraHeight` / `floraDensity` — the grown-flora shape multipliers, clamped to
+  0.3–2.5 and 0.3–2.0 by the core on the way back in.
+* `floraRules` — the fern grammar text exactly as it was typed. It is applied to
+  the core after the module loads, and a grammar the current build rejects is
+  dropped rather than retried on every boot.
 
 ## When it is written
 
@@ -57,6 +68,20 @@ disagree about what a control means.
 Writes are wrapped in `try/catch`: private-mode browsers and native shells
 without `localStorage` simply keep the in-memory values and still get the
 export path.
+
+`biomeMix` is **merged**, never replaced: a document that names one influence
+must not zero the other three, and a field whose type does not match the live
+value is ignored rather than coerced.
+
+## World size is not part of the memory budget
+
+`openWorld.sizeKm` is stored like any other number, but it does not size a
+buffer. The streamed world keeps only the nine 256 m chunks around the camera
+resident, so 1 km and 50 km cost the same; `owSetWorldSize()` clamps to 1–50,
+disposes the chunks that fall outside the new edge (moving edited ones into the
+edit store), re-sizes the water plane and re-streams. `window.__feWorldMemory()`
+reports the real footprint for diagnostics. A test asserts the resident byte
+count is identical before and after growing the world from 12 km to 50 km.
 
 ## Restoring
 

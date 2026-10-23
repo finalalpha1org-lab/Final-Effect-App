@@ -147,6 +147,31 @@ in fill mode, how much of the map was kept from the artist.
 It never runs on its own, so hand-painted biome layers survive every reload,
 every weather tick and every seed change.
 
+## Sea state from the wind
+
+The water sheet used to hold four independent sliders (height, period, scale,
+wind speed) that could be set to combinations no sea can produce. The wind
+speed is now the input and the rest is derived, with the relations a Gerstner
+or FFT spectrum is actually parameterised by:
+
+| Quantity | Relation | 10 m/s | 20 m/s |
+| --- | --- | --- | --- |
+| Significant wave height `H_s` | `0.0025·U²` | 0.25 m | 1.00 m |
+| Peak period `T_p` | `0.73·U` | 7.3 s | 14.6 s |
+| Peak wavelength `L` | `g·T_p²/2π` | 83 m | 334 m |
+| Chop | `0.04 + 0.017·U` | 0.21 | 0.38 |
+
+`wavePhysicsForWind()` in `terrain-main-01.js` is the single source of those
+numbers. The sheet prints them back live (`id="fe-sea-state"`) so the slider and
+the spectrum cannot disagree, and the values are clamped to 0.02–2.6 m,
+2–16 s so a hand-typed weather code cannot request an impossible sea.
+
+**Waves follow the weather** is a toggle, off by default. While it is on,
+`stepWaveClimate()` reads the prevailing wind from the climate state once a
+frame and pushes wind speed, amplitude, period and chop together; while it is
+off, moving a water slider re-takes control immediately. It is a switch, not a
+hidden override.
+
 ## What this does not do
 
 * It is **not a general circulation model**. There is no advection between grid
@@ -164,13 +189,15 @@ The climate controls are part of the studio's settings document
 (`fe_landscape_config_v1`, see `docs/STUDIO-SETTINGS.md`): latitude, sea-level
 temperature, humidity, continentality, wind, time scale, the fog and wetness
 couplings and the seed are all serialised, so a reload resumes the same field
-instead of resetting it to the defaults.
+instead of resetting it to the defaults. The same document carries the water
+sheet's `waveAuto` flag, so a studio that had asked the sea to follow the
+weather comes back with that switch still on.
 
 ## Verification
 
 ```bash
-node --test tests/landscape-climate.test.mjs   # 15 tests
-npm test                                       # 341 tests
+node --test tests/landscape-climate.test.mjs   # 19 tests
+npm test                                       # 351 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn

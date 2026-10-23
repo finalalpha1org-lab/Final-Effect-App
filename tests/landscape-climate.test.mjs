@@ -430,3 +430,91 @@ test('fill-only mode leaves every hand-painted vertex exactly as it was', async 
   }
   assert.match(env.status.textContent, /kept from your painting/, 'the sheet says how much was preserved');
 });
+
+/* ------------------------------------------------------------------ */
+/* Sea state from the climate wind                                     */
+/* ------------------------------------------------------------------ */
+
+function seaStateContext() {
+  const source = readFileSync('terrain-main-01.js', 'utf8');
+  const block = source.slice(source.indexOf('function wavePhysicsForWind'), source.indexOf('window.__feWavePhysics'));
+  const prelude = `
+    let waterWindSpeed = 14, ampUser = 1.05, waterWavePeriod = 6, waveChop = 0.22;
+    const cl = (v, a, b) => Math.min(b, Math.max(a, v));
+    const U = { uWindSpeed: { value: 0 }, amp: { value: 0 }, uWavePeriod: { value: 0 }, uChop: { value: 0 } };`;
+  const tail = `
+    globalThis.__sea = {
+      physics: wavePhysicsForWind, apply: applyWavePhysics,
+      step: stepWaveClimate,
+      setAuto(v) { waveAuto = v; waveAutoApplied = -1; },
+      get auto() { return waveAuto; },
+      state: () => ({ wind: waterWindSpeed, hs: ampUser, period: waterWavePeriod, chop: waveChop, u: { ...U } })
+    };`;
+  const context = { console, Math, Number, JSON };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(prelude + block + tail, context);
+  return { context, sea: context.__sea };
+}
+
+test('the sea state is derived from one wind speed, the way a Gerstner or FFT spectrum expects', () => {
+  const { sea } = seaStateContext();
+  const calm = sea.physics(0);
+  const breeze = sea.physics(8);
+  const gale = sea.physics(20);
+  assert.ok(calm.hs <= 0.02 + 1e-9, 'a calm sea has no waves');
+  assert.ok(breeze.hs > calm.hs && gale.hs > breeze.hs, 'wave height grows with the wind');
+  assert.ok(Math.abs(breeze.hs - 0.0025 * 64) < 1e-6, 'fully developed sea: H_s = 0.0025 U^2');
+  assert.ok(Math.abs(breeze.period - 5.84) < 1e-6, 'peak period: T_p = 0.73 U');
+  const length = 9.81 * breeze.period * breeze.period / (2 * Math.PI);
+  assert.ok(Math.abs(breeze.length - length) < 1e-6, 'peak wavelength: L = g T_p^2 / 2 pi');
+  assert.ok(gale.period > breeze.period && gale.chop > breeze.chop, 'a gale is slower and choppier, not just taller');
+  /* The clamps keep a hand-written weather value from making an impossible sea. */
+  assert.ok(sea.physics(-4).wind === 0 && sea.physics(90).wind === 40);
+  assert.ok(sea.physics(90).hs <= 2.6 && sea.physics(90).period <= 16);
+});
+
+test('applying a wind speed writes every slider and its uniform', () => {
+  const { sea } = seaStateContext();
+  const p = sea.apply(12);
+  const s = sea.state();
+  assert.equal(s.wind, 12);
+  assert.equal(s.hs, p.hs);
+  assert.equal(s.period, p.period);
+  assert.equal(s.u.uWindSpeed.value, 12, 'the spectrum wind speed follows');
+  assert.equal(s.u.amp.value, p.hs, 'the Gerstner amplitude follows');
+  assert.equal(s.u.uWavePeriod.value, p.period);
+  assert.equal(s.u.uChop.value, p.chop);
+});
+
+test('the sea follows the weather only after the artist asks it to', () => {
+  const { context, sea } = seaStateContext();
+  context.window = context;
+  context.FELandscapeWeather = { state: { wind: 16 } };
+  const before = sea.state();
+  sea.step();
+  assert.equal(sea.state().wind, before.wind, 'nothing moves while the toggle is off');
+  assert.equal(sea.auto, false);
+  sea.setAuto(true);
+  sea.step();
+  assert.equal(sea.state().wind, 16, 'the climate wind reaches the water');
+  assert.ok(Math.abs(sea.state().hs - 0.0025 * 256) < 1e-6);
+  context.FELandscapeWeather.state.wind = 4;
+  sea.step();
+  assert.equal(sea.state().wind, 4, 'and keeps following it');
+  /* A missing climate module must never throw inside the render loop. */
+  delete context.FELandscapeWeather;
+  sea.step();
+  assert.equal(sea.state().wind, 4);
+});
+
+test('the sheet exposes the toggle and reads the sea state back in physical units', () => {
+  assert.match(panel, /Waves follow the weather/, 'the toggle is in the water sheet');
+  assert.match(panel, /id="fe-sea-state"/, 'the derived sea state is visible');
+  assert.match(panel, /significant wave height/, 'in metres');
+  assert.match(panel, /peak period/, 'in seconds');
+  assert.match(panel, /wavelength/, 'and metres of wavelength');
+  assert.match(panel, /stepWaveClimate\(\);/, 'the render loop steps it once a frame');
+  assert.match(readFileSync('terrain-main-09.js', 'utf8'), /stepWaveClimate\(\);syncWaterPhysical\(\)/, 'from the frame loop, before the water uniforms are synced');
+  assert.match(panel.slice(panel.indexOf('Waves follow the weather'), panel.indexOf('Waves follow the weather') + 700), /^\s*(?!.*(?:C\+\+|WASM|kernel|shader)).*$/is, 'and never names the implementation');
+});

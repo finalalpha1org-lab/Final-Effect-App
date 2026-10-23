@@ -118,6 +118,8 @@ int   fe_flora_lsystem_run(int iterations, uint32_t seed); /* uploaded set */
 int   fe_flora_lsystem_plant(int fronds, float step, float tilt, float droop,
                              float leafSize, int iterations, uint32_t seed,
                              int detail);
+int   fe_flora_lsystem_reset(void);                        /* built-in back   */
+int   fe_flora_set_shape(float height, float density);      /* 30..250/100     */
 ```
 
 Leaf stride is 10: `[x, y, z, dirX, dirY, dirZ, size, shade, sway, phase]`. `species_info`
@@ -169,11 +171,60 @@ moved identically. The kernel now bakes two channels per vertex:
 * **phase** — accumulated down the path (`Σ 1.6 · segmentLength`), so two limbs
   of the same length still swing out of step.
 
-The shader bends by `skA = aSway²` and
-`skB = sin(uT·0.85 + aPhase) + 0.42·sin(uT·1.9 + 1.6·aPhase + 1.1)`, scaled by
-`uW` and the same spatial gust. The leaf cards carry the same channels, and
-`depthFx()` applies the identical bend in the shadow pass so a cast shadow does
-not stay still while the branch moves.
+The shader bends by
+
+```glsl
+float skA = aSway * aSway * clamp(position.y * 0.34, 0.12, 1.0);
+float skW = 0.55 + 1.25 * aSway;          // stiff limbs are slow, tips are fast
+float skB = sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + 1.6 * aPhase + 1.1);
+transformed.xz += wd * skA * uW * 0.55 * skB * gust;
+```
+
+Compliance therefore drives three things at once: how far a limb moves
+(`skA`), how fast it moves (`skW`) and when it moves (`aPhase`). A thick low limb
+is stiff, slow and out of step with a thin tip that whips — which is the part of
+"mass" a vertex shader can honestly express. The `clamp` on height keeps a
+0.5 m bracken from swaying as far as an 8 m oak. The leaf cards carry the same
+channels, and `depthFx()` applies the identical bend in the shadow pass so a
+cast shadow does not stay still while the branch moves.
+
+What a vertex shader cannot do is collide branches against each other or
+integrate mass: a limb does not push its neighbour, and there is no Verlet or
+rigid-body chain. That needs a CPU skeleton (or a compute pass) and is recorded
+below as incomplete rather than implied.
+
+## Runtime shape controls and the rule editor
+
+Two kernel globals (`gShapeH`, `gShapeD`) scale a **copy** of the species table
+in `generateTree()` / `generateFern()`, so the botanical reference stays intact:
+
+| Slider | Kernel effect |
+| --- | --- |
+| Tree height × (0.5–1.8) | `trunkTop`, `crownY`, `crownRY` × h; the stem thickens by `0.55 + 0.45h` (elastic similarity) |
+| Branch density × (0.4–1.6) | attraction points × d (clamped 16–380), trunk segments × `0.85 + 0.15d`, frond count × d (clamped 4–24) |
+
+`FELandscapeFlora.setShape(h, d)` clamps and re-pushes the pair before every
+build, and `window.__feRegrowFlora(kinds)` drops the cached parts for those
+species and lets `applyGrown()` refill them: instances keep their matrices, only
+the geometry is replaced.
+
+The **rule editor** in the Foliage sheet is a textarea with one production per
+line:
+
+```
+X -> F[+X]F[-X]+X | F[-X]F[+X]-X
+F -> FF
+```
+
+`parseGrammar()` in `terrain-main-07.js` accepts `->`, `→` or `=`, `#` comments
+and an optional `axiom: X` line, and refuses anything outside
+`F X + - & ^ / [ ]`. The accepted text is packed by the bridge into the kernel's
+byte layout and uploaded with `fe_flora_lsystem_load`; from then on
+`generateFern()` expands **that** rule set, so the ferns in the world change —
+the rewrite still happens in C++. *Restore built-in grammar* calls
+`fe_flora_lsystem_reset()` and regrows. The text and the two sliders are part of
+the persisted studio document (`floraHeight`, `floraDensity`, `floraRules`), so a
+reload resumes the same plant shapes and the same grammar.
 
 ## Cost
 
@@ -195,11 +246,13 @@ Three variants per species are grown at boot, so the whole swap costs roughly
 
 ## What this does not do yet
 
-* No rule editor in the UI: the kernel and the bridge accept a custom grammar
-  (`fe_flora_lsystem_load` / `FELandscapeFlora.plant`), but no panel exposes it
-  yet.
 * The wind is a vertex bend, not a rigid-body simulation of each limb; a limb
-  swings with its own phase but branch mass and collision are not simulated.
+  swings with its own compliance, frequency and phase, but branch mass is a
+  proxy and branches do not collide with each other. Verlet or a rigid-body
+  chain would need a CPU skeleton per tree.
+* The uploaded grammar replaces the *frond* grammar only (`fern`, `treefern`).
+  Broadleaves are space colonisation, not a rewriting system, so a rule set does
+  not reshape them — only the height/density sliders do.
 * No bark-unwrap UVs from the kernel; the trunk samples the tiling bark texture
   by triplanar-ish UV already stored per vertex.
 * LOD is still the existing twin mesh (no decimated branch graph yet).
@@ -211,8 +264,8 @@ These are recorded as incomplete rather than finished.
 ## Verification
 
 ```bash
-node --test tests/landscape-flora.test.mjs    # 18 tests
-npm test                                      # 341 tests
+node --test tests/landscape-flora.test.mjs    # 21 tests
+npm test                                      # 351 tests
 ```
 
 The tests grow all eight species and all three rocks from the shipped artifact,

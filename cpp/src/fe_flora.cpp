@@ -339,9 +339,15 @@ int32_t addNode(V3 p, int32_t parent, float lenAcc) {
 /* Cantilever compliance along the skeleton: the root collar does not move, the
    crown sways, a terminal twig swings most. Using the accumulated branch length
    (not the height) is what makes a side limb bend even when its tip sits low. */
-inline float swayOf(float len, const SpeciesSpec& s) {
+inline float swayOf(float len, float radius, const SpeciesSpec& s) {
   const float treeH = maxf(0.6f, s.crownY + s.crownRY);
-  return clampf((len - s.trunkTop * 0.5f) / (treeH * 0.55f), 0.0f, 1.0f);
+  const float path = clampf((len - s.trunkTop * 0.5f) / (treeH * 0.55f), 0.0f, 1.0f);
+  /* Thickness proxy. A limb as thick as the trunk keeps only 55% of its path
+     compliance; a twig a third of that is fully compliant. This is the part a
+     vertex-height law cannot express and the reason the shader also scales the
+     bend frequency by aSway: a whip moves further *and* faster than a limb. */
+  const float thin = clampf(1.0f - radius / maxf(0.02f, s.trunkRadius * 0.60f), 0.0f, 1.0f);
+  return clampf(path * (0.55f + 0.45f * thin), 0.0f, 1.0f);
 }
 
 int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
@@ -366,7 +372,7 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
     const float ph = gNodePh[prev] + segLen * 1.6f;
     frame = tubeSegment(gNodes[prev].p, p, r0, r1, s.tubes, s.trunkTop * t * 0.35f, 0.35f,
                         shade, 0.35f + 0.3f * t, frame, false,
-                        swayOf(gNodes[prev].len, s), swayOf(gNodes[idx].len, s), ph);
+                        swayOf(gNodes[prev].len, r0, s), swayOf(gNodes[idx].len, r1, s), ph);
     gNodePh[idx] = ph;
     prev = idx;
   }
@@ -506,7 +512,7 @@ void meshBranches(const SpeciesSpec& s, Rng& rng, int32_t firstBranch, V3 hint) 
     gNodePh[i] = ph;
     frames[i] = tubeSegment(start, end, r0, r1, sides, gNodes[parent].len * 0.35f, 0.35f,
                             shade, rnd, frames[parent], gNodes[i].terminal != 0,
-                            swayOf(gNodes[parent].len, s), swayOf(gNodes[i].len, s), ph);
+                            swayOf(gNodes[parent].len, r0, s), swayOf(gNodes[i].len, r1, s), ph);
   }
 }
 
@@ -537,7 +543,7 @@ void emitLeafAnchors(const SpeciesSpec& s, Rng& rng, int32_t firstBranch) {
       leaf[7] = 0.2f + 0.8f * t;
       /* The card inherits its branch tip's compliance and phase, so leaves ride
          the limb instead of fluttering in place. */
-      leaf[8] = swayOf(gNodes[i].len, s);
+      leaf[8] = swayOf(gNodes[i].len, gNodes[i].radius, s);
       leaf[9] = gNodePh[i];
       ++gLeafN;
     }
@@ -719,6 +725,27 @@ LsProd gUserProd[LS_RULES];
 int32_t gUserRuleN = 0;
 char gUserAxiom[LS_ALT];
 
+/* Runtime shape controls (the studio's Tree height / Branch density sliders).
+   They scale a *copy* of the species table, so the table stays the botanical
+   reference and the sliders never destroy it. */
+float gShapeH = 1.0f;
+float gShapeD = 1.0f;
+
+void applyShape(SpeciesSpec& s) {
+  if (gShapeH == 1.0f && gShapeD == 1.0f) return;
+  const float h = gShapeH, d = gShapeD;
+  s.trunkTop *= h;
+  s.crownY *= h;
+  s.crownRY *= h;
+  /* A taller tree carries a slightly thicker stem (elastic similarity). */
+  s.trunkRadius *= 0.55f + 0.45f * h;
+  s.crownRX *= (0.72f + 0.28f * h) * (0.85f + 0.15f * d);
+  const int32_t a = int32_t(float(s.attractors) * d + 0.5f);
+  s.attractors = a < 16 ? 16 : (a > 380 ? 380 : a);
+  const int32_t seg = int32_t(float(s.segments) * (0.85f + 0.15f * d) + 0.5f);
+  s.segments = seg < 3 ? 3 : (seg > 26 ? 26 : seg);
+}
+
 int32_t lsExpand(const LsProd* rules, int32_t ruleN, const char* axiom,
                  int32_t iterations, Rng& rng) {
   int32_t n = 0;
@@ -890,7 +917,8 @@ void growFronds(int32_t n, int32_t fronds, float step, float tilt, float droop,
 /* Herbaceous entry points (grammar-grown)                           */
 /* ---------------------------------------------------------------- */
 int32_t generateFern(int32_t kind, uint32_t seed, int32_t detail) {
-  const SpeciesSpec& s = kSpecies[kind];
+  SpeciesSpec s = kSpecies[kind];
+  applyShape(s);
   Rng rng(seed ^ 0x9e3779b9u);
   const bool tree = (kind == SP_TREEFERN);
   float baseY = 0.0f;
@@ -910,9 +938,16 @@ int32_t generateFern(int32_t kind, uint32_t seed, int32_t detail) {
     }
     baseY = s.trunkTop;
   }
-  const int32_t fronds = tree ? 8 : 10;
+  /* A rule set uploaded at runtime takes over the frond grammar: that is what
+     the studio's rule editor edits, and it is expanded here, not in JS. */
+  const LsProd* rules = gUserRuleN > 0 ? gUserProd : kFernRules;
+  const int32_t ruleN = gUserRuleN > 0 ? gUserRuleN : 2;
+  const char* axiom = (gUserRuleN > 0 && gUserAxiom[0]) ? gUserAxiom : "X";
+  const int32_t baseFronds = tree ? 8 : 10;
+  const int32_t f0 = int32_t(float(baseFronds) * gShapeD + 0.5f);
+  const int32_t fronds = f0 < 4 ? 4 : (f0 > 24 ? 24 : f0);
   const int32_t iters = tree ? 4 : 3;
-  const int32_t n = lsExpand(kFernRules, 2, "X", iters, rng);
+  const int32_t n = lsExpand(rules, ruleN, axiom, iters, rng);
   LsStyle st;
   st.leaves = s.leaves;
   st.sides = detail >= 2 ? 4 : 3;
@@ -920,7 +955,7 @@ int32_t generateFern(int32_t kind, uint32_t seed, int32_t detail) {
   st.yaw = 0.62f;
   st.pitch = 0.36f;
   st.scale = 0.62f;
-  growFronds(n, fronds, tree ? 0.052f : 0.048f, tree ? 0.55f : 0.62f,
+  growFronds(n, fronds, (tree ? 0.052f : 0.048f) * gShapeH, tree ? 0.55f : 0.62f,
              tree ? 0.010f : 0.030f, tree ? 0.18f : 0.10f,
              tree ? 0.045f : 0.02f, baseY, iters, st, rng);
   return gVert;
@@ -934,7 +969,8 @@ int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   gNodeN = 0;
   gAttN = 0;
   if (kind >= SP_FERN) return generateFern(kind, seed, detail);
-  const SpeciesSpec& s = kSpecies[kind];
+  SpeciesSpec s = kSpecies[kind];
+  applyShape(s);
   Rng rng(seed ^ 0x51ed270bu);
 
   V3 frame = v3(1.0f, 0.0f, 0.0f);
@@ -1010,6 +1046,20 @@ int32_t loadUserRules(const uint8_t* buf, int32_t bytes) {
 extern "C" {
 
 FE_EXPORT int32_t fe_flora_species_count(void) { return SP_COUNT; }
+
+/* Runtime shape controls, clamped so a slider can never blow a buffer. */
+FE_EXPORT int32_t fe_flora_set_shape(float height, float density) {
+  gShapeH = clampf(height, 0.30f, 2.50f);
+  gShapeD = clampf(density, 0.30f, 2.00f);
+  return int32_t(gShapeH * 100.0f + 0.5f);
+}
+
+/* Back to the built-in frond grammar. */
+FE_EXPORT int32_t fe_flora_lsystem_reset(void) {
+  gUserRuleN = 0;
+  gUserAxiom[0] = 0;
+  return 0;
+}
 FE_EXPORT int32_t fe_flora_rock_kind_count(void) { return ROCK_COUNT; }
 
 FE_EXPORT int32_t fe_flora_tree(int32_t kind, uint32_t seed, int32_t detail) {

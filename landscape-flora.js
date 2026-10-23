@@ -36,6 +36,26 @@
     return c && c.ready && typeof c.floraTree === 'function' ? c : null;
   }
 
+  /* Runtime shape controls. They live here so every builder (species, fern,
+     uploaded rule set) sees the same numbers, and they are re-pushed before
+     each build so a kernel reset can never leave them stale. */
+  const shape = { height: 1, density: 1 };
+  function pushShape(c) {
+    if (c && typeof c.floraSetShape === 'function') c.floraSetShape(shape.height, shape.density);
+  }
+  function setShape(height, density) {
+    const h = Number(height), d = Number(density);
+    shape.height = Number.isFinite(h) ? Math.min(2.5, Math.max(0.3, h)) : shape.height;
+    shape.density = Number.isFinite(d) ? Math.min(2, Math.max(0.3, d)) : shape.density;
+    pushShape(core());
+    return { ...shape };
+  }
+  function resetRules() {
+    const c = core();
+    if (c && typeof c.lsystemReset === 'function') c.lsystemReset();
+    return true;
+  }
+
   function three() {
     return root.THREE;
   }
@@ -73,6 +93,7 @@
     if (id < 0 || id >= KINDS.length) return null;
     const s = (seed === undefined || seed === null) ? ((Math.random() * 4294967295) >>> 0) : (seed >>> 0);
     try {
+      pushShape(c);
       const mesh = c.floraTree(id, s || 1, detailLevel(detail));
       if (!mesh) { state.fallbacks++; return null; }
       const wood = toGeometry(mesh);
@@ -131,6 +152,7 @@
     if (!c || typeof c.lsystemPlant !== 'function') { state.fallbacks++; return null; }
     try {
       const cfg = spec || {};
+      pushShape(c);
       if (cfg.rules && cfg.rules.length && typeof c.lsystemLoad === 'function') {
         if (c.lsystemLoad(cfg) < 0) { state.lastError = 'rule set rejected'; state.fallbacks++; return null; }
       }
@@ -166,6 +188,9 @@
     KINDS,
     ROCK_KINDS,
     state,
+    shape,
+    setShape,
+    resetRules,
     tree,
     rock,
     lsystem,

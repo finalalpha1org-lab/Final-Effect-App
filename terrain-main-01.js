@@ -334,6 +334,16 @@
   }
   return out;
  };
+ /* Runtime shape controls: height and branch density, clamped in the kernel. */
+ core.floraSetShape=function(height,density){
+  if(!core.has('fe_flora_set_shape'))return 0;
+  return ex.fe_flora_set_shape(+height||1,+density||1);
+ };
+ /* Back to the built-in frond grammar. */
+ core.lsystemReset=function(){
+  if(!core.has('fe_flora_lsystem_reset'))return -1;
+  return ex.fe_flora_lsystem_reset();
+ };
  core.floraRock=function(kind,seed,detail){
   if(!core.has('fe_flora_rock'))return null;
   if(ex.fe_flora_rock(kind|0,(seed>>>0)||1,detail|0)<1)return null;
@@ -624,6 +634,36 @@ function writeFoamTexture(tex,foam){const d=tex.image.data;for(let i=0,j=0;i<foa
 function clearFoamTexture(){if(fftFoamZeroed)return;const t=ensureFoamTexture(U.uFFTFoam.value&&U.uFFTFoam.value.image?U.uFFTFoam.value.image.width:1);t.image.data.fill(0);for(let i=3;i<t.image.data.length;i+=4)t.image.data[i]=255;t.needsUpdate=true;fftFoamZeroed=true}
 function makeFFTTexture(size){const t=new THREE.DataTexture(new Uint8Array(size*size*4),size,size,THREE.RGBAFormat,THREE.UnsignedByteType);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=t.magFilter=THREE.LinearFilter;t.generateMipmaps=false;t.flipY=false;t.needsUpdate=true;return t}
 function writeFFTTexture(tex,rgba){tex.image.data.set(rgba);tex.needsUpdate=true}
+/* ---- sea state from wind speed ---------------------------------------
+   The Gerstner and FFT spectra are both parameterised by wind speed, peak
+   period and wavelength, so the same three relations drive the sliders and the
+   climate wind. A fully developed sea:
+     H_s ~ 0.0025 U^2      (significant wave height, fetch-saturated)
+     T_p ~ 0.73 U          (peak period)
+     L   = g T_p^2 / 2pi   (peak wavelength)                            */
+function wavePhysicsForWind(speed){
+ const u=cl(Number.isFinite(+speed)?+speed:0,0,40),g=9.81,hs=cl(.0025*u*u,.02,2.6),period=cl(.73*u,2,16),length=g*period*period/(2*Math.PI);
+ return{wind:u,hs,period,length,chop:cl(.04+u*.017,0,.6)};
+}
+let waveAuto=false,waveAutoApplied=-1;
+function applyWavePhysics(speed){
+ const p=wavePhysicsForWind(speed);
+ waterWindSpeed=p.wind;U.uWindSpeed.value=p.wind;
+ ampUser=p.hs;U.amp.value=p.hs;
+ waterWavePeriod=p.period;U.uWavePeriod.value=p.period;
+ waveChop=p.chop;U.uChop.value=p.chop;
+ return p;
+}
+/* Runs once a frame: the climate is the source of truth only while the artist
+   has asked the sea to follow it. No slider is moved behind their back. */
+function stepWaveClimate(){
+ if(!waveAuto)return;
+ const wx=window.FELandscapeWeather;
+ const w=wx&&wx.state?+wx.state.wind:NaN;
+ if(!Number.isFinite(w)||Math.abs(w-waveAutoApplied)<.05)return;
+ waveAutoApplied=w;applyWavePhysics(w);
+}
+window.__feWavePhysics=wavePhysicsForWind;
 function updateTessendorfOcean(now,force=false){const interval=[110,90,65,50][waterQuality]||65;if(!force&&now-fftUpdateAt<interval)return;try{const lengths=FFT_LENGTHS.map(x=>x/Math.max(U.uWaveScale.value,.1));U.uFFTLen0.value=lengths[0];U.uFFTLen1.value=lengths[1];U.uFFTLen2.value=lengths[2];const resolution=FFT_RESOLUTION[waterQuality]||128,time=U.t.value*6/Math.max(U.uWavePeriod.value,.5),core=window.FELandscapeCore;let fields=null,size=resolution;const native=!!(core&&core.ready&&typeof core.oceanConfigure==='function'&&core.oceanConfigure(resolution,lengths,U.uWindSpeed.value,waterWindDir,seed+37)&&core.oceanUpdate(time,1,1,FFT_MAX_HEIGHT,FFT_MAX_DISPLACE));if(native)size=core.oceanResolution;else{tessendorfOcean.configure({resolution,lengths,windSpeed:U.uWindSpeed.value,windDirection:waterWindDir,seed:seed+37});fields=tessendorfOcean.update(time,{amplitude:1,choppiness:1})}if(!fftTextures.length||fftTextures[0].image.width!==size){fftTextures.forEach(t=>t.dispose());fftTextures=native?[makeFFTTexture(size),makeFFTTexture(size),makeFFTTexture(size)]:fields.map(makeTessendorfTexture);U.uFFT0.value=fftTextures[0];U.uFFT1.value=fftTextures[1];U.uFFT2.value=fftTextures[2]}if(native){for(let i=0;i<3;i++)writeFFTTexture(fftTextures[i],core.oceanCascadeRgba(i));const foam=typeof core.oceanCascadeFoam==='function'?core.oceanCascadeFoam(0):null;if(foam){writeFoamTexture(ensureFoamTexture(size),foam);fftFoamZeroed=false}else clearFoamTexture()}else{fields.forEach((f,i)=>writeTessendorfTexture(fftTextures[i],f));clearFoamTexture()}U.uFFTSize.value=size;fftUpdateAt=now;fftErrorShown=false}catch(e){if(!fftErrorShown){fftErrorShown=true;showErr('Tessendorf FFT ocean solver failed: '+(e?.message||e))}}}
 updateTessendorfOcean(performance.now(),true);
 waterMat.onBeforeCompile=shader=>{const refs=['t','amp','wy','uChop','uWindSpeed','uWavePeriod','uWaveScale','uWindDir','hm','hm2','uTf','uTl','uTa','uTdx','uTdz','uTurbidity','uTransparency','uTurbidColor','deep','shal','uFoamAmt','uFoamThreshold','uShoreFoam','clar','rain','top','hor','uFFT0','uFFT1','uFFT2','uFFTFoam','uFFTLen0','uFFTLen1','uFFTLen2','uFFTSize','uTerrainOrigin','uCubeReflection','uReflect'];for(const k of refs)shader.uniforms[k]=U[k];const shared='\n'+WH.replace('vec2 waveGrad(vec2 p){',RIPF+'\nvec2 waveGrad(vec2 p){')+'\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>'+shared).replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\nvec4 waterBaseWorld=modelMatrix*vec4(position,1.);float waterBaseDepth=max(wy-th(waterBaseWorld.xz),0.);vec2 waterGrad;vec2 waterHorizontal;float waterWave=wvh(waterBaseWorld.xz,8,waterGrad,waterHorizontal);float waterFade=smoothstep(.15,2.3,waterBaseDepth);objectNormal=normalize(vec3(-waterGrad.x*amp*waterFade,1.,-waterGrad.y*amp*waterFade));waterWorldNormal=normalize(mat3(modelMatrix)*objectNormal);').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.xz+=waterHorizontal*amp*uChop*waterFade;float waterRainHeight=rain>.01?length(rainRip(waterBaseWorld.xz)+rainRip(waterBaseWorld.xz*1.7+3.1)*.7)*rain*.06*smoothstep(.02,.7,waterBaseDepth):0.;transformed.y+=waterWave*amp*waterFade+tsH(waterBaseWorld.xz)+waterRainHeight;w=(modelMatrix*vec4(transformed,1.)).xyz;');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+shared+'\nuniform samplerCube uCubeReflection;uniform float uReflect;\n').replace('#include <color_fragment>','#include <color_fragment>\nfloat waterDepth=max(wy+tsH(w.xz)-th(w.xz),0.);float waterAtten=1.-exp(-waterDepth*(.12+uTurbidity*.9)/max(clar,.1));vec3 waterTint=mix(shal,deep,clamp(waterAtten,0.,1.));waterTint=mix(waterTint,uTurbidColor,clamp(uTurbidity*.38,0.,.8));vec2 waterGradF,waterHorizontalF;wvh(w.xz,8,waterGradF,waterHorizontalF);float waterSlope=length(waterGradF*amp);float crestFoam=smoothstep(uFoamThreshold,uFoamThreshold+.6,waterSlope*(.35+uWindSpeed*.045));float fftFoam=texture2D(uFFTFoam,vec2(w.xz/uFFTLen0+.5)).r;crestFoam=max(crestFoam,fftFoam);float waveSet=clamp(.55+.45*sin(t*1.05-dot(w.xz,uWindDir)*.22)+.18*sin(t*.41+dot(w.xz,vec2(-uWindDir.y,uWindDir.x))*.7),0.,1.);float runup=waveSet*waveSet*(3.-2.*waveSet);float shoreBandW=max(uShoreFoam,.05)*(.72+.6*runup)*(.6+.8*min(amp,2.));float shoreBand=1.-smoothstep(0.,max(shoreBandW,.02),waterDepth);float shoreLip=1.-smoothstep(0.,max(uShoreFoam*.3,.03),waterDepth);vec2 shoreGrad;float shoreLace=waveNoise(w.xz*.92+vec2(t*.2,-t*.16),shoreGrad)*.55+waveNoise(w.xz*2.4-uWindDir*t*.14,shoreGrad)*.45;float shoreFoam=(shoreBand*mix(.34,.86,runup)+shoreLip*runup*.5)*mix(.5,1.18,shoreLace)*smoothstep(0.,.02,waterDepth);float waterRainMask=clamp(rain,0.,1.)*mix(.55,1.,smoothstep(0.,1.6,waterDepth));vec2 rainColorRipples=rainRip(w.xz)+rainRip(w.xz*1.7+3.1)*.7;float rainRippleFoam=length(rainColorRipples)*waterRainMask*.22;float rainFoam=clamp(rain,0.,1.)*.06+rainRippleFoam;vec2 foamGrad;float foamNoise=waveNoise(w.xz*.17+uWindDir*t*.035,foamGrad);float foamMask=clamp((crestFoam*mix(.55,1.25,foamNoise)+shoreFoam*mix(.72,1.12,foamNoise)+rainFoam)*uFoamAmt,0.,.94);float waterFoam=foamMask;diffuseColor.rgb=mix(waterTint,vec3(.9,.96,.98),waterFoam);diffuseColor.a=1.;').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nvec3 waterTriW=pow(abs(normalize(waterWorldNormal)),vec3(4.));waterTriW/=max(dot(waterTriW,vec3(1.)),.001);vec2 waterTriGX,waterTriGY,waterTriGZ;float waterTriScale=.62*uWaveScale;float waterTriX=waveNoise(w.yz*waterTriScale+uWindDir*t*.025,waterTriGX),waterTriY=waveNoise(w.xz*waterTriScale+uWindDir*t*.025,waterTriGY),waterTriZ=waveNoise(w.xy*waterTriScale,waterTriGZ);waterTriGX*=waterTriScale;waterTriGY*=waterTriScale;waterTriGZ*=waterTriScale;float waterTriGrain=waterTriX*waterTriW.x+waterTriY*waterTriW.y+waterTriZ*waterTriW.z;roughnessFactor=clamp(roughnessFactor+(waterTriGrain-.5)*.055+uTurbidity*.08,.025,.98);').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nfloat waterNdotV=abs(dot(normalize(normal),normalize(vViewPosition)));float waterFresnel=.02+.98*pow(1.-clamp(waterNdotV,0.,1.),5.);vec3 waterTriGrad=vec3(0.,waterTriGX.x,waterTriGX.y)*waterTriW.x+vec3(waterTriGY.x,0.,waterTriGY.y)*waterTriW.y+vec3(waterTriGZ.x,waterTriGZ.y,0.)*waterTriW.z;vec3 waterRainNormal=vec3(rainColorRipples.x,0.,rainColorRipples.y)*waterRainMask*.9;vec3 waterMicroNormal=normalize(waterWorldNormal+vec3(-waterTriGrad.x*.11,0.,-waterTriGrad.z*.11)+waterRainNormal);normal=normalize(mat3(viewMatrix)*waterMicroNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <lights_fragment_end>','vec3 waterViewDir=normalize(cameraPosition-w);vec3 waterReflectDir=reflect(-waterViewDir,normalize(waterMicroNormal));vec3 waterCubeColor=textureCube(uCubeReflection,waterReflectDir).rgb;float waterViewFresnel=.02+.98*pow(1.-clamp(abs(dot(normalize(waterMicroNormal),waterViewDir)),0.,1.),5.);float waterCubeWeight=clamp(uReflect*(.2+.8*waterViewFresnel)*(1.-roughnessFactor*.35),0.,.95);reflectedLight.indirectSpecular=mix(reflectedLight.indirectSpecular,waterCubeColor,waterCubeWeight);reflectedLight.directSpecular*=.22;\n#include <lights_fragment_end>');};
@@ -738,7 +778,7 @@ const NOLEAF='vTree=fract(sin(dot(wp,vec2(12.9898,78.233)))*43758.5453);vFall=0.
    swings as a unit, and two limbs of the same length swing out of step — which
    a single height-squared law can never do. Geometry without the attributes
    reads 0 and keeps the old behaviour exactly. */
-const SKEL='float skH=max(position.y,0.);float skA=aSway*aSway*clamp(skH*.34,.12,1.);float skB=(sin(uT*.85+aPhase)+.42*sin(uT*1.9+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
+const SKEL='float skH=max(position.y,0.);float skA=aSway*aSway*clamp(skH*.34,.12,1.);float skW=.55+1.25*aSway;float skB=(sin(uT*skW+aPhase)+.42*sin(uT*skW*2.1+aPhase*1.6+1.1))*(.35+.65*gust);transformed.xz+=wd*(skA*uW*'+(0.55).toFixed(3)+')*skB;transformed.y-=skA*skA*abs(skB)*uW*.05;\n';
 function wind(m,a,wf,fx,tk){fx=fx||'';tk=tk||1;m.customProgramCacheKey=()=>'w6'+a+fx+tk;m.onBeforeCompile=s=>{const u=s.uniforms;u.uT=WU;u.uW=WW;u.uShed=FXU.shed;u.uShedF=FXU.shedF;u.uAut=FXU.aut;u.uSnowK=FXU.snowK;u.uBloom=FXU.bloom;u.uTor=FXU.tor;u.uTorS=FXU.torS;u.uGrow=FXU.grow;u.uShedS0=FXU.s0;u.uShedT0=FXU.t0;u.uShedR=FXU.sr;u.uShedE=FXU.se;u.uClk=FXU.clk;u.uTorV=FXU.torV;u.uTorD=FXU.torD;u.uSunD=FXU.sunD;u.uSunI=FXU.sunI;u.uWet=FXU.wet;const fa=(a>=.0015&&a<.01)?a*18:0;
 let fr='';if(fx.includes('s'))fr+='if(vFall>=1.||vR<vTs*.9)discard;\n';if(fx.includes('S'))fr+='if(vR<uShedF||vR<vTs)discard;\n';if(fx.includes('b'))fr+='if(vR>uBloom)discard;\n';
 if(fx.includes('a'))fr+='float at=clamp(uAut*1.35-vTree*.55+(vR-.5)*.25,0.,1.);float fam=fract(vTree*7.7);vec3 endc=fam<.35?vec3(1.6,.4,.2):(fam<.7?vec3(1.75,.9,.22):vec3(1.1,.62,.28));vec3 ac=mix(vec3(1.),vec3(1.45,1.3,.4),smoothstep(0.,.35,at));ac=mix(ac,endc,smoothstep(.35,.8,at));ac*=1.-.25*smoothstep(.85,1.,at)*fract(vR*3.3);diffuseColor.rgb*=ac;\n';if(fx.includes('g'))fr+='diffuseColor.rgb*=mix(vec3(1.),vec3(1.45,1.15,.55),uAut);\n';
