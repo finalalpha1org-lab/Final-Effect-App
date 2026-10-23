@@ -1963,6 +1963,7 @@
 
     FECppEngine.updateOnionSkin();
     FECppEngine.updateMotionTrail();
+    if (typeof window.timelineAutoFitRange === 'function') window.timelineAutoFitRange();
     renderDopeSheetAndCurveCanvas();
   }
   window.refreshAnimationStudioUI = refreshAnimationStudioUI;
@@ -2460,29 +2461,55 @@
         FECppEngine.updateKeyDrag(snapped, value);
       };
 
+      /* A touch that starts on the graph may be either a scrub (horizontal) or a
+         scroll of the sheet (vertical). The wrapper is touch-action:pan-y, so the
+         browser owns vertical pans; we only start scrubbing once the gesture is
+         clearly horizontal. Starting on the first pointerdown used to swallow the
+         vertical drag, which left the sheet impossible to scroll after a tap. */
+      let pendingPointer = null;
+
+      const beginScrub = ev => {
+        scrubbing = true;
+        FECppEngine.selectedKey = null;
+        renderDopeSheetAndCurveCanvas();
+        scrubDope(ev);
+      };
+
       dopeCanvas.addEventListener('pointerdown', ev => {
         if (ev.pointerType === 'mouse' && ev.button !== 0) return;
         const hit = FECppEngine.hitTestAnimationKey(ev.clientX, ev.clientY);
         if (hit) {
           keyDragging = true;
           scrubbing = false;
+          pendingPointer = null;
           FECppEngine.beginKeyDrag(hit);
           try { dopeCanvas.setPointerCapture(ev.pointerId); } catch {}
           ev.preventDefault();
           return;
         }
-        scrubbing = true;
-        FECppEngine.selectedKey = null;
-        renderDopeSheetAndCurveCanvas();
-        scrubDope(ev);
+        pendingPointer = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, type: ev.pointerType };
       });
 
       window.addEventListener('pointermove', ev => {
         if (keyDragging) { dragKeyTo(ev); return; }
+        if (pendingPointer && ev.pointerId === pendingPointer.id) {
+          const dx = Math.abs(ev.clientX - pendingPointer.x);
+          const dy = Math.abs(ev.clientY - pendingPointer.y);
+          if (dx < 4 && dy < 4) return;
+          if (dx > dy * 1.2) {
+            pendingPointer = null;
+            beginScrub(ev);
+          } else {
+            /* Vertical intent: hand the gesture back to the sheet. */
+            pendingPointer = null;
+          }
+          return;
+        }
         if (scrubbing) scrubDope(ev);
       });
 
       const endDopePointer = () => {
+        pendingPointer = null;
         if (keyDragging) {
           keyDragging = false;
           FECppEngine.endKeyDrag();

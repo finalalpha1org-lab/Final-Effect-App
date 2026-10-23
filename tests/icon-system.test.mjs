@@ -133,3 +133,26 @@ test('the home screen ships SVG tiles, the lock badge and the 3D Workspace name'
   assert.ok(html.includes('data-ico="lock"'),'locked studios use the lock icon');
   assert.ok(html.includes('data-ico="flask"'),'the benchmark button uses the flask icon');
 });
+
+test('the Add 3D Element sheet draws real primitive icons, not emoji',()=>{
+  /* Cylinder used to borrow the oil-drum glyph (rendered as a log) and Cone
+     borrowed the ruler glyph. Each primitive now has its own outline. */
+  for(const name of ['cylinder','cone','plane','bulb']){
+    assert.ok(FEIcons.names.includes(name),`${name} must exist in the icon set`);
+    assert.ok(FEIcons.svg(name).includes('<path') || FEIcons.svg(name).includes('<ellipse'),
+      `${name} must be drawn from geometry`);
+  }
+  const page = readFileSync('index.html','utf8');
+  const start = page.indexOf('<div id="add-3d-body">');
+  const end = page.indexOf('</aside>',start);
+  assert.ok(start > 0 && end > start);
+  const body = page.slice(start,end);
+  const buttons = [...body.matchAll(/<button class="add-3d-card-btn"[^>]*><i data-ico="([a-z0-9]+)"><\/i><span>([^<]+)<\/span>/g)];
+  assert.equal(buttons.length,8,`all eight primitives are declarative icons, found ${buttons.length}`);
+  const byLabel = Object.fromEntries(buttons.map(b=>[b[2],b[1]]));
+  assert.equal(byLabel.Cylinder,'cylinder');
+  assert.equal(byLabel.Cone,'cone');
+  assert.equal(byLabel.Plane,'plane');
+  assert.equal(byLabel.Light,'bulb');
+  assert.ok(!EMOJI.test(body),'no emoji is left in the Add 3D sheet');
+});

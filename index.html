@@ -886,6 +886,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .animation-close:hover { color: #ffffff; }
 #animation-sheet-body {
   flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   overflow-y: auto !important;
   -webkit-overflow-scrolling: touch;
   padding: 16px;
@@ -1749,7 +1752,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .anim-btn.danger{background:rgba(239,68,68,0.14);border-color:rgba(239,68,68,0.45);color:#fca5a5}
 .anim-btn.active-autokey{background:rgba(239,68,68,0.28);border-color:#ef4444;color:#fff;box-shadow:0 0 12px rgba(239,68,68,0.4)}
 .anim-select{min-height:36px;padding:0 9px;border-radius:8px;background:#10131d;border:1px solid #333b54;color:#e2e8f0;font-size:11px;font-weight:600}
-#anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:none}
+#anim-dopesheet-wrap{width:100%;height:168px;background:#0b0d14;border:1px solid #262c40;border-radius:10px;overflow:hidden;position:relative;touch-action:pan-y}
+.anim-range-field{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#64748b}
+.anim-range-input{width:58px;height:30px;border-radius:8px;background:#10131d;border:1px solid #333b54;color:#e2e8f0;font:600 12px ui-monospace,monospace;text-align:center;padding:0 4px}
+.anim-range-input:focus{outline:2px solid #6366f1;outline-offset:1px}
 #anim-dopesheet-canvas{width:100%;height:100%;display:block;cursor:ew-resize}
 .anim-presets-bar{display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .anim-tools-strip{background:#121623;padding:7px 9px}
@@ -2287,14 +2293,14 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <button class="add-3d-close" onclick="closeAdd3DModal()" aria-label="Close Add 3D Panel">✕</button>
   </header>
   <div id="add-3d-body">
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cube')"><i>🧊</i><span>Cube</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('sphere')"><i>🔮</i><span>Sphere</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cylinder')"><i>🛢️</i><span>Cylinder</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cone')"><i>📐</i><span>Cone</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('torus')"><i>🍩</i><span>Torus</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('plane')"><i>⬜</i><span>Plane</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('camera')"><i>🎥</i><span>Camera</span></button>
-    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('light')"><i>💡</i><span>Light</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cube')"><i data-ico="cube"></i><span>Cube</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('sphere')"><i data-ico="sphere"></i><span>Sphere</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cylinder')"><i data-ico="cylinder"></i><span>Cylinder</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cone')"><i data-ico="cone"></i><span>Cone</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('torus')"><i data-ico="torus"></i><span>Torus</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('plane')"><i data-ico="plane"></i><span>Plane</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('camera')"><i data-ico="camera"></i><span>Camera</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('light')"><i data-ico="bulb"></i><span>Light</span></button>
   </div>
 </aside>
 
@@ -2773,6 +2779,20 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <button class="anim-btn" id="anim-trail-toggle" type="button" onclick="FECppEngine.toggleMotionTrail()" aria-pressed="false" title="Draw the motion path of the selected object"><i class="ico" data-ico="wave"></i>Motion Trail</button>
         <button class="anim-btn" id="anim-camera-path-btn" type="button" onclick="FECppEngine.buildCameraPath()" title="Bake a smooth camera orbit around the selected object"><i class="ico" data-ico="camera"></i>Camera Path</button>
         <button class="anim-btn primary" id="anim-export-gltf-btn" type="button" onclick="FECppEngine.exportAnimatedGLTF()" title="Export the scene with its animation tracks as glTF"><i class="ico" data-ico="download"></i>Export glTF</button>
+      </div>
+      <div class="anim-top-strip anim-tools-strip" id="anim-range-strip">
+        <span class="anim-strip-label">Timeline</span>
+        <label class="anim-range-field">Start
+          <input class="anim-range-input" id="anim-range-start" type="number" min="0" max="10000" step="1" value="0"
+                 onchange="applyTimelineRange(this.value, document.getElementById('anim-range-end').value)">
+        </label>
+        <label class="anim-range-field">End
+          <input class="anim-range-input" id="anim-range-end" type="number" min="1" max="10000" step="1" value="250"
+                 onchange="applyTimelineRange(document.getElementById('anim-range-start').value, this.value)">
+        </label>
+        <button class="anim-btn" id="anim-range-extend" type="button" onclick="extendTimelineRange(50)" title="Add 50 frames to the end of the timeline">+50</button>
+        <button class="anim-btn" id="anim-range-fit" type="button" onclick="fitTimelineRangeToKeys()" title="Size the timeline to the last keyframe">Fit to keys</button>
+        <span class="anim-status-chip" id="anim-range-status">0 – 250</span>
       </div>
       <div id="anim-dopesheet-wrap" title="Tap or drag horizontally to scrub frames &amp; inspect animation curves">
         <canvas id="anim-dopesheet-canvas"></canvas>
@@ -9356,6 +9376,120 @@ const timelineConfig = window.timelineConfig = {
   lastFrameTime: performance.now()
 };
 
+/* The timeline has no fixed 250-frame ceiling: the visible range grows to keep
+   every keyframe, baked simulation and the playhead inside it, and the end
+   frame can be set by hand. 10000 frames (5½ min at 30 fps) is only a guard
+   against a typo, not a limit on what can be animated. */
+const TIMELINE_HARD_MAX = 10000;
+
+function timelineRangeInputs(){
+  return [
+    ['tb-start-frame-input', 'tb-end-frame-input'],
+    ['anim-range-start', 'anim-range-end']
+  ];
+}
+
+function syncTimelineRangeInputs(){
+  for (const [startId, endId] of timelineRangeInputs()) {
+    const startEl = document.getElementById(startId);
+    const endEl = document.getElementById(endId);
+    if (startEl && document.activeElement !== startEl) startEl.value = String(timelineConfig.startFrame);
+    if (endEl && document.activeElement !== endEl) endEl.value = String(timelineConfig.endFrame);
+  }
+  const statusEl = document.getElementById('anim-range-status');
+  if (statusEl) statusEl.textContent = `${timelineConfig.startFrame} – ${timelineConfig.endFrame}`;
+}
+
+function applyTimelineRange(start, end){
+  const s = Math.max(0, Math.min(TIMELINE_HARD_MAX, Math.round(Number(start) || 0)));
+  const e = Math.max(s + 1, Math.min(TIMELINE_HARD_MAX, Math.round(Number(end) || s + 1)));
+  const changed = s !== timelineConfig.startFrame || e !== timelineConfig.endFrame;
+  timelineConfig.startFrame = s;
+  timelineConfig.endFrame = e;
+  if (timelineConfig.currentFrame < s) timelineConfig.currentFrame = s;
+  if (timelineConfig.currentFrame > e) timelineConfig.currentFrame = e;
+  syncTimelineRangeInputs();
+  renderTimelineRulerCanvas();
+  return changed;
+}
+window.applyTimelineRange = applyTimelineRange;
+
+function setTimelineEndFrame(frame){ return applyTimelineRange(timelineConfig.startFrame, frame); }
+window.setTimelineEndFrame = setTimelineEndFrame;
+
+function setTimelineStartFrame(frame){ return applyTimelineRange(frame, Math.max(Number(frame) + 1, timelineConfig.endFrame)); }
+window.setTimelineStartFrame = setTimelineStartFrame;
+
+function extendTimelineRange(step = 50){
+  const delta = Math.max(1, Math.round(Number(step) || 50));
+  return setTimelineEndFrame(timelineConfig.endFrame + delta);
+}
+window.extendTimelineRange = extendTimelineRange;
+
+function timelineContentEndFrame(){
+  let need = Number(timelineConfig.currentFrame) || 0;
+  try {
+    const keys = timelineKeyFrames();
+    if (keys.length) need = Math.max(need, Number(keys[keys.length - 1]) || 0);
+  } catch (_) {}
+  try {
+    if (typeof getActiveObjectMesh === 'function') {
+      const bakeEnd = Number(getActiveObjectMesh()?.userData?.simBake?.frameEnd) || 0;
+      if (bakeEnd) need = Math.max(need, bakeEnd);
+    }
+  } catch (_) {}
+  return need;
+}
+
+function fitTimelineRangeToKeys(){
+  const last = timelineContentEndFrame();
+  return setTimelineEndFrame(Math.max(50, Math.ceil((last + 12) / 50) * 50));
+}
+window.fitTimelineRangeToKeys = fitTimelineRangeToKeys;
+
+/* Called by the ruler renderer: content that lands beyond the visible range
+   widens it instead of being drawn off the edge. Never shrinks - only the
+   explicit range controls do that. */
+function timelineAutoFitRange(){
+  const need = timelineContentEndFrame();
+  if (need <= timelineConfig.endFrame) return false;
+  timelineConfig.endFrame = Math.min(TIMELINE_HARD_MAX, Math.ceil((need + 1) / 50) * 50);
+  syncTimelineRangeInputs();
+  return true;
+}
+window.timelineAutoFitRange = timelineAutoFitRange;
+
+/* Implementation names stay out of the viewport chrome: solver internals live in
+   getSolverDiagnostics() for the diagnostics sheet only. A cached older bundle
+   could still write "C++/WASM v3 ready" into the physics badge, so the badge is
+   rewritten to the neutral state whenever anything touches it. */
+function sanitizePhysicsBadge(){
+  const badge = document.getElementById('tb-status-badge');
+  if (!badge) return false;
+  const text = String(badge.textContent || '');
+  if (!/C\+\+20|C\+\+|WASM|WebAssembly|Rust\//i.test(text)) return false;
+  badge.textContent = /\bactive\b/i.test(text) ? 'Physics · active' : 'Physics: ready';
+  return true;
+}
+window.sanitizePhysicsBadge = sanitizePhysicsBadge;
+
+function watchPhysicsBadge(){
+  sanitizePhysicsBadge();
+  const badge = document.getElementById('tb-status-badge');
+  if (!badge || typeof MutationObserver !== 'function') return null;
+  const observer = new MutationObserver(() => sanitizePhysicsBadge());
+  observer.observe(badge, { childList: true, characterData: true, subtree: true });
+  return observer;
+}
+window.watchPhysicsBadge = watchPhysicsBadge;
+watchPhysicsBadge();
+
+window.timelineEnsureRange = function timelineEnsureRange(frame){
+  const need = Math.round(Number(frame) || 0);
+  if (!Number.isFinite(need) || need <= timelineConfig.endFrame) return false;
+  return setTimelineEndFrame(Math.ceil((need + 1) / 50) * 50);
+};
+
 function toggleTimelineMinimize() {
   const bar = document.getElementById('studio-timeline-bar');
   const btn = document.getElementById('tb-min-btn');
@@ -9456,9 +9590,9 @@ window.setTimelineCurrentFrame = setTimelineCurrentFrame;
 function updateTimelineRange() {
   const startEl = document.getElementById('tb-start-frame-input');
   const endEl = document.getElementById('tb-end-frame-input');
-  if (startEl) timelineConfig.startFrame = Math.max(0, parseInt(startEl.value) || 0);
-  if (endEl) timelineConfig.endFrame = Math.max(1, parseInt(endEl.value) || 250);
-  renderTimelineRulerCanvas();
+  const start = startEl ? parseInt(startEl.value) || 0 : timelineConfig.startFrame;
+  const end = endEl ? parseInt(endEl.value) || timelineConfig.endFrame : timelineConfig.endFrame;
+  applyTimelineRange(start, end);
 }
 window.updateTimelineRange = updateTimelineRange;
 
@@ -9538,6 +9672,9 @@ function renderTimelineRulerCanvas() {
   if (!canvas) return;
   const container = canvas.parentElement;
   if (!container) return;
+
+  /* Grow the axis before measuring it so new keys can never fall off the end. */
+  timelineAutoFitRange();
 
   const w = Math.max(1, container.clientWidth || 600);
   const h = Math.max(1, container.clientHeight || 52);
