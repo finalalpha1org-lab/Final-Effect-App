@@ -10,11 +10,11 @@ Tests: `node --test tests/landscape-cpp.test.mjs tests/cpp-core-engine.test.mjs`
 
 ## Ordered remaining work
 
-1. Add worker-owned engine initialization and command queue, cancellation/versioning, buffer ownership and memory budgets. Connect island generation/brush/normal updates while preserving undo, autosave and Workspace export. Avoid sharing a resettable scratch arena with persistent buffers.
+1. Add worker-owned engine initialization and command queue, cancellation/versioning, buffer ownership and memory budgets. Connect island generation/brush/normal updates while preserving undo, autosave and Workspace export. Avoid sharing a resettable scratch arena with persistent buffers. **Open:** the landscape bridge still runs on the main thread and cancellation is not implemented; the per-command dirty-rectangle copies are the current mitigation.
 2. Implement mass-accounted hydraulic erosion and conservative thermal transport; flow, sediment and talus masks. Validate conservation, border continuity, deterministic seeds and cancellation. Build a non-destructive parameter stack with cache invalidation.
 3. Add selectable 128/256/512 resolution with resampling, correct texture dimensions, bounded upload ranges and seam-aware chunk neighbors. UI controls must report actual resolution.
 4. Connect height-blended triplanar albedo/normal/roughness/AO materials. Preserve existing lighting/material authoring; use licensed high-quality assets. GPU shaders remain GPU code, not CPU C++ loops.
-5. Port spectral ocean FFT, priority-flood hydrology, chunk generation, spatial scatter, seabed and planet generation. Remove heavy JS only after parity tests and integration checks pass.
+5. ~~Port spectral ocean FFT, priority-flood hydrology, chunk generation, spatial scatter~~ — landed, with parity/behavior tests and per-subsystem JS fallbacks (see the sections below). Still open from this item: the plant-placement solver inside `createChunkJob`, chunk mesh/instance buffer construction, seabed and planet generation. Remove heavy JS only after parity tests and integration checks pass.
 6. Port remaining Workspace geometry and scene processing in separately tested increments; locked studios are not implemented products and must not be reported as migrated.
 
 ## Acceptance and measurement
