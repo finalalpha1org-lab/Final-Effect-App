@@ -42,6 +42,7 @@
   const REQUIRED_KERNELS = Object.freeze({
     animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
     ocean: ['fe_ocean_configure', 'fe_ocean_update', 'fe_ocean_resolution'],
+    render: ['fe_render_trace_samples', 'fe_render_resolve_rgba8', 'fe_render_denoise', 'fe_render_update_convergence'],
     terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic', 'fe_erosion_begin', 'fe_erosion_step', 'fe_erosion_dirty_ptr', 'fe_lod_visible', 'fe_lod_visible_index_ptr', 'fe_lod_visible_tier_ptr'],
     surface: ['fe_surface_pbr', 'fe_surface_detail', 'fe_water_optical'],
     flora: ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_leaf_ptr', 'fe_flora_sway_ptr', 'fe_flora_phase_ptr', 'fe_flora_lsystem', 'fe_flora_lsystem_plant'],
@@ -108,6 +109,9 @@
       isRendering: false,
       isSequenceRendering: false,
       cancelRequested: false,
+      previewBlocked: false,
+      denoise: true,
+      renderToken: 0,
       rafId: 0
     },
     objectSlots: new Map([
@@ -687,9 +691,10 @@
         );
       }
 
-      /* Active Camera */
-      const useSceneCam = (document.getElementById('render-cam-source')?.value || 'scene') === 'scene';
-      const cam = (useSceneCam && eng.sceneCamera) ? eng.sceneCamera : (eng.getActiveCamera?.() || eng.viewportCamera);
+      /* Active Camera — resolved by the same rule the raster capture uses. The
+         path tracer traces the authored frustum, which is the whole camera
+         frame rather than the cropped viewport frame. */
+      const cam = this.renderCamera() || eng.getActiveCamera?.() || eng.viewportCamera;
       cam.updateMatrixWorld(true);
       const eye = new THREE.Vector3();
       const fwd = new THREE.Vector3();
@@ -724,43 +729,72 @@
       return exp.fe_render_get_triangle_count();
     },
 
+    /* The camera a render uses: the authored rig, or the camera the viewport is
+       drawing with. One resolver for both engines, because they used to answer
+       this question differently and one of them answered it wrong. */
+    renderCamera() {
+      const eng = window.FE?.engines?.core;
+      if (!eng) return null;
+      const source = document.getElementById('render-cam-source')?.value || 'viewport';
+      const RC = window.FERenderCapture;
+      const active = typeof eng.getActiveCamera === 'function' ? eng.getActiveCamera() : eng.viewportCamera;
+      const cam = RC
+        ? RC.resolveRenderCamera(eng, source, active)
+        : (source === 'scene' ? (eng.sceneCamera || eng.viewportCamera) : (active || eng.viewportCamera));
+      if (!cam) return null;
+      cam.updateMatrixWorld(true);
+      return cam;
+    },
+
     renderSingleWebGLPostFXFrame(targetCanvas, width, height, frameSeed = 1) {
       const eng = window.FE?.engines?.core;
       if (!eng || !eng.r || !eng.sc) return false;
       targetCanvas.width = width;
       targetCanvas.height = height;
 
-      const useSceneCam = (document.getElementById('render-cam-source')?.value || 'scene') === 'scene';
-      const cam = (useSceneCam && eng.sceneCamera) ? eng.sceneCamera : (eng.getActiveCamera?.() || eng.viewportCamera);
-      const prevAspect = cam.aspect;
-      if (cam.isPerspectiveCamera) {
-        cam.aspect = width / height;
-        cam.updateProjectionMatrix();
-      }
+      const cam = this.renderCamera();
+      if (!cam) return false;
+      const RC = window.FERenderCapture;
 
-      /* Temporarily render with authored materials & shadows if currently in Solid/Wireframe */
+      /* Temporarily render with authored materials & shadows if currently in Solid/Wireframe.
+         This has to happen before helpers are hidden: switching to rendered shading is
+         what turns the shadow catcher on. */
       const prevShading = eng.getShadingMode?.() || 'solid';
       const switchedShading = (prevShading === 'solid' || prevShading === 'wireframe') && typeof window.applyShadingMode === 'function';
       if (switchedShading) window.applyShadingMode('rendered');
 
+      /* A render is the artwork, not the editor: no floor grid, no 3D cursor,
+         no camera rig, no light gizmo. The one exception is the shadow catcher,
+         which is a viewport helper but a rendered element when the dialog asks
+         for one. */
+      const keepShadowCatcher = this.renderState.shadowCatcher !== false && eng.shadowFloor
+        ? new Set([eng.shadowFloor])
+        : null;
+      const hiddenHelpers = RC ? RC.hideEditorHelpers(eng.sc, eng, keepShadowCatcher) : [];
+      const cameraState = RC ? RC.prepareRenderCamera(cam, width / height) : null;
+
       const prevSize = new THREE.Vector2();
       eng.r.getSize(prevSize);
       const prevPR = eng.r.getPixelRatio();
-      eng.r.setPixelRatio(1);
-      eng.r.setSize(width, height, false);
-      eng.r.render(eng.sc, cam);
+      let ctx = null;
+      try {
+        eng.r.setPixelRatio(1);
+        eng.r.setSize(width, height, false);
+        eng.r.render(eng.sc, cam);
 
-      const ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(eng.r.domElement, 0, 0, width, height);
-
-      /* Restore interactive viewport dimensions & shading immediately */
-      eng.r.setPixelRatio(prevPR);
-      eng.r.setSize(prevSize.x, prevSize.y, false);
-      if (cam.isPerspectiveCamera && prevAspect) {
-        cam.aspect = prevAspect;
-        cam.updateProjectionMatrix();
+        ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(eng.r.domElement, 0, 0, width, height);
+      } finally {
+        /* Restore interactive viewport state immediately, even if the capture
+           failed halfway: a lost context must not leave the editor stripped. */
+        eng.r.setPixelRatio(prevPR);
+        eng.r.setSize(prevSize.x, prevSize.y, false);
+        if (RC) {
+          RC.restoreRenderCamera(cam, cameraState);
+          RC.restoreEditorHelpers(hiddenHelpers);
+        }
+        if (switchedShading) window.applyShadingMode(prevShading);
       }
-      if (switchedShading) window.applyShadingMode(prevShading);
 
       /* Run C++ Post-Processing Compositor on the captured RGBA8 frame */
       if (this.ready && ctx) {
@@ -783,6 +817,62 @@
       return true;
     },
 
+    /* A render has to keep going when the tab is not in front. rAF stops dead
+       in a hidden tab, and on a phone the editor goes hidden the moment the
+       Render Result window opens — which is how a four-second render turns
+       into a ten-minute one. A message port is not throttled the same way, so
+       the path tracer is driven by a tick queue instead of animation frames. */
+    renderTicker() {
+      if (this._renderTicker) return this._renderTicker;
+      if (typeof MessageChannel === 'function') {
+        const channel = new MessageChannel();
+        let queued = null;
+        channel.port1.onmessage = () => {
+          const fn = queued;
+          queued = null;
+          if (fn) fn();
+        };
+        this._renderTicker = (fn) => { queued = fn; channel.port2.postMessage(0); };
+      } else {
+        this._renderTicker = (fn) => setTimeout(fn, 0);
+      }
+      return this._renderTicker;
+    },
+
+    /* One render, two places to look at it: the dialog's inline canvas keeps
+       working, and the separate Render Result window — when the user asked for
+       one and the browser allowed it — receives the same frame. */
+    publishPreview(canvas, meta) {
+      const preview = window.FERenderPreview;
+      if (!preview || !preview.isOpen()) return false;
+      return preview.pushCanvas(canvas, meta);
+    },
+
+    /* The Render button. A window can only be opened while the click is still
+       being handled, so it is opened here, synchronously, before the first
+       await — every later sample pass and animation frame is posted into the
+       window that already exists. */
+    renderFrameToPreview() {
+      syncRenderControlsFromUI();
+      const preview = window.FERenderPreview;
+      if (preview && preview.enabled() && !preview.isOpen()) {
+        const { width, height } = this.computeRenderDimensions();
+        if (!preview.ensure({ title: 'Render Result', width, height, reset: true }) && !this.renderState.previewBlocked) {
+          this.renderState.previewBlocked = true;
+          window.FE?.toast?.('The browser blocked the preview window — the render stays visible in this dialog.');
+        }
+      }
+      return this.startStillRender();
+    },
+
+    setPreviewWindow(on) {
+      const preview = window.FERenderPreview;
+      if (!preview) return false;
+      preview.setEnabled(!!on);
+      if (on && preview.enabled()) preview.ensure({ title: 'Render Result' });
+      return preview.enabled();
+    },
+
     async startStillRender() {
       this.stopActiveRender();
       await this.init();
@@ -796,6 +886,7 @@
       const ctx = canvas.getContext('2d');
       const statusEl = document.getElementById('render-progress-text');
       const barEl = document.getElementById('render-progress-fill');
+      window.FERenderPreview?.reset?.('Render Result');
 
       if (this.renderState.engine === 'eevee_cpp' || !this.ready) {
         const t0 = performance.now();
@@ -803,6 +894,9 @@
         const dt = (performance.now() - t0).toFixed(1);
         if (statusEl) statusEl.textContent = `FE Eevee + Post-FX · ${width}×${height} · ${dt} ms`;
         if (barEl) barEl.style.width = '100%';
+        this.publishPreview(canvas, { width, height, elapsed: Number(dt), final: true });
+        window.FERenderPreview?.progress?.(100);
+        window.FERenderPreview?.done?.(undefined, Number(dt));
         return;
       }
 
@@ -814,25 +908,68 @@
 
       const targetSpp = Math.max(1, this.renderState.targetSamples);
       const bounces = this.renderState.bounces;
-      const tileRows = Math.max(16, Math.min(height, Math.floor(48000 / Math.max(64, width))));
+      /* Slice sizing is measured, not guessed. The old fixed 48 000-pixel
+         slice took ~150 ms on a phone and produced exactly 192 animation
+         frames per render; this keeps each slice near 9 ms, so the dialog
+         stays responsive and a fast machine finishes in far fewer ticks. */
+      /* A visible tab wants small slices so the UI stays responsive; a hidden
+         one is being throttled anyway, so it takes fewer, longer slices instead
+         of waiting out the throttle between many tiny ones. */
+      const sliceTarget = () => (typeof document !== 'undefined' && document.visibilityState === 'hidden' ? 40 : 9);
+      let sliceTargetMs = sliceTarget();
+      let tileRows = Math.max(4, Math.min(height, Math.round(22000 / Math.max(64, width))));
       let curTileY = 0;
+      let sliceMs = 0;
       const tStart = performance.now();
+      const token = ++this.renderState.renderToken;
+      const tick = this.renderTicker();
 
       const stepProgressive = () => {
+        if (token !== this.renderState.renderToken) return;
         if (!this.renderState.isRendering || this.renderState.cancelRequested) {
           this.renderState.isRendering = false;
           return;
         }
         const rs = this.renderState;
+        const sliceStart = performance.now();
         const doneSpp = this.exports.fe_render_trace_samples(1, bounces, curTileY, tileRows);
+        sliceMs = performance.now() - sliceStart;
         curTileY += tileRows;
+        /* When this slice finished a whole pass, freeze the pixels that have
+           stopped moving so the remaining passes spend their budget on the
+           shadows and edges instead of a sky that has already converged. */
+        if (curTileY >= height && this.exports.fe_render_update_convergence) {
+          this.exports.fe_render_update_convergence(0.03);
+        }
+        /* Aim for a slice the browser can schedule without stutter. The clamp
+           keeps one pathological slice from collapsing to a single row. */
+        if (sliceMs > 0) {
+          sliceTargetMs = sliceTarget();
+          const scale = sliceTargetMs / sliceMs;
+          tileRows = Math.max(4, Math.min(height, Math.round(tileRows * (scale > 1.6 ? 1.6 : (scale < 0.6 ? 0.6 : scale)))));
+        }
 
         if (curTileY >= height) {
           curTileY = 0;
-          this.exports.fe_render_resolve_rgba8(
+          /* Everything converged: waiting for the sample target would only
+             burn battery. */
+          const active = this.exports.fe_render_active_pixels ? this.exports.fe_render_active_pixels() : 1;
+          const finished = doneSpp >= targetSpp || active === 0;
+          if (finished && rs.denoise !== false && this.exports.fe_render_denoise) {
+            /* Eight noisy samples plus a filter that respects edges looks like
+               three times as many samples, and costs a fraction of them.
+               Three à-trous passes: two leaves low-frequency blotches on a
+               large flat face, which is the one thing a cube makes obvious. */
+            this.exports.fe_render_denoise(3, 1);
+          }
+          /* Bloom is a full-image pyramid blur; during the progressive passes
+             the picture only has to be visible, so it is paid for once, at the
+             end, rather than on every pass. */
+          const tonemapArgs = [
             rs.tonemap, rs.exposure, rs.contrast, rs.saturation,
-            rs.temperature, rs.bloom, rs.vignette, rs.chromatic, rs.grain
-          );
+            rs.temperature, finished ? rs.bloom : 0, rs.vignette, rs.chromatic, rs.grain
+          ];
+          this.exports.fe_render_resolve_rgba8(...tonemapArgs);
           const rgbaPtr = this.exports.fe_render_get_rgba8_ptr();
           const rgbaView = new Uint8ClampedArray(this.memory.buffer, rgbaPtr, width * height * 4);
           const imgData = new ImageData(new Uint8ClampedArray(rgbaView), width, height);
@@ -840,29 +977,39 @@
 
           const pct = Math.min(100, Math.round((doneSpp / targetSpp) * 100));
           if (barEl) barEl.style.width = pct + '%';
-          const elapsed = ((performance.now() - tStart) / 1000).toFixed(1);
+          const elapsedMs = performance.now() - tStart;
+          const elapsed = (elapsedMs / 1000).toFixed(1);
           if (statusEl) {
             statusEl.textContent = `Path tracer · ${doneSpp}/${targetSpp} SPP · ${triCount} tris · ${width}×${height} (${elapsed}s)`;
           }
+          this.publishPreview(canvas, {
+            width, height, spp: doneSpp, sppTotal: targetSpp,
+            elapsed: elapsedMs, final: doneSpp >= targetSpp
+          });
+          window.FERenderPreview?.progress?.(pct);
 
-          if (doneSpp >= targetSpp) {
+          if (finished) {
             this.renderState.isRendering = false;
+            window.FERenderPreview?.done?.(undefined, elapsedMs);
             window.FE?.toast?.(`⚡ Path trace complete (${doneSpp} SPP)`);
             return;
           }
         }
-        this.renderState.rafId = requestAnimationFrame(stepProgressive);
+        tick(stepProgressive);
       };
 
       if (statusEl) statusEl.textContent = `Building BVH (${triCount} triangles) & tracing ${width}×${height}…`;
       if (barEl) barEl.style.width = '4%';
-      this.renderState.rafId = requestAnimationFrame(stepProgressive);
+      tick(stepProgressive);
     },
 
     stopActiveRender() {
       this.renderState.cancelRequested = true;
       this.renderState.isRendering = false;
       this.renderState.isSequenceRendering = false;
+      /* Queued message-port ticks check this token, so a stopped render cannot
+         come back to life a frame later. */
+      this.renderState.renderToken = (this.renderState.renderToken || 0) + 1;
       if (this.renderState.rafId) {
         cancelAnimationFrame(this.renderState.rafId);
         this.renderState.rafId = 0;
@@ -888,20 +1035,75 @@
       canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgbaView), w, h), 0, 0);
     },
 
-    downloadRenderedPNG() {
+    /* What a render can be saved as. PNG is the default because it is the only
+       one that cannot lose a pixel; the lossy formats exist because a 4K still
+       as PNG is a 30 MB file and sometimes the user is on mobile data. */
+    stillFormat() {
+      const el = document.getElementById('render-still-format');
+      const value = el ? el.value : 'png';
+      return window.FERenderExport ? window.FERenderExport.stillFormat(value) : { id: 'png', mime: 'image/png', ext: '.png', lossy: false };
+    },
+
+    syncStillQualityVisibility() {
+      const format = this.stillFormat();
+      const row = document.getElementById('render-still-quality-row');
+      if (row) row.hidden = !format.lossy;
+    },
+
+    stillQuality() {
+      const el = document.getElementById('render-still-quality');
+      return el ? Number(el.value) / 100 : 0.92;
+    },
+
+    downloadRenderedStill() {
       const canvas = document.getElementById('render-preview-canvas');
       if (!canvas || !canvas.width) return;
-      canvas.toBlob(blob => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `FinalEffect_Render_${canvas.width}x${canvas.height}_F${window.timelineConfig?.currentFrame || 0}.png`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
-        window.FE?.toast?.('Saved PNG Render Image');
-      }, 'image/png');
+      const X = window.FERenderExport;
+      if (!X) return;
+      const frame = Number(window.timelineConfig?.currentFrame || 0);
+      X.encodeStill(canvas, this.stillFormat().id, this.stillQuality()).then(async (encoded) => {
+        if (!encoded) {
+          window.FE?.toast?.('This browser could not encode the image.');
+          return;
+        }
+        const name = X.fileName('FinalEffect', canvas.width, canvas.height, `F${frame}`, encoded.ext);
+        const result = await X.saveBlob(encoded.blob, name);
+        window.FE?.toast?.(result.method === 'share' ? `Saved ${name}` : `Downloading ${name}`);
+      });
+    },
+
+    /* Kept under its old name: saved pages and the single-file build call it. */
+    downloadRenderedPNG() {
+      return this.downloadRenderedStill();
+    },
+
+    /* The range the next render will use, taken from the timeline itself —
+       one source of truth, so a video can never disagree with the START/END
+       the user typed. */
+    renderRange() {
+      const cfg = window.timelineConfig || {};
+      const startEl = document.getElementById('tb-start-frame-input');
+      const endEl = document.getElementById('tb-end-frame-input');
+      const read = (el, fallback) => {
+        /* An empty field means "not typed", not frame zero. */
+        const raw = el && el.value !== undefined && el.value !== null ? String(el.value).trim() : '';
+        const n = raw === '' ? NaN : Number(raw);
+        return Number.isFinite(n) ? Math.round(n) : Math.round(Number(fallback) || 0);
+      };
+      const start = Math.max(0, read(startEl, cfg.startFrame ?? 0));
+      const end = Math.max(start + 1, read(endEl, cfg.endFrame ?? 250));
+      const fps = Math.max(1, Math.round(Number(cfg.fps) || 30));
+      return { start, end, fps, frames: end - start + 1, seconds: (end - start + 1) / fps };
+    },
+
+    updateRenderRangeReadout() {
+      const el = document.getElementById('render-range-info');
+      if (!el) return;
+      const X = window.FERenderExport;
+      const range = this.renderRange();
+      el.textContent = X
+        ? X.rangeLabel(range.start, range.end, range.fps)
+        : `Frames ${range.start}–${range.end} · ${range.frames} frames · ${range.fps} fps`;
     },
 
     async renderAnimationSequenceVideo() {
@@ -909,6 +1111,7 @@
       this.stopActiveRender();
       await this.init();
       syncRenderControlsFromUI();
+      this.updateRenderRangeReadout();
 
       const canvas = document.getElementById('render-preview-canvas');
       if (!canvas) return;
@@ -917,32 +1120,25 @@
       canvas.height = height;
       const ctx = canvas.getContext('2d');
 
-      const startF = Number(window.timelineConfig?.startFrame || 0);
-      const endF = Math.max(startF + 1, Number(window.timelineConfig?.endFrame || 120));
-      const fps = Number(window.timelineConfig?.fps || 30);
+      /* The timeline decides what gets rendered. Frames are inclusive, exactly
+         as the START and END fields read. */
+      const range = this.renderRange();
+      const { start: startF, end: endF, fps, frames: totalFrames } = range;
       const statusEl = document.getElementById('render-progress-text');
       const barEl = document.getElementById('render-progress-fill');
+      window.FERenderPreview?.reset?.('Render Result');
 
-      if (typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
-        window.FE?.toast?.('Video encoding requires MediaRecorder support in this browser; saving current frame PNG.');
-        this.downloadRenderedPNG();
+      const X = window.FERenderExport;
+      if (!X) {
+        window.FE?.toast?.('The export module did not load.');
         return;
       }
 
-      const mimeCandidates = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
-      ];
-      const mimeType = mimeCandidates.find(m => MediaRecorder.isTypeSupported?.(m)) || '';
-      const stream = canvas.captureStream(fps);
-      const chunks = [];
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 8_000_000 } : undefined);
-      recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      /* Can this browser record at all? If not, the same buffered frames are
+         written as a PNG sequence in a ZIP instead of a video. */
+      const canRecord = X.videoSupported(typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
+      const sequence = X.createSequence({ byteLimit: 640 * 1024 * 1024 });
 
-      const donePromise = new Promise(resolve => { recorder.onstop = resolve; });
-      recorder.start();
       this.renderState.isSequenceRendering = true;
       this.renderState.cancelRequested = false;
 
@@ -951,10 +1147,46 @@
       if (window.timelineConfig) window.timelineConfig.isPlaying = false;
 
       const usePath = this.renderState.engine === 'cycles_cpp' && this.ready;
-      const seqSpp = Math.min(8, Math.max(2, Math.round(this.renderState.targetSamples / 4)));
+      const targetSpp = Math.max(1, this.renderState.targetSamples);
+      const seqSpp = Math.min(8, Math.max(1, Math.round(targetSpp / 4)));
+      const bounces = this.renderState.bounces;
+      const seqDenoise = this.renderState.denoise !== false;
+      const tStart = performance.now();
+      let cancelled = false;
 
+      /* Yield between slices, not only between frames: one frame at full
+         resolution takes about a second on a phone, and a dialog that does not
+         repaint for a second looks broken. */
+      const yieldToBrowser = () => new Promise((resolve) => {
+        if (typeof MessageChannel === 'function') {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = () => resolve();
+          channel.port2.postMessage(0);
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
+      let tileRows = Math.max(4, Math.min(height, Math.round(22000 / Math.max(64, width))));
+      const traceWholeFrame = async () => {
+        let y = 0;
+        while (y < height) {
+          if (this.renderState.cancelRequested) return false;
+          const sliceStart = performance.now();
+          this.exports.fe_render_trace_samples(seqSpp, bounces, y, tileRows);
+          const sliceMs = performance.now() - sliceStart;
+          y += tileRows;
+          if (sliceMs > 0) {
+            const scale = 9 / sliceMs;
+            tileRows = Math.max(4, Math.min(height, Math.round(tileRows * (scale > 1.6 ? 1.6 : (scale < 0.6 ? 0.6 : scale)))));
+          }
+          await yieldToBrowser();
+        }
+        return true;
+      };
+
+      /* ---- Phase 1: render every frame into the buffer ---------------- */
       for (let f = startF; f <= endF; f++) {
-        if (this.renderState.cancelRequested) break;
+        if (this.renderState.cancelRequested) { cancelled = true; break; }
         if (typeof window.setTimelineCurrentFrame === 'function') {
           window.setTimelineCurrentFrame(f);
         }
@@ -962,7 +1194,9 @@
         if (usePath) {
           this.uploadWorkspaceSceneToCpp(width / height);
           this.exports.fe_render_init_framebuffer(width, height);
-          this.exports.fe_render_trace_samples(seqSpp, 1, 0, height);
+          const traced = await traceWholeFrame();
+          if (!traced) { cancelled = true; break; }
+          if (seqDenoise && this.exports.fe_render_denoise) this.exports.fe_render_denoise(2, 1);
           const rs = this.renderState;
           this.exports.fe_render_resolve_rgba8(
             rs.tonemap, rs.exposure, rs.contrast, rs.saturation,
@@ -975,32 +1209,102 @@
           this.renderSingleWebGLPostFXFrame(canvas, width, height, f + 1);
         }
 
-        const pct = Math.round(((f - startF + 1) / (endF - startF + 1)) * 100);
-        if (barEl) barEl.style.width = pct + '%';
-        if (statusEl) statusEl.textContent = `Rendering Animation Frame ${f}/${endF} (${pct}%) · ${width}×${height} @ ${fps}fps`;
+        /* A video frame is one video frame; a PNG sequence has to stay
+           lossless, and there is no recorder to be kind to. */
+        const encoded = await X.encodeStill(canvas, canRecord ? 'jpeg' : 'png', canRecord ? 0.92 : 1);
+        if (encoded) sequence.add(encoded.blob);
+        if (sequence.full) {
+          window.FE?.toast?.(`Stopped at frame ${f - startF + 1}: the frame buffer is full. Render a shorter range or a smaller resolution.`);
+          break;
+        }
 
-        await new Promise(r => setTimeout(r, Math.max(16, Math.round(1000 / fps))));
+        const pct = Math.round(((f - startF + 1) / totalFrames) * 100);
+        const elapsed = (performance.now() - tStart) / 1000;
+        const eta = pct > 0 ? Math.max(0, Math.round(elapsed * (100 - pct) / pct)) : 0;
+        if (barEl) barEl.style.width = pct + '%';
+        if (statusEl) {
+          statusEl.textContent = `Rendering frame ${f - startF + 1}/${totalFrames} (${pct}%) · ${width}×${height} · ${eta}s left`;
+        }
+        this.publishPreview(canvas, {
+          width, height, index: f - startF + 1, total: totalFrames,
+          force: true, final: f === endF
+        });
+        window.FERenderPreview?.progress?.(pct, `Frame ${f - startF + 1} of ${totalFrames}`);
+
+        /* Yield to the browser so the dialog repaints, but never wait on the
+           clock: the renderer already took as long as it needed. */
+        await new Promise((resolve) => {
+          if (typeof MessageChannel === 'function') {
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () => resolve();
+            channel.port2.postMessage(0);
+          } else {
+            setTimeout(resolve, 0);
+          }
+        });
       }
 
-      recorder.stop();
-      await donePromise;
       this.renderState.isSequenceRendering = false;
       if (typeof window.setTimelineCurrentFrame === 'function') window.setTimelineCurrentFrame(savedFrame);
       if (window.timelineConfig) window.timelineConfig.isPlaying = wasPlaying;
 
-      if (!this.renderState.cancelRequested && chunks.length > 0) {
-        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `FinalEffect_Animation_${width}x${height}_${fps}fps.${ext}`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1500);
-        if (statusEl) statusEl.textContent = `Animation Video Exported (${endF - startF + 1} frames · .${ext})`;
-        window.FE?.toast?.(`🎬 Exported Animation Video (.${ext})`);
+      if (cancelled) {
+        if (statusEl) statusEl.textContent = 'Animation render stopped';
+        return;
       }
+      if (sequence.count === 0) {
+        window.FE?.toast?.('No frames were produced.');
+        return;
+      }
+
+      /* ---- Phase 2: write the file ------------------------------------ */
+      const rendered = sequence.count;
+      if (!canRecord) {
+        const zip = X.createZip();
+        for (let i = 0; i < rendered; i++) {
+          const frameNumber = startF + i;
+          const bytes = new Uint8Array(await sequence.frames[i].arrayBuffer());
+          zip.add(`frames/frame_${String(frameNumber).padStart(5, '0')}.png`, bytes);
+          if (barEl) barEl.style.width = Math.round(((i + 1) / rendered) * 100) + '%';
+        }
+        const blob = zip.build();
+        const name = X.fileName('FinalEffect', width, height, `${zip.count}frames`, '.zip');
+        const result = await X.saveBlob(blob, name);
+        if (statusEl) statusEl.textContent = `PNG sequence saved · ${zip.count} frames · ${(blob.size / 1048576).toFixed(1)} MB`;
+        window.FE?.toast?.(result.method === 'share' ? `Saved ${name}` : `Downloading ${name}`);
+        if (barEl) barEl.style.width = '100%';
+        return;
+      }
+
+      /* The recorder is opened here, not during rendering, so its clock starts
+         when the frames are ready to be played — at the timeline's rate. */
+      const recording = X.beginRecording(canvas, { bitrate: 12_000_000 });
+      if (!recording) {
+        window.FE?.toast?.('This browser could not start the video recorder.');
+        return;
+      }
+      if (statusEl) statusEl.textContent = `Encoding ${rendered} frames at ${fps} fps (${(rendered / fps).toFixed(1)} s)…`;
+      if (barEl) barEl.style.width = '0%';
+
+      await X.playSequence(canvas, sequence.frames.slice(0, rendered), fps, (index) => {
+        recording.capture();
+        const pct = Math.round(((index + 1) / rendered) * 100);
+        if (barEl) barEl.style.width = pct + '%';
+        window.FERenderPreview?.progress?.(pct, `Encoding ${index + 1} of ${rendered}`);
+      });
+
+      const { blob, format } = await recording.finish();
+      if (!blob || blob.size === 0) {
+        window.FE?.toast?.('The recorder produced an empty file — try a shorter range.');
+        return;
+      }
+      const name = X.fileName('FinalEffect', width, height, `${fps}fps`, format.ext);
+      const result = await X.saveBlob(blob, name);
+      if (statusEl) {
+        statusEl.textContent = `${format.label} · ${rendered} frames · ${fps} fps · ${(rendered / fps).toFixed(1)} s · ${(blob.size / 1048576).toFixed(1)} MB`;
+      }
+      window.FE?.toast?.(result.method === 'share' ? `Saved ${name}` : `Downloading ${name}`);
+      if (barEl) barEl.style.width = '100%';
     },
 
     /* ---------------------------------------------------------------------
@@ -1904,9 +2208,9 @@
 
     /* ---- glTF animation export ---- */
     exportAnimatedGLTF() {
-      const T = window.THREE;
-      if (!T || typeof T.GLTFExporter !== 'function') {
-        window.FE?.toast?.('glTF exporter is still loading');
+      const W = window.FEWorkspaceExport;
+      if (!W) {
+        window.FE?.toast?.('The export module did not load');
         return;
       }
       if (!this.ready || this.exports.fe_anim_get_total_keyframes() === 0) {
@@ -1918,47 +2222,30 @@
       const { startF, endF, fps } = sceneTimeConfig();
       const frameCount = Math.max(2, Math.round(endF - startF) + 1);
 
+      /* Same collection as the static exporters: editor furniture never
+         leaves the app, and an instanced mesh is baked where it stands. */
+      const { nodes, objectNames } = window.workspaceExportNodes(eng);
+      if (!nodes.length) {
+        window.FE?.toast?.('Nothing to export — the workspace has no renderable mesh');
+        return;
+      }
+
       const entries = [];
       for (const [objId, slot] of this.objectSlots.entries()) {
         if (this.exports.fe_anim_get_keyframe_count(slot, 0xFFFFFFFF) === 0) continue;
         const obj = this.resolveObjectById(objId);
         if (!obj) continue;
-        entries.push({ objId, slot, obj });
+        const nodeName = objectNames.get(obj);
+        if (!nodeName) continue;
+        entries.push({ objId, slot, obj, nodeName });
+      }
+      if (!entries.length) {
+        window.FE?.toast?.('The keyed objects are not exported meshes');
+        return;
       }
 
-      const exportScene = new T.Scene();
-      const cloneMap = new Map();
-      eng.sc.children.forEach(child => {
-        if (!child.isGridHelper && child.name !== 'Cursor3D' && child.name !== 'StudioFloor' && child.name !== 'ShadowFloor'
-          && !child.userData?.feOnionGhost && child !== this._onionGroup && child !== this._trailGroup) {
-          const clone = child.clone(true);
-          exportScene.add(clone);
-          cloneMap.set(child, clone);
-        }
-      });
-
-      /* glTF animation tracks address nodes by name, so keyed nodes need unique names. */
-      const claimed = new Set();
-      exportScene.children.forEach(child => {
-        if (!child.name) return;
-        if (claimed.has(child.name)) child.name = '';
-        else claimed.add(child.name);
-      });
-      for (const entry of entries) {
-        const target = cloneMap.get(entry.obj) || entry.obj;
-        const fallback = 'FE_' + entry.objId.replace(/[^a-zA-Z0-9_]/g, '_') + '_' + entry.slot;
-        let base = target.name || fallback;
-        let name = base;
-        let suffix = 2;
-        while (claimed.has(name)) name = base + '_' + suffix++;
-        target.name = name;
-        entry.trackName = name;
-        claimed.add(name);
-      }
-
-      const tracks = [];
-      for (const { slot, trackName } of entries) {
-        if (!trackName) continue;
+      const channels = [];
+      for (const { slot, nodeName } of entries) {
         this.exports.fe_arena_reset();
         const cap = frameCount * 11;
         const ptr = this.exports.fe_malloc(cap * 4);
@@ -1970,8 +2257,8 @@
         const positions = new Float32Array(n * 3);
         const quaternions = new Float32Array(n * 4);
         const scales = new Float32Array(n * 3);
-        const euler = new T.Euler();
-        const quat = new T.Quaternion();
+        const euler = new THREE.Euler();
+        const quat = new THREE.Quaternion();
         for (let i = 0; i < n; i++) {
           times[i] = i / fps;
           const b = i * 11;
@@ -1988,31 +2275,37 @@
           scales[i * 3 + 1] = Math.max(0.01, v[b + 7]);
           scales[i * 3 + 2] = Math.max(0.01, v[b + 8]);
         }
-        tracks.push(new T.VectorKeyframeTrack(entry.trackName + '.position', times, positions));
-        tracks.push(new T.QuaternionKeyframeTrack(entry.trackName + '.quaternion', times, quaternions));
-        tracks.push(new T.VectorKeyframeTrack(entry.trackName + '.scale', times, scales));
+        channels.push({ node: nodeName, path: 'translation', times, values: positions });
+        channels.push({ node: nodeName, path: 'rotation', times, values: quaternions });
+        channels.push({ node: nodeName, path: 'scale', times, values: scales });
       }
 
-      if (!tracks.length) { window.FE?.toast?.('No keyframed objects found in the scene'); return; }
-      const clip = new T.AnimationClip('FinalEffectAnimation', (frameCount - 1) / fps, tracks);
-      const exporter = new T.GLTFExporter();
-      window.FE?.toast?.('Exporting glTF animation…');
-      exporter.parse(exportScene, result => {
-        const json = JSON.stringify(result, null, 2);
-        const blob = new Blob([json], { type: 'application/json' });
-        if (typeof window.downloadBlob === 'function') window.downloadBlob(blob, 'FinalEffect-Animated.gltf');
+      if (!channels.length) {
+        window.FE?.toast?.('No keyframed objects found in the scene');
+        return;
+      }
+
+      try {
+        const json = W.buildGLTF(nodes, {
+          sceneName: '3D Workspace',
+          animations: [{ name: 'FinalEffectAnimation', channels }]
+        });
+        const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'model/gltf+json' });
+        const name = 'FinalEffect-Animated.gltf';
+        if (typeof window.downloadBlob === 'function') window.downloadBlob(blob, name);
         else {
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = 'FinalEffect-Animated.gltf';
+          a.download = name;
           a.click();
           setTimeout(() => URL.revokeObjectURL(a.href), 4000);
         }
-        window.FE?.toast?.('Exported FinalEffect-Animated.gltf with animation');
-      }, err => {
+        const animated = json.animations?.[0]?.channels.length || 0;
+        window.FE?.toast?.(`Exported ${name} — ${nodes.length} meshes, ${animated} animated channels`);
+      } catch (err) {
         console.error('Animated glTF export failed:', err);
-        window.FE?.toast?.('glTF export failed');
-      }, { binary: false, animations: [clip], embedImages: true });
+        window.FE?.toast?.('glTF export failed: ' + err.message);
+      }
     }
   });
 
@@ -2325,6 +2618,8 @@
     rs.grain = parseFloat(getVal('render-grain-range', rs.grain)) || 0;
     const scEl = document.getElementById('render-shadow-catcher');
     if (scEl) rs.shadowCatcher = !!scEl.checked;
+    const dnEl = document.getElementById('render-denoise-toggle');
+    if (dnEl) rs.denoise = !!dnEl.checked;
   }
 
   function openRenderEngineModal() {
@@ -2337,6 +2632,9 @@
     const lightSheet = document.getElementById('light-sheet');
     if (lightSheet) { lightSheet.hidden = true; lightSheet.style.display = 'none'; }
     modal.hidden = false;
+    const previewToggle = document.getElementById('render-new-window');
+    if (previewToggle && window.FERenderPreview) previewToggle.checked = window.FERenderPreview.enabled();
+    FECppEngine.updateRenderRangeReadout();
     FECppEngine.startStillRender();
   }
   window.openRenderEngineModal = openRenderEngineModal;

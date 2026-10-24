@@ -54,12 +54,40 @@ float gCen[MAX_VERT * 3];
    tree as one block. */
 float gSway[MAX_VERT];
 float gPhase[MAX_VERT];
+/* Which material group a vertex belongs to: 0 = wood/stem, 1 = foliage, 2 =
+   bloom, 3 = the dark centre of a head (a composite's disc florets, a tulip's
+   stamens, a lavender bud). The bridge splits one grown mesh into the same
+   material slots the studio already renders (bark, leaf, petal, disc), so a
+   plant keeps its PBR layers while its shape comes from here. */
+float gPart[MAX_VERT];
+float gPenPart = 0.0f;
 float gPenSway = 0.0f;
 float gPenPh = 0.0f;
 uint32_t gIdx[MAX_IDX];
 /* x, y, z, dir.x, dir.y, dir.z, size, colourT, sway, phase */
 constexpr int32_t LEAF_STRIDE = 10;
 float gLeaf[MAX_LEAF * LEAF_STRIDE];
+
+/* Leaf cards are grown here too. The anchor buffer above says where a leaf sits
+   and which way its twig points; this second buffer is the quad the renderer
+   actually draws — four vertices, two triangles, the same roll, taper and
+   crown-facing normal the studio used to compute in JavaScript. A card is 17
+   floats, so 3200 anchors is well under a megabyte. */
+constexpr int32_t CARD_V = 4;
+constexpr int32_t CARD_I = 6;
+float gCardPos[MAX_LEAF * CARD_V * 3];
+float gCardNrm[MAX_LEAF * CARD_V * 3];
+float gCardCol[MAX_LEAF * CARD_V * 3];
+float gCardUv[MAX_LEAF * CARD_V * 2];
+float gCardRnd[MAX_LEAF * CARD_V];
+float gCardCen[MAX_LEAF * CARD_V * 3];
+float gCardSway[MAX_LEAF * CARD_V];
+float gCardPh[MAX_LEAF * CARD_V];
+float gCardPart[MAX_LEAF * CARD_V];
+uint32_t gCardIdx[MAX_LEAF * CARD_I];
+int32_t gCardV = 0;
+int32_t gCardI = 0;
+int32_t gCardN = 0;
 
 int32_t gVert = 0;
 int32_t gIdxN = 0;
@@ -128,8 +156,12 @@ void resetMesh() {
   gVert = 0;
   gIdxN = 0;
   gLeafN = 0;
+  gCardV = 0;
+  gCardI = 0;
+  gCardN = 0;
   gPenSway = 0.0f;
   gPenPh = 0.0f;
+  gPenPart = 0.0f;
 }
 
 int32_t pushVert(V3 p, V3 n, float u, float v, float r, float g, float b, float rnd, V3 cen);
@@ -149,6 +181,7 @@ int32_t pushVert(V3 p, V3 n, float u, float v, float r, float g, float b, float 
   gCen[i * 3 + 0] = cen.x; gCen[i * 3 + 1] = cen.y; gCen[i * 3 + 2] = cen.z;
   gSway[i] = gPenSway;
   gPhase[i] = gPenPh;
+  gPart[i] = gPenPart;
   return i;
 }
 
@@ -224,6 +257,35 @@ enum Species {
      a fern is a frond grammar, not a search for light. */
   SP_FERN,
   SP_TREEFERN,
+  /* Ground cover, succulents and palms. These are grown by their own builders
+     below — a tuft is not a small tree and a saguaro is not a bush — but they
+     share the mesh buffers, the wind channels and the species table so the
+     bridge talks to one kernel for every plant in the studio. */
+  SP_GRASS,
+  SP_TALLGRASS,
+  SP_DAISY,
+  SP_TULIP,
+  SP_LAVENDER,
+  SP_SAGUARO,
+  SP_BARREL,
+  SP_AGAVE,
+  SP_PALM,
+  SP_PEBBLE,
+  /* Conifers and desert scrub. A pine is a monopodial leader with whorls of
+     plagiotropic branches; a prickly pear is a chain of flattened cladodes; a
+     Joshua tree is a fibre trunk that forks into leaf rosettes. Each of those
+     is a different growth habit, so each gets its own builder rather than a
+     reused one with different numbers. */
+  SP_PINE,
+  SP_SPRUCE,
+  SP_KRUMM,
+  SP_JUNIPER,
+  SP_PRICKLY,
+  SP_JOSHUA,
+  SP_SAGE,
+  /* The studio's generic wildflower: one tuft carrying three composite heads
+     on separate stems, which is what the biome tables scatter as "flower". */
+  SP_FLOWER,
   SP_COUNT
 };
 
@@ -253,7 +315,25 @@ const SpeciesSpec kSpecies[SP_COUNT] = {
   /* ashbush */ { 0.45f, 0.075f, 1.15f, 1.35f, 0.80f, 0.010f, 8, 260, 0.090f, 7, 5, 0.60f, 3, 1 },
   /* deadtree*/ { 3.0f, 0.34f, 5.4f, 2.6f, 2.4f, 0.016f, 11, 260, 0.090f, 6, 6, 0.00f, 0, 0 },
   /* fern    */ { 0.02f, 0.012f, 0.42f, 0.85f, 0.40f, 0.004f, 2, 0, 0.050f, 1, 4, 0.16f, 2, 1 },
-  /* treefern*/ { 1.60f, 0.10f, 1.95f, 1.10f, 0.55f, 0.008f, 6, 0, 0.060f, 1, 5, 0.22f, 2, 1 }
+  /* treefern*/ { 1.60f, 0.10f, 1.95f, 1.10f, 0.55f, 0.008f, 6, 0, 0.060f, 1, 5, 0.22f, 2, 1 },
+  /* grass   */ { 0.00f, 0.005f, 0.16f, 0.15f, 0.15f, 0.002f, 1, 0, 0.050f, 1, 3, 0.00f, 0, 0 },
+  /* tallgrass*/{ 0.00f, 0.010f, 0.78f, 0.42f, 0.78f, 0.003f, 1, 0, 0.050f, 1, 3, 0.00f, 0, 0 },
+  /* daisy   */ { 0.01f, 0.002f, 0.12f, 0.05f, 0.12f, 0.001f, 1, 0, 0.050f, 1, 3, 0.00f, 0, 0 },
+  /* tulip   */ { 0.02f, 0.004f, 0.36f, 0.08f, 0.36f, 0.001f, 1, 0, 0.050f, 1, 4, 0.00f, 0, 0 },
+  /* lavender*/ { 0.02f, 0.003f, 0.48f, 0.12f, 0.48f, 0.001f, 1, 0, 0.050f, 1, 4, 0.00f, 0, 0 },
+  /* saguaro */ { 5.20f, 0.30f, 4.00f, 0.90f, 1.60f, 0.010f, 10, 0, 0.050f, 1, 8, 0.00f, 0, 0 },
+  /* barrel  */ { 0.80f, 0.32f, 0.55f, 0.40f, 0.40f, 0.005f, 3, 0, 0.050f, 1, 6, 0.00f, 0, 0 },
+  /* agave   */ { 0.10f, 0.04f, 0.60f, 1.05f, 0.55f, 0.004f, 1, 0, 0.050f, 1, 4, 0.00f, 0, 0 },
+  /* palm    */ { 8.00f, 0.19f, 8.40f, 3.20f, 1.80f, 0.010f, 12, 0, 0.050f, 1, 8, 0.00f, 0, 0 },
+  /* pebble  */ { 0.00f, 0.085f, 0.05f, 0.10f, 0.06f, 0.002f, 1, 0, 0.050f, 1, 3, 0.00f, 0, 0 },
+  /* pine    */ { 6.00f, 0.28f, 9.00f, 3.20f, 4.20f, 0.010f, 16, 0, 0.050f, 1, 7, 0.00f, 0, 1 },
+  /* spruce  */ { 0.30f, 0.24f, 7.00f, 2.90f, 9.00f, 0.008f, 18, 0, 0.050f, 1, 7, 0.00f, 0, 1 },
+  /* krumm   */ { 0.10f, 0.11f, 0.80f, 1.50f, 0.80f, 0.006f, 7, 0, 0.050f, 1, 5, 0.00f, 0, 1 },
+  /* juniper */ { 0.20f, 0.09f, 1.30f, 1.10f, 1.30f, 0.005f, 9, 0, 0.050f, 1, 5, 0.00f, 0, 1 },
+  /* prickly */ { 0.20f, 0.05f, 0.90f, 0.70f, 0.90f, 0.004f, 4, 0, 0.050f, 1, 4, 0.00f, 0, 1 },
+  /* joshua  */ { 2.20f, 0.30f, 5.20f, 1.60f, 3.00f, 0.010f, 10, 0, 0.050f, 1, 7, 0.00f, 0, 1 },
+  /* sage    */ { 0.25f, 0.045f, 0.75f, 0.55f, 0.55f, 0.004f, 6, 0, 0.050f, 1, 4, 0.00f, 0, 1 },
+  /* flower  */ { 0.40f, 0.060f, 0.40f, 0.16f, 0.16f, 0.003f, 3, 0, 0.050f, 1, 4, 0.40f, 0, 1 }
 };
 
 /* ---------------------------------------------------------------- */
@@ -546,6 +626,113 @@ void emitLeafAnchors(const SpeciesSpec& s, Rng& rng, int32_t firstBranch) {
       leaf[8] = swayOf(gNodes[i].len, gNodes[i].radius, s);
       leaf[9] = gNodePh[i];
       ++gLeafN;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Leaf cards                                                       */
+/* ---------------------------------------------------------------- */
+/* Per-species card colouring. `petal` > 0 also grows bloom cards: the pale
+ * blossom that sits inside an oak or a shrub crown in spring. These are the
+ * numbers the studio's materials were tuned against, moved into the kernel with
+ * everything else. */
+struct LeafStyle {
+  float c0[3];
+  float c1[3];
+  float petal[3];
+  uint8_t bloom;   /* 0 = foliage only, 1 = every other card also blooms */
+};
+
+const LeafStyle kLeafStyle[SP_COUNT] = {
+  /* oak     */ { { 0.66f, 0.72f, 0.60f }, { 1.15f, 1.15f, 1.00f }, { 1.00f, 0.80f, 0.88f }, 1 },
+  /* birch   */ { { 0.60f, 0.70f, 0.50f }, { 1.30f, 1.25f, 0.90f }, { 0.96f, 0.97f, 0.82f }, 1 },
+  /* acacia  */ { { 0.70f, 0.75f, 0.50f }, { 1.20f, 1.20f, 0.85f }, { 1.00f, 1.00f, 1.00f }, 0 },
+  /* shrub   */ { { 0.66f, 0.72f, 0.60f }, { 1.15f, 1.15f, 1.00f }, { 1.00f, 0.90f, 0.60f }, 1 },
+  /* ashbush */ { { 0.40f, 0.44f, 0.36f }, { 0.75f, 0.78f, 0.62f }, { 1.00f, 1.00f, 1.00f }, 0 },
+  /* deadtree*/ { { 0.50f, 0.42f, 0.36f }, { 0.80f, 0.72f, 0.62f }, { 1.00f, 1.00f, 1.00f }, 0 },
+  /* fern    */ { { 0.44f, 0.64f, 0.30f }, { 0.92f, 1.02f, 0.55f }, { 1.00f, 1.00f, 1.00f }, 0 },
+  /* treefern*/ { { 0.38f, 0.60f, 0.26f }, { 0.86f, 1.00f, 0.50f }, { 1.00f, 1.00f, 1.00f }, 0 },
+  /* the rest carry their colour on the mesh itself */ { { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }, 0 }
+};
+
+/* Append one quad. `b` is the card's base, `dir` runs to its tip, `size` is the
+ * full card length, `part` is 1 for foliage or 2 for a bloom. */
+void pushCard(V3 b, V3 dir, float size, float roll, float c0r, float c0g, float c0b,
+              float c1r, float c1g, float c1b, float shade, float rnd, float sway,
+              float phase, float part, V3 ctr) {
+  if (gCardN >= MAX_LEAF) return;
+  const V3 v = norm(dir);
+  V3 u = v3(v.z, 0.0f, -v.x);
+  if (len(u) < 0.2f) u = v3(1.0f, 0.0f, 0.0f);
+  u = norm(u);
+  const V3 w = cross(v, u);
+  const float cr = cosf(roll), sr = sinf(roll);
+  const V3 axis = norm(add(mul(u, cr), mul(w, sr)));
+  V3 n = norm(cross(v, axis));
+  /* The card faces out of the crown, never into it. */
+  const V3 outward = norm(sub(b, ctr));
+  if (dot(n, outward) < 0.0f) n = mul(n, -1.0f);
+  n = norm(add(mul(n, 0.4f), mul(outward, 0.6f)));
+  const float h = size * 0.42f;
+  const V3 tip = add(b, mul(v, size));
+  const float t = clampf(shade, 0.0f, 1.0f);
+  const float shadow = 0.85f + 0.30f * rnd;
+  const float col[3] = { lerpf(c0r, c1r, t) * shadow, lerpf(c0g, c1g, t) * shadow,
+                         lerpf(c0b, c1b, t) * shadow };
+  const V3 corner[4] = {
+    sub(b, mul(axis, h)), add(b, mul(axis, h)),
+    add(tip, mul(axis, h)), sub(tip, mul(axis, h))
+  };
+  const float uv[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+  const V3 centroid = mul(add(b, tip), 0.5f);
+  const int32_t base = gCardV;
+  for (int32_t k = 0; k < 4; ++k) {
+    const int32_t i = gCardV++;
+    gCardPos[i * 3] = corner[k].x; gCardPos[i * 3 + 1] = corner[k].y; gCardPos[i * 3 + 2] = corner[k].z;
+    gCardNrm[i * 3] = n.x; gCardNrm[i * 3 + 1] = n.y; gCardNrm[i * 3 + 2] = n.z;
+    gCardCol[i * 3] = col[0]; gCardCol[i * 3 + 1] = col[1]; gCardCol[i * 3 + 2] = col[2];
+    gCardUv[i * 2] = uv[k][0]; gCardUv[i * 2 + 1] = uv[k][1];
+    gCardRnd[i] = rnd;
+    gCardCen[i * 3] = centroid.x; gCardCen[i * 3 + 1] = centroid.y; gCardCen[i * 3 + 2] = centroid.z;
+    gCardSway[i] = sway;
+    gCardPh[i] = phase;
+    gCardPart[i] = part;
+  }
+  gCardIdx[gCardI++] = uint32_t(base);
+  gCardIdx[gCardI++] = uint32_t(base + 1);
+  gCardIdx[gCardI++] = uint32_t(base + 2);
+  gCardIdx[gCardI++] = uint32_t(base);
+  gCardIdx[gCardI++] = uint32_t(base + 2);
+  gCardIdx[gCardI++] = uint32_t(base + 3);
+  ++gCardN;
+}
+
+/* Turn every anchor into a card, then add the blossom cards. Called by
+ * fe_flora_tree right after the wood is grown, so one call still produces the
+ * whole plant. */
+void emitLeafCards(int32_t kind, Rng& rng) {
+  if (kind < 0 || kind >= SP_COUNT) return;
+  const LeafStyle& st = kLeafStyle[kind];
+  const SpeciesSpec& sp = kSpecies[kind];
+  const V3 ctr = v3(0.0f, sp.crownY, 0.0f);
+  for (int32_t i = 0; i < gLeafN; ++i) {
+    const float* a = &gLeaf[i * LEAF_STRIDE];
+    const V3 b = v3(a[0], a[1], a[2]);
+    const V3 d = v3(a[3], a[4], a[5]);
+    const float size = a[6];
+    pushCard(b, d, size, rng.range(0.0f, kPi), st.c0[0], st.c0[1], st.c0[2],
+             st.c1[0], st.c1[1], st.c1[2], a[7], rng.f(), a[8], a[9], 1.0f, ctr);
+    /* Blossom: a small quad turned across the leaf, twice as large on every
+       other card so the crown is speckled rather than uniform. */
+    if (st.bloom && (i & 1) == 0) {
+      const V3 p = add(b, v3(rng.range(-0.12f, 0.12f), rng.range(-0.12f, 0.12f),
+                             rng.range(-0.12f, 0.12f)));
+      const float a1 = rng.range(0.0f, kTwoPi), tilt = rng.range(0.0f, 1.1f);
+      const V3 pd = norm(v3(cosf(a1) * sinf(tilt), cosf(tilt), sinf(a1) * sinf(tilt)));
+      pushCard(p, pd, size * 0.34f, 0.0f, st.petal[0], st.petal[1], st.petal[2],
+               st.petal[0] * 1.15f, st.petal[1] * 1.15f, st.petal[2] * 1.15f,
+               0.75f, rng.f(), a[8], a[9], 2.0f, ctr);
     }
   }
 }
@@ -961,6 +1148,896 @@ int32_t generateFern(int32_t kind, uint32_t seed, int32_t detail) {
   return gVert;
 }
 
+/* ==================================================================== */
+/* Ground cover — grass, flowers, succulents, palms and pebbles          */
+/* ==================================================================== */
+/* Everything below grows a plant from its own botanical numbers instead of
+ * scaling a primitive. The units are metres, the root sits on y = 0 and every
+ * mesh is closed where it meets the ground, so the studio can place a tuft on a
+ * slope and not see the inside of the geometry.
+ *
+ * The measurements are the published ranges for each species:
+ *   tall fescue tuft      0.25-0.35 m, 20-30 blades, blade 3-6 mm wide
+ *   Miscanthus sinensis   1.2-2.0 m, 12-20 blades, blade 10-18 mm wide
+ *   Bellis perennis       0.08-0.15 m, head 20-30 mm, 11-15 ray florets
+ *   Tulipa gesneriana     0.30-0.50 m, 6 tepals in two whorls
+ *   Lavandula ang.        0.40-0.70 m, spike of 6-10 verticillasters
+ *   Carnegiea gigantea    5-12 m, 12-24 ribs, arms from 2 m up
+ *   Ferocactus wislizeni  0.6-1.0 m, 13-25 ribs
+ *   Agave americana       1.0-1.8 m rosette, 20-30 leaves, 3-5 cm spine
+ *   Cocos nucifera        8-12 m clear trunk, 12-16 fronds, 60-90 leaflets
+ *   river pebble          20-200 mm, rounded by transport, flat underside
+ */
+
+/* A folded leaf blade: `cols` = 3 gives the V-shaped midrib crease that makes a
+ * blade catch light on one half and shade the other. The spine is integrated
+ * step by step, so a blade that leans past vertical genuinely droops. */
+void blade(V3 root, V3 bendAxis, float length, float width, float lean,
+           float droop, int32_t rows, float shade0, float shade1, float rnd,
+           float sway0, float sway1, float phase, int32_t cols = 3) {
+  if (rows < 2) rows = 2;
+  /* cols = 3 gives the folded midrib; cols = 2 is a single flat card. A lawn of
+     a hundred thousand tufts is drawn with cards, a plant you walk up to with
+     the fold — same blade, two fidelities. */
+  if (cols < 2) cols = 2;
+  if (cols > 3) cols = 3;
+  bendAxis = norm(v3(bendAxis.x, 0.0f, bendAxis.z));
+  if (len(bendAxis) < 0.5f) bendAxis = v3(1.0f, 0.0f, 0.0f);
+  const V3 widthAxis = norm(cross(v3(0.0f, 1.0f, 0.0f), bendAxis));
+  const int32_t first = gVert;
+  const float ds = length / float(rows - 1);
+  V3 p = root;
+  const V3 cen = add(root, mul(v3(0.0f, 1.0f, 0.0f), length * 0.5f));
+  for (int32_t r = 0; r < rows; ++r) {
+    const float t = float(r) / float(rows - 1);
+    const float theta = lean + droop * t;
+    const V3 tangent = norm(add(v3(0.0f, cosf(theta), 0.0f), mul(bendAxis, sinf(theta))));
+    V3 n = norm(cross(tangent, widthAxis));
+    /* Taper to a sub-millimetre tip, never to a point: a collapsed row would
+       emit zero-area triangles that no renderer can shade. */
+    float w = width * (1.0f - t) * (1.0f - t * 0.35f);
+    if (w < width * 0.05f) w = width * 0.05f;
+    const float fold = w * 0.38f;
+    gPenSway = lerpf(sway0, sway1, t);
+    gPenPh = phase;
+    for (int32_t c = 0; c < cols; ++c) {
+      const float off = (cols == 2) ? (c == 0 ? -w : w) : ((c == 0) ? -w : (c == 2 ? w : 0.0f));
+      const float rise = (cols == 3 && c == 1) ? fold : 0.0f;
+      const V3 v = add(add(p, mul(widthAxis, off)), mul(n, rise));
+      const V3 nrm = (cols == 2)
+                        ? norm(add(n, mul(widthAxis, c == 0 ? -0.28f : 0.28f)))
+                        : norm(add(n, mul(widthAxis, (c == 0) ? -0.55f : (c == 2 ? 0.55f : 0.0f))));
+      pushVert(v, nrm, float(c) * 0.5f, t, lerpf(shade0, shade1, t), rnd, cen);
+    }
+    if (r + 1 < rows) p = add(p, mul(tangent, ds));
+  }
+  for (int32_t r = 0; r + 1 < rows; ++r) {
+    for (int32_t c = 0; c + 1 < cols; ++c) {
+      const int32_t a = first + r * cols + c;
+      const int32_t b = a + 1;
+      const int32_t cc = a + cols;
+      const int32_t d = cc + 1;
+      pushTri(a, b, cc);
+      pushTri(b, d, cc);
+    }
+  }
+}
+
+/* A ribbed column — the cross-section radius is modulated by cos(ribs*theta),
+ * which is the shape a saguaro stem or a barrel cactus actually has. Rings are
+ * capped at both ends so the shell is closed. */
+void ribbedColumn(const V3* path, const float* radii, int32_t rings, int32_t sides,
+                  int32_t ribs, float amp, float shade0, float shade1, float rnd,
+                  float sway0, float sway1, float phase) {
+  if (rings < 2 || sides < 3) return;
+  const V3 up = v3(0.0f, 1.0f, 0.0f);
+  const int32_t first = gVert;
+  V3 prevFrame = v3(1.0f, 0.0f, 0.0f);
+  for (int32_t i = 0; i < rings; ++i) {
+    const V3 a = path[i < 1 ? 0 : i - 1];
+    const V3 b = path[i + 1 < rings ? i + 1 : rings - 1];
+    V3 t = norm(sub(b, a));
+    if (len(t) < 0.5f) t = up;
+    V3 u = sub(prevFrame, mul(t, dot(prevFrame, t)));
+    if (len(u) < 1e-4f) {
+      const V3 ref = absf(t.y) > 0.95f ? v3(1.0f, 0.0f, 0.0f) : up;
+      u = sub(ref, mul(t, dot(ref, t)));
+    }
+    u = norm(u);
+    prevFrame = u;
+    const V3 w = cross(t, u);
+    const float vParam = float(i) / float(rings - 1);
+    const V3 cen = path[rings / 2];
+    gPenSway = lerpf(sway0, sway1, vParam);
+    gPenPh = phase;
+    for (int32_t j = 0; j <= sides; ++j) {
+      const float th = (float(j) / float(sides)) * kTwoPi;
+      const float rib = 1.0f + amp * cosf(th * float(ribs));
+      /* The full round normal. Dropping the w.y term here left the arm normals
+         12% short of unit length, which shades the bend of every arm wrong. */
+      const float ct = cosf(th), st = sinf(th);
+      const V3 nrm = v3(u.x * ct + w.x * st, u.y * ct + w.y * st, u.z * ct + w.z * st);
+      const float rr = radii[i] * rib;
+      pushVert(add(path[i], mul(nrm, rr)), nrm, float(j) / float(sides), vParam,
+               lerpf(shade0, shade1, vParam), rnd, cen);
+    }
+  }
+  const int32_t stride = sides + 1;
+  for (int32_t i = 0; i + 1 < rings; ++i) {
+    for (int32_t j = 0; j < sides; ++j) {
+      const int32_t a = first + i * stride + j;
+      const int32_t b = a + 1;
+      const int32_t c = a + stride;
+      const int32_t d = c + 1;
+      pushTri(a, c, b);
+      pushTri(b, c, d);
+    }
+  }
+  /* Caps: a fan to a centre vertex, so the shell has no hole. */
+  for (int32_t end = 0; end < 2; ++end) {
+    const int32_t ring = end ? rings - 1 : 0;
+    const V3 centre = path[ring];
+    gPenSway = lerpf(sway0, sway1, float(ring) / float(rings - 1));
+    const int32_t ci = pushVert(centre, v3(0.0f, end ? 1.0f : -1.0f, 0.0f), 0.5f, 0.5f,
+                                lerpf(shade0, shade1, float(ring) / float(rings - 1)), rnd, centre);
+    const int32_t base = first + ring * stride;
+    for (int32_t j = 0; j < sides; ++j) {
+      if (end) pushTri(base + j, ci, base + j + 1);
+      else pushTri(base + j + 1, ci, base + j);
+    }
+  }
+}
+
+/* One grass tuft: blades on the golden angle, each with its own lean, length and
+ * droop, so no two blades trace the same arc. */
+int32_t generateGrass(int32_t kind, uint32_t seed, int32_t detail) {
+  const bool tall = (kind == SP_TALLGRASS);
+  Rng rng(seed ^ 0x2545f491u);
+  const float H = (tall ? 1.85f : 0.36f) * gShapeH;
+  const float width = tall ? 0.0135f : 0.0048f;
+  const int32_t base = tall ? 16 : 24;
+  int32_t count = int32_t(float(base) * gShapeD * (0.85f + 0.3f * rng.f()));
+  if (detail <= 0) count = count / 2;
+  if (count < 6) count = 6;
+  if (count > 48) count = 48;
+  const int32_t rows = detail >= 2 ? (tall ? 6 : 5) : 4;
+  /* A lawn blade is a card; a blade in your hand is folded. */
+  const int32_t cols = detail >= 2 ? 3 : 2;
+  for (int32_t i = 0; i < count; ++i) {
+    /* Golden angle placement, jittered: successive blades never line up. */
+    const float yaw = float(i) * 2.39996323f + rng.range(-0.35f, 0.35f);
+    const float r = sqrtf(rng.f()) * width * 3.2f;
+    const V3 root = v3(cosf(yaw) * r, 0.0f, sinf(yaw) * r);
+    const V3 axis = v3(cosf(yaw), 0.0f, sinf(yaw));
+    /* Outer blades are shorter and lean further out — the tuft opens up. */
+    const float out = r / (width * 3.2f + 1e-5f);
+    const float h = H * (1.0f - 0.30f * out) * rng.range(0.72f, 1.06f);
+    const float lean = lerpf(tall ? 0.10f : 0.14f, tall ? 0.52f : 0.62f, out) + rng.range(-0.06f, 0.06f);
+    const float droop = tall ? rng.range(0.50f, 0.95f) : rng.range(0.60f, 1.05f);
+    gPenPart = 1.0f;
+    blade(root, axis, h, width * rng.range(0.85f, 1.15f), lean, droop, rows,
+          0.52f, 1.06f, rng.f(), 0.02f, 0.95f, yaw * 0.7f, cols);
+  }
+  return gVert;
+}
+
+/* Bellis / Tulipa / Lavandula. One stem builder, three heads: a flat composite
+ * flower, a tepal cup and a spike of whorls. */
+int32_t generateFlower(int32_t kind, uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x68e31da4u);
+  const bool daisy = (kind == SP_DAISY);
+  const bool tulip = (kind == SP_TULIP);
+  /* The wildflower is a daisy head on a taller, multi-headed plant: three
+   * stems from one crown, which is what a meadow tuft actually looks like. */
+  const bool flower = (kind == SP_FLOWER);
+  const bool composite = daisy || flower;
+  const float H = (daisy ? 0.115f : tulip ? 0.40f : flower ? 0.42f : 0.55f) * gShapeH;
+  const int32_t stems = (daisy || tulip) ? 1 : 3;
+  const int32_t sides = detail >= 2 ? 5 : 4;
+  for (int32_t s = 0; s < stems; ++s) {
+    const float yaw = float(s) * 2.39996323f + rng.range(-0.2f, 0.2f);
+    const float height = H * rng.range(0.88f, 1.08f);
+    gPenPart = 0.0f;
+    const V3 base = v3(cosf(yaw) * 0.012f, 0.0f, sinf(yaw) * 0.012f);
+    const V3 lean = v3(cosf(yaw) * 0.035f, 0.0f, sinf(yaw) * 0.035f);
+    /* Stem: three short tubes, so the stalk arcs instead of standing straight. */
+    const int32_t rings = 3;
+    V3 prev = v3(base.x, -0.01f, base.z);
+    V3 frame = v3(1.0f, 0.0f, 0.0f);
+    const float r0 = daisy ? 0.0016f : tulip ? 0.0042f : flower ? 0.0030f : 0.0026f;
+    for (int32_t i = 1; i <= rings; ++i) {
+      const float t = float(i) / float(rings);
+      const V3 p = v3(base.x + lean.x * t * t, height * t, base.z + lean.z * t * t);
+      frame = tubeSegment(prev, p, r0 * (1.0f - 0.25f * (float(i - 1) / float(rings))),
+                          r0 * (1.0f - 0.25f * t), sides, height * t, 0.5f,
+                          lerpf(0.55f, 0.95f, t), rng.f(), frame, i == rings,
+                          0.02f, 0.45f, yaw);
+      prev = p;
+    }
+
+    /* Leaves: two per stem for the composites, a fan of three for the spike. */
+    const int32_t leaves = daisy ? 3 : (tulip ? 2 : flower ? 5 : 4);
+    for (int32_t l = 0; l < leaves; ++l) {
+      const float ly = height * (0.12f + 0.16f * float(l));
+      const float lyaw = yaw + float(l) * 2.39996323f;
+      const float len = (daisy ? 0.035f : tulip ? 0.10f : flower ? 0.075f : 0.085f) * rng.range(0.85f, 1.15f) * gShapeH;
+      gPenPart = 1.0f;
+      blade(v3(base.x, ly, base.z), v3(cosf(lyaw), 0.0f, sinf(lyaw)), len,
+            len * 0.22f, 0.95f, 0.55f, detail >= 2 ? 4 : 3, 0.55f, 0.92f,
+            rng.f(), 0.10f, 0.55f, lyaw);
+    }
+
+    if (composite) {
+      /* Head: 13 ray florets on the golden angle around a domed disc. */
+      gPenPart = 2.0f;
+      const V3 head = v3(prev.x, height, prev.z);
+      const int32_t petals = detail >= 2 ? (flower ? 14 : 13) : (flower ? 9 : 9);
+      const float R = (flower ? 0.019f : 0.014f) * (0.9f + 0.2f * rng.f());
+      for (int32_t i = 0; i < petals; ++i) {
+        const float a = float(i) * 2.39996323f;
+        const float a2 = rng.range(-0.06f, 0.06f);
+        const V3 dirv = v3(cosf(a + a2), 0.0f, sinf(a + a2));
+        blade(v3(head.x + dirv.x * 0.002f, head.y, head.z + dirv.z * 0.002f),
+              v3(-dirv.z, 0.0f, dirv.x), R * rng.range(0.85f, 1.1f), 0.0032f,
+              1.30f, -0.22f, 3, 0.72f, 1.12f, rng.f(), 0.35f, 0.55f, a);
+      }
+      /* Domed disc in the middle, tilted up like a real composite. It is its
+         own material — a composite's disc florets are not ray florets — so it
+         gets its own part id. */
+      gPenPart = 3.0f;
+      const int32_t seg = 10;
+      const int32_t first = gVert;
+      const V3 domeC = head;
+      gPenSway = 0.4f;
+      const float discR = flower ? 0.0068f : 0.0048f;
+      const int32_t ci = pushVert(add(domeC, v3(0.0f, 0.0035f, 0.0f)), v3(0.0f, 1.0f, 0.0f),
+                                  0.5f, 0.5f, 1.25f, rng.f(), domeC);
+      for (int32_t j = 0; j <= seg; ++j) {
+        const float a = (float(j) / float(seg)) * kTwoPi;
+        pushVert(add(domeC, v3(cosf(a) * discR, 0.0012f, sinf(a) * discR)),
+                 norm(v3(cosf(a) * 0.45f, 1.0f, sinf(a) * 0.45f)), 0.5f, 0.0f, 0.95f, rng.f(), domeC);
+      }
+      for (int32_t j = 0; j < seg; ++j) pushTri(ci, first + 1 + j, first + 2 + j);
+    } else if (tulip) {
+      /* Six tepals in two whorls form the cup. */
+      gPenPart = 2.0f;
+      const V3 cup = v3(prev.x, height * 0.88f, prev.z);
+      for (int32_t i = 0; i < 6; ++i) {
+        const float a = float(i) * 1.04719755f + (i >= 3 ? 0.30f : 0.0f);
+        const float inward = (i >= 3) ? 0.16f : 0.26f;
+        blade(v3(cup.x + cosf(a) * 0.008f, cup.y, cup.z + sinf(a) * 0.008f),
+              v3(cosf(a), 0.0f, sinf(a)), 0.072f * gShapeH * rng.range(0.94f, 1.06f),
+              0.024f, -inward, -0.55f, 4, 0.80f, 1.15f, rng.f(), 0.30f, 0.70f, a);
+      }
+      /* Three stamens standing inside the cup — the flower's own centre. */
+      gPenPart = 3.0f;
+      for (int32_t i = 0; i < 3; ++i) {
+        const float a = float(i) * 2.09439510f + 0.4f;
+        const V3 a0 = v3(cup.x, cup.y + 0.004f, cup.z);
+        const V3 a1 = v3(cup.x + cosf(a) * 0.006f, cup.y + 0.030f, cup.z + sinf(a) * 0.006f);
+        tubeSegment(a0, a1, 0.0012f, 0.0010f, 3, 0.0f, 1.0f, 0.95f, rng.f(),
+                    v3(1.0f, 0.0f, 0.0f), true, 0.45f, 0.55f, a);
+      }
+    } else {
+      /* Lavender: verticillasters up the top third of the stem. */
+      gPenPart = 2.0f;
+      const int32_t whorls = detail >= 2 ? 8 : 5;
+      const float top = height * 0.62f;
+      for (int32_t wI = 0; wI < whorls; ++wI) {
+        const float t = float(wI) / float(whorls - 1);
+        const float wy = lerpf(top, height, t);
+        const int32_t per = 6;
+        for (int32_t k = 0; k < per; ++k) {
+          const float a = float(k) * 1.04719755f + float(wI) * 0.9f;
+          const float rr = 0.006f * (1.0f - t * 0.35f);
+          /* Two of the six florets in each whorl are still closed: a darker
+             bud, which is what gives a lavender spike its shadow. */
+          gPenPart = (k % 3 == 2) ? 3.0f : 2.0f;
+          blade(v3(prev.x + cosf(a) * rr * 0.4f, wy, prev.z + sinf(a) * rr * 0.4f),
+                v3(cosf(a), 0.0f, sinf(a)), 0.009f * rng.range(0.8f, 1.2f), 0.0026f,
+                1.05f, 0.45f, 2, 0.86f, 1.18f, rng.f(), 0.45f, 0.75f, a);
+        }
+      }
+    }
+  }
+  return gVert;
+}
+
+/* Cacti and agave: ribbed columns, arms, and a rosette of thick leaves. */
+int32_t generateSucculent(int32_t kind, uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x1b56c4e9u);
+  if (kind == SP_AGAVE) {
+    /* Agave: 24 leaves in a rosette, thick at the base, spine at the tip, on
+       the short woody caudex an A. americana actually stands on. */
+    gPenPart = 0.0f;
+    const int32_t caudexSides = detail >= 2 ? 8 : 5;
+    tubeSegment(v3(0.0f, -0.10f, 0.0f), v3(0.0f, 0.10f, 0.0f), 0.075f * (0.7f + 0.3f * gShapeH),
+                0.062f * (0.7f + 0.3f * gShapeH), caudexSides, 0.0f, 1.0f, 0.62f,
+                rng.f(), v3(1.0f, 0.0f, 0.0f), true, 0.0f, 0.02f, 0.0f);
+    gPenPart = 1.0f;
+    int32_t leaves = detail >= 2 ? 24 : 14;
+    const float H = 1.15f * gShapeH;
+    for (int32_t i = 0; i < leaves; ++i) {
+      const float a = float(i) * 2.39996323f;
+      const float ring = float(i) / float(leaves);
+      const float lean = lerpf(0.55f, 1.35f, ring);
+      const float len = H * lerpf(1.0f, 0.42f, ring) * rng.range(0.92f, 1.08f);
+      blade(v3(0.0f, 0.01f, 0.0f), v3(cosf(a), 0.0f, sinf(a)), len,
+            len * 0.115f, lean, 0.35f, detail >= 2 ? 5 : 4, 0.72f, 1.02f,
+            rng.f(), 0.03f, 0.42f, a);
+    }
+    return gVert;
+  }
+  const bool barrel = (kind == SP_BARREL);
+  const int32_t ribs = barrel ? 21 : 20;
+  const int32_t sides = detail >= 2 ? ribs * 2 : ribs;
+  if (barrel) {
+    /* Barrel cactus: a ribbed spheroid, widest at 45% of its height. */
+    constexpr int32_t RINGS = 11;
+    V3 path[RINGS];
+    float rad[RINGS];
+    /* Individuals differ: a barrel cactus grown from another seed is a little
+       fatter or taller and leans off vertical by a degree or two. */
+    const float H = 0.85f * gShapeH * rng.range(0.90f, 1.08f);
+    const float R = 0.32f * (0.6f + 0.4f * gShapeH) * rng.range(0.88f, 1.12f);
+    const float leanA = rng.range(0.0f, kTwoPi), leanK = rng.range(0.005f, 0.03f);
+    for (int32_t i = 0; i < RINGS; ++i) {
+      const float t = float(i) / float(RINGS - 1);
+      path[i] = v3(cosf(leanA) * leanK * t * t, H * t, sinf(leanA) * leanK * t * t);
+      const float bulge = sinf(kPi * clampf(t * 1.06f, 0.0f, 1.0f));
+      rad[i] = R * (0.22f + 0.78f * powf(bulge, 0.62f));
+    }
+    ribbedColumn(path, rad, RINGS, sides, ribs, 0.085f, 0.62f, 0.96f, rng.f(),
+                 0.0f, 0.10f, 0.0f);
+    /* The crown of small yellow flowers a barrel cactus carries at the top. */
+    gPenPart = 2.0f;
+    for (int32_t i = 0; i < 6; ++i) {
+      const float a = float(i) * 1.04719755f;
+      const float rr = R * 0.30f;
+      blade(v3(cosf(a) * rr, H * 0.985f, sinf(a) * rr), v3(cosf(a), 0.0f, sinf(a)),
+            0.028f, 0.010f, 0.55f, -0.20f, 3, 1.05f, 1.25f, rng.f(), 0.0f, 0.10f, a);
+    }
+    return gVert;
+  }
+  /* Saguaro: a fluted stem with arms that leave the trunk two metres up and
+     turn vertical, exactly how Carnegiea branches. */
+  constexpr int32_t RINGS = 12;
+  const float H = 5.6f * gShapeH;
+  const float R = 0.30f * (0.7f + 0.3f * gShapeH);
+  V3 path[RINGS];
+  float rad[RINGS];
+  for (int32_t i = 0; i < RINGS; ++i) {
+    const float t = float(i) / float(RINGS - 1);
+    path[i] = v3(sinf(t * 1.1f) * 0.05f, H * t, cosf(t * 0.9f) * 0.04f);
+    rad[i] = R * (1.0f - 0.16f * t) * (1.0f + 0.10f * (1.0f - smoothstepf(0.0f, 0.12f, t)));
+  }
+  ribbedColumn(path, rad, RINGS, sides, ribs, 0.075f, 0.58f, 0.92f, rng.f(),
+               0.0f, 0.30f, 0.0f);
+  const int32_t arms = detail >= 2 ? 3 : 2;
+  for (int32_t arm = 0; arm < arms; ++arm) {
+    const float a = float(arm) * 2.09439510f + rng.range(-0.3f, 0.3f);
+    const float y0 = H * rng.range(0.34f, 0.52f);
+    const float out = R * 2.6f;
+    const float rise = H * rng.range(0.22f, 0.34f);
+    constexpr int32_t AR = 6;
+    V3 ap[AR];
+    float ar[AR];
+    for (int32_t i = 0; i < AR; ++i) {
+      const float t = float(i) / float(AR - 1);
+      /* Elbow: sideways first, then up. */
+      const float side = sinf(t * kHalfPi);
+      const float up = 1.0f - cosf(t * kHalfPi);
+      ap[i] = v3(cosf(a) * (R + out * side), y0 + rise * up,
+                 sinf(a) * (R + out * side));
+      ar[i] = R * 0.62f * (1.0f - 0.10f * t);
+    }
+    ribbedColumn(ap, ar, AR, sides > 16 ? 16 : sides, ribs, 0.075f, 0.58f, 0.90f,
+                 rng.f(), 0.10f, 0.34f, a);
+  }
+  return gVert;
+}
+
+/* Coconut palm: a leaning trunk with ring scars, and a crown of pinnate fronds
+ * whose leaflets alternate either side of the rachis. */
+int32_t generatePalm(uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x7f4a7c15u);
+  const float H = 8.4f * gShapeH;
+  const int32_t sides = detail >= 2 ? 10 : 7;
+  const int32_t rings = detail >= 2 ? 14 : 9;
+  V3 prev = v3(0.0f, -0.05f, 0.0f);
+  V3 frame = v3(1.0f, 0.0f, 0.0f);
+  const float leanA = rng.range(0.6f, 2.4f);
+  const float leanAmt = rng.range(0.6f, 1.3f);
+  V3 top = prev;
+  for (int32_t i = 1; i <= rings; ++i) {
+    const float t = float(i) / float(rings);
+    const V3 p = v3(cosf(leanA) * leanAmt * t * t, H * t, sinf(leanA) * leanAmt * t * t);
+    const float r0 = 0.19f * (1.0f - 0.28f * (float(i - 1) / float(rings))) * (0.75f + 0.25f * gShapeH);
+    const float r1 = 0.19f * (1.0f - 0.28f * t) * (0.75f + 0.25f * gShapeH);
+    /* Ring scars: the shade dips every ring, which is what a palm trunk reads as. */
+    frame = tubeSegment(prev, p, r0, r1, sides, H * t * 0.35f, 0.35f,
+                        0.72f + 0.16f * (i % 2), rng.f(), frame, i == rings,
+                        0.0f, 0.30f * t, 0.0f);
+    prev = p;
+    top = p;
+  }
+  const int32_t fronds = detail >= 2 ? 14 : 9;
+  for (int32_t f = 0; f < fronds; ++f) {
+    const float a = float(f) * 2.39996323f;
+    const float droop = rng.range(0.55f, 1.25f);
+    const float len = rng.range(2.2f, 3.4f) * (0.7f + 0.3f * gShapeH);
+    const V3 axis = v3(cosf(a), 0.0f, sinf(a));
+    const int32_t segs = detail >= 2 ? 5 : 4;
+    V3 p = top;
+    V3 dir = norm(add(v3(0.0f, 1.0f, 0.0f), mul(axis, 1.35f)));
+    for (int32_t s = 0; s < segs; ++s) {
+      const float t = float(s + 1) / float(segs);
+      dir = norm(add(dir, v3(0.0f, -droop * 0.30f, 0.0f)));
+      const V3 q = add(p, mul(dir, len / float(segs)));
+      tubeSegment(p, q, lerpf(0.028f, 0.010f, t), lerpf(0.026f, 0.008f, t),
+                  detail >= 2 ? 4 : 3, t, 1.0f, 0.80f, rng.f(),
+                  v3(1.0f, 0.0f, 0.0f), false, 0.30f + 0.4f * t, 0.30f + 0.5f * t, a);
+      /* Leaflets alternate left and right of the rachis. */
+      const V3 side = norm(cross(dir, v3(0.0f, 1.0f, 0.0f)));
+      const int32_t per = detail >= 2 ? 5 : 3;
+      gPenPart = 1.0f;
+      for (int32_t k = 0; k < per; ++k) {
+        for (int32_t sgn = 0; sgn < 2; ++sgn) {
+          const float lt = float(k) / float(per);
+          const V3 at = add(p, mul(sub(q, p), lt));
+          const float ll = 0.42f * (1.0f - 0.55f * lt) * rng.range(0.85f, 1.1f);
+          const V3 out = mul(side, sgn ? 1.0f : -1.0f);
+          blade(at, norm(add(out, mul(dir, 0.45f))), ll, 0.020f,
+                lerpf(0.95f, 1.35f, lt), 0.65f, 3, 0.80f, 1.10f, rng.f(),
+                0.32f + 0.4f * t, 0.35f + 0.45f * t, a + float(k));
+        }
+      }
+      p = q;
+    }
+  }
+  return gVert;
+}
+
+/* A river pebble: a rounded, water-worn solid with a flattened underside.
+ * The rows stop short of the poles and the two poles are single vertices with
+ * their own fans — a lat/long sphere whose pole rows collapse emits a ring of
+ * zero-area triangles that no shader can light. */
+int32_t generatePebble(uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x3c6ef372u);
+  const int32_t rows = detail >= 2 ? 9 : 6;
+  const int32_t sides = detail >= 2 ? 14 : 9;
+  const float R = 0.085f * (0.7f + 0.5f * rng.f()) * gShapeH;
+  const float squash = rng.range(0.55f, 0.85f);
+  const uint32_t ns = seed | 1u;
+  gPenSway = 0.0f;
+  gPenPh = 0.0f;
+  const V3 pivot = v3(0.0f, R * 0.5f, 0.0f);
+  const int32_t first = gVert;
+  for (int32_t i = 0; i < rows; ++i) {
+    const float th = kPi * (float(i) + 0.5f) / float(rows);
+    for (int32_t j = 0; j <= sides; ++j) {
+      const float ph = (float(j) / float(sides)) * kTwoPi;
+      const V3 n = v3(sinf(th) * cosf(ph), cosf(th), sinf(th) * sinf(ph));
+      const float bumps = fbm(v3(n.x * 3.1f, n.y * 3.1f, n.z * 3.1f), ns, 3);
+      const float rr = R * (1.0f + 0.22f * bumps);
+      V3 p = v3(n.x * rr * 1.18f, n.y * rr * squash + R * 0.55f, n.z * rr);
+      if (p.y < 0.0f) p.y *= 0.18f; /* flat underside, bedded in the ground */
+      pushVert(p, norm(n), float(j) / float(sides), float(i) / float(rows),
+               0.78f + 0.22f * (0.5f + 0.5f * n.y), rng.f(), pivot);
+    }
+  }
+  const int32_t stride = sides + 1;
+  for (int32_t i = 0; i + 1 < rows; ++i) {
+    for (int32_t j = 0; j < sides; ++j) {
+      const int32_t a = first + i * stride + j;
+      const int32_t b = a + 1;
+      const int32_t c = a + stride;
+      const int32_t d = c + 1;
+      pushTri(a, c, b);
+      pushTri(b, c, d);
+    }
+  }
+  for (int32_t end = 0; end < 2; ++end) {
+    const float ny = end ? 1.0f : -1.0f;
+    float py = ny * R * squash + R * 0.55f;
+    if (py < 0.0f) py *= 0.18f;
+    const int32_t pole = pushVert(v3(0.0f, py, 0.0f), v3(0.0f, ny, 0.0f), 0.5f,
+                                  end ? 1.0f : 0.0f, end ? 1.0f : 0.62f, rng.f(), pivot);
+    const int32_t ring = first + (end ? rows - 1 : 0) * stride;
+    for (int32_t j = 0; j < sides; ++j) {
+      if (end) pushTri(ring + j, pole, ring + j + 1);
+      else pushTri(ring + j + 1, pole, ring + j);
+    }
+  }
+  return gVert;
+}
+
+/* ==================================================================== */
+/* Conifers, desert scrub and the card emitter                          */
+/* ==================================================================== */
+
+/* One conifer whorl table. The numbers follow the published habit of each
+ * species: a Scots pine keeps its lower trunk clear and crowns from two thirds
+ * up; a spruce keeps branches to the ground in a near-perfect cone; krummholz
+ * is the same spruce flattened by wind at the treeline; juniper is a many-stem
+ * shrub with soft, drooping sprays. */
+struct ConiferSpec {
+  float height;    /* metres to the leader tip                       */
+  float trunkR;    /* radius at the root collar                      */
+  float bare;      /* fraction of height before the first live whorl  */
+  int32_t whorls;  /* branch levels up the trunk                     */
+  int32_t perWhorl;
+  float crownR;    /* longest branch, at the base of the crown        */
+  float droop;     /* radians a branch falls below horizontal        */
+  float needle;    /* needle length, metres                          */
+  int32_t sprays;  /* needle rows along one branch                   */
+  float profile;   /* 0.5 = cone, 1.2 = umbrella (pine)              */
+  bool multi;      /* several stems from one root (juniper, krumm)    */
+  float shade0;
+  float shade1;
+};
+
+const ConiferSpec kConifer[4] = {
+  /* pine    */ { 15.0f, 0.30f, 0.42f, 7, 4, 3.40f, 0.22f, 0.135f, 2, 0.62f, false, 0.55f, 0.95f },
+  /* spruce  */ { 16.5f, 0.26f, 0.05f, 9, 5, 3.10f, 0.46f, 0.110f, 2, 0.85f, false, 0.50f, 0.90f },
+  /* krumm   */ { 1.55f, 0.11f, 0.03f, 4, 4, 1.55f, 0.60f, 0.065f, 1, 1.15f, true, 0.52f, 0.94f },
+  /* juniper */ { 2.70f, 0.10f, 0.02f, 5, 3, 1.15f, 0.85f, 0.048f, 1, 1.30f, true, 0.58f, 1.00f }
+};
+
+/* A needle spray: two rows of needles either side of a twig, which is what a
+ * conifer twig actually looks like from a metre away. */
+void needleSpray(V3 from, V3 dir, float length, float needle, int32_t count,
+                 float shade, float rnd, float sway, float phase) {
+  /* A conifer in full detail is thousands of small blades; stop before the
+     shared vertex buffer runs out instead of emitting a truncated branch. */
+  if (gVert > MAX_VERT - 96) return;
+  const V3 side = norm(cross(dir, v3(0.0f, 1.0f, 0.0f)));
+  const V3 up = norm(cross(side, dir));
+  for (int32_t i = 0; i < count; ++i) {
+    const float t = (float(i) + 0.5f) / float(count);
+    const V3 at = add(from, mul(dir, length * t));
+    const float len = needle * (1.0f - 0.35f * t) * (0.85f + 0.3f * rnd);
+    for (int32_t s = 0; s < 2; ++s) {
+      const float sgn = s ? 1.0f : -1.0f;
+      const V3 out = norm(add(mul(side, sgn), mul(up, 0.35f)));
+      gPenPart = 1.0f;
+      blade(at, out, len, needle * 0.16f, 1.15f, 0.55f, 2,
+            shade * 0.85f, shade, rnd, sway, sway * 1.05f, phase);
+    }
+  }
+}
+
+/* A branch: three drooping segments with a needle spray on each, plus one
+ * fork, so the silhouette is ragged instead of a clean spoke. */
+void coniferBranch(V3 base, V3 dir, float length, float droop, const ConiferSpec& sp,
+                   int32_t detail, float rnd, float phase) {
+  if (gVert > MAX_VERT - 400) return;
+  const int32_t segs = detail >= 2 ? 3 : 2;
+  const int32_t sides = detail >= 2 ? 5 : 4;
+  V3 p = base;
+  float r = sp.trunkR * 0.16f;
+  V3 frame = v3(0.0f, 0.0f, 1.0f);
+  for (int32_t s = 0; s < segs; ++s) {
+    const float t = float(s + 1) / float(segs);
+    /* The branch tip falls as it reaches out: droop accumulates with `t`. */
+    const V3 d = norm(add(dir, v3(0.0f, -droop * t, 0.0f)));
+    const V3 q = add(p, mul(d, length / float(segs)));
+    gPenPart = 0.0f;
+    frame = tubeSegment(p, q, r, r * 0.70f, sides, t * length, 0.8f,
+                        sp.shade0 + (sp.shade1 - sp.shade0) * t, rnd, frame,
+                        false, 0.05f + 0.35f * t, 0.10f + 0.45f * t, phase);
+    /* A branch that carries needles all the way along it. */
+    if (sp.sprays > 0) {
+      const int32_t n = detail >= 2 ? sp.sprays + 1 : 1;
+      needleSpray(p, d, length / float(segs) * 1.05f, sp.needle, n,
+                  sp.shade0 + (sp.shade1 - sp.shade0) * t + 0.05f, rnd,
+                  0.15f + 0.45f * t, phase);
+    }
+    /* One fork at the halfway point, angled up out of the needle plane. */
+    if (detail >= 2 && s == segs / 2) {
+      const V3 side = norm(cross(d, v3(0.0f, 1.0f, 0.0f)));
+      const V3 fq = norm(add(mul(d, 0.75f), mul(side, 0.55f)));
+      coniferBranch(p, fq, length * 0.42f, droop, sp, detail - 1, rnd, phase + 0.7f);
+    }
+    p = q;
+    r *= 0.72f;
+  }
+}
+
+int32_t generateConifer(int32_t kind, uint32_t seed, int32_t detail) {
+  const ConiferSpec& sp = kConifer[kind - SP_PINE];
+  Rng rng(seed ^ 0x4f1bbcdcu);
+  const float H = sp.height * gShapeH;
+  const float trunkR = sp.trunkR * (0.7f + 0.3f * gShapeH);
+  const int32_t stems = sp.multi ? 2 : 1;
+  for (int32_t stem = 0; stem < stems; ++stem) {
+    const float sa = float(stem) * kTwoPi / float(stems) + rng.range(-0.4f, 0.4f);
+    const float sd = sp.multi ? trunkR * rng.range(0.8f, 2.2f) : 0.0f;
+    const V3 root = v3(cosf(sa) * sd, -0.12f * trunkR * 8.0f, sinf(sa) * sd);
+    const float stemH = H * (sp.multi ? rng.range(0.60f, 0.95f) : rng.range(0.94f, 1.06f));
+    const float leanA = rng.range(0.0f, kTwoPi);
+    const float leanK = sp.multi ? rng.range(0.10f, 0.35f) : rng.range(0.0f, 0.06f);
+    const int32_t rings = detail >= 2 ? 12 : 8;
+    const int32_t sides = detail >= 2 ? 8 : 5;
+    V3 prev = root;
+    V3 frame = v3(1.0f, 0.0f, 0.0f);
+    V3 top = root;
+    for (int32_t i = 1; i <= rings; ++i) {
+      const float t = float(i) / float(rings);
+      const V3 p = v3(root.x + cosf(leanA) * leanK * t * t * stemH * 0.25f, root.y + stemH * t,
+                      root.z + sinf(leanA) * leanK * t * t * stemH * 0.25f);
+      const float r0 = trunkR * (1.0f - 0.86f * (float(i - 1) / float(rings)));
+      const float r1 = trunkR * (1.0f - 0.86f * t);
+      /* The root collar flares where it meets the soil. */
+      const float flare = (i == 1) ? 1.55f : 1.0f;
+      gPenPart = 0.0f;
+      frame = tubeSegment(prev, p, (r0 < 0.006f ? 0.006f : r0) * flare, (r1 < 0.005f ? 0.005f : r1),
+                          sides, stemH * t * 0.5f, 0.7f,
+                          sp.shade0 + (sp.shade1 - sp.shade0) * 0.35f, rng.f(), frame,
+                          i == rings, 0.0f, 0.02f * t, float(stem) * 0.9f);
+      prev = p;
+      top = p;
+    }
+    /* Whorls. Branch reach follows the crown profile: longest at the bottom of
+     * the live crown, vanishing at the leader, which is what makes a cone. */
+    const int32_t whorls = detail >= 2 ? sp.whorls : (sp.whorls * 2 + 2) / 3;
+    for (int32_t w = 0; w < whorls; ++w) {
+      const float t = float(w) / float(whorls - 1);
+      const float y = root.y + stemH * (sp.bare + (1.0f - sp.bare) * t * 0.96f);
+      const float taper = powf(1.0f - t, sp.profile);
+      const float reach = sp.crownR * taper * (0.82f + 0.36f * rng.f()) *
+                          (0.6f + 0.4f * gShapeH) * (stem ? 1.0f - 0.18f * float(stem) : 1.0f);
+      if (reach < sp.needle * 2.0f) continue;
+      /* The whorl turns by a fraction of the golden angle so the branches of
+         successive whorls do not stack into visible columns. */
+      const float rot = float(w) * 2.39996323f * 0.618f + float(stem) * 1.1f;
+      const int32_t n = detail >= 2 ? sp.perWhorl : (sp.perWhorl + 1) / 2;
+      for (int32_t b = 0; b < n; ++b) {
+        const float a = rot + kTwoPi * float(b) / float(n) + rng.range(-0.18f, 0.18f);
+        const V3 dir = v3(cosf(a), 0.0f, sinf(a));
+        const V3 base = v3(root.x + cosf(leanA) * leanK * (t * t) * stemH * 0.25f +
+                               dir.x * trunkR * 0.5f,
+                           y, root.z + sinf(leanA) * leanK * (t * t) * stemH * 0.25f +
+                               dir.z * trunkR * 0.5f);
+        coniferBranch(base, dir, reach, sp.droop * (0.8f + 0.4f * rng.f()), sp, detail,
+                      rng.f(), float(b) * 1.7f);
+      }
+    }
+    /* Leader: a tuft of upward needles on the tip so the tree has a point. */
+    for (int32_t i = 0; i < (detail >= 2 ? 6 : 3); ++i) {
+      const float a = float(i) * 2.39996323f;
+      gPenPart = 1.0f;
+      blade(add(top, v3(0.0f, -sp.needle * 0.6f, 0.0f)),
+            v3(cosf(a) * 0.35f, 1.0f, sinf(a) * 0.35f), sp.needle * 2.4f, sp.needle * 0.22f,
+            0.30f, 0.25f, 2, sp.shade1 * 0.95f, sp.shade1, rng.f(), 0.35f, 0.55f, a);
+    }
+  }
+  return gVert;
+}
+
+/* -------------------------------------------------------------------- */
+/* Prickly pear (Opuntia): a chain of flattened cladodes                  */
+/* -------------------------------------------------------------------- */
+/* A pad is a flattened ellipsoid 22 cm long, 15 cm wide and 2.2 cm thick —
+ * the published range for O. ficus-indica — built ring by ring so the rim is
+ * a real rim and not a decal. */
+void pad(V3 base, V3 up, V3 side, float length, float width, float thick,
+         float shade, float rnd, int32_t detail) {
+  const int32_t rings = detail >= 2 ? 6 : 4;
+  const int32_t around = detail >= 2 ? 10 : 7;
+  const V3 axis = norm(up);
+  const V3 flat = norm(side);
+  const V3 front = norm(cross(axis, flat));
+  const V3 mid = add(base, mul(axis, length * 0.5f));
+  const int32_t first = gVert;
+  gPenPart = 0.0f;
+  for (int32_t i = 0; i < rings; ++i) {
+    const float t = (float(i) + 0.5f) / float(rings);
+    const float bulge = sinf(kPi * t);
+    const float w = width * 0.5f * powf(bulge, 0.55f);
+    const float th = thick * 0.5f * powf(bulge, 0.45f);
+    const V3 centre = add(base, mul(axis, length * t));
+    for (int32_t j = 0; j <= around; ++j) {
+      const float a = (float(j) / float(around)) * kTwoPi;
+      const float ca = cosf(a), sn = sinf(a);
+      /* Areoles: the pad dimples where the spines sit, on a 5/8 lattice. */
+      const float dimple = 1.0f - 0.06f * maxf(0.0f, cosf(a * 5.0f + t * 8.0f));
+      const V3 p = add(centre, add(mul(flat, ca * w * dimple), mul(front, sn * th * dimple)));
+      const V3 n = norm(add(mul(flat, ca), mul(front, sn * 2.2f)));
+      pushVert(p, n, float(j) / float(around), t, shade + 0.10f * (1.0f - t), rnd, mid);
+    }
+  }
+  const int32_t stride = around + 1;
+  for (int32_t i = 0; i + 1 < rings; ++i) {
+    for (int32_t j = 0; j < around; ++j) {
+      const int32_t a = first + i * stride + j;
+      const int32_t b = a + 1;
+      const int32_t c = a + stride;
+      const int32_t d = c + 1;
+      pushTri(a, c, b);
+      pushTri(b, c, d);
+    }
+  }
+  /* Close both ends so a pad seen edge-on is not a hole. */
+  for (int32_t end = 0; end < 2; ++end) {
+    const V3 poleP = add(base, mul(axis, end ? length : 0.0f));
+    const int32_t pole = pushVert(poleP, mul(axis, end ? 1.0f : -1.0f), 0.5f,
+                                  end ? 1.0f : 0.0f, shade * 0.92f, rnd, mid);
+    const int32_t ring = first + (end ? rings - 1 : 0) * stride;
+    for (int32_t j = 0; j < around; ++j) {
+      if (end) pushTri(ring + j, pole, ring + j + 1);
+      else pushTri(ring + j + 1, pole, ring + j);
+    }
+  }
+}
+
+void pricklyBranch(V3 base, V3 dir, float length, int32_t depth, int32_t detail,
+                   Rng& rng, float sway) {
+  const V3 up = norm(add(dir, v3(0.0f, 0.55f, 0.0f)));
+  const V3 side = norm(cross(up, v3(rng.range(-1.0f, 1.0f), 0.0f, rng.range(-1.0f, 1.0f))));
+  pad(base, up, side, length, length * 0.68f, length * 0.13f, 0.62f, rng.f(), detail);
+  if (depth <= 0) {
+    /* A pad that ends a branch flowers at its upper edge: two blooms in the
+       magenta-to-yellow range prickly pears actually open in spring. */
+    const int32_t blooms = detail >= 2 ? 2 : 1;
+    for (int32_t b = 0; b < blooms; ++b) {
+      const V3 at = add(add(base, mul(up, length * (0.80f + 0.14f * float(b)))), mul(side, rng.range(-0.03f, 0.03f)));
+      for (int32_t i = 0; i < 5; ++i) {
+        const float a = float(i) * 1.2566f;
+        gPenPart = 2.0f;
+        blade(at, norm(v3(cosf(a), 0.55f, sinf(a))), 0.032f, 0.014f, 1.05f, -0.2f, 2,
+              1.05f, 1.25f, rng.f(), sway * 1.1f, sway * 1.1f, a);
+      }
+    }
+    return;
+  }
+  const int32_t kids = detail >= 2 ? 2 : 1;
+  for (int32_t k = 0; k < kids; ++k) {
+    const float a = float(k) * 2.1f + rng.range(-0.5f, 0.5f) + (k ? 3.1f : 0.0f);
+    const V3 cdir = norm(add(mul(up, 0.65f), v3(cosf(a) * 0.9f, 0.0f, sinf(a) * 0.9f)));
+    const V3 cbase = add(base, mul(up, length * (0.88f + 0.06f * float(k))));
+    pricklyBranch(cbase, cdir, length * rng.range(0.62f, 0.82f), depth - 1, detail, rng, sway);
+  }
+}
+
+int32_t generatePrickly(uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x2c1b3c6du);
+  const int32_t stems = 2;
+  for (int32_t s = 0; s < stems; ++s) {
+    const float a = float(s) * 2.39996323f;
+    const V3 base = v3(cosf(a) * 0.07f, -0.01f, sinf(a) * 0.07f);
+    const V3 dir = norm(v3(cosf(a) * 0.55f, 1.0f, sinf(a) * 0.55f));
+    pricklyBranch(base, dir, 0.32f * (0.9f + 0.25f * gShapeH), detail >= 2 ? 3 : 2,
+                  detail, rng, 0.15f);
+  }
+  return gVert;
+}
+
+/* -------------------------------------------------------------------- */
+/* Joshua tree (Yucca brevifolia)                                        */
+/* -------------------------------------------------------------------- */
+/* A fibre trunk that forks, each branch ending in a dense rosette of stiff
+ * 20-30 cm leaves. Grows 5-15 m in the Mojave and almost nothing else looks
+ * like it, so it gets its own shape. */
+int32_t generateJoshua(uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x1a2b3c4du);
+  const float H = 7.4f * gShapeH;
+  const float baseR = 0.34f * (0.75f + 0.25f * gShapeH);
+  /* Three forks, each spawning two more: the candelabra habit. */
+  struct Arm { V3 base; V3 dir; float len; float r; int32_t depth; };
+  Arm stack[12];
+  int32_t n = 0;
+  stack[n].base = v3(0.0f, -0.2f, 0.0f);
+  stack[n].dir = v3(rng.range(-0.05f, 0.05f), 1.0f, rng.range(-0.05f, 0.05f));
+  stack[n].len = H * 0.42f;
+  stack[n].r = baseR;
+  stack[n].depth = 0;
+  ++n;
+  int32_t vertsBefore = 0;
+  (void)vertsBefore;
+  while (n > 0) {
+    const Arm arm = stack[--n];
+    const int32_t segs = detail >= 2 ? 4 : 3;
+    const int32_t sides = detail >= 2 ? 8 : 5;
+    V3 p = arm.base;
+    V3 d = norm(arm.dir);
+    V3 frame = v3(1.0f, 0.0f, 0.0f);
+    float r = arm.r;
+    for (int32_t i = 0; i < segs; ++i) {
+      const float t = float(i + 1) / float(segs);
+      d = norm(add(d, v3(rng.range(-0.12f, 0.12f), 0.02f, rng.range(-0.12f, 0.12f))));
+      const V3 q = add(p, mul(d, arm.len / float(segs)));
+      gPenPart = 0.0f;
+      frame = tubeSegment(p, q, r, r * 0.86f, sides, t * arm.len, 0.85f, 0.66f + 0.12f * rng.f(),
+                          rng.f(), frame, false, 0.05f * t, 0.12f * t, float(arm.depth));
+      p = q;
+      r *= 0.93f;
+    }
+    if (arm.depth < 2) {
+      for (int32_t k = 0; k < 2; ++k) {
+        const float a = rng.range(0.0f, kTwoPi);
+        stack[n].base = p;
+        stack[n].dir = norm(add(mul(d, 0.55f), v3(cosf(a) * 0.8f, 0.25f, sinf(a) * 0.8f)));
+        stack[n].len = arm.len * rng.range(0.55f, 0.8f);
+        stack[n].r = r * 0.9f;
+        stack[n].depth = arm.depth + 1;
+        ++n;
+        if (n >= 11) break;
+      }
+    } else {
+      /* Rosette: 30 leaves radiating from the tip, each one stiff and spined. */
+      const int32_t leaves = detail >= 2 ? 34 : 18;
+      for (int32_t i = 0; i < leaves; ++i) {
+        const float a = float(i) * 2.39996323f;
+        const float tilt = lerpf(0.30f, 1.40f, float(i) / float(leaves));
+        const V3 out = norm(v3(cosf(a) * sinf(tilt), cosf(tilt), sinf(a) * sinf(tilt)));
+        gPenPart = 1.0f;
+        blade(p, out, 0.26f * (0.8f + 0.3f * rng.f()), 0.020f, 1.15f, 0.35f,
+              detail >= 2 ? 3 : 2, 0.72f, 0.98f, rng.f(), 0.45f, 0.62f, a);
+      }
+      /* A second, shorter whorl inside the first: the rosette a Joshua tree
+         carries is dense enough to hide the branch tip from below. */
+      if (detail >= 2) {
+        for (int32_t i = 0; i < 12; ++i) {
+          const float a = float(i) * 2.39996323f + 0.9f;
+          const V3 out = norm(v3(cosf(a) * 0.55f, 1.0f, sinf(a) * 0.55f));
+          gPenPart = 1.0f;
+          blade(add(p, v3(0.0f, 0.02f, 0.0f)), out, 0.20f, 0.017f, 0.55f, 0.2f, 2,
+                0.68f, 0.95f, rng.f(), 0.40f, 0.58f, a + 0.5f);
+        }
+      }
+    }
+  }
+  return gVert;
+}
+
+/* -------------------------------------------------------------------- */
+/* Sagebrush (Artemisia tridentata)                                      */
+/* -------------------------------------------------------------------- */
+/* A woody base with many short, leafy stems. The leaves are the plant's whole
+ * silhouette, so they are grown, not drawn as a sphere. */
+int32_t generateSage(uint32_t seed, int32_t detail) {
+  Rng rng(seed ^ 0x77d1c3e5u);
+  const float H = 0.95f * gShapeH;
+  const int32_t stems = detail >= 2 ? 14 : 8;
+  for (int32_t s = 0; s < stems; ++s) {
+    const float a = float(s) * 2.39996323f + rng.range(-0.25f, 0.25f);
+    /* A stem that reaches further out leans further, so the clump opens into
+       the loose, rounded dome a sagebrush has instead of a bundle of spikes. */
+    const float reach = rng.range(0.10f, 0.30f) * (0.7f + 0.3f * gShapeH);
+    const float top = H * rng.range(0.55f, 1.0f);
+    const float lean = 0.35f + reach * 2.2f + rng.range(0.0f, 0.25f);
+    const V3 base = v3(cosf(a) * 0.03f, 0.0f, sinf(a) * 0.03f);
+    /* Stem: a thin woody tube that leans out as it rises. */
+    const int32_t segs = detail >= 2 ? 3 : 2;
+    V3 p = base;
+    V3 frame = v3(1.0f, 0.0f, 0.0f);
+    V3 dir = norm(v3(cosf(a) * lean, 1.0f, sinf(a) * lean));
+    for (int32_t i = 0; i < segs; ++i) {
+      const float t = float(i + 1) / float(segs);
+      const V3 q = add(p, mul(dir, (top / float(segs)) * (1.0f + 0.1f * float(i))));
+      gPenPart = 0.0f;
+      frame = tubeSegment(p, q, 0.010f * (1.0f - 0.5f * t), 0.008f * (1.0f - 0.5f * t),
+                          4, t, 1.0f, 0.58f, rng.f(), frame, false,
+                          0.05f + 0.2f * t, 0.15f + 0.4f * t, a);
+      /* Leaves grow all along the stem, not just at the tip. */
+      const int32_t leaves = detail >= 2 ? 5 : 3;
+      for (int32_t k = 0; k < leaves; ++k) {
+        const float lt = float(k) / float(leaves);
+        const V3 at = add(p, mul(sub(q, p), lt));
+        const float la = a + float(k) * 2.0f + rng.range(-0.4f, 0.4f);
+        const V3 ldir = norm(v3(cosf(la), 0.35f + rng.range(0.0f, 0.4f), sinf(la)));
+        gPenPart = 1.0f;
+        blade(at, ldir, 0.030f * (0.8f + 0.4f * rng.f()), 0.0075f, 1.1f, 0.4f, 2,
+              0.70f, 1.00f, rng.f(), 0.30f + 0.35f * t, 0.35f + 0.4f * t, la);
+      }
+      p = q;
+      dir = norm(add(dir, v3(0.0f, 0.06f, 0.0f)));
+    }
+  }
+  return gVert;
+}
+
 /* ---------------------------------------------------------------- */
 /* Tree entry point                                                 */
 /* ---------------------------------------------------------------- */
@@ -968,6 +2045,36 @@ int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   if (kind < 0 || kind >= SP_COUNT) return 0;
   gNodeN = 0;
   gAttN = 0;
+  /* Habit-locked species first: a pine, a prickly pear and a sagebrush are
+     grown by their own builders, not by the colonisation routine. */
+  if (kind >= SP_PINE) {
+    switch (kind) {
+      case SP_PINE:
+      case SP_SPRUCE:
+      case SP_KRUMM:
+      case SP_JUNIPER: return generateConifer(kind, seed, detail);
+      case SP_PRICKLY: return generatePrickly(seed, detail);
+      case SP_JOSHUA: return generateJoshua(seed, detail);
+      case SP_SAGE: return generateSage(seed, detail);
+      case SP_FLOWER: return generateFlower(kind, seed, detail);
+      default: return 0;
+    }
+  }
+  if (kind >= SP_GRASS) {
+    switch (kind) {
+      case SP_GRASS:
+      case SP_TALLGRASS: return generateGrass(kind, seed, detail);
+      case SP_DAISY:
+      case SP_TULIP:
+      case SP_LAVENDER: return generateFlower(kind, seed, detail);
+      case SP_SAGUARO:
+      case SP_BARREL:
+      case SP_AGAVE: return generateSucculent(kind, seed, detail);
+      case SP_PALM: return generatePalm(seed, detail);
+      case SP_PEBBLE: return generatePebble(seed, detail);
+      default: return 0;
+    }
+  }
   if (kind >= SP_FERN) return generateFern(kind, seed, detail);
   SpeciesSpec s = kSpecies[kind];
   applyShape(s);
@@ -1060,11 +2167,322 @@ FE_EXPORT int32_t fe_flora_lsystem_reset(void) {
   gUserAxiom[0] = 0;
   return 0;
 }
+
+/* ---------------------------------------------------------------- */
+/* Buildings                                                         */
+/* ---------------------------------------------------------------- */
+/* The studio's last JavaScript-authored meshes were the four shells it places
+ * along a street: a pitched-roof house, a four-storey block, an eight-storey
+ * mid-rise and a sixteen-storey tower. They were literal boxes with a hand-
+ * placed roof, so every copy on a street was the same building.
+ *
+ * These are grown from the same rules a real one is built to. A storey is 3.0 m
+ * (3.5 for the ground floor of the house), a residential facade bay is 3.6 m,
+ * a balcony is 1.3 m deep with a 1.0 m parapet, a parapet cap is 0.3 m, a
+ * foundation stands 0.45 m proud of grade, and a pitched roof sits at 35
+ * degrees with a 0.35 m eave overhang. Nothing is a magic number, and the seed
+ * moves storey count, bay count, roof pitch, entrance bay and chimney side
+ * within the range the type actually uses.
+ *
+ * Parts keep the studio's material slots: 0 wall (facade texture and lit
+ * windows), 1 roof, 2 base (foundation, trims, balconies, canopy, parapet,
+ * chimney, mast). UVs stay in metres divided by the facade tile, exactly as the
+ * JavaScript shells did, so the existing textures land on the same bricks. */
+enum { BUILD_HOUSE = 0, BUILD_BLOCK = 1, BUILD_MID = 2, BUILD_TOWER = 3, BUILD_COUNT = 4 };
+
+/* Material tint. Buildings are textured by the studio's facade map, but a door
+ * is still brown and a chimney is still brick, so the vertex colour carries the
+ * albedo the way the JavaScript shells baked theirs. */
+V3 gTint = v3(1.0f, 1.0f, 1.0f);
+
+/* A quadrilateral with metre UVs projected on its dominant axis, wound so the
+ * normal points away from `inward` (the centre of the solid). */
+void facadeQuad(V3 a, V3 b, V3 c, V3 d, V3 inward, float tile, float shade,
+                float rnd, V3 cen) {
+  V3 n = norm(cross(sub(b, a), sub(c, a)));
+  if (dot(n, sub(a, inward)) < 0.0f) n = mul(n, -1.0f);
+  const V3 pts[4] = {a, b, c, d};
+  V3 u = norm(sub(b, a)), v = norm(sub(d, a));
+  const int32_t base = gVert;
+  for (int32_t i = 0; i < 4; ++i) {
+    const V3 p = pts[i];
+    /* Horizontal coordinate follows the face's own u axis, vertical is world
+     * Y, so a window course is level whatever the building is rotated to. */
+    const float uu = dot(sub(p, a), u) / tile;
+    const float vv = (absf(n.y) > 0.7f ? dot(sub(p, a), v) : p.y) / tile;
+    pushVert(p, n, uu, vv, shade * gTint.x, shade * gTint.y, shade * gTint.z, rnd, cen);
+  }
+  pushTri(base, base + 1, base + 2);
+  pushTri(base, base + 2, base + 3);
+}
+
+/* A triangle with the same UV projection, for gable ends and roof hips. */
+void facadeTri(V3 a, V3 b, V3 c, V3 inward, float tile, float shade, float rnd, V3 cen) {
+  V3 n = norm(cross(sub(b, a), sub(c, a)));
+  if (dot(n, sub(a, inward)) < 0.0f) n = mul(n, -1.0f);
+  const V3 pts[3] = {a, b, c};
+  V3 u = norm(sub(b, a));
+  const int32_t base = gVert;
+  for (int32_t i = 0; i < 3; ++i) {
+    const V3 p = pts[i];
+    const float uu = dot(sub(p, a), u) / tile;
+    const float vv = p.y / tile;
+    pushVert(p, n, uu, vv, shade * gTint.x, shade * gTint.y, shade * gTint.z, rnd, cen);
+  }
+  pushTri(base, base + 1, base + 2);
+}
+
+/* Axis-aligned box. `tile` scales the facade UVs; `shade` is its brightness and
+ * `gTint` its colour. */
+void tinted(V3 t) { gTint = t; }
+void facadeBox(V3 c, V3 half, float tile, float shade, float rnd) {
+  const V3 lo = sub(c, half), hi = add(c, half);
+  const V3 face[6][5] = {
+    {v3(lo.x, lo.y, hi.z), v3(hi.x, lo.y, hi.z), v3(hi.x, hi.y, hi.z), v3(lo.x, hi.y, hi.z), v3(0, 0, -1)},
+    {v3(hi.x, lo.y, lo.z), v3(lo.x, lo.y, lo.z), v3(lo.x, hi.y, lo.z), v3(hi.x, hi.y, lo.z), v3(0, 0, 1)},
+    {v3(hi.x, lo.y, hi.z), v3(hi.x, lo.y, lo.z), v3(hi.x, hi.y, lo.z), v3(hi.x, hi.y, hi.z), v3(-1, 0, 0)},
+    {v3(lo.x, lo.y, lo.z), v3(lo.x, lo.y, hi.z), v3(lo.x, hi.y, hi.z), v3(lo.x, hi.y, lo.z), v3(1, 0, 0)},
+    {v3(lo.x, hi.y, hi.z), v3(hi.x, hi.y, hi.z), v3(hi.x, hi.y, lo.z), v3(lo.x, hi.y, lo.z), v3(0, -1, 0)},
+    {v3(lo.x, lo.y, lo.z), v3(hi.x, lo.y, lo.z), v3(hi.x, lo.y, hi.z), v3(lo.x, lo.y, hi.z), v3(0, 1, 0)},
+  };
+  for (int32_t f = 0; f < 6; ++f) {
+    facadeQuad(face[f][0], face[f][1], face[f][2], face[f][3], face[f][4], tile, shade, rnd, c);
+  }
+}
+
+/* One storey band: a slightly proud line of concrete, which is what actually
+ * catches light on a rendered facade. */
+void storeyBand(float w, float d, float y, float proud, float thick, float shade) {
+  gPenPart = 2.0f;
+  gPenSway = 0.0f;
+  gPenPh = 0.0f;
+  facadeBox(v3(0.0f, y, 0.0f), v3(w * 0.5f + proud, thick * 0.5f, d * 0.5f + proud), 2.0f, shade, 0.5f);
+}
+
+/* A balcony: floor slab, parapet on three sides, two side walls. */
+void balcony(float x, float y, float zFront, float w, float depth, float shade) {
+  gPenPart = 2.0f;
+  const float rail = 1.0f;
+  facadeBox(v3(x, y, zFront + depth * 0.5f), v3(w * 0.5f, 0.08f, depth * 0.5f), 1.6f, shade, 0.4f);
+  facadeBox(v3(x, y + rail * 0.5f, zFront + depth), v3(w * 0.5f, rail * 0.5f, 0.05f), 1.6f, shade * 1.15f, 0.4f);
+  facadeBox(v3(x - w * 0.5f + 0.05f, y + rail * 0.5f, zFront + depth * 0.5f), v3(0.05f, rail * 0.5f, depth * 0.5f), 1.6f, shade * 1.1f, 0.4f);
+  facadeBox(v3(x + w * 0.5f - 0.05f, y + rail * 0.5f, zFront + depth * 0.5f), v3(0.05f, rail * 0.5f, depth * 0.5f), 1.6f, shade * 1.1f, 0.4f);
+}
+
+/* Canopy over the entrance, held on two posts — every walk-up has one. */
+void entrance(float zFront, float w, float y, float tile) {
+  gPenPart = 2.0f;
+  facadeBox(v3(0.0f, y, zFront + 0.8f), v3(w * 0.5f + 0.3f, 0.10f, 0.8f), tile, 0.62f, 0.6f);
+  facadeBox(v3(-w * 0.5f + 0.1f, y * 0.5f, zFront + 1.45f), v3(0.06f, y * 0.5f, 0.06f), tile, 0.58f, 0.6f);
+  facadeBox(v3(w * 0.5f - 0.1f, y * 0.5f, zFront + 1.45f), v3(0.06f, y * 0.5f, 0.06f), tile, 0.58f, 0.6f);
+}
+
+/* Flat-roof trim: parapet ring, roof plant, mast. */
+void flatRoof(float w, float d, float y, Rng& rng, float tile, float shade) {
+  gPenPart = 2.0f;
+  const float capH = 0.32f, pr = 0.18f;
+  facadeBox(v3(0.0f, y + capH * 0.5f, d * 0.5f), v3(w * 0.5f + pr, capH * 0.5f, pr), tile, shade, 0.5f);
+  facadeBox(v3(0.0f, y + capH * 0.5f, -d * 0.5f), v3(w * 0.5f + pr, capH * 0.5f, pr), tile, shade, 0.5f);
+  facadeBox(v3(w * 0.5f, y + capH * 0.5f, 0.0f), v3(pr, capH * 0.5f, d * 0.5f), tile, shade, 0.5f);
+  facadeBox(v3(-w * 0.5f, y + capH * 0.5f, 0.0f), v3(pr, capH * 0.5f, d * 0.5f), tile, shade, 0.5f);
+  /* Lift overrun and a stair head, both dark, both off-centre because they
+   * have to clear the stair core. */
+  const float ox = rng.range(-0.22f, 0.22f) * w, oz = rng.range(-0.22f, 0.22f) * d;
+  facadeBox(v3(ox, y + 1.1f, oz), v3(w * 0.16f, 1.1f, d * 0.14f), 2.4f, 0.30f, 0.5f);
+  facadeBox(v3(-ox * 0.8f, y + 0.7f, -oz * 0.8f), v3(w * 0.09f, 0.7f, d * 0.09f), 2.4f, 0.30f, 0.5f);
+  /* No mast here: the tower grows its own on the crown, and a building with
+   * two aerials is a building nobody built. */
+}
+
+void generateBuilding(int32_t kind, uint32_t seed, int32_t detail) {
+  Rng rng((seed ^ 0x6d2b79f5u) * 2654435761u + uint32_t(kind) * 2246822519u);
+  gTint = v3(1.0f, 1.0f, 1.0f);
+  const float tile = 9.0f;          /* facade texture tile in metres */
+  const float storey = 3.0f;        /* one residential storey */
+  const float proud = detail >= 2 ? 0.10f : 0.0f;
+
+  if (kind == BUILD_HOUSE) {
+    /* Detached two-storey house: 6.4 m square footprint, 3.5 m ground floor,
+     * 2.5 m upper floor, 35 degree pitch, 0.35 m eave. */
+    const float w = rng.range(6.0f, 7.2f), d = rng.range(6.0f, 7.2f);
+    const float gh = 3.5f, uh = 2.5f, wallTop = gh + uh;
+    const float pitch = rng.range(0.60f, 0.72f);   /* tan(31-36 deg) */
+    const float ridge = wallTop + d * 0.5f * pitch;
+    const float eave = 0.35f;
+
+    /* Foundation stands proud of grade by 0.45 m. */
+    gPenPart = 2.0f;
+    tinted(v3(0.46f, 0.46f, 0.48f));
+    facadeBox(v3(0.0f, -0.22f, 0.0f), v3(w * 0.5f + 0.18f, 0.23f, d * 0.5f + 0.18f), 3.0f, 0.92f, 0.5f);
+    /* The walls: one mass, textured. */
+    gPenPart = 0.0f;
+    facadeBox(v3(0.0f, wallTop * 0.5f, 0.0f), v3(w * 0.5f, wallTop * 0.5f, d * 0.5f), tile, 0.94f, 0.5f);
+
+    /* Pitched roof: two planes and two gable ends, ridge along Z. */
+    gPenPart = 1.0f;
+    const float ew = w * 0.5f + eave, ed = d * 0.5f + eave;
+    const V3 rA = v3(0.0f, ridge, -ed), rB = v3(0.0f, ridge, ed);
+    facadeQuad(v3(-ew, wallTop, -ed), v3(-ew, wallTop, ed), rB, rA, v3(0.0f, ridge * 0.5f, 0.0f),
+               tile, 0.88f, 0.5f, v3(0, wallTop, 0));
+    facadeQuad(v3(ew, wallTop, ed), v3(ew, wallTop, -ed), rA, rB, v3(0.0f, ridge * 0.5f, 0.0f),
+               tile, 0.88f, 0.5f, v3(0, wallTop, 0));
+    /* Gable ends, closed with the wall material so the texture continues. */
+    gPenPart = 0.0f;
+    facadeTri(v3(-w * 0.5f, wallTop, d * 0.5f), v3(w * 0.5f, wallTop, d * 0.5f), v3(0.0f, ridge, d * 0.5f),
+              v3(0.0f, wallTop, 0.0f), tile, 0.90f, 0.5f, v3(0, wallTop, 0));
+    facadeTri(v3(w * 0.5f, wallTop, -d * 0.5f), v3(-w * 0.5f, wallTop, -d * 0.5f), v3(0.0f, ridge, -d * 0.5f),
+              v3(0.0f, wallTop, 0.0f), tile, 0.90f, 0.5f, v3(0, wallTop, 0));
+
+    /* Trims: fascia at the eave line, rake boards, chimney, door, porch,
+     * step and a window sill course — everything a real facade has. */
+    gPenPart = 2.0f;
+    const float trim = 0.14f;
+    tinted(v3(0.97f, 0.96f, 0.93f));      /* painted fascia */
+    facadeBox(v3(0.0f, wallTop + 0.01f, ed), v3(ew, trim * 0.5f, 0.06f), 1.5f, 0.90f, 0.5f);
+    facadeBox(v3(0.0f, wallTop + 0.01f, -ed), v3(ew, trim * 0.5f, 0.06f), 1.5f, 0.90f, 0.5f);
+    facadeBox(v3(ew, wallTop + 0.01f, 0.0f), v3(0.06f, trim * 0.5f, ed), 1.5f, 0.90f, 0.5f);
+    facadeBox(v3(-ew, wallTop + 0.01f, 0.0f), v3(0.06f, trim * 0.5f, ed), 1.5f, 0.90f, 0.5f);
+    /* Soffit under the eaves: the roof has a thickness you can see from below. */
+    gPenPart = 1.0f;
+    tinted(v3(0.80f, 0.78f, 0.75f));
+    facadeQuad(v3(-ew, wallTop - 0.02f, -d * 0.5f), v3(ew, wallTop - 0.02f, -d * 0.5f),
+               v3(ew, wallTop - 0.02f, -ed), v3(-ew, wallTop - 0.02f, -ed), v3(0, wallTop + 1, 0),
+               4.0f, 0.9f, 0.5f, v3(0, wallTop, 0));
+    facadeQuad(v3(-ew, wallTop - 0.02f, d * 0.5f), v3(-ew, wallTop - 0.02f, ed),
+               v3(ew, wallTop - 0.02f, ed), v3(ew, wallTop - 0.02f, d * 0.5f), v3(0, wallTop + 1, 0),
+               4.0f, 0.9f, 0.5f, v3(0, wallTop, 0));
+    /* Ridge cap. */
+    gPenPart = 2.0f;
+    tinted(v3(0.30f, 0.31f, 0.33f));
+    facadeBox(v3(0.0f, ridge + 0.04f, 0.0f), v3(0.14f, 0.05f, ed), 1.5f, 0.9f, 0.5f);
+    tinted(v3(1.0f, 1.0f, 1.0f));
+    const float cx = rng.range(-0.28f, 0.28f) * w;
+    const float cz = rng.range(-0.18f, 0.18f) * d;
+    /* A chimney clears the ridge by half a metre, which is what the code
+     * actually asks for so it draws on its own draught. */
+    const float chimTop = ridge + 0.55f;
+    tinted(v3(0.62f, 0.40f, 0.34f));      /* brick */
+    facadeBox(v3(cx, (wallTop + chimTop) * 0.5f, cz), v3(0.42f, (chimTop - wallTop) * 0.5f + 0.2f, 0.42f),
+              1.2f, 0.92f, 0.5f);
+    tinted(v3(0.55f, 0.55f, 0.56f));      /* pot */
+    facadeBox(v3(cx, chimTop + 0.09f, cz), v3(0.52f, 0.09f, 0.52f), 1.2f, 0.9f, 0.5f);
+    tinted(v3(1.0f, 1.0f, 1.0f));
+    /* Door and porch on +Z. */
+    const float doorW = 1.0f, doorH = 2.1f;
+    tinted(v3(0.94f, 0.93f, 0.90f));
+    facadeBox(v3(0.0f, doorH * 0.5f + 0.45f, d * 0.5f + 0.04f), v3(doorW * 0.5f + 0.08f, doorH * 0.5f + 0.08f, 0.04f), 1.2f, 0.90f, 0.5f);
+    tinted(v3(0.36f, 0.22f, 0.12f));      /* stained timber door */
+    facadeBox(v3(0.0f, doorH * 0.5f + 0.45f, d * 0.5f + 0.07f), v3(doorW * 0.5f, doorH * 0.5f, 0.05f), 1.2f, 0.95f, 0.5f);
+    tinted(v3(0.58f, 0.56f, 0.54f));      /* flags */
+    facadeBox(v3(0.0f, 0.52f, d * 0.5f + 0.9f), v3(1.15f, 0.08f, 0.85f), 1.4f, 0.95f, 0.5f);
+    tinted(v3(0.96f, 0.96f, 0.94f));      /* porch posts */
+    facadeBox(v3(-0.95f, 1.9f, d * 0.5f + 1.62f), v3(0.05f, 1.42f, 0.05f), 1.4f, 0.94f, 0.5f);
+    facadeBox(v3(0.95f, 1.9f, d * 0.5f + 1.62f), v3(0.05f, 1.42f, 0.05f), 1.4f, 0.94f, 0.5f);
+    tinted(v3(0.34f, 0.33f, 0.32f));      /* porch roof */
+    facadeBox(v3(0.0f, 3.34f, d * 0.5f + 0.95f), v3(1.15f, 0.09f, 0.72f), 1.4f, 0.95f, 0.5f);
+    tinted(v3(1.0f, 1.0f, 1.0f));
+    return;
+  }
+
+  /* Walk-up block, mid-rise and tower share one rule set: a rectangular plan,
+   * a storey grid, a bay grid, balconies along +Z, pilasters on the corners. */
+  float w, d, h;
+  int32_t storeys, bays;
+  if (kind == BUILD_BLOCK) {
+    w = rng.range(8.0f, 9.2f); d = rng.range(11.0f, 12.6f);
+    storeys = rng.irange(4, 5); bays = rng.irange(3, 4);
+  } else if (kind == BUILD_MID) {
+    w = rng.range(9.0f, 10.4f); d = rng.range(9.0f, 10.4f);
+    storeys = rng.irange(7, 9); bays = rng.irange(3, 4);
+  } else {
+    w = rng.range(6.0f, 6.8f); d = rng.range(6.0f, 6.8f);
+    storeys = rng.irange(13, 16); bays = rng.irange(2, 3);
+  }
+  h = float(storeys) * storey;
+
+  /* Foundation and walls. */
+  gPenPart = 2.0f;
+  facadeBox(v3(0.0f, -0.22f, 0.0f), v3(w * 0.5f + 0.22f, 0.23f, d * 0.5f + 0.22f), 3.0f, 0.40f, 0.5f);
+  gPenPart = 0.0f;
+  facadeBox(v3(0.0f, h * 0.5f, 0.0f), v3(w * 0.5f, h * 0.5f, d * 0.5f), tile, 0.93f, 0.5f);
+
+  /* A plinth in darker render up to 1.1 m, then a band at every storey. */
+  gPenPart = 2.0f;
+  tinted(v3(0.36f, 0.35f, 0.34f));        /* darker plinth render */
+  facadeBox(v3(0.0f, 0.55f, 0.0f), v3(w * 0.5f + 0.02f, 0.55f, d * 0.5f + 0.02f), 2.2f, 0.95f, 0.5f);
+  tinted(v3(0.86f, 0.85f, 0.83f));        /* pale concrete for the trims */
+
+  if (detail >= 1) {
+    for (int32_t f = 1; f < storeys; ++f) {
+      storeyBand(w, d, float(f) * storey, 0.03f, 0.16f, 0.60f);
+      if (proud > 0.0f) storeyBand(w, d, float(f) * storey - 0.35f, 0.0f, 0.05f, 0.74f);
+    }
+  }
+
+  /* Balconies: one per bay per storey above the ground floor, on +Z. */
+  if (detail >= 1) {
+    const float bayW = w / float(bays);
+    for (int32_t f = 1; f < storeys; ++f) {
+      for (int32_t b = 0; b < bays; ++b) {
+        if (rng.f() < 0.18f) continue;   /* a bay without one, as on a real run */
+        const float x = -w * 0.5f + bayW * (float(b) + 0.5f);
+        balcony(x, float(f) * storey, d * 0.5f, bayW * 0.72f, 1.3f, 0.58f);
+      }
+    }
+  }
+
+  /* Corner pilasters on the mid-rise and tower, which is what gives them a
+   * vertical emphasis rather than a stack of slabs. */
+  if (detail >= 2 && kind != BUILD_BLOCK) {
+    gPenPart = 2.0f;
+    const float pw = kind == BUILD_TOWER ? 0.30f : 0.5f;
+    for (int32_t sx = -1; sx <= 1; sx += 2) {
+      for (int32_t sz = -1; sz <= 1; sz += 2) {
+        facadeBox(v3(float(sx) * w * 0.5f, h * 0.5f, float(sz) * d * 0.5f),
+                  v3(pw * 0.5f, h * 0.5f, pw * 0.5f), 1.4f, 0.62f, 0.5f);
+      }
+    }
+  }
+
+  entrance(d * 0.5f, 3.0f, storey * 0.92f, 1.6f);
+  flatRoof(w, d, h, rng, 1.8f, 0.58f);
+
+  /* The tower gets a stepped crown: a 2 m setback with its own glazing, then
+   * the plant deck. That silhouette is what a 50 m building looks like. */
+  if (kind == BUILD_TOWER) {
+    gPenPart = 0.0f;
+    facadeBox(v3(0.0f, h + 3.0f, 0.0f), v3(w * 0.5f - 1.0f, 3.0f, d * 0.5f - 1.0f), tile, 0.90f, 0.5f);
+    gPenPart = 2.0f;
+    facadeBox(v3(0.0f, h + 6.2f, 0.0f), v3(w * 0.5f - 0.8f, 0.2f, d * 0.5f - 0.8f), 1.8f, 0.56f, 0.5f);
+    /* A 4 m aerial on the plant deck, which is what a roof of this height
+     * actually carries. */
+    facadeBox(v3(0.0f, h + 8.3f, 0.0f), v3(0.12f, 1.9f, 0.12f), 1.0f, 0.62f, 0.5f);
+    facadeBox(v3(0.0f, h + 9.6f, 0.0f), v3(0.05f, 0.5f, 0.05f), 1.0f, 0.66f, 0.5f);
+  }
+}
+
 FE_EXPORT int32_t fe_flora_rock_kind_count(void) { return ROCK_COUNT; }
+
+/* Buildings: the four shell types the studio places along a street. Same
+ * buffers, same part channel, so the bridge treats them exactly like a plant. */
+FE_EXPORT int32_t fe_build_kind_count(void) { return BUILD_COUNT; }
+
+FE_EXPORT int32_t fe_build(int32_t kind, uint32_t seed, int32_t detail) {
+  resetMesh();
+  if (kind < 0 || kind >= BUILD_COUNT) return 0;
+  generateBuilding(kind, seed, detail);
+  return gVert;
+}
 
 FE_EXPORT int32_t fe_flora_tree(int32_t kind, uint32_t seed, int32_t detail) {
   resetMesh();
   generateTree(kind, seed, detail);
+  /* Wood first, then the leaf cards grown from the anchors that wood produced.
+     One call, one plant, no second round trip from the UI. */
+  if (gVert > 0 && kind >= 0 && kind < SP_GRASS) {
+    Rng cardRng((seed ^ 0x51ed270bu) * 2654435761u + uint32_t(kind) * 40503u);
+    emitLeafCards(kind, cardRng);
+  }
   return gVert > 0 ? gVert : 0;
 }
 
@@ -1090,6 +2508,24 @@ FE_EXPORT float* fe_flora_leaf_ptr(void) { return gLeaf; }
  * branch phase in radians. */
 FE_EXPORT float* fe_flora_sway_ptr(void) { return gSway; }
 FE_EXPORT float* fe_flora_phase_ptr(void) { return gPhase; }
+/* Material group per vertex: 0 wood, 1 foliage, 2 bloom. */
+FE_EXPORT float* fe_flora_part_ptr(void) { return gPart; }
+
+/* Leaf cards grown with the tree: quads, not anchors. `fe_flora_leaf_count`
+ * above still reports the anchors, which the card placer used to need. */
+FE_EXPORT int32_t fe_flora_card_count(void) { return gCardN; }
+FE_EXPORT int32_t fe_flora_card_vert_count(void) { return gCardV; }
+FE_EXPORT int32_t fe_flora_card_index_count(void) { return gCardI; }
+FE_EXPORT float* fe_flora_card_pos_ptr(void) { return gCardPos; }
+FE_EXPORT float* fe_flora_card_nrm_ptr(void) { return gCardNrm; }
+FE_EXPORT float* fe_flora_card_col_ptr(void) { return gCardCol; }
+FE_EXPORT float* fe_flora_card_uv_ptr(void) { return gCardUv; }
+FE_EXPORT float* fe_flora_card_rnd_ptr(void) { return gCardRnd; }
+FE_EXPORT float* fe_flora_card_cen_ptr(void) { return gCardCen; }
+FE_EXPORT float* fe_flora_card_sway_ptr(void) { return gCardSway; }
+FE_EXPORT float* fe_flora_card_phase_ptr(void) { return gCardPh; }
+FE_EXPORT float* fe_flora_card_part_ptr(void) { return gCardPart; }
+FE_EXPORT uint32_t* fe_flora_card_idx_ptr(void) { return gCardIdx; }
 FE_EXPORT int32_t fe_flora_leaf_stride(void) { return LEAF_STRIDE; }
 
 /* Runs the fern grammar and nothing else: no turtle, no geometry. Returns the

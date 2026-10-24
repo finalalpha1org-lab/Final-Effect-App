@@ -154,7 +154,42 @@
     scale: '<path d="M12 3.5v17M6.5 6.5h11"/><path d="M6.5 6.5 3 13.2h7z"/><path d="M17.5 6.5 14 13.2h7z"/><path d="M8 20.5h8"/>',
     square: '<rect x="4.5" y="4.5" width="15" height="15" rx="2.4"/>',
     hand: '<path d="M8.2 12V6.4a1.6 1.6 0 0 1 3.2 0V11M11.4 10.6V4.9a1.6 1.6 0 0 1 3.2 0V11M14.6 11.2V6.6a1.6 1.6 0 0 1 3.2 0v7.2a6.2 6.2 0 0 1-6.2 6.2h-1.2a5 5 0 0 1-4.1-2.2L3.6 13.6a1.7 1.7 0 0 1 2.7-2l1.9 2.2"/>',
-    chair: '<path d="M6.5 3.5v9h11v-9"/><path d="M4.5 12.5h15"/><path d="M7.5 12.5v8M16.5 12.5v8"/>'
+    chair: '<path d="M6.5 3.5v9h11v-9"/><path d="M4.5 12.5h15"/><path d="M7.5 12.5v8M16.5 12.5v8"/>',
+    /* Edit Mode. These are the mesh-editing vocabulary: a dot set for vertices,
+       a single segment for edges, a triangle for faces, and then one glyph per
+       operation, so a tool button never has to fall back to the sparkle. */
+    move: '<path d="M12 3.2v17.6M3.2 12h17.6"/><path d="M12 3.2 9.6 6M12 3.2 14.4 6M12 20.8 9.6 18M12 20.8 14.4 18M3.2 12 6 9.6M3.2 12 6 14.4M20.8 12 18 9.6M20.8 12 18 14.4"/>',
+    rotate: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20.4 4.4v4.2h-4.2"/>',
+    mirror: '<path d="M12 3.4v17.2"/><path d="M8.6 6.2 3.4 12l5.2 5.8z"/><path d="M15.4 6.2 20.6 12l-5.2 5.8z"/>',
+    copy: '<rect x="8.6" y="8.6" width="11.4" height="11.4" rx="2"/><path d="M15.4 8.6V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.4a2 2 0 0 0 2 2h2.6"/>',
+    'select-box': '<rect x="4" y="5" width="16" height="14" rx="1.6" stroke-dasharray="3 2.4"/><circle cx="4" cy="5" r="1.3"/><circle cx="20" cy="19" r="1.3"/>',
+    'select-circle': '<circle cx="12" cy="12" r="7.6" stroke-dasharray="3 2.4"/><circle cx="12" cy="12" r="1.2"/>',
+    vertex: '<circle cx="6.5" cy="7" r="1.7"/><circle cx="17.5" cy="7" r="1.7"/><circle cx="6.5" cy="17.5" r="1.7"/><circle cx="17.5" cy="17.5" r="1.7"/>',
+    edge: '<path d="M6.4 17.6 17.6 6.4"/><circle cx="6.4" cy="17.6" r="1.7"/><circle cx="17.6" cy="6.4" r="1.7"/>',
+    face: '<path d="M12 4.6 20.4 19H3.6z"/>',
+    extrude: '<rect x="3.6" y="9.6" width="10.8" height="10.8" rx="1.4"/><path d="M9 9.6V4.4h11v11h-5.6"/>',
+    inset: '<rect x="3.8" y="3.8" width="16.4" height="16.4" rx="1.6"/><rect x="8.6" y="8.6" width="6.8" height="6.8" rx="1"/>',
+    bevel: '<path d="M20.4 3.6H10L3.6 10v10.4"/><path d="M3.6 10H10V3.6"/>',
+    poke: '<path d="M3.8 3.8h16.4v16.4H3.8z"/><path d="M12 12 3.8 3.8M12 12l8.2-8.2M12 12l-8.2 8.2M12 12l8.2 8.2"/>',
+    split: '<path d="M12 2.8v18.4"/><path d="M3.8 8.2h5.4l5.6 7.6h5.4"/>',
+    fill: '<path d="M3.8 20.2h16.4"/><path d="M6 20.2V9.4L12 4l6 5.4v10.8z"/>',
+    bridge: '<path d="M3.8 18.4c0-6.4 3.6-10.6 8.2-10.6s8.2 4.2 8.2 10.6"/><path d="M3.8 18.4h16.4"/><path d="M3.8 9.4v9M20.2 9.4v9"/>',
+    merge: '<path d="M4.6 4.6h14.8l-6 7.2v7.6h-2.8v-7.6z"/><path d="M8.4 19.4h7.2"/>',
+    weld: '<path d="M3.8 12h5.6M14.6 12h5.6"/><path d="M9.4 8.2 12 12l-2.6 3.8M14.6 8.2 12 12l2.6 3.8"/>',
+    collapse: '<path d="M3.8 12h16.4"/><path d="M7.6 6.6 12 11.6l4.4-5M7.6 17.4 12 12.4l4.4 5"/>',
+    bisect: '<path d="M2.8 12h18.4" stroke-dasharray="2.2 2.2"/><path d="M7 4.4h10v15.2H7z"/>',
+    loop: '<path d="M4.2 12c0-3 3.5-5.4 7.8-5.4s7.8 2.4 7.8 5.4-3.5 5.4-7.8 5.4S4.2 15 4.2 12z"/><path d="M4.2 7.4v9.2M19.8 7.4v9.2"/>',
+    normal: '<path d="M12 20.4V4.4"/><path d="M8.2 8.2 12 4.4l3.8 3.8"/><path d="M4.6 20.4h14.8"/>',
+    flip: '<path d="M12 3.4v17.2"/><path d="M9.4 8.6 5 12l4.4 3.4z"/><path d="M14.6 8.6 19 12l-4.4 3.4z"/>',
+    smooth: '<path d="M3.6 15.8c3-6.4 6-6.4 8.4-1.2 2.4 5.2 5.4 5.2 8.4-1.2"/><path d="M3.6 19.4h16.8"/>',
+    flat: '<path d="M3.6 15.4h16.8"/><path d="M3.6 19h16.8"/><path d="M7 11V5.6h10V11"/>',
+    sharp: '<path d="M4 19.4 12 4.6l8 14.8z"/><path d="M12 4.6v14.8"/>',
+    seam: '<path d="M12 3.4v17.2" stroke-dasharray="2.4 2.4"/><path d="M6 6.4h4M14 6.4h4M6 17.6h4M14 17.6h4"/>',
+    expand: '<path d="M12 4.4v15.2M6.6 8.2 12 3.4l5.4 4.8M6.6 15.8 12 20.6l5.4-4.8"/>',
+    align: '<path d="M4.2 12h15.6"/><path d="M7.6 7.6h8.8M7.6 16.4h8.8"/>',
+    bend: '<path d="M4.4 19.2c0-8 6.4-14.4 14.4-14.4" stroke-dasharray="0"/><path d="M4.4 19.2h3.6M15.2 4.8V8.4"/>',
+    slide: '<path d="M4.2 12h15.6"/><path d="M4.2 12l3.6-3M4.2 12l3.6 3M19.8 12l-3.6-3M19.8 12l-3.6 3"/><circle cx="12" cy="12" r="1.6"/>',
+    shear: '<path d="M4.6 19.4h9.2L20 4.6h-9.2z"/>'
   };
 
   /* Emoji that shipped before the SVG set. Each maps to a named icon; the

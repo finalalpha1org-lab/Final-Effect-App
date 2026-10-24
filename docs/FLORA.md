@@ -1,4 +1,4 @@
-# Grown flora — the tree and rock kernel
+# Grown flora — trees, ground cover and rock, all in C++
 
 The Landscaping Studio used to *draw* its trees: `oakTreeJs()` pushed a trunk,
 then called a recursive `grow()` that split into two or three children at
@@ -13,7 +13,10 @@ same `fe_core_engine.wasm` as the rest of the core:
 * **woody species** — space colonisation (Runions et al. 2007), the skeleton a
   tree would grow toward light;
 * **herbaceous species** — a strict parametric **L-system**, because a fern is a
-  frond grammar, not a search for light.
+  frond grammar, not a search for light;
+* **ground cover and succulents** — palms, saguaros, barrel cacti, agave, grass
+  tufts, daisies, tulips, lavender and river pebbles, each grown from its own
+  published dimensions (below).
 
 JavaScript keeps only the job it should have: turning the engine's anchors into
 the leaf cards the existing PBR material already knows how to shade.
@@ -89,8 +92,10 @@ quality tier.
 ## ABI
 
 ```c
-int   fe_flora_species_count(void);       /* 8  */
+int   fe_flora_species_count(void);       /* 26 */
 int   fe_flora_rock_kind_count(void);     /* 3  */
+int   fe_build_kind_count(void);          /* 4  */
+int   fe_build(int kind, uint32_t seed, int detail);  /* house, block, mid, tower */
 int   fe_flora_tree(int kind, uint32_t seed, int detail);   /* -> verts, 0 = fail */
 int   fe_flora_rock(int kind, uint32_t seed, int detail);
 int   fe_flora_vert_count(void);
@@ -107,6 +112,7 @@ int   fe_flora_leaf_ptr(void);  /* float[leaves*10] */
 int   fe_flora_species_info(int kind, float *out8);
 float *fe_flora_sway_ptr(void);   /* float[verts] 0..1 compliance      */
 float *fe_flora_phase_ptr(void);  /* float[verts] radians, per branch  */
+float *fe_flora_part_ptr(void);   /* float[verts] 0 wood, 1 foliage, 2 bloom, 3 head centre */
 int   fe_flora_leaf_stride(void); /* 10 */
 /* grammar */
 int   fe_flora_lsystem(int iterations, uint32_t seed);   /* -> symbols   */
@@ -238,6 +244,119 @@ the rewrite still happens in C++. *Restore built-in grammar* calls
 the persisted studio document (`floraHeight`, `floraDensity`, `floraRules`), so a
 reload resumes the same plant shapes and the same grammar.
 
+## Ground cover, succulents and palms
+
+`fe_flora_species_count()` is 26. Indices 0–7 are the woody and herbaceous
+species above; 8–17 are the plants a viewer walks up to; 18–24 are the conifers
+and desert shrubs; 25 is the meadow wildflower tuft, each grown by its own builder because a tuft is not a small
+tree and a saguaro is not a bush:
+
+| # | Species | Built from | Size grown | Verts @ detail 2 |
+| --- | --- | --- | --- | --- |
+| 8 | `grass` | 24–48 folded blades on the golden angle, each with its own lean and droop | 0.26 m tuft | 315 |
+| 9 | `tallgrass` | same blade, 16–40 per clump, 13.5 mm wide | 1.36 m | 252 |
+| 10 | `daisy` | stem, 3 leaves, 13 ray florets, domed disc | 0.13 m | 202 |
+| 11 | `tulip` | stem, 2 leaves, 6 tepals in two whorls, 3 stamens | 0.40 m | 157 |
+| 12 | `lavender` | 3 stems, 8 verticillasters of 6 florets each | 0.55 m | 1119 |
+| 13 | `saguaro` | ribbed column (20 ribs), 3 arms that leave the trunk and turn up | 5.6 m | 806 |
+| 14 | `barrel` | ribbed spheroid (21 ribs) with a crown of 6 flowers | 0.86 m | 529 |
+| 15 | `agave` | 24-leaf rosette, thick base, spine tip | 0.92 m | 360 |
+| 16 | `palm` | leaning trunk with ring scars, 14 pinnate fronds with alternating leaflets | 9.2 m | 7309 |
+| 17 | `pebble` | noise-displaced sphere with a flattened underside and real poles | 0.10 m | 135 |
+| 18 | `pine` | self-similar whorls (7 whorls × 4 limbs) of needle sprays on a clear bole | 14.8 m | 4 765 |
+| 19 | `spruce` | 9 whorls × 5 limbs, sprays drooping further with each whorl | 16.2 m | 7 773 |
+| 20 | `krumm` | wind-pruned krummholz: 4 whorls, limbs bending away from the prevailing wind | 1.5 m | 4 154 |
+| 21 | `juniper` | 5 whorls × 3 ascending limbs, dense awl foliage | 2.35 m | 4 154 |
+| 22 | `prickly` | stacked flattened pads in two stems, areoles and fruit on every rim | 0.76 m | 3 000 |
+| 23 | `joshua` | 2.6 m trunk splitting twice into 3 arms, spiky rosettes at every tip | 6.0 m | 2 016 |
+| 24 | `sage` | 9 woody stems, grey-green leaf cards, waist-high | 0.82 m | 1 680 |
+| 25 | `flower` | 3 stems from one crown, 14 ray florets and a domed disc per head | 0.44 m | 705 |
+
+Every one of them is closed where it meets the ground (the palm socket is buried
+5 cm), has unit-length normals, no zero-area triangles and no vertex below its
+own soil line.
+
+### Material groups
+
+One grown plant usually needs more than one material: bark, leaf and petal are
+different PBR layers in the studio. Rather than force three meshes, the kernel
+writes a **part id** per vertex (`fe_flora_part_ptr`): `0` wood/stem, `1`
+foliage, `2` bloom. `FELandscapeFlora.plantParts()` splits the index buffer into
+one geometry per part while sharing the attribute buffers, so a palm costs one
+vertex upload and two draw calls with the trunk and the leaflets each keeping
+their own material.
+
+| Kind | Parts | Slots fed |
+| --- | --- | --- |
+| `palm`, `agave`, `pine`, `spruce`, `krumm`, `juniper`, `joshua`, `sage` | 0 wood, 1 foliage | trunk material, leaf material |
+| `daisy`, `tulip`, `lavender`, `flower` | 0 stem, 1 leaves, 2 bloom, 3 the dark centre | stem, leaf, petal, disc/stamens/bud |
+| `barrel`, `prickly` | 0 body, 2 crown | cactus body, bloom |
+| `saguaro`, `grass`, `tallgrass`, `pebble` | one part | their single material |
+
+### Fidelity is a level-of-detail decision, not an authoring one
+
+`grass` and `tallgrass` are modelled here for the near field, but the studio's
+lawn is 80 000–105 000 instances; at 384 triangles a tuft that is 40 million
+triangles a frame. So the same kernel grows them at a second fidelity — the
+folded three-column blade at detail 2 (360 and 288 vertices), a two-column card
+at detail 1 (192 and 128) — and the studio draws the card. Both come from C++;
+nothing about the shape is authored in JavaScript. The studio's count is a
+budget, not a placeholder.
+
+**Every species the studio places is grown in the kernel.** `GROWN_PLANTS` in
+`terrain-main-02.js` names all seventeen placed kinds (palms, cacti, conifers,
+grasses, the wildflowers and sage), with the material slots each one feeds; the
+grown geometry replaces the JavaScript primitive on the existing `InstancedMesh`
+right after the eager build, again when a late kernel finishes loading, and
+again the first time a lazy species is built. The JavaScript primitives remain
+only as the fallback for an artifact older than the page — no species is ever
+left without geometry.
+
+`grass` and `tallgrass` are grown at **card fidelity** (`detail 1`, two-column
+blades, 192 and 128 vertices) because they are instanced 105 000 and 80 000
+times, and their decimated shadow proxies are rebuilt from the same geometry so
+a grown blade casts a grown shadow. Every other kind is grown at the studio's
+current detail. Each also grows a one-step-cheaper twin for the LOD tier, so a
+distant tree is a real coarser tree rather than the high-detail mesh.
+
+### Leaf cards are grown in C++ too
+
+`fe_flora_tree` no longer just returns wood. After the skeleton is grown, the
+kernel walks the anchors it just produced and emits the **quad cards** the
+renderer actually draws — position, normal, colour, UV, random, card centre,
+sway, phase and part — into a second buffer (`fe_flora_card_*`, 13 exports).
+The card roll, taper and crown-facing normal are the same maths the studio used
+to run in JavaScript, so the crown still reads as a crown, but the studio no
+longer places a single leaf. `FELandscapeFlora.grownAsset()` then returns one
+`BufferGeometry` per material slot: wood from the mesh, foliage and blossom from
+the card buffer, sharing the vertex buffers of each.
+
+Detail 2 card counts: oak 612, birch 383, acacia 356, shrub 518, ashbush 324,
+fern 760, treefern 2 080, deadtree 0.
+
+## Buildings
+
+The four street shells are grown in the same kernel (`fe_build`) and the same
+buffers. They were the last meshes authored in JavaScript — literal boxes with a
+hand-placed roof, so every copy on a street was the same building. They are now
+built to the dimensions a real one is built to:
+
+| Type | Plan | Storeys | Height | Rule |
+| --- | --- | --- | --- | --- |
+| `house` | 6.0–7.2 m square | 2 (3.5 m + 2.5 m) | 8.0–11.0 m | 31–36° pitch, 0.35 m eave, chimney clearing the ridge by 0.55 m |
+| `block` | 8.0–9.2 × 11.0–12.6 m | 4–5 | 12–15 m | balcony per bay per storey, 1.3 m deep, 1.0 m parapet |
+| `mid` | 9.0–10.4 m square | 7–9 | 21–27 m | corner pilasters, storey bands every 3 m |
+| `tower` | 6.0–6.8 m square | 13–16 | 42–58 m | stepped crown with its own glazing, plant deck, 4 m aerial |
+
+A storey is 3.0 m, a residential bay 3.6 m, the foundation stands 0.45 m proud
+of grade, and the facade UVs stay in metres divided by the 9 m texture tile, so
+the studio's existing brick and render maps land exactly where they did. Parts
+feed the same three slots the studio renders: `0` wall, `1` roof, `2` base
+(foundation, trims, balconies, canopy, parapet, chimney, mast). The seed moves
+the footprint, storey count, bay count, roof pitch, chimney side and entrance
+bay — within the range the type actually uses, never outside it.
+
+
 ## Cost
 
 Measured in Node against the shipped artifact (`detail = 2`):
@@ -268,19 +387,26 @@ Three variants per species are grown at boot, so the whole swap costs roughly
 * No bark-unwrap UVs from the kernel; the trunk samples the tiling bark texture
   by triplanar-ish UV already stored per vertex.
 * LOD is still the existing twin mesh (no decimated branch graph yet).
-* `applyGrown()` is the only path that regenerates geometry; editing a species
-  seed is not exposed in the UI.
+* `applyGrown()` / `applyGrownPlants()` are the only paths that regenerate
+  geometry; editing a species seed is not exposed in the UI.
+* The ground-cover meshes are wired for `palm`, `saguaro` and `barrel` only; the
+  daisy, tulip, lavender and grass meshes are built and tested but still render
+  their card launchers while they are instanced in the tens of thousands.
 
 These are recorded as incomplete rather than finished.
 
 ## Verification
 
 ```bash
-node --test tests/landscape-flora.test.mjs    # 21 tests
-npm test                                      # 390 tests
+node --test tests/landscape-flora.test.mjs    # 24 tests
+node --test tests/flora-plants.test.mjs       # 7 tests
+node --test tests/buildings.test.mjs          # 7 tests
+node --test tests/openworld-tiles.test.mjs    # 6 tests
+npm test                                      # 505 tests
 ```
 
-The tests grow all eight species and all three rocks from the shipped artifact,
+The tests grow all twenty-six species, all three rocks and all four buildings
+from the shipped artifact,
 assert the L-system's exact symbol counts (`F = 2(3ⁿ − 2ⁿ)`, `X = 3ⁿ`), that a
 custom rule set uploaded at runtime is rewritten and grown, that every vertex
 carries a bounded compliance and a finite phase, that a single height band

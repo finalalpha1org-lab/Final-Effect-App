@@ -408,8 +408,34 @@
      not have them, in which case the material keeps its height-only bend. */
   if(typeof Ex.fe_flora_sway_ptr==='function')out.sway=new Float32Array(new Float32Array(mem,Ex.fe_flora_sway_ptr(),nv));
   if(typeof Ex.fe_flora_phase_ptr==='function')out.phase=new Float32Array(new Float32Array(mem,Ex.fe_flora_phase_ptr(),nv));
+  /* Material group per vertex: 0 wood, 1 foliage, 2 bloom. */
+  if(typeof Ex.fe_flora_part_ptr==='function')out.part=new Float32Array(new Float32Array(mem,Ex.fe_flora_part_ptr(),nv));
   return out;
  }
+ /* Leaf cards grown by the kernel with the tree: four vertices and two
+    triangles per card, already coloured and oriented. The studio no longer
+    builds leaves in JavaScript. */
+ core.floraCards=function(){
+  if(!core.has('fe_flora_card_vert_count'))return null;
+  const nv=ex.fe_flora_card_vert_count(),ni=ex.fe_flora_card_index_count(),nc=ex.fe_flora_card_count();
+  if(nv<1||ni<1)return null;
+  const mem=ex.memory.buffer,f32=(p,n)=>new Float32Array(new Float32Array(mem,p,n));
+  return {
+   cards:nc,
+   verts:nv,
+   indices:ni,
+   pos:f32(ex.fe_flora_card_pos_ptr(),nv*3),
+   nrm:f32(ex.fe_flora_card_nrm_ptr(),nv*3),
+   col:f32(ex.fe_flora_card_col_ptr(),nv*3),
+   uv:f32(ex.fe_flora_card_uv_ptr(),nv*2),
+   rnd:f32(ex.fe_flora_card_rnd_ptr(),nv),
+   cen:f32(ex.fe_flora_card_cen_ptr(),nv*3),
+   sway:f32(ex.fe_flora_card_sway_ptr(),nv),
+   phase:f32(ex.fe_flora_card_phase_ptr(),nv),
+   part:f32(ex.fe_flora_card_part_ptr(),nv),
+   idx:new Uint32Array(new Uint32Array(mem,ex.fe_flora_card_idx_ptr(),ni))
+  };
+ };
  core.floraTree=function(kind,seed,detail){
   if(!core.has('fe_flora_tree'))return null;
   if(ex.fe_flora_tree(kind|0,(seed>>>0)||1,detail|0)<1)return null;
@@ -431,6 +457,15 @@
  core.lsystemReset=function(){
   if(!core.has('fe_flora_lsystem_reset'))return -1;
   return ex.fe_flora_lsystem_reset();
+ };
+ /* Buildings: the four shells the studio places along a street, grown in the
+   kernel like everything else. Same buffers as a plant, so the same bridge
+   reads them and the studio never authors a wall in JavaScript. */
+ core.building=function(kind,seed,detail){
+  if(!core.has('fe_build'))return null;
+  if(ex.fe_build(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
  };
  core.floraRock=function(kind,seed,detail){
   if(!core.has('fe_flora_rock'))return null;
@@ -508,7 +543,8 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
  };
  core.floraCounts=function(){
   return {species:core.has('fe_flora_species_count')?ex.fe_flora_species_count():0,
-          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0};
+          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0,
+          buildings:core.has('fe_build_kind_count')?ex.fe_build_kind_count():0};
  };
  /* ---- Climate & weather (optional kernels; the JS weather runs unchanged) --- */
  let climatePtr=0;
@@ -598,7 +634,11 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
 })(globalThis);
 /* END LANDSCAPE CORE BRIDGE */
 
-function showErr(t){let b=document.getElementById('err');if(!b){b=document.createElement('div');b.id='err';b.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:30;background:#7a1f1f;color:#fff;padding:8px 10px;border-radius:8px;font:12px/1.35 system-ui;white-space:pre-wrap;word-break:break-word';b.onclick=()=>b.remove();document.body.appendChild(b)}b.textContent+=(b.textContent?'\n':'')+t}
+/* Two catch sites in the same frame used to print the same stack twice, which
+   buried the viewport under a wall of identical red text. The same message is
+   shown once per session; a different one still appends. */
+const shownErrors=new Set();
+function showErr(t){const text=String(t==null?'Unknown error':t);const key=text.slice(0,400);if(shownErrors.has(key))return;shownErrors.add(key);let b=document.getElementById('err');if(!b){b=document.createElement('div');b.id='err';b.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:30;background:#7a1f1f;color:#fff;padding:8px 10px;border-radius:8px;font:12px/1.35 system-ui;white-space:pre-wrap;word-break:break-word;max-height:38vh;overflow:auto';b.onclick=()=>b.remove();document.body.appendChild(b)}b.textContent+=(b.textContent?'\n':'')+text}
 const seenRuntimeErrors=new Set();addEventListener('error',e=>{const masked=!e.filename&&!e.lineno&&!e.error&&(e.message==='Script error.'||!e.message);if(masked){if(!seenRuntimeErrors.has('anonymous-cross-origin')){seenRuntimeErrors.add('anonymous-cross-origin');console.warn('Browser masked an external script error; no source details were provided')}return}const file=(e.filename||'inline').split('/').pop(),key=(e.message||'error')+'|'+file+'|'+(e.lineno||0);if(seenRuntimeErrors.has(key))return;seenRuntimeErrors.add(key);const detail=e.error?.stack||`${e.message||'Script error'} (${file}:${e.lineno||0}:${e.colno||0})`;showErr('Runtime: '+String(detail).slice(0,900))});addEventListener('unhandledrejection',e=>{const r=e.reason,detail=r?.stack||r?.message||String(r||'Unhandled promise rejection');showErr('Unhandled promise: '+String(detail).slice(0,900))});
 const $=s=>document.querySelector(s),R=Math.random,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);function environmentFillLevel(on,day,cloud=0){return on?1.25-.35*cl(day,0,1)+.25*cl(cloud,0,1):0}
 const S=100,N=128,D=S/N,W=N+1,cv=$('#c');
@@ -617,7 +657,8 @@ const hemi=new THREE.HemisphereLight(0xcfe3ff,0x6a5a48,.6),envFill=new THREE.Hem
 sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
 scene.add(hemi,envFill,sun,sun.target);scene.fog=new THREE.FogExp2(0xbcd0e6,.004);
 const BG=new THREE.Color(0x3d3d3d),grid=new THREE.GridHelper(200,200,0x000000,0x555555);grid.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(grid);grid.position.y=.05;grid.material.transparent=true;grid.material.opacity=.5;grid.renderOrder=1;scene.add(grid);
-[[0xff3352,[-100,0,0],[100,0,0]],[0x8bdc00,[0,0,-100],[0,0,100]]].forEach(([c,a,b])=>{const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]),new THREE.LineBasicMaterial({color:c}));l.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(l);l.position.y=.06;scene.add(l)});
+const gridAxes=[];
+[[0xff3352,[-100,0,0],[100,0,0]],[0x8bdc00,[0,0,-100],[0,0,100]]].forEach(([c,a,b])=>{const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]),new THREE.LineBasicMaterial({color:c}));l.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(l);l.position.y=.06;scene.add(l);gridAxes.push(l)});
 const sbx=new THREE.BoxHelper(undefined,0xffaa40);sbx.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(sbx);sbx.visible=false;scene.add(sbx);
 /* sky + water shaders */
 

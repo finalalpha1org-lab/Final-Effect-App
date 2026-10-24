@@ -111,6 +111,66 @@ pass and is not in this budget.
 GPU, no device). The in-page frame timings are the only measurements taken, so
 "120 FPS on a phone" is an unverified claim and is not made here.
 
+## Render time: why a cube took ten minutes
+
+A path-traced still used to be the slowest thing in the app by a wide margin,
+and the reasons were not subtle. Measured on the default cube scene at
+450x800 (the `hd` vertical preset), in node on a desktop CPU:
+
+| | before | after |
+| --- | --- | --- |
+| samples | 24 (32 if the dialog had not synced yet) | 8, denoised |
+| bloom | full pyramid **every** sample pass | once, on the final pass |
+| pixels already converged | traced again | frozen (`fe_render_update_convergence`) |
+| driving loop | `requestAnimationFrame` | message-port ticks |
+| total | **4.3 s** | **1.4 s** |
+
+Three times faster on a desktop. On a phone the ratio is better, because the
+fix removes a fixed cost rather than a scaling one.
+
+**`requestAnimationFrame` was the ten minutes.** A render is exactly the
+workload that leaves the tab hidden — opening the Render Result window does it
+on a phone — and rAF stops dead in a hidden tab. The render then advanced one
+slice each time the user came back to look at it. A message port keeps
+delivering when rAF does not, so the render finishes whether or not anyone is
+watching; when the tab *is* hidden the slices get longer (40 ms instead of 9 ms)
+because the browser is throttling scheduling anyway.
+
+### The denoiser is the reason 8 samples look finished
+
+24 samples of a path tracer is a noisy image that took three times as long as
+it needed to. Eight samples plus an edge-aware filter of the accumulation
+buffer is cleaner *and* cheaper:
+
+* separable: 5 taps per axis, three à-trous iterations (radii 1, 2 and 4). Two leaves low-frequency blotches on a large flat face — the one thing a cube makes impossible to hide — so stills get three; animation frames get two, because there are hundreds of them;
+* guides: **depth** (16-bit, 0–64 m) and **albedo** (8-bit RGB) recorded on the
+  primary hit, exactly as production denoisers use them;
+* the weight falls off on the combined error of depth, albedo and luminance, so
+  it never blends across a silhouette or a material boundary.
+
+Measured against a 64-sample reference at 220x308: raw 8 samples is 23.4 dB,
+filtered 8 samples is 32.4 dB. Three passes cost about 200 ms at 450x800 —
+roughly one and a half samples' worth of time for sixteen samples' worth of
+cleanliness.
+
+That albedo guide is not decoration. Without it the filter cannot tell the
+studio floor grid from noise — both are thin luminance steps — and the grid
+disappears, which is the exact complaint this pass started from. The test for
+it compares against a 5x5 box blur: the cube's top edge keeps 100% of its
+sharpness where the blur keeps 24%.
+
+### What is still slow, honestly
+
+* **Resolution is linear in time and there are no threads.** This wasm build has
+  no `pthreads`, so a still uses one core. 720x1280 (`fhd`) is 2.5x the pixels
+  of `hd` and takes 2.5x as long.
+* **SIMD is not used.** A `-msimd128` build was measured and was ~2% faster:
+  the ray loop is scalar and does not autovectorise, so it was reverted rather
+  than shipped as an unearned claim.
+* **The animation exporter is still CPU-bound** at `spp/4` samples per frame.
+  At 30 fps a 10-second range is 300 frames; that is minutes, not seconds, and
+  the EEVEE-style raster engine is the right choice for that job today.
+
 ## Time-sliced erosion
 
 The batch call `fe_terrain_erode_hydraulic(count, …)` still exists — the

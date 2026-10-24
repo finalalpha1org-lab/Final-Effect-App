@@ -22,8 +22,6 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/OBJExporter.js" crossorigin="anonymous"></script>
 <script>
 window.onerror = function(msg, url, line, col, error) {
   console.warn("Global caught error:", msg, url, line, col, error);
@@ -1884,6 +1882,7 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 .render-modal-window{width:min(1040px,100%);max-height:94dvh;background:#11141e;border:1px solid #2f364f;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,0.85);display:flex;flex-direction:column;overflow:hidden}
 .render-modal-head{padding:12px 16px;background:#161a27;border-bottom:1px solid #272d42;display:flex;align-items:center;justify-content:space-between;gap:10px}
 .render-modal-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(290px,0.95fr);gap:14px;padding:14px;overflow-y:auto;flex:1;min-height:0}
+.render-range-info{font-size:10px;color:#94a3b8;font-variant-numeric:tabular-nums;text-align:right}
 .render-preview-pane{display:flex;flex-direction:column;gap:10px;background:#090b10;border:1px solid #23283b;border-radius:12px;padding:10px;min-height:260px}
 .render-canvas-stage{flex:1;min-height:220px;max-height:56dvh;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#0d1018 0% 25%,#121622 0% 50%) 50%/18px 18px;border-radius:8px}
 #render-preview-canvas{max-width:100%;max-height:54dvh;width:auto;height:auto;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,0.7)}
@@ -1934,6 +1933,159 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 }
 
 /* ============================================================
+   FE-EDIT-MODE
+   The mesh editor. It is not a copy of another application's panel:
+   the normal bottom toolbar becomes a left-to-right row of four
+   categories, and each one opens its own sub-toolbar in the sheet
+   directly above it, in the same scrollable-sheet language every
+   other panel in this app already uses.
+   ============================================================ */
+#edit-category-bar { flex: none; }
+#edit-category-bar[hidden] { display: none; }
+#edit-category-bar .tool { gap: 6px; }
+#edit-category-bar .tool[aria-pressed="true"] {
+  background: #282c3c;
+  border-color: var(--ac);
+  color: #fff;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ac) 35%, transparent);
+}
+#edit-category-bar .tool[disabled] { opacity: .38; }
+.edit-bar-sep { flex: none; width: 1px; height: 22px; background: #2a2d37; margin: 0 2px; }
+#edit-category-bar .edit-done { margin-left: auto; border-color: #2f5d46; color: #a7f3d0; }
+
+#edit-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tb) + var(--sb));
+  z-index: 1000;
+  display: none;
+  flex-direction: column;
+  max-height: 46vh;
+  background: rgba(17, 20, 28, 0.98);
+  backdrop-filter: blur(12px);
+  border: 1px solid #34394d;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+}
+#edit-sheet.open { display: flex; }
+#edit-sheet[hidden] { display: none; }
+.edit-sheet-head {
+  flex: none;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #1e2230;
+  border-bottom: 1px solid #2a2f42;
+  font-weight: 600;
+  font-size: 12px;
+}
+.edit-sheet-head .edit-sheet-stats {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  font-size: 10.5px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The sub-toolbar of the open category: one left-to-right row that scrolls
+   sideways, exactly like the main bar below it. Nothing wraps, so the row
+   still reads as a toolbar instead of a grid of tiles. */
+#edit-sheet-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+#edit-sheet-tools::-webkit-scrollbar { display: none; }
+.edit-tool {
+  flex: none;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 9px 13px;
+  background: var(--panel2);
+  border: 1px solid #2a2d37;
+  border-radius: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.15;
+}
+.edit-tool .ico { width: 18px; height: 18px; }
+.edit-tool:active { transform: scale(.97); }
+.edit-tool.on {
+  background: #282c3c;
+  border-color: var(--ac);
+  color: #fff;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ac) 35%, transparent);
+}
+.edit-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.edit-sheet-row[hidden] { display: none; }
+.edit-sheet-row label { flex: none; min-width: 62px; }
+.edit-sheet-row output { flex: none; min-width: 46px; text-align: right; color: #e2e8f0; font-variant-numeric: tabular-nums; }
+.edit-sheet-row input[type="range"] { flex: 1; min-width: 60px; accent-color: #f59e0b; }
+.edit-sheet-row select {
+  background: #1e2230;
+  color: #e2e8f0;
+  border: 1px solid #2a2f42;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.edit-sheet-row .tool { padding: 6px 10px; font-size: 11px; }
+.edit-sheet-row input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: #1e2230;
+  color: #e2e8f0;
+  border: 1px solid #2a2f42;
+  border-radius: 8px;
+  padding: 6px 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.edit-hint { margin: 0; font-size: 10.5px; line-height: 1.45; color: #7d8798; }
+#edit-marquee {
+  position: fixed;
+  z-index: 990;
+  pointer-events: none;
+  border: 1.5px dashed rgba(245, 158, 11, 0.92);
+  background: rgba(245, 158, 11, 0.12);
+}
+#edit-marquee[hidden] { display: none; }
+
+/* ============================================================
    FE-LANDSCAPE-LAYOUT
    Landscape / wide-short viewports (phones held sideways, tablets
    and small desktop windows). The bottom sheets dock to the right
@@ -1975,6 +2127,20 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #toast { bottom: calc(var(--tb) + var(--sb) + 8px); max-width: 72vw; }
 
   /* --- studio sheets become right-hand side panels --- */
+  #edit-sheet {
+    top: 0;
+    bottom: 0;
+    left: auto;
+    right: 0;
+    width: min(380px, 46vw);
+    max-width: min(380px, 46vw);
+    max-height: none;
+    border: 0;
+    border-left: 1px solid #34394d;
+    border-radius: 14px 0 0 14px;
+    box-shadow: -16px 0 36px rgba(0, 0, 0, .62);
+  }
+  #edit-sheet-tools { gap: 6px; }
   #camera-sheet,
   #light-sheet,
   #modifiers-sheet,
@@ -2130,6 +2296,11 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 </head>
 <body>
 <script src="fe-icons.js"></script>
+<script src="edit-mode.js"></script>
+<script src="render-capture.js"></script>
+<script src="render-preview.js"></script>
+<script src="render-export.js"></script>
+<script src="workspace-export.js"></script>
 <script src="fe-taa.js"></script>
 <script src="volume-atlas.js"></script>
 <script src="volume-library.js"></script>
@@ -2982,6 +3153,10 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
             </select>
           </div>
           <div class="render-row">
+            <label>Timeline Range</label>
+            <span id="render-range-info" class="render-range-info">—</span>
+          </div>
+          <div class="render-row">
             <label for="render-cam-source">Camera Source</label>
             <select class="anim-select" id="render-cam-source" onchange="FECppEngine.startStillRender()">
               <option value="viewport" selected>Active Viewport View</option>
@@ -2990,15 +3165,32 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           </div>
         </div>
         <div class="render-group">
-          <div class="render-group-title">2. Ray Tracing & Environment</div>
+          <div class="render-group-title">Preview &amp; Window</div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;">
+            <input type="checkbox" id="render-new-window" checked onchange="FECppEngine.setPreviewWindow(this.checked)">
+            <span>Show finished renders in their own window</span>
+          </label>
+          <div style="font-size:10px;color:#64748b;line-height:1.45;margin-top:6px;">The render opens in a separate tab you can keep beside the editor: fit, actual size, save, and a filmstrip for animations.</div>
+        </div>
+        <div class="render-group">
+          <div class="render-group-title">2. Ray Tracing &amp; Environment</div>
           <div class="render-row">
             <label for="render-samples-select">Path Samples</label>
             <select class="anim-select" id="render-samples-select" onchange="FECppEngine.startStillRender()">
-              <option value="8">8 SPP (Fast)</option>
-              <option value="24" selected>24 SPP (Balanced)</option>
+              <option value="4">4 SPP (Instant)</option>
+              <option value="8" selected>8 SPP (Fast, denoised)</option>
+              <option value="16">16 SPP (Balanced)</option>
+              <option value="24">24 SPP (Clean)</option>
               <option value="48">48 SPP (Clean GI)</option>
               <option value="96">96 SPP (Studio Final)</option>
             </select>
+          </div>
+          <div class="render-row">
+            <label for="render-denoise-toggle">Denoise</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#cbd5e1;cursor:pointer;">
+              <input type="checkbox" id="render-denoise-toggle" checked onchange="FECppEngine.renderState.denoise=this.checked;FECppEngine.startStillRender()">
+              <span style="font-size:10px;color:#64748b;">edge-aware, keeps the grid</span>
+            </label>
           </div>
           <div class="render-row">
             <label for="render-bounces-select">Light Bounces</label>
@@ -3024,7 +3216,26 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           </label>
         </div>
         <div class="render-group">
-          <div class="render-group-title">3. Color Grading &amp; Post-FX</div>
+          <div class="render-group-title">3. Output File</div>
+          <div class="render-row">
+            <label for="render-still-format">Still Format</label>
+            <select class="anim-select" id="render-still-format" onchange="FECppEngine.syncStillQualityVisibility()">
+              <option value="png" selected>PNG (lossless, largest)</option>
+              <option value="jpeg">JPEG (small, everywhere)</option>
+              <option value="webp">WebP (small, modern)</option>
+            </select>
+          </div>
+          <div class="render-row" id="render-still-quality-row" hidden>
+            <label for="render-still-quality">Quality</label>
+            <input type="range" id="render-still-quality" min="50" max="100" step="1" value="92">
+          </div>
+          <div style="font-size:10px;color:#64748b;line-height:1.45;margin-top:4px;">
+            Video is written as MP4 (H.264) when the browser can encode it, WebM otherwise.
+            On a phone the file goes to the share sheet, so it lands in Files or Photos.
+          </div>
+        </div>
+        <div class="render-group">
+          <div class="render-group-title">4. Color Grading &amp; Post-FX</div>
           <div class="render-row">
             <label for="render-tonemap-select">Tone Mapper</label>
             <select class="anim-select" id="render-tonemap-select" onchange="FECppEngine.renderState.tonemap=parseInt(this.value)||0;FECppEngine.reResolveToneMapInstant()">
@@ -3047,8 +3258,8 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
       </div>
     </div>
     <footer class="render-actions-bar">
-      <button class="export-action-btn" type="button" onclick="FECppEngine.startStillRender()">⚡ Render Frame</button>
-      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedPNG()">🖼 Save PNG</button>
+      <button class="export-action-btn" type="button" onclick="FECppEngine.renderFrameToPreview()">⚡ Render Frame</button>
+      <button class="export-action-btn" type="button" style="background:#16a34a;border-color:#22c55e;" onclick="FECppEngine.downloadRenderedStill()">🖼 Save Image</button>
       <button class="export-action-btn" type="button" style="background:#7c3aed;border-color:#a855f7;" onclick="FECppEngine.renderAnimationSequenceVideo()">🎬 Render Video</button>
       <button class="btn btn-secondary" type="button" onclick="FECppEngine.stopActiveRender()">⏹ Stop</button>
       <button class="btn btn-secondary" type="button" style="margin-left:auto;" onclick="closeRenderEngineModal()">Close</button>
@@ -3494,6 +3705,73 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     </div>
 
     <nav class="toolbar" id="bottom-toolbar"></nav>
+
+    <!-- Edit Mode. The bar is left-to-right; every entry opens its own
+         sub-toolbar in the sheet above it. -->
+    <nav class="toolbar edit-toolbar" id="edit-category-bar" aria-label="Edit Mode tools" hidden>
+      <button class="tool" type="button" data-edit-category="select"><i class="ico" data-ico="select-box"></i><span>Select</span></button>
+      <button class="tool" type="button" data-edit-category="transform"><i class="ico" data-ico="move"></i><span>Transform</span></button>
+      <button class="tool" type="button" data-edit-category="mesh"><i class="ico" data-ico="extrude"></i><span>Mesh</span></button>
+      <button class="tool" type="button" data-edit-category="normals"><i class="ico" data-ico="normal"></i><span>Shading</span></button>
+      <span class="edit-bar-sep" aria-hidden="true"></span>
+      <button class="tool" type="button" data-edit-mode="vertex"><i class="ico" data-ico="vertex"></i><span>Vertices</span></button>
+      <button class="tool" type="button" data-edit-mode="edge"><i class="ico" data-ico="edge"></i><span>Edges</span></button>
+      <button class="tool" type="button" data-edit-mode="face"><i class="ico" data-ico="face"></i><span>Faces</span></button>
+      <span class="edit-bar-sep" aria-hidden="true"></span>
+      <button class="tool" type="button" id="edit-undo" aria-label="Undo"><i class="ico" data-ico="undo"></i></button>
+      <button class="tool" type="button" id="edit-redo" aria-label="Redo"><i class="ico" data-ico="redo"></i></button>
+      <button class="tool" type="button" id="edit-xray"><i class="ico" data-ico="eye"></i><span>See through</span></button>
+      <button class="tool" type="button" id="edit-snap"><i class="ico" data-ico="pin"></i><span>Snap</span></button>
+      <button class="tool edit-done" type="button" id="edit-done"><i class="ico" data-ico="check"></i><span>Done</span></button>
+    </nav>
+
+    <div id="edit-sheet" class="floating-panel edit-sheet" aria-hidden="true" hidden>
+      <div class="edit-sheet-head">
+        <span id="edit-sheet-title">Select</span>
+        <span class="edit-sheet-stats" id="edit-status-line"></span>
+        <button class="panel-close" type="button" id="edit-sheet-close" aria-label="Hide tools"><i class="ico" data-ico="close"></i></button>
+      </div>
+      <div class="edit-sheet-body">
+        <div id="edit-sheet-tools" role="toolbar" aria-label="Sub-toolbar"></div>
+        <div class="edit-sheet-row" id="edit-amount-row" hidden>
+          <label id="edit-amount-label" for="edit-amount">Distance</label>
+          <input type="range" id="edit-amount" min="0" max="1" step="0.01" value="0.2" />
+          <output id="edit-amount-out">0.20</output>
+        </div>
+        <div class="edit-sheet-row">
+          <label for="edit-axis">Axis</label>
+          <select id="edit-axis">
+            <option value="0">All</option>
+            <option value="1">X only</option>
+            <option value="2">Y only</option>
+            <option value="3">Z only</option>
+          </select>
+          <button class="tool" type="button" id="edit-prop"><i class="ico" data-ico="gauge"></i><span>Proportional</span></button>
+        </div>
+        <div class="edit-sheet-row" id="edit-prop-row" hidden>
+          <select id="edit-prop-falloff" aria-label="Falloff">
+            <option value="0">Constant</option>
+            <option value="1">Linear</option>
+            <option value="2" selected>Smooth</option>
+            <option value="3">Sphere</option>
+            <option value="4">Root</option>
+            <option value="5">Sharp</option>
+          </select>
+          <input type="range" id="edit-prop-radius" min="0.05" max="10" step="0.05" value="1" aria-label="Proportional radius" />
+          <output id="edit-prop-radius-out">1.00</output>
+        </div>
+        <div class="edit-sheet-row" id="edit-exact-row" hidden>
+          <label>Exact</label>
+          <input type="number" id="edit-exact-x" step="0.1" value="0" inputmode="decimal" aria-label="X offset" />
+          <input type="number" id="edit-exact-y" step="0.1" value="0" inputmode="decimal" aria-label="Y offset" />
+          <input type="number" id="edit-exact-z" step="0.1" value="0" inputmode="decimal" aria-label="Z offset" />
+          <button class="tool" type="button" id="edit-exact-apply"><i class="ico" data-ico="check"></i><span>Apply</span></button>
+        </div>
+        <p class="edit-hint" id="edit-hint"></p>
+      </div>
+    </div>
+
+    <div id="edit-marquee" hidden></div>
   </section>
 </template>
 
@@ -3508,6 +3786,7 @@ const STUDIOS={
     tools:[
       ['add','➕','Add 3D'],
       ['edit','✏️','Edit'],
+      ['transform','✋','Object Tools'],
       ['mod','🔧','Modification'],
       ['anim','🎬','Animation Studio'],
       ['landscape','🏞️','Landscaping Studio'],
@@ -4434,70 +4713,103 @@ function exportFinal3dBinary() {
 }
 window.exportFinal3dBinary = exportFinal3dBinary;
 
+/* ---- Workspace geometry export ------------------------------------------
+   Blender exports the depsgraph, not the interface: no gizmo, no grid, no
+   cursor, and every instanced copy baked where it stands. This collects the
+   same set and hands plain arrays to the writers in workspace-export.js. */
+function workspaceExportNodes(eng, options) {
+  const W = window.FEWorkspaceExport;
+  if (!W) throw new Error('The export module (workspace-export.js) did not load.');
+  const opts = options || {};
+  const collected = W.collect(eng.sc, { triangleBudget: opts.triangleBudget || 900000 });
+  const nodes = [];
+  const objectNames = new Map();
+  const used = new Set();
+  collected.meshes.forEach((mesh) => {
+    const baked = mesh.isInstancedMesh
+      ? W.bakeInstanced(mesh, { maxInstances: opts.maxInstances || 4000 })
+      : W.bakeGeometry(mesh.geometry, mesh.matrixWorld ? mesh.matrixWorld.elements : null);
+    if (!baked) return;
+    const base = W.sanitize(mesh.name || mesh.type || 'Mesh');
+    let name = base, suffix = 2;
+    while (used.has(name)) name = `${base}_${suffix++}`;
+    used.add(name);
+    const firstMaterial = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    nodes.push({
+      name,
+      positions: baked.positions,
+      normals: baked.normals,
+      uvs: baked.uvs,
+      indices: baked.indices,
+      vertexCount: baked.vertexCount,
+      material: W.describeMaterial(firstMaterial, nodes.length)
+    });
+    objectNames.set(mesh, name);
+  });
+  return { nodes, objectNames, collected };
+}
+window.workspaceExportNodes = workspaceExportNodes;
+
+function exportSummary(nodes, collected) {
+  const triangles = Math.round(nodes.reduce((sum, n) => sum + n.indices.length / 3, 0));
+  const parts = [`${nodes.length} mesh${nodes.length === 1 ? '' : 'es'}`, `${triangles.toLocaleString()} triangles`];
+  if (collected.truncated) parts.push('partial — scene exceeded the export budget');
+  return parts.join(' · ');
+}
+
 function exportGLTF(isBinary = true) {
   try {
-    setExportStatus(`Generating ${isBinary ? '.glb' : '.gltf'} via THREE.GLTFExporter...`);
     const eng = FE.engines?.core;
-    if (!eng || !eng.sc) throw new Error('3D Scene is not ready');
+    if (!eng || !eng.sc) throw new Error('The 3D Workspace scene is not ready yet.');
+    const W = window.FEWorkspaceExport;
+    if (!W) throw new Error('The export module (workspace-export.js) did not load.');
 
-    if (typeof THREE.GLTFExporter !== 'function') {
-      throw new Error('GLTFExporter library is loading or unavailable');
+    setExportStatus('Collecting scene geometry…');
+    const { nodes, collected } = workspaceExportNodes(eng);
+    if (!nodes.length) throw new Error('Nothing to export yet — the workspace has no renderable mesh.');
+
+    const summary = exportSummary(nodes, collected);
+    const name = isBinary ? 'FinalEffect-Workspace.glb' : 'FinalEffect-Workspace.gltf';
+    if (isBinary) {
+      const bytes = W.buildGLB(nodes, { sceneName: '3D Workspace' });
+      downloadBlob(new Blob([bytes], { type: 'model/gltf-binary' }), name);
+    } else {
+      const json = W.buildGLTF(nodes, { sceneName: '3D Workspace' });
+      downloadBlob(new Blob([JSON.stringify(json, null, 2)], { type: 'model/gltf+json' }), name);
     }
-
-    const exporter = new THREE.GLTFExporter();
-    const exportScene = new THREE.Scene();
-    eng.sc.children.forEach(c => {
-      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor' && !c.userData?.feOnionGhost) {
-        exportScene.add(c.clone(true));
-      }
-    });
-
-    exporter.parse(exportScene, function (result) {
-      if (isBinary) {
-        const blob = new Blob([result], { type: 'application/octet-stream' });
-        downloadBlob(blob, 'MyProject.glb');
-        setExportStatus('Successfully exported MyProject.glb! 🌐');
-        FE.toast('Exported MyProject.glb successfully! 🌐');
-      } else {
-        const output = JSON.stringify(result, null, 2);
-        const blob = new Blob([output], { type: 'application/json' });
-        downloadBlob(blob, 'MyProject.gltf');
-        setExportStatus('Successfully exported MyProject.gltf! 🌐');
-        FE.toast('Exported MyProject.gltf successfully! 🌐');
-      }
-      setTimeout(closeExportModal, 1400);
-    }, { binary: isBinary, embedImages: true });
+    const note = collected.warnings.length ? ` (${collected.warnings[0]})` : '';
+    setExportStatus(`Exported ${name} — ${summary}${note}`);
+    FE.toast(`Exported ${name} — ${summary}`);
+    setTimeout(closeExportModal, 1400);
   } catch (err) {
-    console.error('GLTF export failed:', err);
-    setExportStatus('GLTF error: ' + err.message);
-    FE.toast('GLTF error: ' + err.message);
+    console.error('glTF export failed:', err);
+    setExportStatus('glTF error: ' + err.message);
+    FE.toast('glTF error: ' + err.message);
   }
 }
 window.exportGLTF = exportGLTF;
 
 function exportOBJ() {
   try {
-    setExportStatus('Generating .obj via THREE.OBJExporter...');
     const eng = FE.engines?.core;
-    if (!eng || !eng.sc) throw new Error('3D Scene is not ready');
+    if (!eng || !eng.sc) throw new Error('The 3D Workspace scene is not ready yet.');
+    const W = window.FEWorkspaceExport;
+    if (!W) throw new Error('The export module (workspace-export.js) did not load.');
 
-    if (typeof THREE.OBJExporter !== 'function') {
-      throw new Error('OBJExporter library is loading or unavailable');
+    setExportStatus('Collecting scene geometry…');
+    const { nodes, collected } = workspaceExportNodes(eng);
+    if (!nodes.length) throw new Error('Nothing to export yet — the workspace has no renderable mesh.');
+
+    const summary = exportSummary(nodes, collected);
+    const mtlName = 'FinalEffect-Workspace.mtl';
+    const text = W.buildOBJ(nodes, { mtlName });
+    downloadBlob(new Blob([text], { type: 'text/plain' }), 'FinalEffect-Workspace.obj');
+    const materials = W.materialsOf(nodes);
+    if (materials.length) {
+      downloadBlob(new Blob([W.buildMTL(materials)], { type: 'text/plain' }), mtlName);
     }
-
-    const exporter = new THREE.OBJExporter();
-    const exportScene = new THREE.Scene();
-    eng.sc.children.forEach(c => {
-      if (!c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor' && !c.userData?.feOnionGhost) {
-        exportScene.add(c.clone(true));
-      }
-    });
-
-    const result = exporter.parse(exportScene);
-    const blob = new Blob([result], { type: 'text/plain' });
-    downloadBlob(blob, 'MyProject.obj');
-    setExportStatus('Successfully exported MyProject.obj! 📦');
-    FE.toast('Exported MyProject.obj successfully! 📦');
+    setExportStatus(`Exported FinalEffect-Workspace.obj + .mtl — ${summary}`);
+    FE.toast(`Exported FinalEffect-Workspace.obj — ${summary}`);
     setTimeout(closeExportModal, 1400);
   } catch (err) {
     console.error('OBJ export failed:', err);
@@ -4507,55 +4819,6 @@ function exportOBJ() {
 }
 window.exportOBJ = exportOBJ;
 
-function exportFBX() {
-  try {
-    setExportStatus('Generating .fbx asset package...');
-    const eng = FE.engines?.core;
-    if (!eng || !eng.sc) throw new Error('3D Scene is not ready');
-
-    const meshes = [];
-    eng.sc.traverse(c => {
-      if (c.isMesh && !c.isGridHelper && c.name !== 'Cursor3D' && c.name !== 'StudioFloor' && c.name !== 'ShadowFloor') {
-        meshes.push(c);
-      }
-    });
-
-    let fbx = `; FBX 7.4.0 project export from Final Effect 3D\n`;
-    fbx += `; Generated on: ${new Date().toISOString()}\n\n`;
-    fbx += `FBXHeaderExtension: {\n  FBXHeaderVersion: 1003\n  FBXVersion: 7400\n  Creator: "Final Effect 3D Suite"\n}\n\n`;
-    fbx += `GlobalSettings: {\n  Version: 1000\n  Properties70: {\n    P: "UpAxis", "int", "Integer", "", 1\n    P: "UnitScaleFactor", "double", "Number", "", 1.0\n  }\n}\n\n`;
-    fbx += `Definitions: {\n  Version: 100\n  Count: ${meshes.length + 1}\n  ObjectType: "Model" {\n    Count: ${meshes.length}\n  }\n}\n\n`;
-    fbx += `Objects: {\n`;
-
-    meshes.forEach((m, idx) => {
-      const name = (m.name || 'Mesh_' + idx).replace(/[\s"']/g, '_');
-      const p = m.position;
-      const r = m.rotation;
-      const s = m.scale;
-      fbx += `  Model: 1000${idx}, "Model::${name}", "Mesh" {\n`;
-      fbx += `    Version: 232\n`;
-      fbx += `    Properties70: {\n`;
-      fbx += `      P: "Lcl Translation", "Lcl Translation", "", "A", ${p.x.toFixed(4)}, ${p.y.toFixed(4)}, ${p.z.toFixed(4)}\n`;
-      fbx += `      P: "Lcl Rotation", "Lcl Rotation", "", "A", ${(r.x * 57.2958).toFixed(4)}, ${(r.y * 57.2958).toFixed(4)}, ${(r.z * 57.2958).toFixed(4)}\n`;
-      fbx += `      P: "Lcl Scaling", "Lcl Scaling", "", "A", ${s.x.toFixed(4)}, ${s.y.toFixed(4)}, ${s.z.toFixed(4)}\n`;
-      fbx += `    }\n`;
-      fbx += `  }\n`;
-    });
-
-    fbx += `}\n\n`;
-    fbx += `Relations: {}\n`;
-
-    const blob = new Blob([fbx], { type: 'application/octet-stream' });
-    downloadBlob(blob, 'MyProject.fbx');
-    setExportStatus('Successfully exported MyProject.fbx! 🎬');
-    FE.toast('Exported MyProject.fbx successfully! 🎬');
-    setTimeout(closeExportModal, 1400);
-  } catch (err) {
-    console.error('FBX export failed:', err);
-    setExportStatus('FBX error: ' + err.message);
-    FE.toast('FBX error: ' + err.message);
-  }
-}
 window.exportFBX = exportFBX;
 
 $('#btn-global-settings').onclick=openGlobalSettings;
@@ -4571,19 +4834,6 @@ app.addEventListener('click',e=>{
   if(b.dataset.act){ if(b.dataset.act==='import') FE.toast('Import to Main Grid'); return emit('action',{studio:sid,action:b.dataset.act}) }
   
   // Handle sub-toolbar buttons if clicked
-  if (b.dataset.subtool) {
-    const st = b.dataset.subtool;
-    if (st === 'back') {
-      exitSubToolbar();
-      return;
-    }
-    if (st === 'delete') {
-      requestDeleteActiveObject();
-      return;
-    }
-    openFloatingPanel(st);
-    return;
-  }
 
   if(b.dataset.tool){
     const k=b.dataset.tool;
@@ -4597,8 +4847,16 @@ app.addEventListener('click',e=>{
       selectObject('light', 'light_tool');
       return;
     }
+    if (k === 'transform') {
+      renderObjectTools();
+      return;
+    }
     if (k === 'edit') {
-      renderSubToolbar();
+      /* The Edit tool keeps its own object bar (Move, Rotate, Scale, Transform,
+         Annotate, Measure, 3D Cursor, Delete) and never switches the mode. It is
+         not Edit Mode: that lives on the mode dropdown, brings its own main
+         toolbar and edits vertices, edges and faces in the C++ kernel. */
+      renderObjectTools();
       return;
     }
     if (k === 'add') {
@@ -5842,59 +6100,51 @@ function getActiveToolbar() {
   return document.getElementById('toolbar-' + sid) || document.querySelector('.screen.active .toolbar') || document.querySelector('.toolbar');
 }
 
-function renderSubToolbar() {
+/* Object tools: the numeric transform panels and the annotation/measure
+   helpers. They belong to Object Mode, not to Edit Mode, which has its own
+   toolbar and its own sheet. */
+function renderObjectTools() {
   closeAllFloatingPanels();
   const toolbar = getActiveToolbar();
   if (!toolbar) return;
-  toolbar.innerHTML = `
-    <button class="tool" id="subtool-back" data-subtool="back" onclick="exitSubToolbar()">← Back</button>
-    <button class="tool" id="subtool-move" data-subtool="move" onclick="openFloatingPanel('move')">✋ Move</button>
-    <button class="tool" id="subtool-rotate" data-subtool="rotate" onclick="openFloatingPanel('rotate')">🔄 Rotate</button>
-    <button class="tool" id="subtool-scale" data-subtool="scale" onclick="openFloatingPanel('scale')">🔍 Scale</button>
-    <button class="tool" id="subtool-transform" data-subtool="transform" onclick="openFloatingPanel('transform')">🎯 Transform</button>
-    <button class="tool" id="subtool-annotation" data-subtool="annotation" onclick="openFloatingPanel('annotation')">✏️ Annotate</button>
-    <button class="tool" id="subtool-measure" data-subtool="measure" onclick="openFloatingPanel('measure')">📏 Measure</button>
-    <button class="tool" id="subtool-cursor3d" data-subtool="cursor3d" onclick="openFloatingPanel('cursor3d')">🎯 3D Cursor</button>
-    <button class="tool" id="subtool-delete" data-subtool="delete" onclick="requestDeleteActiveObject()" style="color:#f87171;border-color:#7f1d1d;">🗑️ Delete</button>
-  `;
-  
-  // Sync top mode selector to 'edit'
-  const modeSel = getScreenElement('.mode');
-  if (modeSel && modeSel.value !== 'edit') {
-    modeSel.value = 'edit';
-  }
-
-  // Edit mode opens with no transform tool selected; the user opens one by tapping its tool button.
-  FE.toast('Edit tools ready — choose a tool');
+  const items = [
+    ['back', 'chevronDown', 'Back', 'closeObjectTools()'],
+    ['move', 'move', 'Move', "openFloatingPanel('move')"],
+    ['rotate', 'rotate', 'Rotate', "openFloatingPanel('rotate')"],
+    ['scale', 'scale', 'Scale', "openFloatingPanel('scale')"],
+    ['transform', 'target', 'Transform', "openFloatingPanel('transform')"],
+    ['annotation', 'pen', 'Annotate', "openFloatingPanel('annotation')"],
+    ['measure', 'ruler', 'Measure', "openFloatingPanel('measure')"],
+    ['cursor3d', 'pin', '3D Cursor', "openFloatingPanel('cursor3d')"]
+  ];
+  toolbar.innerHTML = items.map(([id, icon, label, action]) =>
+    `<button class="tool" id="objecttool-${id}" data-objecttool="${id}" onclick="${action}"><i class="ico" data-ico="${icon}"></i><span>${label}</span></button>`
+  ).join('') + '<button class="tool" style="color:#f87171;border-color:#7f1d1d;" onclick="requestDeleteActiveObject()"><i class="ico" data-ico="trash"></i><span>Delete</span></button>';
+  FEIcons.hydrate(toolbar);
+  /* No panel opens by itself: the user taps the tool they want. */
+  FE.toast('Object tools — choose one');
 }
-window.renderSubToolbar = renderSubToolbar;
+window.renderObjectTools = renderObjectTools;
 
-function exitSubToolbar() {
+function closeObjectTools() {
   const toolbar = getActiveToolbar();
   if (!toolbar) return;
   const sid = FE.current || 'core';
   const tools = STUDIOS[sid]?.tools || [];
   toolbar.innerHTML = tools.map(([k,i,l])=>`<button class="tool" id="tool-${sid}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
-  
-  // Sync top mode selector back to 'object'
-  const modeSel = getScreenElement('.mode');
-  if (modeSel && modeSel.value !== 'object') {
-    modeSel.value = 'object';
-  }
-
+  FEIcons.hydrate(toolbar);
   closeAllFloatingPanels();
-  FE.toast('Main Toolbar Restored');
 }
-window.exitSubToolbar = exitSubToolbar;
+window.closeObjectTools = closeObjectTools;
 
 document.addEventListener('fe:mode', e => {
   const {studio, mode} = e.detail;
-  if (studio === 'core') {
-    if (mode === 'edit') {
-      renderSubToolbar();
-    } else {
-      exitSubToolbar();
-    }
+  if (studio !== 'core') return;
+  if (mode === 'edit') {
+    closeAllFloatingPanels();
+    window.FEEditMode?.enter();
+  } else if (window.FEEditMode?.isActive()) {
+    window.FEEditMode.exit();
   }
 });
 
@@ -9250,10 +9500,24 @@ function applyShadingMeshOverride(mesh,patch){if(!mesh)return;if(!shadingMeshOve
 function applyShadingMaterialToMesh(mesh,patch){const materials=Array.isArray(mesh?.material)?mesh.material:[mesh?.material];materials.filter(Boolean).forEach(material=>applyShadingMaterialOverride(material,patch))}
 function restoreShadingModeOverrides(){for(const [material,state] of shadingMaterialOverrides){if(state.color&&material.color?.copy)material.color.copy(state.color);if(state.emissive&&material.emissive?.copy)material.emissive.copy(state.emissive);for(const key of ['wireframe','side','roughness','metalness','emissiveIntensity'])if(state[key]!==undefined)material[key]=state[key];material.needsUpdate=true}shadingMaterialOverrides.clear();for(const [mesh,state] of shadingMeshOverrides){mesh.castShadow=state.castShadow;mesh.receiveShadow=state.receiveShadow}shadingMeshOverrides.clear()}
 function applyShadingRuntimeMode(shading,eng,light){const suppress=shading==='solid'||shading==='wireframe';if(suppress){if(light&&shadingSuppressedLight!==light){if(shadingSuppressedLight)shadingSuppressedLight.visible=shadingSuppressedLightVisible;shadingSuppressedLight=light;shadingSuppressedLightVisible=light.visible}if(light)light.visible=false;if(eng.r?.shadowMap){if(!shadingShadowSnapshot)shadingShadowSnapshot={renderer:eng.r,enabled:eng.r.shadowMap.enabled,type:eng.r.shadowMap.type};eng.r.shadowMap.enabled=false}return}if(shadingSuppressedLight){shadingSuppressedLight.visible=shadingSuppressedLightVisible;shadingSuppressedLight=null;shadingSuppressedLightVisible=null}if(shadingShadowSnapshot){shadingShadowSnapshot.renderer.shadowMap.enabled=shadingShadowSnapshot.enabled;shadingShadowSnapshot.renderer.shadowMap.type=shadingShadowSnapshot.type;shadingShadowSnapshot=null}}
+/* The sky the user chose. Blender's viewport keeps its background in every
+   shading mode; only the lighting that background contributes changes. Solid
+   and Wireframe are Workbench: no image-based light, but the sky is still the
+   backdrop, so it has to survive the switch. */
+function rememberSkyTexture(eng,texture){
+  const scene=eng?.sc;
+  if(!scene||!texture?.isTexture)return;
+  eng.skyTexture=texture;
+  scene.userData.feSkyTexture=texture;
+}
 function applyLandscapeAwareShadingWorld(eng,fallbackColor){
-  const scene=eng?.sc,imported=scene?.getObjectByName('ImportedLandscape')?._landscapeEnvironmentTexture;
+  const scene=eng?.sc;
+  if(!scene)return;
+  const imported=scene.getObjectByName('ImportedLandscape')?._landscapeEnvironmentTexture;
   if(imported&&(!scene.environment||scene.environment===imported)){scene.environment=imported;scene.background=imported;return}
-  scene.environment=null;scene.background=new THREE.Color(fallbackColor);
+  scene.environment=null;
+  const sky=scene.userData?.feSkyTexture||eng?.skyTexture;
+  scene.background=(sky&&sky.isTexture)?sky:new THREE.Color(fallbackColor);
 }
 function applyShadingMode(shading) {
   const eng = FE.engines.core;
@@ -9341,8 +9605,15 @@ function applyShadingMode(shading) {
     }
     if (eng.fillLight) eng.fillLight.visible = false;
     if (eng.amb) { eng.amb.visible = true; eng.amb.intensity = 0.32; }
-    if (!eng.sc.environment) applyHdriPreset('studio');
-    else eng.sc.background = eng.sc.environment;
+    /* Material Preview must not forget the sky the user picked while another
+       shading mode was active; only fall back to the studio sky when none was
+       ever chosen. */
+    if (!eng.sc.environment) {
+      const remembered = eng.sc.userData?.feSkyTexture;
+      if (remembered && remembered.isTexture) eng.sc.environment = remembered;
+      else applyHdriPreset('studio');
+    }
+    if (eng.sc.environment) eng.sc.background = eng.sc.environment;
   } else if (shading === 'rendered') {
     // 4. RENDERED: Relies strictly on actual scene lights and real-time shadows for ALL models!
     allMeshes.forEach(mesh => {
@@ -9403,8 +9674,13 @@ function applyHdriPreset(preset, setBackground = false) {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.mapping = THREE.EquirectangularReflectionMapping;
-  eng.sc.environment = texture;
-  if (setBackground || currentShadingMode === 'material') {
+  texture.encoding = THREE.sRGBEncoding;
+  rememberSkyTexture(eng, texture);
+  /* Solid and Wireframe are Workbench: the sky is visible behind the model but
+     must not light it, so only the backdrop is assigned there. */
+  const workbench = currentShadingMode === 'solid' || currentShadingMode === 'wireframe';
+  eng.sc.environment = workbench ? null : texture;
+  if (setBackground || currentShadingMode === 'material' || currentShadingMode === 'rendered' || workbench) {
     eng.sc.background = texture;
   }
 }
@@ -9424,15 +9700,19 @@ document.addEventListener('fe:hdriFile', e=>{
   if(!eng) return;
 
   const rgbeLoader = new THREE.RGBELoader();
+  const adoptSky = (texture) => {
+    const workbench = currentShadingMode === 'solid' || currentShadingMode === 'wireframe';
+    rememberSkyTexture(eng, texture);
+    eng.sc.environment = workbench ? null : texture;
+    eng.sc.background = texture;
+  };
   rgbeLoader.load(url, (texture) => {
     texture.mapping = THREE.EquirectangularReflectionMapping;
-    eng.sc.environment = texture;
-    eng.sc.background = texture;
+    adoptSky(texture);
   }, undefined, (err) => {
     new THREE.TextureLoader().load(url, (tex) => {
       tex.mapping = THREE.EquirectangularReflectionMapping;
-      eng.sc.environment = tex;
-      eng.sc.background = tex;
+      adoptSky(tex);
     });
   });
 });
@@ -9529,6 +9809,11 @@ function syncTimelineRangeInputs(){
     loopBtn.textContent = timelineConfig.loopRange ? 'Loop: on' : 'Loop: off';
     loopBtn.classList.toggle('is-on', !!timelineConfig.loopRange);
     loopBtn.setAttribute('aria-pressed', timelineConfig.loopRange ? 'true' : 'false');
+  }
+  /* Keep the render dialog honest while it is open: what it says it will
+     render is the range the timeline currently holds. */
+  if (!document.getElementById('render-range-info')?.closest('[hidden]')) {
+    window.FECppEngine?.updateRenderRangeReadout?.();
   }
 }
 

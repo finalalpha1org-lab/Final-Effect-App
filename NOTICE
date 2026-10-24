@@ -1,0 +1,38 @@
+Final Effect 3D
+Copyright (C) 2026 Final Alpha <finalalpha1org@gmail.com>
+
+This project is licensed under the GNU General Public License, version 3 or (at
+your option) any later version. See LICENSE for the full text.
+
+Why this licence
+----------------
+Final Effect 3D is a complete creation suite, and the closest thing to it is
+Blender. Parts of Blender that are worth reusing — the render engines, the
+shader node system, the compositor — are GPL-2.0-or-later. A GPL-3.0-or-later
+project can take them; a CC0 project cannot. The licence was changed on
+2026-10-24 for exactly that reason. Releases published before that date were
+released under CC0-1.0 and stay CC0-1.0: a licence already granted cannot be
+withdrawn. Everything from this commit on is GPL-3.0-or-later.
+
+Third-party components distributed with this build
+--------------------------------------------------
+three.js (r128)                 MIT License      Copyright (c) 2010-2021 three.js authors
+three-csg-ts                    MIT License      Copyright (c) 2021 three-csg-ts contributors
+  bundled into modifier-engine.js
+
+Three.js is loaded by index.html from jsDelivr and is also bundled (via an
+alias shim) into the CSG modifier build. The MIT licence requires this notice to
+travel with the code; it does.
+
+Build-time only (not distributed)
+---------------------------------
+esbuild                         MIT License
+wrangler (Cloudflare Workers)   Apache-2.0 / MIT
+
+Copied Blender source
+---------------------
+Nothing from the Blender tree has been copied into this repository yet. When it
+is, the rule is: keep the original copyright header on every file, add an entry
+to this NOTICE naming the file, the upstream commit and the licence, and do not
+use the Blender or Cycles trademarks to imply endorsement. docs/LICENSING.md
+has the component-by-component table.

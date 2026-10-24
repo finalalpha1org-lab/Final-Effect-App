@@ -265,16 +265,26 @@ const GROWN_CFG={
  treefern:{c0:[.38,.6,.26],c1:[.86,1.0,.5],ctr:[0,1.6,0,1.15],bcol:null,petal:0}
 };
 const GROWN_JOBS=[];
+/* One grown tree: the kernel returns the wood and the leaf cards it grew with
+   it. The JavaScript card placer below is only used when the artifact is older
+   than this page — it is not how leaves are built any more. */
 function grownTree(kind){
  const f=window.FELandscapeFlora;if(!f||typeof f.tree!=='function')return null;
  const cfg=GROWN_CFG[kind];if(!cfg)return null;
+ try{
+  const asset=f.grownAsset?f.grownAsset(kind):null;
+  if(asset&&asset.slots&&asset.slots.length){
+   const by=new Map(asset.slots.map(g=>[g.slot,g.geometry]));
+   if(!by.get(0))return null;
+   if(cfg.petal){const bloom=by.get(2)||by.get(1);return bloom?[by.get(0),by.get(1)||bloom,bloom]:[by.get(0),by.get(1)||by.get(0)]}
+   return[by.get(0),by.get(1)||by.get(0)];
+  }
+ }catch(e){showErr('Grown '+kind+': '+e.message)}
+ /* Fallback: previous artifact, build the cards here. */
  const t=f.tree(kind);if(!t||!t.wood||!t.leaf||!t.leaf.length)return null;
  const L=GA(),a=t.leaf,st=t.leafStride||8;let B=null;
  for(let i=0;i+st<=a.length;i+=st){
   const b=[a[i]+(R()-.5)*.06,a[i+1]+(R()-.5)*.06,a[i+2]+(R()-.5)*.06];
-  /* Cards inherit the compliance and phase of the twig they sit on, so a leaf
-     cannot stay behind while its branch swings. Kernels older than the skeletal
-     wind export eight floats per leaf and those two channels stay at zero. */
   L.sw=st>8?a[i+8]:0;L.phv=st>8?a[i+9]:0;
   lcard(L,b,[a[i+3],a[i+4],a[i+5]],a[i+6],cfg.c0,cfg.c1,cfg.ctr,a[i+7]);
   if(cfg.petal&&((i/st)|0)%2===0){if(!B){B=GA();B.bcol=cfg.bcol}petalCard(B,[b[0]+(R()-.5)*.25,b[1]+(R()-.5)*.25,b[2]+(R()-.5)*.25],a[i+6]*.3)}
@@ -297,10 +307,13 @@ function rockBuilder(pk){
 }
 /* Swap one InstancedMesh onto a grown geometry and keep the LOD twin, the
    selection bounds and the procedural caveat honest about the new mesh. */
-function adoptGeometry(K,m,geo){
+function adoptGeometry(K,m,geo,lod){
  if(!m||!geo)return;
  m.geometry=geo;
- if(m.userData&&m.userData.lodGeom)m.userData.lodGeom=geo;
+ /* The low-detail twin is its own mesh, not a copy of this one: pass it in or
+    leave the existing one alone. Overwriting it made every swap high-detail at
+    every distance, which is the opposite of a level of detail. */
+ if(lod&&m.userData&&m.userData.lodGeom)m.userData.lodGeom=lod;
  K.selectionBounds=null;K.selectionGrid=null;K.selectionGridDirty=true;
 }
 let grownTries=0;
@@ -368,7 +381,121 @@ function applyGrown(jobs){
 /* terrain-main-01 builds lazy species from other blocks; it calls back here so a
    species that appeared after the artifact finished loading is grown too. */
 window.__feGrowSpecies=applyGrown;
-try{const c=window.FELandscapeCore;if(c&&c.loading&&c.loading.then)c.loading.then(()=>{try{applyGrown()}catch(e){showErr('Grown flora: '+e.message)}})}catch(e){}
+try{const c=window.FELandscapeCore;if(c&&c.loading&&c.loading.then)c.loading.then(()=>{try{applyGrown()}catch(e){showErr('Grown flora: '+e.message)}try{applyGrownPlants()}catch(e){showErr('Grown plants: '+e.message)}try{applyGrownBuildings()}catch(e){showErr('Grown buildings: '+e.message)}})}catch(e){}
+/* Every plant and tree the studio places is grown in the C++ kernel. Each entry
+   names the material slots the studio already renders for that species, in the
+   order it builds them, and which kernel part feeds each slot. `-1` means the
+   whole mesh goes into that slot because the plant is one material.
+   `lawn` species are the ones drawn in the tens of thousands, so they use the
+   card-fidelity geometry (about a third of the triangles) instead of the folded
+   blade a plant you walk up to gets. */
+const GROWN_PLANTS = {
+  /* trees */
+  pine: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2101 },
+  spruce: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2203 },
+  krumm: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2309 },
+  juniper: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2411 },
+  joshua: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2503 },
+  sage: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2609 },
+  palm: { slots: 2, plan: [[0, 0], [1, 1]], seed: 7331 },
+  agave: { slots: 2, plan: [[0, 0], [1, 1]], seed: 2711 },
+  /* cacti — one fleshy material each */
+  saguaro: { slots: 1, plan: [[-1, 0]], seed: 7717 },
+  barrel: { slots: 1, plan: [[-1, 0]], seed: 7907 },
+  prickly: { slots: 1, plan: [[-1, 0]], seed: 8101 },
+  /* lawn and meadow */
+  grass: { slots: 1, plan: [[-1, 0]], seed: 1103, lawn: 1 },
+  tallgrass: { slots: 1, plan: [[-1, 0]], seed: 1201, lawn: 1 },
+  daisy: { slots: 4, plan: [[0, 0], [1, 1], [2, 2], [3, 3]], seed: 1301 },
+  tulip: { slots: 4, plan: [[0, 0], [1, 1], [2, 2], [3, 3]], seed: 1409 },
+  lavender: { slots: 4, plan: [[0, 0], [1, 1], [2, 2], [3, 3]], seed: 1511 },
+  /* The meadow tuft: three composite heads on one crown. */
+  flower: { slots: 4, plan: [[0, 0], [1, 1], [2, 2], [3, 3]], seed: 1601 }
+};
+/* Street shells are grown in the kernel too: real massing, seeded per building,
+   the same three material slots the studio already renders (wall, roof, base).
+   No wall, balcony, canopy or chimney in this file any more. */
+const GROWN_BUILDINGS = {
+  house: { slots: 3, plan: [[0, 0], [1, 1], [2, 2]], seed: 3301 },
+  block: { slots: 2, plan: [[0, 0], [2, 1]], seed: 3407 },
+  mid: { slots: 2, plan: [[0, 0], [2, 1]], seed: 3511 },
+  tower: { slots: 2, plan: [[0, 0], [2, 1]], seed: 3607 }
+};
+function applyGrownBuildings(only) {
+  const f = window.FELandscapeFlora;
+  if (!f || typeof f.buildingAsset !== 'function') return 0;
+  let grown = 0;
+  for (const kind in GROWN_BUILDINGS) {
+    if (only && only !== kind) continue;
+    const K = KIND[kind];
+    if (!K || !K.meshes || !K.meshes.length) continue;
+    const spec = GROWN_BUILDINGS[kind];
+    const asset = f.buildingAsset(kind, spec.seed, detail, spec.plan);
+    if (!asset || !asset.slots || !asset.slots.length) continue;
+    for (const group of asset.slots) {
+      const mesh = K.meshes[group.slot];
+      if (mesh && group.geometry) adoptGeometry(K, mesh, group.geometry);
+    }
+    grown++;
+  }
+  if (grown) window.__feBuildingsGrown = true;
+  return grown;
+}
+
+function applyGrownPlants(only) {
+  const f = window.FELandscapeFlora;
+  if (!f || typeof f.grownAsset !== 'function') return 0;
+  let grown = 0;
+  for (const kind in GROWN_PLANTS) {
+    if (only && only !== kind) continue;
+    const K = KIND[kind];
+    if (!K || !K.meshes || !K.meshes.length) continue;
+    const spec = GROWN_PLANTS[kind], slots = spec.slots;
+    const variants = Math.max(1, Math.round(K.meshes.length / slots));
+    /* A lawn is instanced a hundred thousand times: grow it at card fidelity,
+       which is the same blade the kernel folds for the near field. */
+    const level = spec.lawn ? 1 : detail;
+    for (let v = 0; v < variants; ++v) {
+      const asset = f.grownAsset(kind, spec.seed + v * 977, level, spec.plan);
+      if (!asset || !asset.slots || !asset.slots.length) continue;
+      /* The same plant at one detail step down, for the LOD twin. */
+      const lowAsset = level > 0 ? f.grownAsset(kind, spec.seed + v * 977, level - 1, spec.plan) : null;
+      const lowFor = (slot) => {
+        const g = lowAsset && lowAsset.slots ? lowAsset.slots.find((x) => x.slot === slot) : null;
+        return g ? g.geometry : null;
+      };
+      for (const group of asset.slots) {
+        const mesh = K.meshes[v * slots + group.slot];
+        if (mesh && group.geometry) adoptGeometry(K, mesh, group.geometry, lowFor(group.slot));
+      }
+      grown++;
+    }
+  }
+  if (grown) {
+    for (const kind in GROWN_PLANTS) {
+      const K = KIND[kind];
+      if (!K) continue;
+      if (K.lowMeshes) K.lowMeshes.forEach((low, i) => {
+        const m = K.meshes[i];
+        if (m) low.geometry = (m.userData && m.userData.lodGeom) || m.geometry;
+      });
+      /* A lawn casts shadows through a decimated proxy of its own blade, so it
+         has to be rebuilt from the grown geometry or the shadows keep the old
+         card silhouette. */
+      if (K.shadowMeshes && K.shadowMeshes.length) {
+        K.meshes.forEach((m, i) => {
+          const proxy = K.shadowMeshes[i];
+          if (!proxy || !m.geometry) return;
+          proxy.geometry = (m.userData && m.userData.lodGeom) || m.geometry;
+        });
+      }
+    }
+    window.__fePlantsGrown = true;
+  }
+  return grown;
+}
+window.__feGrownPlants = applyGrownPlants;
+
 function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,lodGeom:grassLowG}]],false);
 mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
 mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,lodGeom:tallGrassLowG}]],false);
@@ -387,9 +514,17 @@ mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[m
 mk('tower',250,[[towerW,{pbr:GT[2],map:GT[0],em:GT[1],bump:.4,sn:1,part:'shell'}],[towerB,{nt:1,sn:1,part:'base'}]],true);
 ['house','block','mid','tower'].forEach(k=>KIND[k].vr=.08);}
 buildEager();
+/* The kernel may already be up (embedded base64); if not, the load callback
+   below grows the same plants in place once it is. */
+try{applyGrownPlants()}catch(e){showErr('Grown plants: '+e.message)}
+try{applyGrownBuildings()}catch(e){showErr('Grown buildings: '+e.message)}
 const SX=(fn,o)=>[0,1,2].map(v=>[fn(),{...o,vi:v,vn:3}]);
 const LZTK={sage:8,ashbush:8,juniper:8,krumm:3,agave:8,fern:12,treefern:2.5};
-function lazyBuild(k){const[max,fn]=LZREG[k],parts=fn();parts.forEach(p=>{p[1].tk=LZTK[k]||1});mk(k,max,parts,true);KIND[k].vr=.35;KIND[k].tint=kt(k);if(mode=='wire')shade()}
+function lazyBuild(k){const[max,fn]=LZREG[k],parts=fn();parts.forEach(p=>{p[1].tk=LZTK[k]||1});mk(k,max,parts,true);KIND[k].vr=.35;KIND[k].tint=kt(k);if(mode=='wire')shade();
+ /* Palm, saguaro and barrel are lazy species: their instanced meshes only
+    exist once the studio asks for them, so the grown mesh is swapped in here
+    rather than at boot. */
+ if(GROWN_PLANTS[k]){try{applyGrownPlants(k)}catch(e){showErr('Grown plants: '+e.message)}}}
 const LZ=(k,max,fn)=>{LZREG[k]=[max,fn];LAZY[k]=()=>lazyBuild(k)};
 const bk=(t,w,ns)=>({map:BT[t],w,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN[t],ns:ns||.65,rm:BR[t]});
 LZ('spruce',1500,()=>TV(spruceTree,bk('pine',.0014),{map:NDT,cut:.35,ds:1,phys:1,nm:LEAF_PBR.needle.nm,ns:.3,rm:LEAF_PBR.needle.rm,roughness:.76,w:.0014,wf:.02}));

@@ -175,7 +175,7 @@ test('Animation Studio exposes the graph editor, keying sets and motion tools', 
     'fe_anim_edit_key', 'fe_anim_duplicate_keys_in_range', 'fe_anim_catmull_rom',
     'fe_anim_sample_object', 'fe_anim_bake_samples', 'fe_sim_bake_compress',
     'applySimulationBakeAtFrame', 'updateOnionSkin', 'updateMotionTrail', 'buildCameraPath',
-    'exportAnimatedGLTF', 'animations: [clip]'
+    'exportAnimatedGLTF', "animations: [{ name: 'FinalEffectAnimation', channels }]"
   ]) {
     assert.ok(bridge.includes(needle), `bridge is missing ${needle}`);
   }

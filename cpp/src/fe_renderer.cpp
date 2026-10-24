@@ -40,6 +40,10 @@ struct SceneLight {
   float    intensity;
   float    radius;
   float    spot_cos_outer;
+  /* Tangent basis for the soft-shadow disk, computed once when the light is
+     set instead of twice per shading point. */
+  fe::Vec3 tangent;
+  fe::Vec3 bitangent;
 };
 
 struct CameraState {
@@ -83,6 +87,32 @@ static uint32_t     g_fb_h = 0;
 static uint32_t     g_accum_samples = 0;
 static float        g_accum_rgb[kMaxPathPixels * 3];
 static uint8_t      g_resolved_rgba[kMaxPathPixels * 4];
+
+/* Per-pixel sample counts. A cube is mostly flat surfaces and sky: after two
+   samples the sky has converged and every extra sample spent on it is waste
+   that the picture never shows. These make the tracer spend its budget on the
+   pixels that are actually still moving — the shadows and the edges. */
+static uint16_t     g_pixel_samples[kMaxPathPixels];
+static uint16_t     g_pixel_cap[kMaxPathPixels];
+
+/* Primary-hit distance, quantised to 16 bits over 0..64 m. The denoiser needs
+   it to tell a cube edge from noise on the same surface, and 3 MB of uint16 is
+   cheap next to a float buffer. 0xFFFF means "sky". */
+static uint16_t     g_depth16[kMaxPathPixels];
+constexpr uint16_t  kDepthFar = 0xFFFFu;
+constexpr float     kDepthScale = 1023.0f;   /* 64 m / 0xFFFF-ish */
+
+/* Primary-hit albedo, 8 bits per channel. A colour-weighted filter cannot tell
+   a painted line from noise on its own — both are sharp luminance steps — so
+   the filter is told which steps are geometry and which are material. This is
+   the same trick production denoisers use when they are handed albedo and
+   normal passes; 5 MB buys the whole floor grid back. */
+static uint8_t      g_albedo8[kMaxPathPixels * 3];
+
+/* Lights that are actually on. Iterating four slots and skipping the empty
+   ones is cheap per sample and was not cheap per bounce. */
+static uint32_t     g_active_lights[kMaxLights];
+static uint32_t     g_active_light_count = 0;
 static float        g_bloom_a[kMaxBloomDim * 3];
 static float        g_bloom_b[kMaxBloomDim * 3];
 
@@ -131,19 +161,19 @@ static fe::Vec3 sample_environment(const fe::Vec3& dir) {
     const fe::Vec3 rim_dir = fe::normalize({-0.65f, 0.42f, -0.62f});
     const float key_lobe = fe::maxf(0.0f, fe::dot(dir, key_dir));
     const float rim_lobe = fe::maxf(0.0f, fe::dot(dir, rim_dir));
-    base += fe::Vec3(1.55f, 1.48f, 1.38f) * fe::powf(key_lobe, 14.0f);
-    base += fe::Vec3(0.55f, 0.68f, 1.05f) * fe::powf(rim_lobe, 18.0f);
+    base += fe::Vec3(1.55f, 1.48f, 1.38f) * fe::powi(key_lobe, 14u);
+    base += fe::Vec3(0.55f, 0.68f, 1.05f) * fe::powi(rim_lobe, 18u);
   } else if (g_env_preset != 3) {
     const fe::Vec3 sun_dir = (g_env_preset == 4)
       ? fe::normalize({0.75f, 0.18f, 0.63f})
       : fe::normalize({0.52f, 0.72f, 0.46f});
     const float sd = fe::maxf(0.0f, fe::dot(dir, sun_dir));
-    base += fe::Vec3(2.2f, 1.85f, 1.45f) * fe::powf(sd, 48.0f);
+    base += fe::Vec3(2.2f, 1.85f, 1.45f) * fe::powi(sd, 48u);
   } else {
     /* Subtle moon glow at night */
     const fe::Vec3 moon_dir = fe::normalize({-0.45f, 0.68f, 0.57f});
     const float md = fe::maxf(0.0f, fe::dot(dir, moon_dir));
-    base += fe::Vec3(0.35f, 0.45f, 0.75f) * fe::powf(md, 64.0f);
+    base += fe::Vec3(0.35f, 0.45f, 0.75f) * fe::powi(md, 64u);
   }
 
   (void)t;
@@ -318,6 +348,26 @@ static bool trace_bvh(const fe::Ray& ray, float t_max, HitInfo& hit, bool any_hi
   return found;
 }
 
+/* 64 points on the unit disk, golden-angle spiral. Shadow rays need a jittered
+   disk, and sin/cos per sample per light per bounce was a measurable share of
+   the frame; a table of pre-distributed points is both cheaper and better
+   stratified than two uniform randoms. */
+constexpr uint32_t kDiskSamples = 64;
+struct DiskPoint { float x, y; };
+static DiskPoint g_disk[kDiskSamples];
+static bool g_disk_ready = false;
+
+static void ensure_disk_table(void) {
+  if (g_disk_ready) return;
+  for (uint32_t i = 0; i < kDiskSamples; ++i) {
+    const float r = fe::sqrtf((static_cast<float>(i) + 0.5f) / static_cast<float>(kDiskSamples));
+    const float phi = static_cast<float>(i) * 2.39996323f;   /* golden angle */
+    g_disk[i].x = r * fe::cosf(phi);
+    g_disk[i].y = r * fe::sinf(phi);
+  }
+  g_disk_ready = true;
+}
+
 /* ---- Orthonormal Basis & Sampling Helpers ---- */
 static void make_onb(const fe::Vec3& n, fe::Vec3& t, fe::Vec3& b) {
   if (fe::absf(n.y) < 0.999f) {
@@ -369,7 +419,7 @@ static fe::Vec3 evaluate_ggx_direct(
   const float G = gv * gl;
 
   const fe::Vec3 f0 = fe::lerpv({0.04f, 0.04f, 0.04f}, albedo, metalness);
-  const float f_pow = fe::powf(fe::clampf(1.0f - vdoth, 0.0f, 1.0f), 5.0f);
+  const float f_pow = fe::powi(fe::clampf(1.0f - vdoth, 0.0f, 1.0f), 5u);
   const fe::Vec3 F = f0 + (fe::Vec3(1.0f) - f0) * f_pow;
 
   const fe::Vec3 spec = F * (D * G / fe::maxf(1e-4f, 4.0f * ndotv * ndotl));
@@ -380,9 +430,11 @@ static fe::Vec3 evaluate_ggx_direct(
 }
 
 /* ---- Progressive Path Integrator ---- */
-static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
+static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng, float* out_primary_depth, fe::Vec3* out_primary_albedo) {
   fe::Vec3 radiance(0.0f);
   fe::Vec3 throughput(1.0f);
+  if (out_primary_depth) *out_primary_depth = -1.0f;
+  if (out_primary_albedo) *out_primary_albedo = {0.0f, 0.0f, 0.0f};
 
   for (uint32_t bounce = 0; bounce <= max_bounces; ++bounce) {
     HitInfo hit;
@@ -390,6 +442,7 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
       radiance += throughput * sample_environment(ray.dir);
       break;
     }
+    if (bounce == 0 && out_primary_depth) *out_primary_depth = hit.t;
 
     MaterialPBR mat;
     if (hit.is_ground) {
@@ -407,6 +460,8 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
       mat = g_materials[hit.mat_id < g_mat_count ? hit.mat_id : 0];
     }
 
+    if (bounce == 0 && out_primary_albedo) *out_primary_albedo = mat.albedo;
+
     if (mat.emission > 0.0f) {
       radiance += throughput * mat.albedo * mat.emission;
     }
@@ -414,33 +469,29 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
     const fe::Vec3 v = -ray.dir;
     const fe::Vec3 origin_offset = hit.pos + hit.normal * 1e-3f;
 
-    /* Next-Event Estimation: sample all active scene lights with soft-shadow jitter */
-    for (uint32_t li = 0; li < kMaxLights; ++li) {
-      const SceneLight& L = g_lights[li];
-      if (L.type == 0 || L.intensity <= 1e-4f) continue;
+    /* Next-Event Estimation: sample the lights that are on, with soft-shadow jitter */
+    for (uint32_t ai = 0; ai < g_active_light_count; ++ai) {
+      const SceneLight& L = g_lights[g_active_lights[ai]];
 
       fe::Vec3 l_dir;
       float max_dist = 1e20f;
       float atten = 1.0f;
 
-      /* Random disk offset for soft shadows */
-      fe::Vec3 t_basis, b_basis;
-      const float r_u = fe::sqrtf(rng.next_f01()) * L.radius;
-      const float r_phi = fe::kTwoPi * rng.next_f01();
+      /* Stratified disk offset for soft shadows, from the precomputed table. */
+      const DiskPoint& disk = g_disk[static_cast<uint32_t>(rng.next_f01() * static_cast<float>(kDiskSamples)) & (kDiskSamples - 1u)];
+      const float r_u = L.radius;
 
       if (L.type == 2) {
         /* Directional sun light */
-        const fe::Vec3 base_l = fe::normalize(-L.dir);
-        make_onb(base_l, t_basis, b_basis);
-        l_dir = fe::normalize(base_l + (t_basis * fe::cosf(r_phi) + b_basis * fe::sinf(r_phi)) * (r_u * 0.06f));
+        const fe::Vec3 base_l = -L.dir;
+        const fe::Vec3 offset = L.tangent * disk.x + L.bitangent * disk.y;
+        l_dir = fe::normalize(base_l + offset * (r_u * 0.06f));
       } else {
         /* Point or Spot light */
         fe::Vec3 to_light = L.pos - hit.pos;
         const float dist = fe::length(to_light);
         if (dist < 1e-3f) continue;
-        const fe::Vec3 base_l = to_light * (1.0f / dist);
-        make_onb(base_l, t_basis, b_basis);
-        const fe::Vec3 jitter_pos = L.pos + (t_basis * fe::cosf(r_phi) + b_basis * fe::sinf(r_phi)) * r_u;
+        const fe::Vec3 jitter_pos = L.pos + (L.tangent * disk.x + L.bitangent * disk.y) * r_u;
         const fe::Vec3 jvec = jitter_pos - hit.pos;
         max_dist = fe::length(jvec) - 2e-3f;
         l_dir = jvec * (1.0f / fe::maxf(1e-4f, max_dist + 2e-3f));
@@ -448,7 +499,7 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
 
         if (L.type == 3) {
           /* Spot cone falloff */
-          const float spot_cos = fe::dot(-l_dir, fe::normalize(L.dir));
+          const float spot_cos = fe::dot(-l_dir, L.dir);
           const float inner_cos = fe::lerpf(L.spot_cos_outer, 1.0f, 0.35f);
           if (spot_cos <= L.spot_cos_outer) continue;
           atten *= fe::smoothstepf(L.spot_cos_outer, inner_cos, spot_cos);
@@ -475,7 +526,7 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
 
     /* Indirect bounce: choose specular vs diffuse lobe from Fresnel + metalness */
     const float ndotv = fe::maxf(0.0f, fe::dot(hit.normal, v));
-    const float fresnel = 0.04f + 0.96f * fe::powf(1.0f - ndotv, 5.0f);
+    const float fresnel = 0.04f + 0.96f * fe::powi(1.0f - ndotv, 5u);
     const float spec_prob = fe::clampf(fe::lerpf(fresnel, 1.0f, mat.metalness), 0.08f, 0.92f);
 
     fe::Vec3 next_dir;
@@ -485,7 +536,7 @@ static fe::Vec3 trace_path(fe::Ray ray, uint32_t max_bounces, fe::RNG& rng) {
       next_dir = fe::normalize(fe::lerpv(refl, jitter, mat.roughness * mat.roughness));
       if (fe::dot(next_dir, hit.normal) <= 0.0f) next_dir = jitter;
       const fe::Vec3 f0 = fe::lerpv({0.04f, 0.04f, 0.04f}, mat.albedo, mat.metalness);
-      const fe::Vec3 F = f0 + (fe::Vec3(1.0f) - f0) * fe::powf(1.0f - ndotv, 5.0f);
+      const fe::Vec3 F = f0 + (fe::Vec3(1.0f) - f0) * fe::powi(1.0f - ndotv, 5u);
       throughput = throughput * F * (1.0f / spec_prob);
     } else {
       next_dir = sample_cosine_hemisphere(hit.normal, rng);
@@ -674,6 +725,7 @@ FE_EXPORT void fe_render_scene_clear(void) {
     g_lights[i].type = 0;
     g_lights[i].intensity = 0.0f;
   }
+  g_active_light_count = 0;
 }
 
 FE_EXPORT int32_t fe_render_add_mesh(
@@ -765,6 +817,14 @@ FE_EXPORT void fe_render_set_light(
   L.intensity = fe::maxf(0.0f, intensity);
   L.radius = fe::clampf(radius_softness, 0.0f, 8.0f);
   L.spot_cos_outer = fe::clampf(spot_cos_outer, -1.0f, 0.999f);
+  make_onb(L.dir, L.tangent, L.bitangent);
+
+  g_active_light_count = 0;
+  for (uint32_t i = 0; i < kMaxLights; ++i) {
+    if (g_lights[i].type != 0 && g_lights[i].intensity > 1e-4f) {
+      g_active_lights[g_active_light_count++] = i;
+    }
+  }
 }
 
 FE_EXPORT void fe_render_set_camera(
@@ -789,6 +849,7 @@ FE_EXPORT void fe_render_set_camera(
 }
 
 FE_EXPORT int32_t fe_render_build_bvh(void) {
+  ensure_disk_table();
   g_bvh_used = 0;
   if (g_tri_count == 0) {
     g_bvh_ready = false;
@@ -809,6 +870,11 @@ FE_EXPORT int32_t fe_render_init_framebuffer(uint32_t width, uint32_t height) {
   g_fb_w = width;
   g_fb_h = height;
   fe_render_reset_accumulation();
+  const uint32_t n = width * height;
+  for (uint32_t i = 0; i < n; ++i) {
+    g_pixel_samples[i] = 0;
+    g_pixel_cap[i] = 0xFFFFu;   /* no cap until convergence says otherwise */
+  }
   return 1;
 }
 
@@ -816,6 +882,11 @@ FE_EXPORT void fe_render_reset_accumulation(void) {
   g_accum_samples = 0;
   const uint32_t n = g_fb_w * g_fb_h * 3;
   for (uint32_t i = 0; i < n; ++i) g_accum_rgb[i] = 0.0f;
+  const uint32_t pixels = g_fb_w * g_fb_h;
+  for (uint32_t i = 0; i < pixels; ++i) {
+    g_pixel_samples[i] = 0;
+    g_pixel_cap[i] = 0xFFFFu;
+  }
 }
 
 FE_EXPORT uint32_t fe_render_trace_samples(
@@ -836,6 +907,8 @@ FE_EXPORT uint32_t fe_render_trace_samples(
     const uint32_t sample_idx = g_accum_samples + s + 1;
     for (uint32_t y = y0; y < y1; ++y) {
       for (uint32_t x = 0; x < g_fb_w; ++x) {
+        const uint32_t pixel_index = y * g_fb_w + x;
+        if (g_pixel_samples[pixel_index] >= g_pixel_cap[pixel_index]) continue;
         const uint64_t seed = (static_cast<uint64_t>(y * g_fb_w + x) * 1973ULL) ^
                               (static_cast<uint64_t>(sample_idx) * 9277ULL + 0x9e3779b97f4a7c15ULL);
         fe::RNG rng(seed, sample_idx * 2u + 1u);
@@ -857,11 +930,32 @@ FE_EXPORT uint32_t fe_render_trace_samples(
           ray_dir = fe::normalize(focal_pt - ray_origin);
         }
 
-        const fe::Vec3 col = trace_path(fe::Ray(ray_origin, ray_dir), bounces, rng);
-        const uint32_t pi = (y * g_fb_w + x) * 3;
-        g_accum_rgb[pi + 0] += col.x;
-        g_accum_rgb[pi + 1] += col.y;
-        g_accum_rgb[pi + 2] += col.z;
+        float primary_depth = -1.0f;
+        fe::Vec3 primary_albedo;
+        const fe::Vec3 col = trace_path(fe::Ray(ray_origin, ray_dir), bounces, rng, &primary_depth, &primary_albedo);
+        if (s == 0 && primary_depth > 0.0f) {
+          const float q = fe::minf(primary_depth, 64.0f) * kDepthScale;
+          g_depth16[y * g_fb_w + x] = static_cast<uint16_t>(q);
+        } else if (s == 0 && primary_depth < 0.0f) {
+          g_depth16[y * g_fb_w + x] = kDepthFar;
+        }
+        /* Running mean, not a sum. Per-pixel sample counts only help if the
+           buffer is already an average, and an average removes a whole pass of
+           normalisation (and the sample-count scaling in bloom). */
+        const uint32_t sample_now = g_pixel_samples[pixel_index] + 1u;
+        g_pixel_samples[pixel_index] = static_cast<uint16_t>(sample_now < 0xFFFFu ? sample_now : 0xFFFFu);
+        const float mean_w = 1.0f / static_cast<float>(sample_now);
+        const uint32_t mi = pixel_index * 3;
+        g_accum_rgb[mi + 0] += (col.x - g_accum_rgb[mi + 0]) * mean_w;
+        g_accum_rgb[mi + 1] += (col.y - g_accum_rgb[mi + 1]) * mean_w;
+        g_accum_rgb[mi + 2] += (col.z - g_accum_rgb[mi + 2]) * mean_w;
+
+        if (s == 0) {
+          const uint32_t ai = (y * g_fb_w + x) * 3;
+          g_albedo8[ai + 0] = static_cast<uint8_t>(fe::clampf(primary_albedo.x, 0.0f, 1.0f) * 255.0f + 0.5f);
+          g_albedo8[ai + 1] = static_cast<uint8_t>(fe::clampf(primary_albedo.y, 0.0f, 1.0f) * 255.0f + 0.5f);
+          g_albedo8[ai + 2] = static_cast<uint8_t>(fe::clampf(primary_albedo.z, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
       }
     }
   }
@@ -871,6 +965,233 @@ FE_EXPORT uint32_t fe_render_trace_samples(
     g_accum_samples += sample_count;
   }
   return g_accum_samples;
+}
+
+/* ---- Edge-avoiding denoiser ----------------------------------------
+   A path tracer at 8 samples per pixel is not noise-free, but most of that
+   noise is high-frequency and can be removed without softening the picture if
+   the filter knows where the geometry ends. This is a separable bilateral
+   filter — five taps per axis, three à-trous iterations (radii 1, 2, 4) — that
+   stops at luminance steps and at depth discontinuities. It runs on the linear
+   accumulation buffer before tone mapping, so the grade sees a clean image.
+
+   Cost is what matters here: the default went from 24 SPP to 8 SPP, and the
+   filter has to cost far less than the 16 SPP it replaces. Two passes of five
+   taps is thirty weight evaluations per pixel in total, each a handful of
+   flops, with no per-pixel allocation and no second full-size image. */
+
+constexpr uint32_t kDenoiseMaxRow = 1280;
+static float g_denoise_row[kDenoiseMaxRow * 3];
+static float g_denoise_ring[5][kDenoiseMaxRow * 3];
+static uint32_t g_denoise_tag[5];
+
+static inline float denoise_luma(const float* c) {
+  return c[0] * 0.2126f + c[1] * 0.7152f + c[2] * 0.0722f;
+}
+
+/* Lorentzian falloff on the three things a filter must not cross: a depth
+   discontinuity (geometry), an albedo edge (material — the floor grid), and a
+   large luminance step that is neither (a shadow, an emissive lamp). Written as
+   an error term summed before squaring so the gates reinforce each other
+   instead of one of them being outvoted. */
+/* Tuned against a 64-sample reference on the default cube scene: these hold
+   the floor grid's edges (the thing a blur eats first) while still removing
+   most of the noise at 8 samples. fe_render_denoise_config() exists so the
+   ratios are visible and adjustable rather than buried in the weight. */
+static float g_dn_lum = 10.0f, g_dn_alb = 46.0f, g_dn_dep = 9.0f;
+
+static inline float denoise_weight(
+  float lum_a, float lum_b,
+  uint16_t d_a, uint16_t d_b,
+  const uint8_t* alb_a, const uint8_t* alb_b
+) {
+  const float dl = fe::absf(lum_a - lum_b);
+
+  /* Depth gate, relative so it works at 0.5 m and at 40 m alike. */
+  float a = 0.0f;
+  if (d_a != d_b) {
+    const float da = (d_a == kDepthFar) ? 64.0f : (static_cast<float>(d_a) * (1.0f / kDepthScale));
+    const float db = (d_b == kDepthFar) ? 64.0f : (static_cast<float>(d_b) * (1.0f / kDepthScale));
+    const float near = fe::maxf(0.08f, fe::minf(da, db));
+    a += fe::absf(da - db) / near * g_dn_dep;
+  }
+
+  /* Albedo gate: a material boundary is never blended across, however similar
+     the lit result looks. This is what keeps the studio grid on the floor. */
+  const float dr = static_cast<float>(static_cast<int>(alb_a[0]) - static_cast<int>(alb_b[0])) * (1.0f / 255.0f);
+  const float dg = static_cast<float>(static_cast<int>(alb_a[1]) - static_cast<int>(alb_b[1])) * (1.0f / 255.0f);
+  const float db2 = static_cast<float>(static_cast<int>(alb_a[2]) - static_cast<int>(alb_b[2])) * (1.0f / 255.0f);
+  a += fe::sqrtf(dr * dr + dg * dg + db2 * db2) * g_dn_alb;
+
+  /* Luminance gate, deliberately loose: the whole point of the filter is to
+     average away luminance noise, so this only has to catch the steps the
+     other two gates cannot see. */
+  a += dl * g_dn_lum;
+
+  return 1.0f / (1.0f + a * a);
+}
+
+static void denoise_horizontal(uint32_t w, uint32_t h, uint32_t step) {
+  for (uint32_t y = 0; y < h; ++y) {
+    float* row = &g_accum_rgb[static_cast<size_t>(y) * w * 3];
+    for (uint32_t x = 0; x < w; ++x) {
+      const float* c = row + x * 3;
+      const float lum_c = denoise_luma(c);
+      const uint32_t di_c = y * w + x;
+      const uint16_t d_c = g_depth16[di_c];
+      const uint8_t* alb_c = &g_albedo8[static_cast<size_t>(di_c) * 3];
+      float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, wsum = 0.0f;
+      for (int k = -2; k <= 2; ++k) {
+        int sx = static_cast<int>(x) + k * static_cast<int>(step);
+        sx = sx < 0 ? 0 : (sx >= static_cast<int>(w) ? static_cast<int>(w) - 1 : sx);
+        const float* n = row + static_cast<size_t>(sx) * 3;
+        const uint32_t di_n = y * w + sx;
+        const float wt = denoise_weight(lum_c, denoise_luma(n), d_c, g_depth16[di_n], alb_c, &g_albedo8[static_cast<size_t>(di_n) * 3]);
+        sum0 += n[0] * wt;
+        sum1 += n[1] * wt;
+        sum2 += n[2] * wt;
+        wsum += wt;
+      }
+      const float inv = 1.0f / fe::maxf(1e-6f, wsum);
+      g_denoise_row[x * 3 + 0] = sum0 * inv;
+      g_denoise_row[x * 3 + 1] = sum1 * inv;
+      g_denoise_row[x * 3 + 2] = sum2 * inv;
+    }
+    for (uint32_t i = 0; i < w * 3; ++i) row[i] = g_denoise_row[i];
+  }
+}
+
+static void denoise_vertical(uint32_t w, uint32_t h, uint32_t step) {
+  const size_t row_floats = static_cast<size_t>(w) * 3;
+  for (uint32_t i = 0; i < 5; ++i) g_denoise_tag[i] = 0xFFFFFFFFu;
+
+  const auto load = [&](int yy) -> const float* {
+    const int clamped = yy < 0 ? 0 : (yy >= static_cast<int>(h) ? static_cast<int>(h) - 1 : yy);
+    const uint32_t slot = static_cast<uint32_t>(clamped) % 5u;
+    if (g_denoise_tag[slot] != static_cast<uint32_t>(clamped)) {
+      const float* src = &g_accum_rgb[static_cast<size_t>(clamped) * w * 3];
+      float* dst = g_denoise_ring[slot];
+      for (size_t i = 0; i < row_floats; ++i) dst[i] = src[i];
+      g_denoise_tag[slot] = static_cast<uint32_t>(clamped);
+    }
+    return g_denoise_ring[slot];
+  };
+
+  for (uint32_t y = 0; y < h; ++y) {
+    const float* centre = load(static_cast<int>(y));
+    for (uint32_t x = 0; x < w; ++x) {
+      const float* c = centre + x * 3;
+      const float lum_c = denoise_luma(c);
+      const uint32_t di_c = y * w + x;
+      const uint16_t d_c = g_depth16[di_c];
+      const uint8_t* alb_c = &g_albedo8[static_cast<size_t>(di_c) * 3];
+      float sum0 = 0.0f, sum1 = 0.0f, sum2 = 0.0f, wsum = 0.0f;
+      for (int k = -2; k <= 2; ++k) {
+        const int sy = static_cast<int>(y) + k * static_cast<int>(step);
+        const int clamped = sy < 0 ? 0 : (sy >= static_cast<int>(h) ? static_cast<int>(h) - 1 : sy);
+        const float* r = load(clamped);
+        const float* n = r + x * 3;
+        const uint32_t di_n = static_cast<size_t>(clamped) * w + x;
+        const float wt = denoise_weight(lum_c, denoise_luma(n), d_c, g_depth16[di_n], alb_c, &g_albedo8[static_cast<size_t>(di_n) * 3]);
+        sum0 += n[0] * wt;
+        sum1 += n[1] * wt;
+        sum2 += n[2] * wt;
+        wsum += wt;
+      }
+      const float inv = 1.0f / fe::maxf(1e-6f, wsum);
+      g_denoise_row[x * 3 + 0] = sum0 * inv;
+      g_denoise_row[x * 3 + 1] = sum1 * inv;
+      g_denoise_row[x * 3 + 2] = sum2 * inv;
+    }
+    float* dst = &g_accum_rgb[static_cast<size_t>(y) * w * 3];
+    for (size_t i = 0; i < row_floats; ++i) dst[i] = g_denoise_row[i];
+  }
+}
+
+FE_EXPORT void fe_render_denoise_config(float lum, float alb, float dep) {
+  g_dn_lum = lum; g_dn_alb = alb; g_dn_dep = dep;
+}
+
+FE_EXPORT uint32_t fe_render_denoise(uint32_t iterations, uint32_t strength) {
+  if (g_fb_w == 0 || g_fb_h == 0 || g_accum_samples == 0) return 0;
+  if (g_fb_w > kDenoiseMaxRow || iterations == 0) return 0;
+  const uint32_t passes = iterations > 3 ? 3 : iterations;
+  (void)strength;
+
+  /* The buffer already holds radiance means, so the filter can compare colours
+     directly and the resolve needs no knowledge of what just happened. */
+  for (uint32_t it = 0; it < passes; ++it) {
+    const uint32_t step = 1u << it;
+    denoise_horizontal(g_fb_w, g_fb_h, step);
+    denoise_vertical(g_fb_w, g_fb_h, step);
+  }
+  return 1;
+}
+
+/* After each full pass, mark the pixels that have stopped moving and freeze
+   their sample counts. "Stopped moving" is measured against the pixel's four
+   neighbours rather than against its own history: progressive accumulation
+   smooths a pixel's history by construction, so history cannot see the noise
+   the denoiser will. A neighbourhood that agrees on colour and depth is either
+   a flat surface or the middle of a soft gradient, and neither needs samples.
+
+   Threshold is in linear light against the mean level, so it behaves the same
+   in a bright sky and a dim corner. */
+FE_EXPORT uint32_t fe_render_update_convergence(float tolerance) {
+  if (g_fb_w == 0 || g_fb_h == 0) return 0;
+  const float tol = fe::clampf(tolerance, 0.0005f, 0.5f);
+  uint32_t converged = 0;
+
+  for (uint32_t y = 0; y < g_fb_h; ++y) {
+    for (uint32_t x = 0; x < g_fb_w; ++x) {
+      const uint32_t i = y * g_fb_w + x;
+      const uint16_t n = g_pixel_samples[i];
+      if (n == 0 || g_pixel_cap[i] != 0xFFFFu) { if (g_pixel_cap[i] != 0xFFFFu) ++converged; continue; }
+
+      const float* c = &g_accum_rgb[static_cast<size_t>(i) * 3];
+      const float lum = c[0] * 0.2126f + c[1] * 0.7152f + c[2] * 0.0722f;
+      const uint16_t depth = g_depth16[i];
+
+      float worst = 0.0f;
+      const int offsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+      for (uint32_t k = 0; k < 4; ++k) {
+        const int nx = static_cast<int>(x) + offsets[k][0];
+        const int ny = static_cast<int>(y) + offsets[k][1];
+        if (nx < 0 || ny < 0 || nx >= static_cast<int>(g_fb_w) || ny >= static_cast<int>(g_fb_h)) continue;
+        const uint32_t ni = static_cast<uint32_t>(ny) * g_fb_w + static_cast<uint32_t>(nx);
+        if (g_pixel_samples[ni] == 0) continue;
+        if (g_depth16[ni] != depth) { worst = 1.0f; break; }   /* a silhouette: keep sampling */
+        const float* nc = &g_accum_rgb[static_cast<size_t>(ni) * 3];
+        const float nlum = nc[0] * 0.2126f + nc[1] * 0.7152f + nc[2] * 0.0722f;
+        const float scale = fe::maxf(0.03f, fe::maxf(lum, nlum));
+        const float diff = fe::absf(lum - nlum) / scale;
+        if (diff > worst) worst = diff;
+      }
+
+      if (worst < tol) {
+        g_pixel_cap[i] = n;
+        ++converged;
+      }
+    }
+  }
+  return converged;
+}
+
+/* How many pixels are still taking samples. Zero means every pixel has
+   converged, and the render can stop before its sample target: there is
+   nothing left for another pass to improve. */
+FE_EXPORT uint32_t fe_render_active_pixels(void) {
+  const uint32_t n = g_fb_w * g_fb_h;
+  uint32_t active = 0;
+  for (uint32_t i = 0; i < n; ++i) {
+    if (g_pixel_samples[i] < g_pixel_cap[i]) ++active;
+  }
+  return active;
+}
+
+FE_EXPORT uint32_t fe_render_get_pixel_samples(uint32_t x, uint32_t y) {
+  if (x >= g_fb_w || y >= g_fb_h) return 0;
+  return g_pixel_samples[y * g_fb_w + x];
 }
 
 FE_EXPORT uint32_t fe_render_get_accum_samples(void) {
@@ -889,14 +1210,13 @@ FE_EXPORT uint32_t fe_render_resolve_rgba8(
   float film_grain
 ) {
   if (g_fb_w == 0 || g_fb_h == 0) return 0;
-  const float inv_s = 1.0f / static_cast<float>(g_accum_samples > 0 ? g_accum_samples : 1);
 
-  /* Temporary normalized linear view for bloom extraction */
+  /* The accumulation buffer holds radiance means, so there is nothing to
+     normalise here and the bloom threshold is a real luminance. */
   uint32_t bw = 1, bh = 1;
   const bool use_bloom = bloom_strength > 1e-3f;
   if (use_bloom) {
-    /* Scale threshold by sample count so we don't allocate another full-res buffer */
-    build_bloom_pyramid(g_accum_rgb, g_fb_w, g_fb_h, 0.85f * static_cast<float>(g_accum_samples > 0 ? g_accum_samples : 1), bw, bh);
+    build_bloom_pyramid(g_accum_rgb, g_fb_w, g_fb_h, 0.85f, bw, bh);
   }
 
   const float inv_w = 1.0f / static_cast<float>(g_fb_w);
@@ -909,7 +1229,7 @@ FE_EXPORT uint32_t fe_render_resolve_rgba8(
     if (x >= static_cast<int>(g_fb_w)) x = static_cast<int>(g_fb_w) - 1;
     if (y >= static_cast<int>(g_fb_h)) y = static_cast<int>(g_fb_h) - 1;
     const uint32_t i = (static_cast<uint32_t>(y) * g_fb_w + static_cast<uint32_t>(x)) * 3;
-    return {g_accum_rgb[i + 0] * inv_s, g_accum_rgb[i + 1] * inv_s, g_accum_rgb[i + 2] * inv_s};
+    return {g_accum_rgb[i + 0], g_accum_rgb[i + 1], g_accum_rgb[i + 2]};
   };
 
   for (uint32_t y = 0; y < g_fb_h; ++y) {
@@ -926,7 +1246,7 @@ FE_EXPORT uint32_t fe_render_resolve_rgba8(
       }
 
       if (use_bloom) {
-        col += sample_bloom_bilinear(u, v, bw, bh) * (inv_s * bloom_strength);
+        col += sample_bloom_bilinear(u, v, bw, bh) * bloom_strength;
       }
 
       col = apply_tonemap_grade(col, tonemap_mode, exposure, contrast, saturation, temperature);
