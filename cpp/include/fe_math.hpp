@@ -103,6 +103,20 @@ inline float powf(float base, float exp) {
   return exp2f(exp * log2f(base));
 }
 
+/* powi(x, n) — exponentiation by squaring. Every integer exponent in the
+   renderer used to go through exp2/log2 (two polynomial evaluations and a
+   float->int round trip); a lobe with exponent 48 is six multiplies instead. */
+inline float powi(float base, uint32_t e) {
+  float r = 1.0f;
+  float b = base;
+  while (e) {
+    if (e & 1u) r *= b;
+    b *= b;
+    e >>= 1u;
+  }
+  return r;
+}
+
 inline float expf(float x) {
   return exp2f(x * 1.44269504089f);
 }

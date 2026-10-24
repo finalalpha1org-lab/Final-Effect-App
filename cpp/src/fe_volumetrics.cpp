@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_math.hpp"
 
 /* Eulerian smoke & fire core.
@@ -29,19 +30,71 @@ constexpr uint32_t MESH_INDICES = MESH_CUBES * 18u; /* 3 sign-changing edges per
 static uint32_t NX = 0, NY = 0, NZ = 0;
 static float HX = 0.f, HY = 0.f, HZ = 0.f;
 
-static float FU[VFACES], FV[VFACES], FW[VFACES];   /* face velocities */
-static float AU[VFACES], AV[VFACES], AW[VFACES];   /* advection scratch */
-static float den[VCELLS], tem[VCELLS], prs[VCELLS], divf[VCELLS], tmp[VCELLS], prs2[VCELLS];
+/* The combustion grid. Nine and a half megabytes over a 40^3 lattice, kept in
+   one lazy block: a session that never opens the smoke solver does not reserve
+   it, and neither does the kernel worker that shares this module. The block is
+   carved once by fe_vol_init and never moves, which is what lets the pointer
+   exports below stay a plain return. */
+static uint8_t* g_vol_block = nullptr;
+static uint32_t g_vol_cursor = 0;
+
+static void* vol_carve(uint32_t bytes) {
+  uint8_t* p = g_vol_block + g_vol_cursor;
+  g_vol_cursor = (g_vol_cursor + bytes + 15u) & ~15u;
+  return p;
+}
+
+static float* FU = nullptr; static float* FV = nullptr; static float* FW = nullptr;   /* face velocities */
+static float* AU = nullptr; static float* AV = nullptr; static float* AW = nullptr;   /* advection scratch */
+static float* den = nullptr; static float* tem = nullptr; static float* prs = nullptr;
+static float* divf = nullptr; static float* tmp = nullptr; static float* prs2 = nullptr;
 /* Previous accepted frame, used by the temporal filter. Two extra fields are
    cheap next to the solver arrays and give the shader a calmer field. */
-static float denPrev[VCELLS], temPrev[VCELLS];
+static float* denPrev = nullptr; static float* temPrev = nullptr;
 static float temporalAmount = 0.f;
-static float cvx[VCELLS], cvy[VCELLS], cvz[VCELLS];
-static float crl[VCELLS * 3];
+static float* cvx = nullptr; static float* cvy = nullptr; static float* cvz = nullptr;
+static float* crl = nullptr;
 
-static float meshPos[MESH_VERTS * 3], meshNrm[MESH_VERTS * 3];
-static uint32_t meshIdx[MESH_INDICES];
-static int32_t cubeVert[MESH_CUBES];
+static float* meshPos = nullptr; static float* meshNrm = nullptr;
+static uint32_t* meshIdx = nullptr;
+static int32_t* cubeVert = nullptr;
+
+/* face velocities + advection 6x VFACES, the 8 cell fields plus 3 centre
+   velocities plus a 3-wide curl 14x VCELLS, the surface mesh 6x MESH_VERTS,
+   its indices and its cube table; 512 bytes of slack absorbs the 16-byte
+   alignment padding between the blocks. */
+constexpr uint32_t kVolBytes =
+  (VFACES * 6u + VCELLS * 14u + MESH_VERTS * 6u) * 4u + MESH_INDICES * 4u + MESH_CUBES * 4u + 512u;
+
+static bool ensure_vol_buffers(void) {
+  if (g_vol_block != nullptr) return true;
+  g_vol_block = reinterpret_cast<uint8_t*>(fe::heap::alloc(kVolBytes, 16));
+  if (g_vol_block == nullptr) return false;
+  g_vol_cursor = 0;
+  FU = static_cast<float*>(vol_carve(VFACES * 4u));
+  FV = static_cast<float*>(vol_carve(VFACES * 4u));
+  FW = static_cast<float*>(vol_carve(VFACES * 4u));
+  AU = static_cast<float*>(vol_carve(VFACES * 4u));
+  AV = static_cast<float*>(vol_carve(VFACES * 4u));
+  AW = static_cast<float*>(vol_carve(VFACES * 4u));
+  den = static_cast<float*>(vol_carve(VCELLS * 4u));
+  tem = static_cast<float*>(vol_carve(VCELLS * 4u));
+  prs = static_cast<float*>(vol_carve(VCELLS * 4u));
+  divf = static_cast<float*>(vol_carve(VCELLS * 4u));
+  tmp = static_cast<float*>(vol_carve(VCELLS * 4u));
+  prs2 = static_cast<float*>(vol_carve(VCELLS * 4u));
+  denPrev = static_cast<float*>(vol_carve(VCELLS * 4u));
+  temPrev = static_cast<float*>(vol_carve(VCELLS * 4u));
+  cvx = static_cast<float*>(vol_carve(VCELLS * 4u));
+  cvy = static_cast<float*>(vol_carve(VCELLS * 4u));
+  cvz = static_cast<float*>(vol_carve(VCELLS * 4u));
+  crl = static_cast<float*>(vol_carve(VCELLS * 12u));
+  meshPos = static_cast<float*>(vol_carve(MESH_VERTS * 12u));
+  meshNrm = static_cast<float*>(vol_carve(MESH_VERTS * 12u));
+  meshIdx = static_cast<uint32_t*>(vol_carve(MESH_INDICES * 4u));
+  cubeVert = static_cast<int32_t*>(vol_carve(MESH_CUBES * 4u));
+  return true;
+}
 
 static uint32_t meshVertCount = 0, meshIdxCount = 0;
 static float stats[6] = {0, 0, 0, 0, 0, 0}; /* divBefore, divAfter, totalDensity, maxTemp, maxSpeed, steps */
@@ -433,6 +486,7 @@ extern "C" {
 
 FE_EXPORT int32_t fe_vol_init(uint32_t nx, uint32_t ny, uint32_t nz) {
   if (nx < 8 || ny < 8 || nz < 8 || nx > VMAX || ny > VMAX || nz > VMAX) return -1;
+  if (!ensure_vol_buffers()) return -4;   /* the device refused the memory */
   NX = nx; NY = ny; NZ = nz;
   HX = 1.f / float(nx); HY = 1.f / float(ny); HZ = 1.f / float(nz);
   for (uint32_t n = 0; n < VCELLS; ++n) { den[n] = 0.f; tem[n] = 0.f; prs[n] = 0.f; divf[n] = 0.f; tmp[n] = 0.f; prs2[n] = 0.f; cvx[n] = 0.f; cvy[n] = 0.f; cvz[n] = 0.f; crl[n * 3] = crl[n * 3 + 1] = crl[n * 3 + 2] = 0.f; }

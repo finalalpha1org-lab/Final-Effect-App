@@ -394,9 +394,26 @@ const OWIDX=(()=>{const a=[];for(let j=0;j<TG;j++)for(let i=0;i<TG;i++){const A=
  const edge=(e,k)=>e==0?k:e==1?TG*TN+k:e==2?k*TN:k*TN+TG;
  for(let e=0;e<4;e++)for(let k=0;k<TG;k++){const t0=edge(e,k),t1=edge(e,k+1),s0=TV+e*TN+k,s1=s0+1;a.push(t0,s0,t1,t1,s0,s1)}
  return new THREE.BufferAttribute(new Uint16Array(a),1)})();
-const OWZA=new THREE.BufferAttribute(new Float32Array(TVT*4),4),OWZB=new THREE.BufferAttribute(new Float32Array(TVT*2),2),OW_TOPOLOGY=new Map([[TG,{seg:TG,tn:TN,tv:TV,tvt:TVT,h3:H3,index:OWIDX,weightsA:OWZA,weightsB:OWZB}]]);
+/* Three vec4 weight sets, exactly the three attributes the detail shader
+   declares. The cached 64-segment topology used to ship only A and B, so
+   `owBuildNode` wrote `surfaceWeightsC: undefined` into every tile geometry.
+   Rendering survived that (three just skips the missing attribute) but
+   `geometry.dispose()` walks `for (const name in geometry.attributes)` and
+   called `attributes.remove(undefined)`, which throws inside three — every
+   tile release broke the frame: "Open World: remove@three.min.js". One
+   undefined attribute was the whole crash. */
+const OWZA=new THREE.BufferAttribute(new Float32Array(TVT*4),4),OWZB=new THREE.BufferAttribute(new Float32Array(TVT*4),4),OWZC=new THREE.BufferAttribute(new Float32Array(TVT*4),4);
+const OW_TOPOLOGY=new Map([[TG,{seg:TG,tn:TN,tv:TV,tvt:TVT,h3:H3,index:OWIDX,weightsA:OWZA,weightsB:OWZB,weightsC:OWZC}]]);
+/* Every tile of one segment count shares these attribute objects. Disposing
+   one tile must not delete the GPU buffer its siblings are still drawing from,
+   so ownership is tracked here and the shared buffers are detached before the
+   per-tile release. */
+const OW_SHARED=new WeakSet();
 function owTileSegments(n){return n.size>=512?32:64}
-function owTileTopology(seg){let t=OW_TOPOLOGY.get(seg);if(t)return t;const tn=seg+1,tv=tn*tn,tvt=tv+4*tn,h3=seg+3,ix=[];for(let j=0;j<seg;j++)for(let i=0;i<seg;i++){const a=j*tn+i,b=(j+1)*tn+i,c=a+1,d=b+1;ix.push(a,b,c,b,d,c)}const edge=(e,k)=>e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg;for(let e=0;e<4;e++)for(let k=0;k<seg;k++){const a=edge(e,k),b=edge(e,k+1),c=tv+e*tn+k,d=c+1;ix.push(a,c,b,b,c,d)}t={seg,tn,tv,tvt,h3,index:new THREE.BufferAttribute(new Uint16Array(ix),1),weightsA:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsB:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsC:new THREE.BufferAttribute(new Float32Array(tvt*4),4)};OW_TOPOLOGY.set(seg,t);return t}
+function owTileTopology(seg){let t=OW_TOPOLOGY.get(seg);if(t)return t;const tn=seg+1,tv=tn*tn,tvt=tv+4*tn,h3=seg+3,ix=[];for(let j=0;j<seg;j++)for(let i=0;i<seg;i++){const a=j*tn+i,b=(j+1)*tn+i,c=a+1,d=b+1;ix.push(a,b,c,b,d,c)}const edge=(e,k)=>e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg;for(let e=0;e<4;e++)for(let k=0;k<seg;k++){const a=edge(e,k),b=edge(e,k+1),c=tv+e*tn+k,d=c+1;ix.push(a,c,b,b,c,d)}t={seg,tn,tv,tvt,h3,index:new THREE.BufferAttribute(new Uint16Array(ix),1),weightsA:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsB:new THREE.BufferAttribute(new Float32Array(tvt*4),4),weightsC:new THREE.BufferAttribute(new Float32Array(tvt*4),4)};OW_SHARED.add(t.index);OW_SHARED.add(t.weightsA);OW_SHARED.add(t.weightsB);OW_SHARED.add(t.weightsC);OW_TOPOLOGY.set(seg,t);return t}
+/* The cached topology is created before this helper exists, so it is registered
+   once here rather than inside the factory. */
+for(const t of OW_TOPOLOGY.values()){OW_SHARED.add(t.index);OW_SHARED.add(t.weightsA);OW_SHARED.add(t.weightsB);if(t.weightsC)OW_SHARED.add(t.weightsC)}
 let owTerrainMat=null;
 function owMakeTerrainMat(){const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:tm.normalMap,normalScale:new THREE.Vector2(.08,.08),side:THREE.DoubleSide});m.color.setScalar(.9);m.envMapIntensity=.5;
  injectDetail(m,false);const f=m.onBeforeCompile;m.onBeforeCompile=function(s,r){f.call(this,s,r);s.fragmentShader=s.fragmentShader.replace('uLit*(grm','0.*(grm')};m.customProgramCacheKey=()=>'ow-terrain-v1';return m}
@@ -417,10 +434,26 @@ function owBuildNode(n){const top=owTileTopology(owTileSegments(n)),seg=top.seg,
  for(let j=0;j<tn;j++)for(let i=0;i<tn;i++){const k=j*tn+i,x=n.x0+i*sp,z=n.z0+j*sp,c=(j+1)*h3+i+1,h=hg[c],dx=(hg[c+1]-hg[c-1])/(2*sp),dz=(hg[c+h3]-hg[c-h3])/(2*sp),nl=Math.hypot(dx,1,dz);
   pos[k*3]=x;pos[k*3+1]=h;pos[k*3+2]=z;nor[k*3]=-dx/nl;nor[k*3+1]=1/nl;nor[k*3+2]=-dz/nl;owColor(x,z,h,Math.hypot(dx,dz),TMP3);col[k*3]=TMP3[0];col[k*3+1]=TMP3[1];col[k*3+2]=TMP3[2];uv[k*2]=x*.01;uv[k*2+1]=z*.01;if(h<mn)mn=h;if(h>mx)mx=h}
  for(let e=0;e<4;e++)for(let k=0;k<tn;k++){const src=e===0?k:e===1?seg*tn+k:e===2?k*tn:k*tn+seg,d=tv+e*tn+k;pos[d*3]=pos[src*3];pos[d*3+1]=pos[src*3+1]-skd;pos[d*3+2]=pos[src*3+2];nor.copyWithin(d*3,src*3,src*3+3);col.copyWithin(d*3,src*3,src*3+3);uv[d*2]=uv[src*2];uv[d*2+1]=uv[src*2+1]}
- const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.setAttribute('surfaceWeightsA',top.weightsA);g.setAttribute('surfaceWeightsB',top.weightsB);g.setAttribute('surfaceWeightsC',top.weightsC);g.setIndex(top.index);
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nor,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+ /* Never store a hole in geometry.attributes: an undefined entry is harmless
+    while drawing and fatal when the geometry is released. */
+ const put=(name,attr)=>{if(attr&&attr.array)g.setAttribute(name,attr)};
+ put('surfaceWeightsA',top.weightsA);put('surfaceWeightsB',top.weightsB);put('surfaceWeightsC',top.weightsC);if(top.index)g.setIndex(top.index);
  g.boundingSphere=new THREE.Sphere(new THREE.Vector3(n.cx,(mn+mx)/2,n.cz),Math.hypot(n.size*.5*1.42,(mx-mn)/2+skd)+1);
  if(!owTerrainMat)owTerrainMat=owMakeTerrainMat();const m=new THREE.Mesh(g,owTerrainMat);m.receiveShadow=true;m.castShadow=false;m.visible=false;m.matrixAutoUpdate=false;m.name='OW tile L'+n.l;OW.root.add(m);n.mesh=m;n.segments=seg;n.cy=(mn+mx)/2;n.built=true;if(mode=='wire')owTerrainMat.wireframe=true}
-function owDisposeNode(n){if(n.mesh){OW.root.remove(n.mesh);n.mesh.geometry.dispose();n.mesh=null}n.built=false}
+/* Release one tile. Shared topology attributes are detached first, and the
+   whole release is guarded: a renderer that refuses one geometry must not take
+   the streaming loop down with it. */
+function owReleaseGeometry(g){
+ if(!g)return;
+ try{
+  const at=g.attributes||{};
+  for(const name in at){const a=at[name];if(!a||!a.array||OW_SHARED.has(a))delete at[name]}
+  if(g.index&&OW_SHARED.has(g.index))g.index=null;
+  g.dispose();
+ }catch(e){console.warn('Open World: geometry release skipped —',e&&e.message)}
+}
+function owDisposeNode(n){if(n.mesh){OW.root.remove(n.mesh);owReleaseGeometry(n.mesh.geometry);n.mesh.geometry=null;n.mesh=null}n.built=false}
 function owInitTiles(){owDisposeAllTiles();const half=OW.P.half||OW.P.size/2,RS=2048,nr=Math.ceil(OW.P.size/RS);roots=[];for(let j=0;j<nr;j++)for(let i=0;i<nr;i++)roots.push(owMkNode(5,-OW.P.size/2+i*RS,-OW.P.size/2+j*RS,RS,null));owQ=QS[OW.Q]}
 function owDisposeAllTiles(){for(const n of ownodes)owDisposeNode(n);ownodes.length=0;roots=[];prevDrawn=[];drawn.length=0;blocks.clear()}
 function owTileInView(n){owCullSphere.center.set(n.cx,n.cy,n.cz);const terrainRadius=Math.hypot(n.size*.72,320),prefetchMargin=Math.max(256,n.size*.4);owCullSphere.radius=terrainRadius+prefetchMargin;return owViewFrustum.intersectsSphere(owCullSphere)}
@@ -476,7 +509,7 @@ void main(){vec3 V=normalize(cameraPosition-vW);float kind=vI2.y,wd=max(vI2.x,1.
  float a=mix(.5,.94,dep);a=max(a,foam*.92);a*=vI.z*(kind>.5?smoothstep(0.,.1,min(vUv.x,1.-vUv.x))*.5+.5:1.);
  float dist=length(vW-cameraPosition),fog=1.-exp(-fd*fd*dist*dist);col=mix(col,fc,fog);gl_FragColor=vec4(col,a*(1.-fog*.35));}`});
  owWMat.name='OW river/lake water';return owWMat}
-function owDisposeWater(){for(const m of owWMeshes){OW.root.remove(m);m.geometry.dispose()}owWMeshes.length=0;if(owMist){OW.root.remove(owMist);owMist.geometry.dispose();owMist=null}}
+function owDisposeWater(){for(const m of owWMeshes){OW.root.remove(m);owReleaseGeometry(m.geometry)}owWMeshes.length=0;if(owMist){OW.root.remove(owMist);owReleaseGeometry(owMist.geometry);owMist=null}}
 function owRiverMesh(r,sea){const m=r.x.length,pos=new Float32Array(m*9),nor=new Float32Array(m*9),uv=new Float32Array(m*6),inf=new Float32Array(m*12),inf2=new Float32Array(m*6),idx=[];
  const surf=new Float32Array(m);for(let i=0;i<m;i++){surf[i]=r.bed[i]+r.dW[i];if(r.end==='sea'){const e=Math.max(0,1-(r.cum[m-1]-r.cum[i])/70);surf[i]=Math.max(surf[i],sea+.2*e+.02)}}
  for(let i=0;i<m;i++){const a=Math.max(0,i-1),b=Math.min(m-1,i+1);let tx=r.x[b]-r.x[a],tz=r.z[b]-r.z[a];const tl=Math.hypot(tx,tz)||1;tx/=tl;tz/=tl;const hw=r.w[i]*1.18,L=Math.max(.5,r.cum[b]-r.cum[a]),dy=(surf[b]-surf[a])/L,slope=Math.min(2.5,Math.max(0,-dy)),y=surf[i];

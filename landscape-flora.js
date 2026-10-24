@@ -21,14 +21,64 @@
   /* Kernel order — every name here maps to one row of `kSpecies` in
    * `cpp/src/fe_flora.cpp`. Broadleaves grow by space colonisation; the two
    * herbaceous species at the end are grown by a strict L-system. */
-  const KINDS = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern'];
+  const KINDS = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern',
+    /* Ground cover, succulents and palms: same table, same buffers, own
+       builders in the kernel. Order is the C++ species index. */
+    'grass', 'tallgrass', 'daisy', 'tulip', 'lavender', 'saguaro', 'barrel', 'agave', 'palm', 'pebble',
+    /* Conifers and desert scrub. */
+    'pine', 'spruce', 'krumm', 'juniper', 'prickly', 'joshua', 'sage',
+    /* The generic wildflower tuft the biome tables scatter as "flower". */
+    'flower'];
+  /* Species whose whole mesh — not leaf cards around a trunk — is grown in
+     C++. These are the plants with real petal, rib and leaflet geometry. */
+  const PLANT_KINDS = ['grass', 'tallgrass', 'daisy', 'tulip', 'lavender', 'saguaro', 'barrel', 'agave', 'palm', 'pebble',
+    'pine', 'spruce', 'krumm', 'juniper', 'prickly', 'joshua', 'sage', 'flower'];
+  /* Species that grow leaf cards in the kernel: wood + foliage (+ blossom). */
+  const CARD_KINDS = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'fern', 'treefern'];
+  /* Which material slot each kernel part feeds, per kind. Slot order matches
+     the part list the studio already builds for that species. */
+  const PART_PLAN = {
+    grass: [[1, 0]],
+    tallgrass: [[1, 0]],
+    /* stem, leaf, bloom, and the darkest part of the head (a composite's disc
+       florets, a tulip's stamens, a lavender bud). */
+    daisy: [[0, 0], [1, 1], [2, 2], [3, 3]],
+    tulip: [[0, 0], [1, 1], [2, 2], [3, 3]],
+    lavender: [[0, 0], [1, 1], [2, 2], [3, 3]],
+    flower: [[0, 0], [1, 1], [2, 2], [3, 3]],
+    saguaro: [[0, 0]],
+    barrel: [[0, 0], [2, 1]],
+    agave: [[1, 0]],
+    palm: [[0, 0], [1, 1]],
+    pebble: [[0, 0]],
+    pine: [[0, 0], [1, 1]],
+    spruce: [[0, 0], [1, 1]],
+    krumm: [[0, 0], [1, 1]],
+    juniper: [[0, 0], [1, 1]],
+    prickly: [[0, 0], [2, 1]],
+    joshua: [[0, 0], [1, 1]],
+    sage: [[0, 0], [1, 1]],
+    /* Card-grown species: the foliage (and blossom) live in the card buffer. */
+    oak: [[0, 0], [1, 1], [2, 2]],
+    birch: [[0, 0], [1, 1], [2, 2]],
+    acacia: [[0, 0], [1, 1]],
+    shrub: [[0, 0], [1, 1], [2, 2]],
+    ashbush: [[0, 0], [1, 1]],
+    fern: [[0, 0], [1, 1]],
+    treefern: [[0, 0], [1, 1]],
+    deadtree: [[0, 0]]
+  };
   const ROCK_KINDS = ['granite', 'sandstone', 'basalt'];
 
   const state = {
     ready: false,
     used: 0,
     fallbacks: 0,
-    lastError: null
+    lastError: null,
+    /* The seed each species was actually grown from. The impostor has to be
+       baked from the very same plant, or a tree changes shape as it crosses
+       the far-tier boundary. */
+    seeds: {}
   };
 
   function core() {
@@ -177,6 +227,319 @@
     return c.lsystemRun(iterations, seed);
   }
 
+  /* One grown plant, split into the material groups the studio renders.
+   * Returns { groups: [{ slot, index }] } where `slot` is the legacy part's
+   * position and `index` is a Uint32Array for that group, or null when the
+   * kernel is absent. The attributes are shared between groups — the same
+   * vertex buffer, three index sets — so a three-material plant costs one
+   * upload, not three. */
+  function plantParts(kind, seed, detail) {
+    const c = core();
+    if (!c || typeof c.floraTree !== 'function') {
+      state.fallbacks++;
+      return null;
+    }
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return null;
+    const plan = PART_PLAN[KINDS[id]];
+    if (!plan) return null;
+    const s = (seed === undefined || seed === null) ? ((Math.random() * 4294967295) >>> 0) : (seed >>> 0);
+    try {
+      pushShape(c);
+      const mesh = c.floraTree(id, s || 1, detailLevel(detail));
+      if (!mesh) { state.fallbacks++; return null; }
+      const idx = new Uint32Array(mesh.idx);
+      const part = mesh.part;
+      const groups = plan.map(([kernelPart, slot]) => {
+        const out = [];
+        for (let i = 0; i < idx.length; ++i) {
+          if (Math.round(part[idx[i]]) === kernelPart) out.push(idx[i]);
+        }
+        return { slot, index: new Uint32Array(out) };
+      }).filter((g) => g.index.length);
+      if (!groups.length) { state.fallbacks++; return null; }
+      const base = toGeometry(mesh);
+      if (!base) return null;
+      state.ready = true;
+      state.used++;
+      return { base, groups, verts: mesh.verts };
+    } catch (error) {
+      state.lastError = error && error.message;
+      state.fallbacks++;
+      return null;
+    }
+  }
+
+  /* Turn a plant group into its own geometry: same attribute buffers, its own
+     index, so one kernel mesh feeds every material slot. */
+  function groupGeometry(base, index) {
+    const THREE = three();
+    if (!THREE || !base) return null;
+    const g = new THREE.BufferGeometry();
+    for (const name in base.attributes) g.setAttribute(name, base.attributes[name]);
+    g.setIndex(new THREE.BufferAttribute(index, 1));
+    g.boundingSphere = base.boundingSphere;
+    g.boundingBox = base.boundingBox;
+    return g;
+  }
+
+  /* One call grows a whole plant in the kernel and hands back the geometry for
+   * every material slot the studio renders. Card-grown trees (oak, birch, …)
+   * get their foliage and blossom from the card buffer the kernel filled with
+   * the wood; everything else is split out of the mesh itself by the per-vertex
+   * part id. Either way the studio receives BufferGeometry and nothing else —
+   * no asset is authored in JavaScript. */
+  function grownAsset(kind, seed, detail, planOverride) {
+    const c = core();
+    if (!c || typeof c.floraTree !== 'function') return null;
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return null;
+    const name = KINDS[id];
+    const plan = planOverride || PART_PLAN[name] || [];
+    const s = (seed === undefined || seed === null) ? ((Math.random() * 4294967295) >>> 0) : (seed >>> 0);
+    state.seeds[name] = s;
+    const indexOf = (idx, partArr, part) => {
+      const out = [];
+      for (let i = 0; i < idx.length; ++i) if (Math.round(partArr[idx[i]]) === part) out.push(idx[i]);
+      return out;
+    };
+    try {
+      pushShape(c);
+      const mesh = c.floraTree(id, s || 1, detailLevel(detail));
+      if (!mesh || !mesh.verts) return null;
+      const base = toGeometry(mesh);
+      if (!base) return null;
+      const slots = [];
+      const cards = (CARD_KINDS.indexOf(name) >= 0 && typeof c.floraCards === 'function')
+        ? c.floraCards() : null;
+      if (cards && cards.verts) {
+        /* Wood from the mesh, foliage and blossom from the cards. */
+        for (const [part, slot] of plan) {
+          if (part !== 0) continue;
+          const idx = indexOf(mesh.idx, mesh.part, 0);
+          if (idx.length) slots.push({ slot, geometry: groupGeometry(base, new Uint32Array(idx)) });
+        }
+        const cardBase = toGeometry(cards);
+        for (const [part, slot] of plan) {
+          if (part === 0) continue;
+          const idx = indexOf(cards.idx, cards.part, part);
+          if (idx.length) slots.push({ slot, geometry: groupGeometry(cardBase, new Uint32Array(idx)) });
+        }
+        state.ready = true;
+        state.used++;
+        return { slots, verts: mesh.verts, cards: cards.cards, leaves: mesh.leaves };
+      }
+      for (const [part, slot] of plan) {
+        /* -1 means "the whole mesh into this slot": a plant whose parts share
+           one material does not need to be split at all. */
+        if (part < 0) { slots.push({ slot, geometry: base }); continue; }
+        const idx = indexOf(mesh.idx, mesh.part, part);
+        if (!idx.length) continue;
+        slots.push({ slot, geometry: groupGeometry(base, new Uint32Array(idx)) });
+      }
+      if (!slots.length) {
+        /* No part plan: the whole mesh is one material. */
+        slots.push({ slot: 0, geometry: base });
+      }
+      state.ready = true;
+      state.used++;
+      return { slots, verts: mesh.verts, cards: 0, leaves: mesh.leaves };
+    } catch (error) {
+      state.lastError = error && error.message;
+      state.fallbacks++;
+      return null;
+    }
+  }
+
+  /* ---- buildings -------------------------------------------------------- *
+   * The four street shells the studio places are grown by the same kernel, in
+   * real metres: 3 m storeys, 3.6 m bays, a 1.3 m balcony, a 35 degree roof.
+   * They keep the studio's three material slots (wall / roof / base) and, like
+   * a plant, hand back one BufferGeometry per slot rather than a mesh in JS. */
+  const BUILDINGS = ['house', 'block', 'mid', 'tower'];
+  const BUILDING_PLAN = {
+    house: [[0, 0], [1, 1], [2, 2]],
+    /* A flat-roofed block has no roof mesh of its own: the parapet, plant deck
+       and canopy are all the concrete slot, so part 1 is unused. */
+    block: [[0, 0], [2, 1]],
+    mid: [[0, 0], [2, 1]],
+    tower: [[0, 0], [2, 1]]
+  };
+  function buildingAsset(kind, seed, detail, planOverride) {
+    const c = core();
+    if (!c || typeof c.building !== 'function') return null;
+    const id = typeof kind === 'number' ? kind : BUILDINGS.indexOf(kind);
+    if (id < 0 || id >= BUILDINGS.length) return null;
+    const plan = planOverride || BUILDING_PLAN[BUILDINGS[id]] || [];
+    const s = (seed === undefined || seed === null) ? ((Math.random() * 4294967295) >>> 0) : (seed >>> 0);
+    try {
+      const mesh = c.building(id, s || 1, detailLevel(detail));
+      if (!mesh || !mesh.verts) return null;
+      const base = toGeometry(mesh);
+      if (!base) return null;
+      const slots = [];
+      for (const [part, slot] of plan) {
+        const idx = [];
+        for (let i = 0; i < mesh.idx.length; ++i) {
+          if (Math.round(mesh.part[mesh.idx[i]]) === part) idx.push(mesh.idx[i]);
+        }
+        if (!idx.length) continue;
+        slots.push({ slot, geometry: groupGeometry(base, new Uint32Array(idx)) });
+      }
+      if (!slots.length) return null;
+      state.ready = true;
+      state.used++;
+      return { slots, verts: mesh.verts };
+    } catch (error) {
+      state.lastError = error && error.message;
+      return null;
+    }
+  }
+
+  /* ---- impostors -------------------------------------------------------- *
+   * A tree three kilometres away is a handful of pixels. The kernel bakes it
+   * from the same mesh it just grew — eight azimuths, key-lit, supersampled —
+   * and hands back the atlas plus the quad size in metres. This turns that into
+   * the texture the studio samples; no art is authored here, and a species that
+   * has not been baked falls back to its low-detail mesh.
+   *
+   * The atlas is cached per kind and seed, because baking a 9 000-vertex oak
+   * costs a few milliseconds and a species only ever needs one. */
+  const IMPOSTOR_VIEWS = 8;
+  const impostorCache = new Map();
+  const impostorPending = new Map();
+  function seedFor(kind) {
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0) return undefined;
+    return state.seeds[KINDS[id]];
+  }
+  /* Which plant, at which detail: the key that makes an atlas reusable. */
+  function impostorKey(id, seed, level) { return id + ':' + seed + ':' + level; }
+  function impostorSeed(id, seed) {
+    /* Prefer the seed the near mesh was grown from; without one the species
+       would pop into a different silhouette at the tier boundary. */
+    if (seed !== undefined && seed !== null) return seed >>> 0;
+    const grown = seedFor(id);
+    return grown === undefined ? 7331 + id * 977 : grown;
+  }
+
+  /* The texture half: pure main-thread work, because a DataTexture cannot be
+     created anywhere else. Everything expensive has already happened. */
+  function atlasFromBake(baked, id) {
+    const THREE = three();
+    if (!THREE || !baked || !baked.pixels || !baked.views) return null;
+    const tex = new THREE.DataTexture(baked.pixels, baked.width * baked.views, baked.height,
+      THREE.RGBAFormat, THREE.UnsignedByteType);
+    /* A distant plant is a few texels tall, so the atlas needs a mip chain or
+       it boils as the camera drifts. Both tile dimensions are powers of two, so
+       the chain is valid everywhere. */
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    /* The bytes are already display-encoded, so they must not be decoded
+       again on the way in. */
+    if (THREE.LinearEncoding !== undefined) tex.encoding = THREE.LinearEncoding;
+    tex.name = KINDS[id] + ' impostor';
+    return {
+      kind: KINDS[id],
+      texture: tex,
+      views: baked.views,
+      width: baked.width,
+      height: baked.height,
+      quadW: baked.quadW,
+      quadH: baked.quadH,
+      coverage: baked.coverage,
+      cropU: baked.cropU,
+      cropV: baked.cropV,
+      offU: baked.offU,
+      offThread: !!baked.offThread
+    };
+  }
+
+  /* The synchronous path. Used when there is no worker, and as the last resort
+     when one exists but will not run. */
+  function impostor(kind, seed, detail) {
+    const c = core();
+    if (!c || typeof c.impostor !== 'function') return null;
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return null;
+    const s = impostorSeed(id, seed);
+    const level = detailLevel(detail);
+    const key = impostorKey(id, s, level);
+    const hit = impostorCache.get(key);
+    if (hit) return hit;
+    let baked;
+    try { baked = c.impostor(id, s, level, IMPOSTOR_VIEWS); }
+    catch (error) { state.lastError = error && error.message; return null; }
+    const out = atlasFromBake(baked, id);
+    if (out) impostorCache.set(key, out);
+    return out;
+  }
+
+  /* ---- off-thread baking ------------------------------------------------ *
+   * One species' atlas is 20–36 ms of rasterising on this machine, which is a
+   * dropped frame on a phone. It is pure function-of-inputs work, so it runs on
+   * the kernel worker when there is one; the texture is still created here.
+   * Callers get a promise either way, and a species already cached or already
+   * baking resolves immediately to the same object. */
+  let kernelChannel = null;
+  function kernel() {
+    if (kernelChannel) return kernelChannel;
+    const api = root.FEKernelWorker;
+    if (!api || typeof api.create !== 'function') return null;
+    kernelChannel = api.create({ api: core() || root.FELandscapeCore });
+    return kernelChannel;
+  }
+  function impostorAsync(kind, seed, detail) {
+    const c = core();
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return Promise.resolve(null);
+    const s = impostorSeed(id, seed);
+    const level = detailLevel(detail);
+    const key = impostorKey(id, s, level);
+    const hit = impostorCache.get(key);
+    if (hit) return Promise.resolve(hit);
+    const running = impostorPending.get(key);
+    if (running) return running;
+    const channel = c ? kernel() : null;
+    if (!channel) return Promise.resolve(impostor(kind, s, level));
+    const task = channel.run('impostor', { kind: id, seed: s, detail: level, views: IMPOSTOR_VIEWS })
+      .then((baked) => {
+        impostorPending.delete(key);
+        if (!baked) return null;
+        baked.offThread = channel.mode() === 'worker';
+        const out = atlasFromBake(baked, id);
+        /* The detail preset can change while a bake is in flight; a stale atlas
+           must not be cached under the new key. */
+        if (!out) return null;
+        impostorCache.set(key, out);
+        return out;
+      })
+      .catch((error) => {
+        impostorPending.delete(key);
+        state.lastError = (error && error.message) || String(error);
+        /* A worker that accepts jobs and then fails is worse than none: fall
+           back to doing it here, once, and let the cache keep the result. */
+        const out = impostor(kind, s, level);
+        return out;
+      });
+    impostorPending.set(key, task);
+    return task;
+  }
+  function impostorCount() { return impostorCache.size; }
+  function impostorBusy() { return impostorPending.size; }
+  /* The detail preset changed: the near meshes are regrown, so the atlases
+     baked from the old ones have to go with them. */
+  function impostorReset() {
+    for (const [, entry] of impostorCache) {
+      try { entry.texture.dispose(); } catch (error) { state.lastError = error && error.message; }
+    }
+    impostorCache.clear();
+    impostorPending.clear();
+  }
+
   function counts() {
     const c = core();
     if (!c || typeof c.floraCounts !== 'function') return { species: 0, rocks: 0 };
@@ -184,8 +547,10 @@
   }
 
   root.FELandscapeFlora = {
-    version: '1.0.0',
+    version: '1.1.0',
     KINDS,
+    PLANT_KINDS,
+    PART_PLAN,
     ROCK_KINDS,
     state,
     shape,
@@ -198,6 +563,20 @@
     rules,
     counts,
     toGeometry,
+    plantParts,
+    grownAsset,
+    impostor,
+    impostorAsync,
+    impostorCount,
+    impostorBusy,
+    impostorReset,
+    seedFor,
+    IMPOSTOR_VIEWS,
+    BUILDINGS,
+    BUILDING_PLAN,
+    buildingAsset,
+    CARD_KINDS,
+    groupGeometry,
     detailLevel
   };
 })(typeof window !== 'undefined' ? window : globalThis);

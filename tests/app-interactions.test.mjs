@@ -47,13 +47,19 @@ test('OrbitControls stay locked during Explore pointer-look and restore with the
   assert.ok(terrain.includes('Object.assign(oc,exploreSaved.controls)'));
 });
 
-test('Edit mode waits for an explicit sub-tool choice instead of opening Move automatically', () => {
-  const start=app.indexOf('function renderSubToolbar()'),end=app.indexOf('window.renderSubToolbar',start);
+test('Object tools wait for an explicit choice instead of opening Move automatically', () => {
+  const start=app.indexOf('function renderObjectTools()'),end=app.indexOf('window.renderObjectTools',start);
   assert.ok(start>=0&&end>start);
   const body=app.slice(start,end);
   assert.ok(body.includes('closeAllFloatingPanels()'));
-  const code=body.replace(/toolbar\.innerHTML\s*=\s*`[\s\S]*?`;/,'');
-  assert.ok(!/openFloatingPanel\(['"]move['"]\)/.test(code),'the explicit Move button may open its panel, but Edit entry must not call it');
+  /* The Move button may exist as a menu entry (a quoted action string), but
+     building the menu must not *call* it. */
+  assert.ok(!/openFloatingPanel\(['"]move['"]\)\s*;/.test(body),'the menu may list Move, but entry must not open it');
+  assert.match(body, /choose one/,'the user is told to pick a tool instead of getting one chosen for them');
+  /* Edit Mode is a real mode with its own toolbar; it must not be reached by
+     swapping the object toolbar for a list of transform buttons. */
+  assert.ok(!app.includes('function renderSubToolbar()'));
+  assert.ok(app.includes("window.FEEditMode?.enter()"));
 });
 
 test('Annotate creates world-space 3D lines and is bounded to the actual viewport', () => {

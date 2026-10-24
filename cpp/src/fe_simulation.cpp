@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_math.hpp"
 
 namespace {
@@ -40,10 +41,26 @@ static int32_t  g_sc_next[kMaxDeformNodes];
 static float    g_node_strain[kMaxDeformNodes];
 static uint16_t g_node_strain_deg[kMaxDeformNodes];
 
-static float    g_field_a[kMaxGridNodes];
-static float    g_field_b[kMaxGridNodes];
-static float    g_field_foam[kMaxGridNodes];
-static float    g_field_speed[kMaxGridNodes];
+/* The surface-reconstruction grid. Four float fields over 97^3 nodes are
+   14.6 MB: the largest single block in the module and one that only the liquid
+   mesher ever reads. It comes from the lazy heap, so a studio that never runs
+   a fluid simulation does not reserve it. */
+static float*   g_field_a = nullptr;
+static float*   g_field_b = nullptr;
+static float*   g_field_foam = nullptr;
+static float*   g_field_speed = nullptr;
+
+static bool ensure_surface_grid(void) {
+  if (g_field_a != nullptr) return true;
+  constexpr uint32_t kNodeBytes = kMaxGridNodes * sizeof(float);
+  uint8_t* base = reinterpret_cast<uint8_t*>(fe::heap::alloc(kNodeBytes * 4u, 16));
+  if (base == nullptr) return false;
+  g_field_a     = reinterpret_cast<float*>(base);
+  g_field_b     = reinterpret_cast<float*>(base + kNodeBytes);
+  g_field_foam  = reinterpret_cast<float*>(base + kNodeBytes * 2u);
+  g_field_speed = reinterpret_cast<float*>(base + kNodeBytes * 3u);
+  return true;
+}
 
 static uint32_t g_edge_lo[kEdgeCacheCap];
 static uint32_t g_edge_hi[kEdgeCacheCap];
@@ -1171,6 +1188,7 @@ FE_EXPORT int32_t fe_sim_reconstruct_liquid_mesh(
   out_counts_2[0] = 0u;
   out_counts_2[1] = 0u;
   if (particle_count == 0u || max_vertices < 3u || max_indices < 3u) return 0;
+  if (!ensure_surface_grid()) return -2;   /* the device refused the memory */
 
   const float h = maxf(smoothing_length, 0.04f);
   float low_x, low_y, low_z, high_x, high_y, high_z;

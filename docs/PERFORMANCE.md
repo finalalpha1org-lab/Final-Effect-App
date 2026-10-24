@@ -36,6 +36,131 @@ this repository or explicitly marked as not done.
 | Rain → PBR roughness + puddle ripples | wet surfaces are a shader uniform, not a particle system |
 | Chunk-level *Fill unpainted ground only* | a painted 256 m tile is never speckled by a fill |
 
+## The two stalls that were actually measurable
+
+The landscaping studio had two costs that were large enough to measure on a
+desktop CPU, and neither of them was the one that looked expensive. Both were
+found by timing the call, not by reading the shader.
+
+**`fe_surface_detail` ran five noise evaluations per texel.** It is the kernel
+that bakes the triplanar detail normal/roughness field for every PBR surface
+(terrain 256², foliage and leaf cards 128²). Every texel sampled the same height
+noise five times — once for itself and once per Sobel neighbour — so a 512² bake
+re-evaluated its own height field 1.3 million times.
+
+It now runs two passes: pass one writes the height into a `w*h` float scratch
+buffer, pass two reads that buffer through the *same* wrapped `iL/iR/jD/jU`
+indices and the same 5-tap sign convention. The output is **bit-identical**, not
+approximately equal — the 12 baseline hashes in `tests/surface-detail.test.mjs`
+(4 surface kinds × 3 sizes) were compared byte for byte against the old build,
+because a different kernel would silently change every surface in the app.
+
+| Bake | Before | After |
+| --- | --- | --- |
+| 256 × 256 | 75.9 ms | **13.3 ms** |
+| 512 × 512 | 302.6 ms | **43.1 ms** |
+
+**The landscaping renderer was re-rendering the shadow map every frame.** The
+3D workspace viewport already gated its shadow pass to 30 Hz, but the studio's
+`renderer.shadowMap.autoUpdate` was still on, so a static scene paid for a full
+2048² depth pass at display refresh rate. It now uses the workspace rule:
+
+* `autoUpdate = false`; `shadowCadence(now)` arms `needsUpdate` when the light
+  rig reports dirty or when 33 ms have passed since the last update;
+* only `updateDirectionalShadowFocus` sets dirty, and it already throttles
+  itself to 220 ms with a ±2 m snap, so panning the camera does not smear the
+  shadow;
+* latency when the user actually moves the sun is ≤ 33 ms, i.e. one or two
+  frames — no visible lag, and no blur filter paying for a stale map.
+
+`tests/shadow-cadence.test.mjs` slices the real function out of
+`terrain-main-04.js` and drives it with a fake renderer, so the test fails if
+someone raises the interval or forgets to arm the first update.
+
+## Instance transforms: the settle stutter
+
+Every plant in the studio is one instance in an `InstancedMesh`, and the matrix
+that places it used to be composed in JavaScript through a `THREE.Object3D`:
+
+```js
+dm.quaternion.setFromUnitVectors(UP, groundNormal(x, z, align)); // sqrt + rsqrt
+dm.quaternion.multiply(axisAngle(UP, o.r));                      // 2 trig calls
+dm.quaternion.multiply(euler(tiltX, 0, tiltZ, 'YXZ'));           // 2 trig calls
+dm.scale.set(bw, s, bw);
+dm.updateMatrix();                                               // 4x4 compose
+mesh.setMatrixAt(i, dm.matrix);                                  // 16 float copy
+```
+
+That is correct, and it was measured: **18.2 ms for 30 000 instances** on a
+desktop CPU, and a phone is three to five times slower. It runs on every camera
+settle (the quadtree re-culls 240 ms after the camera stops) and after every
+edit that regrows a species — so it is felt as a stutter, not as a lower frame
+rate. Two things were wrong with it beyond the raw cost:
+
+* it ran **once per mesh**. A species with a wood mesh and a leaf mesh walked
+  its whole instance list twice, so the terrain sampling for the root sink (24
+  `hgt()` lookups per tree) was done twice as well;
+* it allocated and wrote through JS objects — property lookups, a shared
+  `Object3D`, a `Matrix4` — for arithmetic that is a pure function of the
+  instance and the ground under it.
+
+It is now `fe_scatter_begin` / `fe_scatter_matrices` (`cpp/src/fe_scatter.cpp`):
+
+* one pre-pass per species fills a structure-of-arrays block — position, both
+  scales, yaw, the terrain normal it is aligned to, and the two placement
+  hashes — while it writes the per-instance scratch the colour and the impostor
+  quad need (`fe_scatter_aux_ptr`). **No JavaScript allocation**, and the root
+  sink is sampled once instead of once per mesh;
+* the kernel turns that block into `count * 16` floats in one flat loop, reading
+  the compacted visible index list the quadtree just produced
+  (`fe_scatter_order_ptr`) so invisible instances are never touched;
+* the caller blits the block into `instanceMatrix.array` with a single `set()`.
+
+| | before | after |
+| --- | --- | --- |
+| 30 000 instances, transform only | 12.1 ms | **3.8 ms** |
+| 30 000 instances, two meshes, with root-sink sampling | 85.1 ms | **19.7 ms** |
+
+The second row is a worst case, not a typical scene: it puts the root-sink loop
+on all 30 000 instances, while in a real world it runs only for woody species
+(a few thousand trees). The row that matters for the frame is the first one —
+ground cover is where the instance counts are.
+
+The kernel reproduces the three.js transform, it does not approximate it:
+`tests/scatter-layout.test.mjs` compares every one of the 16 components against
+an `Object3D` driven the old way, for both rotation modes, and checks scale,
+orthogonality and the compacted order. The tolerance is 6e-5 because the module
+is compiled freestanding and cannot call a platform libm — `cpp/src/fe_scatter.cpp`
+therefore carries its own double-precision sin/cos, which brings the difference
+down to float32 rounding. Anything actually wrong (a flipped sign, tilt before
+yaw) shows up at 1e-1 and fails the test.
+
+### The root sink is in the kernel too
+
+A tree is not placed at the height under its trunk. The studio lowers it by
+however far the ground falls away inside its root span — twelve directions, two
+radii, 24 samples of the height field — so a tree on a ridge does not hover.
+That was 24 `hgt()` lookups per instance in JavaScript, once per mesh, which is
+720 000 bilinear samples for 30 000 instances.
+
+`fe_scatter_terrain(n, size)` now owns a copy of the height grid; the studio
+hands the same heights the terrain mesh was built from over **once per settle**
+(1 MB for a 513² world, and only for species that have a root span), and the
+kernel does the sampling inline. The clamp, the two radii and the twelve
+directions are the studio's own formula, and `tests/scatter-layout.test.mjs`
+recomputes them in JavaScript from the same grid and compares the resulting
+`y` translation instance by instance.
+
+Rocks are bedded by a twelfth of their size (`flags` bit 0), which was also a
+per-instance `if` in the loop.
+
+**What is still in JavaScript, honestly:** the pre-pass itself — the two
+placement hashes and the ground normal for each instance. They are pure maths
+and could move too, but they feed the per-instance colour and the variant
+bucket, and `Math.sin` in the studio is not bit-identical to any polynomial the
+module could use: moving them would quietly re-tint the forest. The pre-pass is
+the ~19 ms that is left in the worst-case row above.
+
 ## The compacted visible-instance list
 
 `fe_lod_visible(count, xyz, vp, camX, camY, camZ, fullDistance, cullRadius,
@@ -110,6 +235,96 @@ pass and is not in this budget.
 **Real-device profiling.** RenderDoc and Tracy cannot run in this sandbox (no
 GPU, no device). The in-page frame timings are the only measurements taken, so
 "120 FPS on a phone" is an unverified claim and is not made here.
+
+## The 3D Workspace viewport loop
+
+The landscaping loop already had the rule "a frame allocates nothing and does no
+DOM lookups" and a test that enforces it. The 3D Workspace loop had neither, and
+it was the worse of the two.
+
+* **Autofocus ran the UI every frame.** With *continuous autofocus* on, each
+  frame did two `getElementById` calls, a `toFixed(2)` string, two DOM writes and
+  a full `updateDoFFilter()` — which is **16 more DOM lookups, a
+  `querySelector` and a filter-chain rebuild** — whether or not the camera had
+  moved. In a still viewport that was 18 DOM lookups per frame, for a number that
+  had not changed. The elements are cached on the engine now (the autofocus
+  checkbox already was) and the whole block sits behind a one-centimetre change
+  check, so an idle viewport does one distance compare.
+* **Focus tracking to "center" allocated a `THREE.Vector3` per frame.** One
+  garbage object every 8 ms on a 120 Hz panel; the vector is cached.
+* **`stepPhysicsSimulations` allocated a closure per frame** —
+  `sc.children.forEach(child => ...)` before any other work in the frame. It is
+  an index loop now, and the scene walk is the same.
+
+`tests/workspace-frame-budget.test.mjs` pins all four: at most one `new THREE.*`
+in the loop and only behind a one-time guard, exactly three `getElementById`
+calls and each inside a `=== undefined` setup guard, one `updateDoFFilter()`
+call behind the change check, and the shadow tick plus the ⚙ metrics still
+wired.
+
+What that does **not** claim: the GPU cost of the viewport. TAA, the shadow
+pass and fill rate are untouched by this, and no GPU measurement is possible in
+this sandbox.
+
+## Render time: why a cube took ten minutes
+
+A path-traced still used to be the slowest thing in the app by a wide margin,
+and the reasons were not subtle. Measured on the default cube scene at
+450x800 (the `hd` vertical preset), in node on a desktop CPU:
+
+| | before | after |
+| --- | --- | --- |
+| samples | 24 (32 if the dialog had not synced yet) | 8, denoised |
+| bloom | full pyramid **every** sample pass | once, on the final pass |
+| pixels already converged | traced again | frozen (`fe_render_update_convergence`) |
+| driving loop | `requestAnimationFrame` | message-port ticks |
+| total | **4.3 s** | **1.4 s** |
+
+Three times faster on a desktop. On a phone the ratio is better, because the
+fix removes a fixed cost rather than a scaling one.
+
+**`requestAnimationFrame` was the ten minutes.** A render is exactly the
+workload that leaves the tab hidden — opening the Render Result window does it
+on a phone — and rAF stops dead in a hidden tab. The render then advanced one
+slice each time the user came back to look at it. A message port keeps
+delivering when rAF does not, so the render finishes whether or not anyone is
+watching; when the tab *is* hidden the slices get longer (40 ms instead of 9 ms)
+because the browser is throttling scheduling anyway.
+
+### The denoiser is the reason 8 samples look finished
+
+24 samples of a path tracer is a noisy image that took three times as long as
+it needed to. Eight samples plus an edge-aware filter of the accumulation
+buffer is cleaner *and* cheaper:
+
+* separable: 5 taps per axis, three à-trous iterations (radii 1, 2 and 4). Two leaves low-frequency blotches on a large flat face — the one thing a cube makes impossible to hide — so stills get three; animation frames get two, because there are hundreds of them;
+* guides: **depth** (16-bit, 0–64 m) and **albedo** (8-bit RGB) recorded on the
+  primary hit, exactly as production denoisers use them;
+* the weight falls off on the combined error of depth, albedo and luminance, so
+  it never blends across a silhouette or a material boundary.
+
+Measured against a 64-sample reference at 220x308: raw 8 samples is 23.4 dB,
+filtered 8 samples is 32.4 dB. Three passes cost about 200 ms at 450x800 —
+roughly one and a half samples' worth of time for sixteen samples' worth of
+cleanliness.
+
+That albedo guide is not decoration. Without it the filter cannot tell the
+studio floor grid from noise — both are thin luminance steps — and the grid
+disappears, which is the exact complaint this pass started from. The test for
+it compares against a 5x5 box blur: the cube's top edge keeps 100% of its
+sharpness where the blur keeps 24%.
+
+### What is still slow, honestly
+
+* **Resolution is linear in time and there are no threads.** This wasm build has
+  no `pthreads`, so a still uses one core. 720x1280 (`fhd`) is 2.5x the pixels
+  of `hd` and takes 2.5x as long.
+* **SIMD is not used.** A `-msimd128` build was measured and was ~2% faster:
+  the ray loop is scalar and does not autovectorise, so it was reverted rather
+  than shipped as an unearned claim.
+* **The animation exporter is still CPU-bound** at `spp/4` samples per frame.
+  At 30 fps a 10-second range is 300 frames; that is minutes, not seconds, and
+  the EEVEE-style raster engine is the right choice for that job today.
 
 ## Time-sliced erosion
 

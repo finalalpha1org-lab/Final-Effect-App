@@ -222,7 +222,7 @@ weather comes back with that switch still on.
 
 ```bash
 node --test tests/landscape-climate.test.mjs   # 19 tests
-npm test                                       # 390 tests
+npm test                                       # 505 tests
 ```
 
 The tests pin the 6.5 K/km lapse rate, the post-noon thermal peak, fog at dawn

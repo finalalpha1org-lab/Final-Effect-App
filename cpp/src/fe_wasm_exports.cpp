@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 
 namespace {
 
@@ -99,6 +100,31 @@ FE_EXPORT void fe_arena_reset(void) {
 
 FE_EXPORT uint32_t fe_heap_used_bytes(void) {
   return g_arena_offset;
+}
+
+/* What the lazily grown heap has handed out, and how big linear memory is. The
+ * studio panel reports the pair instead of pretending the artifact has a fixed
+ * footprint: the first number is the real working set of the kernels that have
+ * been opened, the second the ceiling they have grown to since boot. */
+FE_EXPORT uint32_t fe_heap_lazy_used(void) {
+  ensure_wasm_runtime_initialized();
+  return fe::heap::used();
+}
+
+FE_EXPORT uint32_t fe_heap_lazy_capacity(void) {
+  ensure_wasm_runtime_initialized();
+  return fe::heap::capacity();
+}
+
+/* The simulation core's JavaScript arena used to be a second bump allocator
+ * that started at the end of linear memory and grew it itself, which meant two
+ * pieces of code believed they owned the region above the static data. It asks
+ * the kernel instead: one allocator, one owner, and an allocation that can
+ * never land inside a kernel buffer. Returns 0 when the device refuses the
+ * memory; the caller throws rather than writing through a null pointer. */
+FE_EXPORT uint32_t fe_heap_alloc(uint32_t byte_size, uint32_t alignment) {
+  ensure_wasm_runtime_initialized();
+  return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(fe::heap::alloc(byte_size, alignment)));
 }
 
 } // extern "C"

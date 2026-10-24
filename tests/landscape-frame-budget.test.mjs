@@ -79,9 +79,15 @@ test('the instance list written to the GPU is the compacted list the core return
   assert.match(SYNC, /const total=visOrder\?visN:K\.list\.length;/, 'a refresh only visits visible slots');
   assert.match(SYNC, /const sourceIndex=visOrder\?visOrder\[q\]:q;/, 'and maps each slot back to its placement');
   assert.match(SYNC, /if\(visOrder===null&&lodTiers&&lodTiers\[sourceIndex\]<0\)continue;/, 'the legacy tier -1 still culls');
-  assert.match(SYNC, /useLow=lodTiers\[tierIndex\]===1/, 'the low tier still picks the decimated mesh');
+  /* Three tiers now: the grown mesh, its low twin, and the baked impostor. */
+  assert.match(SYNC, /tier=lodTiers\[tierIndex\]\|0;/, 'the core decides the tier per instance');
+  assert.match(SYNC, /const useLow=tier===1&&!!low;/, 'the low tier still picks the decimated mesh');
+  assert.match(SYNC, /if\(tier===2&&imp\)\{/, 'the far tier is the impostor quad');
+  assert.match(SYNC, /if\(tier===2&&!imp\)\{tier=1;/, 'a species whose atlas is not baked yet keeps its low mesh');
   assert.match(SYNC, /m\.count=ci;/, 'the draw count is the compacted count');
   assert.match(TERRAIN, /core\.lodVisible=function\(state\)\{/, 'the compacted list is a core call');
+  assert.match(TERRAIN, /core\.lodTree=function\(state\)\{/, 'and the quadtree is the path a flora species takes');
+  assert.match(SYNC, /const qt=core\.lodTree\(\{slot,count:n,xyz,generation:gen/, 'the species slot and an instance checksum key the tree');
   assert.match(TERRAIN, /const got=ex\.fe_lod_visible\(count,visPtr,visVpPtr,/, 'the view-projection matrix is passed by pointer, not by value');
   assert.match(TERRAIN, /if\(!visVpPtr\)\{visVpPtr=ex\.fe_malloc\(64\);/, 'the matrix buffer is allocated once');
   assert.match(TERRAIN, /indices:new Uint32Array\(ex\.memory\.buffer,ex\.fe_lod_visible_index_ptr\(\),got\)/, 'indices are a view over the core buffer');

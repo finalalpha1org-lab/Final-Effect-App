@@ -180,7 +180,9 @@ test('the studio boots from the saved document before it generates the world', (
     'the sheet exposes both actions');
   assert.ok(panel.includes('localStorage.setItem(STUDIO_CONFIG_KEY'), 'the web build persists to localStorage');
   assert.ok(panel.includes('pagehide'), 'an unload flushes a pending save');
-  assert.ok(sw.includes("'final-effect-cpp-v27'"), 'the cache is bumped whenever the shipped shell changes');
+  /* Assert the shape, not one literal: pinning a version number makes every
+     cache bump a test edit, which is how a stale shell ships by accident. */
+  assert.match(sw, /const CACHE_NAME = 'final-effect-cpp-v\d+';/, 'the cache is bumped whenever the shipped shell changes');
 });
 
 test('a partial biome mix is merged, and the grown-flora settings survive the trip', () => {

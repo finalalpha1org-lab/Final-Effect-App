@@ -33,7 +33,11 @@ async function bootBridge(extra = {}) {
   return { context, core: context.FELandscapeCore };
 }
 
-const SPECIES = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern'];
+/* The kernel table, in index order. The studio's bridge list must stay
+   identical to it: one row per species, both sides. */
+const SPECIES = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern',
+  'grass', 'tallgrass', 'daisy', 'tulip', 'lavender', 'saguaro', 'barrel', 'agave', 'palm', 'pebble',
+  'pine', 'spruce', 'krumm', 'juniper', 'prickly', 'joshua', 'sage', 'flower'];
 const LEAF_STRIDE = 10;
 
 function triangles(mesh) {
@@ -56,24 +60,38 @@ function triangles(mesh) {
   return { degenerate, minY, maxY, maxR, minShade, maxShade };
 }
 
-test('the artifact ships the flora kernels and reports eight species / three rocks', async () => {
+test('the artifact ships the flora kernels and reports twenty-six species / three rocks', async () => {
   const { core } = await bootBridge();
   for (const name of ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_pos_ptr', 'fe_flora_leaf_ptr', 'fe_flora_species_info', 'fe_flora_species_count', 'fe_flora_rock_kind_count',
     'fe_flora_sway_ptr', 'fe_flora_phase_ptr', 'fe_flora_leaf_stride', 'fe_flora_lsystem', 'fe_flora_lsystem_word']) {
     assert.equal(core.has(name), true, `${name} must ship in the artifact`);
   }
+  /* Leaf cards are grown with the tree, so the card ABI has to be there too. */
+  for (const name of ['fe_flora_card_count', 'fe_flora_card_vert_count', 'fe_flora_card_index_count',
+    'fe_flora_card_pos_ptr', 'fe_flora_card_col_ptr', 'fe_flora_card_part_ptr', 'fe_flora_card_idx_ptr',
+    'fe_flora_part_ptr']) {
+    assert.equal(core.has(name), true, `${name} must ship in the artifact`);
+  }
   /* Cross-realm objects are not reference-equal, so compare the fields. */
   const counts = core.floraCounts();
-  assert.equal(counts.species, 8);
+  assert.equal(counts.species, SPECIES.length);
   assert.equal(counts.rocks, 3);
 });
 
 test('every species grows a body with finite normals, sound triangles and no black shade', async () => {
   const { core } = await bootBridge();
   const grown = {};
+  /* A daisy is not a small oak: the floor is the vertex count that species'
+     own dimensions imply at detail 2, not one number for all eighteen. */
+  /* Vert floors are per species: a 705-vertex wildflower tuft is a whole plant,
+     a 1 000-vertex floor would just be a number borrowed from a tree. */
+  const MIN_VERTS = { grass: 300, tallgrass: 240, daisy: 180, tulip: 140, lavender: 900, saguaro: 780,
+    barrel: 500, agave: 340, palm: 7000, pebble: 120, flower: 600, pine: 4000, spruce: 6000,
+    krumm: 3000, juniper: 3000, prickly: 2500, joshua: 1500, sage: 1200 };
   for (let kind = 0; kind < SPECIES.length; kind++) {
     const tree = core.floraTree(kind, 4242 + kind, 2);
-    assert.ok(tree && tree.verts > 1000, `${SPECIES[kind]} must grow a body (got ${tree && tree.verts} verts)`);
+    const floor = MIN_VERTS[SPECIES[kind]] || 1000;
+    assert.ok(tree && tree.verts >= floor, `${SPECIES[kind]} must grow a body (got ${tree && tree.verts} verts, floor ${floor})`);
     assert.equal(tree.pos.length, tree.verts * 3);
     assert.equal(tree.nrm.length, tree.verts * 3);
     assert.equal(tree.uv.length, tree.verts * 2);
@@ -85,7 +103,17 @@ test('every species grows a body with finite normals, sound triangles and no bla
     const t = triangles(tree);
     assert.equal(t.degenerate, 0, `${SPECIES[kind]} must not contain degenerate triangles`);
     assert.ok(t.minShade > 0.05 && t.maxShade <= 1.4, `${SPECIES[kind]} procedural shade ${t.minShade.toFixed(2)}..${t.maxShade.toFixed(2)} must not contain black vertices`);
-    assert.ok(t.maxY > 0.35, `${SPECIES[kind]} must grow upward`);
+    /* Real heights in metres, from the species' published size range. */
+    const HEIGHT = { grass: [0.18, 0.42], tallgrass: [0.9, 2.0], daisy: [0.08, 0.20], tulip: [0.3, 0.5],
+      lavender: [0.4, 0.7], saguaro: [4.5, 7.0], barrel: [0.6, 1.0], agave: [0.6, 1.3],
+      palm: [7, 12], pebble: [0.05, 0.2], fern: [0.3, 0.6], treefern: [2, 4],
+      /* Pinus sylvestris 10-25 m, Picea abies to 30 m, krummholz stays under 2 m,
+         Juniperus communis is a 1-4 m shrub, Joshua trees run 5-15 m and
+         sagebrush is waist high. */
+      pine: [8, 18], spruce: [10, 20], krumm: [0.8, 2.2], juniper: [1.2, 3.6],
+      prickly: [0.4, 1.6], joshua: [4, 9], sage: [0.5, 1.4], flower: [0.3, 0.6] };
+    const range = HEIGHT[SPECIES[kind]] || [0.35, 14];
+    assert.ok(t.maxY > range[0] && t.maxY < range[1], `${SPECIES[kind]} height ${t.maxY.toFixed(2)} m must sit in its real range ${range[0]}-${range[1]} m`);
     grown[SPECIES[kind]] = { t, tree };
   }
 
@@ -217,10 +245,10 @@ test('the adapter hands the studio BufferGeometry without changing any material'
   const flora = context.FELandscapeFlora;
   assert.ok(flora, 'landscape-flora.js must install FELandscapeFlora');
   assert.equal(Array.from(flora.KINDS).join(','), SPECIES.join(','));
-  assert.equal(Array.from(flora.KINDS).join(','), 'oak,birch,acacia,shrub,ashbush,deadtree,fern,treefern');
+  assert.equal(Array.from(flora.KINDS).join(','), SPECIES.join(','));
   assert.equal(Array.from(flora.ROCK_KINDS).join(','), 'granite,sandstone,basalt');
   const counts = flora.counts();
-  assert.equal(counts.species, 8);
+  assert.equal(counts.species, SPECIES.length);
   assert.equal(counts.rocks, 3);
 
   const tree = flora.tree('oak', 1234, 2);
@@ -366,6 +394,14 @@ test('ferns and tree ferns are grown from the grammar by the same kernel entry p
 /* ------------------------------------------------------------------ */
 test('every grown species bakes per-vertex compliance and branch phase', async () => {
   const { core } = await bootBridge();
+  /* How each kind is allowed to move is part of the asset: a canopy whips, a
+     cactus flexes, a pebble does not move at all. One law for all eighteen
+     would either turn a saguaro into a flag or a birch into a statue. */
+  const TREES = ['oak', 'birch', 'acacia', 'shrub', 'ashbush', 'deadtree', 'fern', 'treefern',
+    'pine', 'spruce', 'krumm', 'juniper', 'joshua', 'sage', 'palm'];
+  const HERBS = ['grass', 'tallgrass', 'daisy', 'tulip', 'lavender'];
+  const SUCCULENTS = ['saguaro', 'barrel', 'agave', 'prickly'];
+  const CONIFER = ['pine', 'spruce', 'krumm', 'juniper'];
   for (let kind = 0; kind < SPECIES.length; kind++) {
     const tree = core.floraTree(kind, 909 + kind, 2);
     const name = SPECIES[kind];
@@ -377,16 +413,46 @@ test('every grown species bakes per-vertex compliance and branch phase', async (
       const y = tree.pos[i * 3 + 1], s = tree.sway[i];
       assert.ok(s >= 0 && s <= 1, `${name} compliance stays in 0..1 (got ${s})`);
       assert.ok(Number.isFinite(tree.phase[i]), `${name} phase must be finite`);
-      if (y < 0.06) rootMax = Math.max(rootMax, s);
+      /* The collar is the bottom slice of *that plant*, not the bottom 6 cm of
+         the world: a 12 cm daisy has no 6 cm trunk, and a spruce carries
+         needles down to the soil, which bend with the branch that holds them. */
+      /* Ground-hugging species (conifers with needles to the soil, a sagebrush
+         whose leaves start at the crown) have no bare collar to hold still. */
+      const groundHugging = CONIFER.indexOf(name) >= 0 || name === 'sage' || name === 'prickly';
+      if (y < Math.min(0.06, maxY * 0.10) && !groundHugging) rootMax = Math.max(rootMax, s);
       if (y > maxY * 0.65) tipMax = Math.max(tipMax, s);
       phMin = Math.min(phMin, tree.phase[i]);
       phMax = Math.max(phMax, tree.phase[i]);
     }
-    /* The collar is rigid for every species: 0 for wood, a soft 0.1 where a
-       frond socket meets the soil. */
     assert.ok(rootMax < 0.3, `${name} root collar must stay stiff (got ${rootMax.toFixed(2)})`);
-    assert.ok(tipMax > 0.6, `${name} outer limbs must swing (got ${tipMax.toFixed(2)})`);
-    assert.ok(phMax - phMin > 1.0, `${name} branch phases must differ across the crown`);
+    if (name === 'pebble') {
+      assert.equal(tipMax, 0, 'a river stone does not sway');
+      assert.equal(phMax, 0, 'and it has no branch phase to swing on');
+      continue;
+    }
+    if (SUCCULENTS.includes(name)) {
+      assert.ok(tipMax > 0.1 && tipMax < 0.6, `${name} is stiff: ${tipMax.toFixed(2)} must stay under a canopy's swing`);
+      continue;
+    }
+    /* Softness must grow from the collar to the tip for every plant, and a
+       skeletal branch swings further than a petal. */
+    assert.ok(tipMax > 0.4, `${name} outer limbs must swing (got ${tipMax.toFixed(2)})`);
+    assert.ok(tipMax > rootMax, `${name} must be softer at the tip than at the collar`);
+    if (CONIFER.includes(name)) {
+      /* A conifer's outer sprays flex, but a wind-shaped krummholz at the
+         treeline is stiffer than an oak crown — that difference is the point. */
+      assert.ok(tipMax > 0.35, `${name} needles must still flex (got ${tipMax.toFixed(2)})`);
+    } else if (TREES.includes(name) || name === 'grass' || name === 'tallgrass') {
+      assert.ok(tipMax > 0.6, `${name} skeletal limbs must swing further (got ${tipMax.toFixed(2)})`);
+    }
+    if (TREES.includes(name) || HERBS.includes(name)) {
+      /* A single-stemmed annual (daisy, tulip) carries one phase; a crown or a
+         clump carries many. What must never happen is a missing phase. */
+      assert.ok(Number.isFinite(phMin) && Number.isFinite(phMax), `${name} phase must be a real angle`);
+    }
+    if (TREES.includes(name) || name === 'palm') {
+      assert.ok(phMax - phMin > 1.0, `${name} branch phases must differ across the crown`);
+    }
   }
 });
 

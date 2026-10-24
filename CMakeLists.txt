@@ -7,6 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(FE_CORE_SOURCES
   cpp/src/fe_wasm_exports.cpp
+  cpp/src/fe_heap.cpp
+  cpp/src/fe_scatter.cpp
   cpp/src/fe_animation.cpp
   cpp/src/fe_renderer.cpp
   cpp/src/fe_sculpt_touch.cpp
@@ -14,6 +16,18 @@ set(FE_CORE_SOURCES
   cpp/src/fe_landscape.cpp
   cpp/src/fe_openworld.cpp
   cpp/src/fe_ocean.cpp
+  cpp/src/fe_volumetrics.cpp
+  cpp/src/fe_modifiers.cpp
+  cpp/src/fe_surface.cpp
+  cpp/src/fe_flora.cpp
+  cpp/src/fe_climate.cpp
+  cpp/src/fe_lod.cpp
+  cpp/src/fe_impostor.cpp
+  # Edit Mode. Keep this list identical to CPP_SOURCES in
+  # scripts/build-cpp-wasm.mjs; a source that only exists in one of the two
+  # builds is a kernel that ships in the browser but never gets a native test.
+  cpp/src/fe_editmesh.cpp
+  cpp/src/fe_editmesh_tools.cpp
 )
 
 if(EMSCRIPTEN)
@@ -34,4 +48,8 @@ else()
   add_executable(fe_core_tests cpp/tests/fe_core_tests.cpp)
   target_link_libraries(fe_core_tests PRIVATE fe_core_engine)
   add_test(NAME fe_core_tests COMMAND fe_core_tests)
+
+  add_executable(fe_editmesh_tests cpp/tests/fe_editmesh_tests.cpp)
+  target_link_libraries(fe_editmesh_tests PRIVATE fe_core_engine)
+  add_test(NAME fe_editmesh_tests COMMAND fe_editmesh_tests)
 endif()

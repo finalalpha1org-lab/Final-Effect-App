@@ -345,6 +345,53 @@
    indices:new Uint32Array(ex.memory.buffer,ex.fe_lod_visible_index_ptr(),got),
    tiers:new Uint8Array(ex.memory.buffer,ex.fe_lod_visible_tier_ptr(),got)};
  };
+ /* Quadtree LoD: the same answer as lodVisible, reached through a spatial index
+   the kernel built once per species. `generation` is a checksum of the instance
+   positions, so the tree is rebuilt only when a plant actually moved; a settled
+   camera re-walks the existing tree and pays for the tree, not the world. */
+ core.lodTree=function(state){
+  if(!core.ready||!state||!state.xyz||!state.vp||!core.has('fe_lod_tree_cull'))return null;
+  const count=Math.min(state.xyz.length/3|0,state.count|0);
+  if(count<=0)return{count:0,indices:EMPTY_U32,tiers:EMPTY_U8,nodes:0};
+  const slot=state.slot|0;
+  const bytes=count*12;
+  if(bytes>visBytes){visPtr=ex.fe_malloc(bytes);visBytes=visPtr?bytes:visBytes}
+  if(!visPtr)return null;
+  if(!visVpPtr){visVpPtr=ex.fe_malloc(64);if(!visVpPtr)return null}
+  new Float32Array(ex.memory.buffer,visPtr,count*3).set(state.xyz.subarray(0,count*3));
+  new Float32Array(ex.memory.buffer,visVpPtr,16).set(state.vp);
+  const built=ex.fe_lod_tree_build(slot,count,visPtr,state.generation>>>0);
+  if(built<0){core.error='Quadtree build returned '+built;return null}
+  const got=ex.fe_lod_tree_cull(slot,visPtr,visVpPtr,state.camX,state.camY,state.camZ,
+   state.mid,state.far,state.radius,state.margin,state.options|0);
+  if(got<0){core.error='Quadtree cull returned '+got;return null}
+  const stats=new Int32Array(new Int32Array(ex.memory.buffer,ex.fe_lod_tree_stats_ptr(slot),5));
+  return{count:got,nodes:stats[0],visited:stats[1],culled:stats[2],scanned:stats[4],rebuilt:built>0,
+   indices:new Uint32Array(ex.memory.buffer,ex.fe_lod_tree_index_ptr(),got),
+   tiers:new Uint8Array(ex.memory.buffer,ex.fe_lod_tree_tier_ptr(),got)};
+ };
+ /* Foliage impostor atlas for one species, baked in the kernel from the very
+   mesh it just grew. Returns the pixels and the quad size the studio draws;
+   null when the artifact predates the baker. */
+ core.impostor=function(kind,seed,detail,views){
+  if(!core.has('fe_impostor_build'))return null;
+  const n=ex.fe_impostor_build(kind|0,(seed>>>0)||1,detail|0,views|0);
+  if(n<1)return null;
+  const w=ex.fe_impostor_width(),h=ex.fe_impostor_height();
+  const bounds=new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_impostor_bounds_ptr(),8));
+  /* crop/offset describe which part of the tile holds the plant; the quad is
+     sized to that rectangle so a wide tree is not drawn on a too-tall card. */
+  return{views:n,width:w,height:h,
+   pixels:new Uint8Array(new Uint8Array(ex.memory.buffer,ex.fe_impostor_pixels_ptr(),w*h*n*4)),
+   quadW:bounds[0],quadH:bounds[1],coverage:bounds[2],baseY:bounds[3],
+   cropU:bounds[4],cropV:bounds[5],offU:bounds[6]};
+ };
+ /* The atlas column a camera sees a plant from, computed by the kernel so the
+   billboard shader and any CPU-side check agree on the convention. */
+ core.impostorColumn=function(dx,dz){
+  if(!core.has('fe_impostor_column'))return -1;
+  return ex.fe_impostor_column(+dx||0,+dz||0)|0;
+ };
  core.lodClassify=function(state){
   if(!core.ready||!state||!state.xyz)return null;
   const count=Math.min(state.xyz.length/3|0,state.count|0);
@@ -408,8 +455,34 @@
      not have them, in which case the material keeps its height-only bend. */
   if(typeof Ex.fe_flora_sway_ptr==='function')out.sway=new Float32Array(new Float32Array(mem,Ex.fe_flora_sway_ptr(),nv));
   if(typeof Ex.fe_flora_phase_ptr==='function')out.phase=new Float32Array(new Float32Array(mem,Ex.fe_flora_phase_ptr(),nv));
+  /* Material group per vertex: 0 wood, 1 foliage, 2 bloom. */
+  if(typeof Ex.fe_flora_part_ptr==='function')out.part=new Float32Array(new Float32Array(mem,Ex.fe_flora_part_ptr(),nv));
   return out;
  }
+ /* Leaf cards grown by the kernel with the tree: four vertices and two
+    triangles per card, already coloured and oriented. The studio no longer
+    builds leaves in JavaScript. */
+ core.floraCards=function(){
+  if(!core.has('fe_flora_card_vert_count'))return null;
+  const nv=ex.fe_flora_card_vert_count(),ni=ex.fe_flora_card_index_count(),nc=ex.fe_flora_card_count();
+  if(nv<1||ni<1)return null;
+  const mem=ex.memory.buffer,f32=(p,n)=>new Float32Array(new Float32Array(mem,p,n));
+  return {
+   cards:nc,
+   verts:nv,
+   indices:ni,
+   pos:f32(ex.fe_flora_card_pos_ptr(),nv*3),
+   nrm:f32(ex.fe_flora_card_nrm_ptr(),nv*3),
+   col:f32(ex.fe_flora_card_col_ptr(),nv*3),
+   uv:f32(ex.fe_flora_card_uv_ptr(),nv*2),
+   rnd:f32(ex.fe_flora_card_rnd_ptr(),nv),
+   cen:f32(ex.fe_flora_card_cen_ptr(),nv*3),
+   sway:f32(ex.fe_flora_card_sway_ptr(),nv),
+   phase:f32(ex.fe_flora_card_phase_ptr(),nv),
+   part:f32(ex.fe_flora_card_part_ptr(),nv),
+   idx:new Uint32Array(new Uint32Array(mem,ex.fe_flora_card_idx_ptr(),ni))
+  };
+ };
  core.floraTree=function(kind,seed,detail){
   if(!core.has('fe_flora_tree'))return null;
   if(ex.fe_flora_tree(kind|0,(seed>>>0)||1,detail|0)<1)return null;
@@ -431,6 +504,15 @@
  core.lsystemReset=function(){
   if(!core.has('fe_flora_lsystem_reset'))return -1;
   return ex.fe_flora_lsystem_reset();
+ };
+ /* Buildings: the four shells the studio places along a street, grown in the
+   kernel like everything else. Same buffers as a plant, so the same bridge
+   reads them and the studio never authors a wall in JavaScript. */
+ core.building=function(kind,seed,detail){
+  if(!core.has('fe_build'))return null;
+  if(ex.fe_build(kind|0,(seed>>>0)||1,detail|0)<1)return null;
+  const out=floraCopy(ex);
+  return out.verts?out:null;
  };
  core.floraRock=function(kind,seed,detail){
   if(!core.has('fe_flora_rock'))return null;
@@ -508,7 +590,8 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
  };
  core.floraCounts=function(){
   return {species:core.has('fe_flora_species_count')?ex.fe_flora_species_count():0,
-          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0};
+          rocks:core.has('fe_flora_rock_kind_count')?ex.fe_flora_rock_kind_count():0,
+          buildings:core.has('fe_build_kind_count')?ex.fe_build_kind_count():0};
  };
  /* ---- Climate & weather (optional kernels; the JS weather runs unchanged) --- */
  let climatePtr=0;
@@ -593,12 +676,55 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
  core.climateRankine=function(r,coreRadius,vmax){
   return core.has('fe_climate_rankine')?ex.fe_climate_rankine(+r||0,+coreRadius||0,+vmax||0):0;
  };
+ /* ---- Instanced transforms ------------------------------------------------
+   Every visible plant's matrix used to be composed through a THREE.Object3D:
+   shortest-arc quaternion to the ground normal, yaw about +Y, a YXZ tilt Euler,
+   then updateMatrix(). That is five quaternion operations and four
+   transcendental calls per instance through object property lookups — measured
+   at 18.2 ms for 30 000 instances on a desktop CPU, three to five times that on
+   a phone, and it runs every time a camera pan settles. The core does the same
+   arithmetic in one flat pass and hands back a dense block that is blitted into
+   the instance buffer with a single set(). tests/scatter-layout.test.mjs holds
+   the kernel to the three.js result element by element. */
+ core.instancingBegin=function(count){
+  if(!core.has('fe_scatter_begin')||!(count>0))return null;
+  const p=ex.fe_scatter_begin(count|0);
+  if(!p)return null;
+  const op=ex.fe_scatter_order_ptr(),ap=ex.fe_scatter_aux_ptr();
+  if(!op||!ap)return null;
+  /* Built after the call: growing the memory detaches any older view. The aux
+     block is the studio's per-instance scratch — placing it here is what keeps
+     a camera settle free of JavaScript allocations. */
+  return {input:new Float32Array(ex.memory.buffer,p,count*11),
+          order:new Uint32Array(ex.memory.buffer,op,count),orderPtr:op,
+          aux:new Float32Array(ex.memory.buffer,ap,count*5)};
+ };
+ core.instancingMatrices=function(count,orderPtr,tilt,bend,mode,flags){
+  if(!core.has('fe_scatter_matrices')||!(count>0))return null;
+  const p=ex.fe_scatter_matrices(count|0,(orderPtr>>>0),+tilt||0,+bend||0,mode|0,flags|0);
+  return p?new Float32Array(ex.memory.buffer,p,count*16):null;
+ };
+ /* The root sink samples the same heights the terrain mesh was built from, so
+   the grid is handed over once per settle (1 MB for a 513^2 world) instead of
+   the studio doing 24 lookups per tree in JavaScript. */
+ core.instancingTerrain=function(heights,n,size){
+  if(!core.has('fe_scatter_terrain')||!heights||!(n>1))return false;
+  const p=ex.fe_scatter_terrain(n|0,+size||0);
+  if(!p)return false;
+  const cells=(n+1)*(n+1),view=new Float32Array(ex.memory.buffer,p,cells);
+  view.set(heights.length>cells?heights.subarray(0,cells):heights);
+  return true;
+ };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;
 })(globalThis);
 /* END LANDSCAPE CORE BRIDGE */
 
-function showErr(t){let b=document.getElementById('err');if(!b){b=document.createElement('div');b.id='err';b.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:30;background:#7a1f1f;color:#fff;padding:8px 10px;border-radius:8px;font:12px/1.35 system-ui;white-space:pre-wrap;word-break:break-word';b.onclick=()=>b.remove();document.body.appendChild(b)}b.textContent+=(b.textContent?'\n':'')+t}
+/* Two catch sites in the same frame used to print the same stack twice, which
+   buried the viewport under a wall of identical red text. The same message is
+   shown once per session; a different one still appends. */
+const shownErrors=new Set();
+function showErr(t){const text=String(t==null?'Unknown error':t);const key=text.slice(0,400);if(shownErrors.has(key))return;shownErrors.add(key);let b=document.getElementById('err');if(!b){b=document.createElement('div');b.id='err';b.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:30;background:#7a1f1f;color:#fff;padding:8px 10px;border-radius:8px;font:12px/1.35 system-ui;white-space:pre-wrap;word-break:break-word;max-height:38vh;overflow:auto';b.onclick=()=>b.remove();document.body.appendChild(b)}b.textContent+=(b.textContent?'\n':'')+text}
 const seenRuntimeErrors=new Set();addEventListener('error',e=>{const masked=!e.filename&&!e.lineno&&!e.error&&(e.message==='Script error.'||!e.message);if(masked){if(!seenRuntimeErrors.has('anonymous-cross-origin')){seenRuntimeErrors.add('anonymous-cross-origin');console.warn('Browser masked an external script error; no source details were provided')}return}const file=(e.filename||'inline').split('/').pop(),key=(e.message||'error')+'|'+file+'|'+(e.lineno||0);if(seenRuntimeErrors.has(key))return;seenRuntimeErrors.add(key);const detail=e.error?.stack||`${e.message||'Script error'} (${file}:${e.lineno||0}:${e.colno||0})`;showErr('Runtime: '+String(detail).slice(0,900))});addEventListener('unhandledrejection',e=>{const r=e.reason,detail=r?.stack||r?.message||String(r||'Unhandled promise rejection');showErr('Unhandled promise: '+String(detail).slice(0,900))});
 const $=s=>document.querySelector(s),R=Math.random,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);function environmentFillLevel(on,day,cloud=0){return on?1.25-.35*cl(day,0,1)+.25*cl(cloud,0,1):0}
 const S=100,N=128,D=S/N,W=N+1,cv=$('#c');
@@ -610,14 +736,19 @@ let scatterDensity=1,scatterClustering=.35,shallowBrushDepth=1.5;try{const saved
 const VEGETATION_VIEW_FAR=16000;const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.5,VEGETATION_VIEW_FAR);cam.position.set(108,85,120);
 const ren=new THREE.WebGLRenderer({canvas:cv,antialias:true,powerPreference:'high-performance'});
 ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.setSize(innerWidth,innerHeight);
-ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;ren.toneMapping=THREE.ACESFilmicToneMapping;ren.outputEncoding=THREE.sRGBEncoding;ren.toneMappingExposure=1;
+ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;/* A shadow map is a second pass over every caster, and the sun barely moves:
+   it only follows the camera target in 2 m steps at most five times a second.
+   Refreshing it every frame bought nothing a 30 Hz cadence does not, so the
+   loop drives needsUpdate and this stays off. */
+ren.shadowMap.autoUpdate=false;ren.shadowMap.needsUpdate=true;ren.toneMapping=THREE.ACESFilmicToneMapping;ren.outputEncoding=THREE.sRGBEncoding;ren.toneMappingExposure=1;
 const oc=new THREE.OrbitControls(cam,cv);oc.enableDamping=true;oc.maxPolarAngle=Math.PI;oc.maxDistance=260;oc.target.set(0,4,0);
 const tc=new THREE.TransformControls(cam,cv);tc.userData.isEditorHelper=true;const TERRAIN_EDITOR_HELPERS=new Set([tc]);tc.addEventListener('dragging-changed',e=>{oc.enabled=exploreMode?false:!e.value;if(e.value)push()});scene.add(tc);
 const hemi=new THREE.HemisphereLight(0xcfe3ff,0x6a5a48,.6),envFill=new THREE.HemisphereLight(0xb9d4ff,0x62584a,0),sun=new THREE.DirectionalLight(0xfff0d8,1.2),sc=sun.shadow.camera;envFill.name='Environment fill light';
 sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
 scene.add(hemi,envFill,sun,sun.target);scene.fog=new THREE.FogExp2(0xbcd0e6,.004);
 const BG=new THREE.Color(0x3d3d3d),grid=new THREE.GridHelper(200,200,0x000000,0x555555);grid.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(grid);grid.position.y=.05;grid.material.transparent=true;grid.material.opacity=.5;grid.renderOrder=1;scene.add(grid);
-[[0xff3352,[-100,0,0],[100,0,0]],[0x8bdc00,[0,0,-100],[0,0,100]]].forEach(([c,a,b])=>{const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]),new THREE.LineBasicMaterial({color:c}));l.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(l);l.position.y=.06;scene.add(l)});
+const gridAxes=[];
+[[0xff3352,[-100,0,0],[100,0,0]],[0x8bdc00,[0,0,-100],[0,0,100]]].forEach(([c,a,b])=>{const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a),new THREE.Vector3(...b)]),new THREE.LineBasicMaterial({color:c}));l.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(l);l.position.y=.06;scene.add(l);gridAxes.push(l)});
 const sbx=new THREE.BoxHelper(undefined,0xffaa40);sbx.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(sbx);sbx.visible=false;scene.add(sbx);
 /* sky + water shaders */
 
@@ -908,7 +1039,11 @@ const wob=(g,a)=>{const p=g.attributes.position;for(let i=0;i<p.count;i++){const
 const blob=(r,x,y,z,a)=>{const g=new THREE.SphereGeometry(1,12,9),p=g.attributes.position;for(let i=0;i<p.count;i++){const X=p.getX(i),Y=p.getY(i),Z=p.getZ(i),k=r*(1+a*Math.sin(X*3.1+Y*2.3+x)*Math.sin(Z*2.7+X*1.9+y));p.setXYZ(i,X*k,Y*k*.85,Z*k)}return g.translate(x,y,z)};
 const PALF=[[1,.35,.5],[1,.85,.2],[1,1,1],[.65,.45,.95],[1,.5,.15]];
 const BMAT=[];
-const KIND={},dm=new THREE.Object3D(),tcol=new THREE.Color(),WU={value:0},WW={value:1};
+const KIND={},dm=new THREE.Object3D(),dmi=new THREE.Object3D(),tcol=new THREE.Color(),WU={value:0},WW={value:1};
+/* Every mesh a kind owns, whatever tier it belongs to. Anything that hides,
+   disposes or reconfigures a species has to see all three tiers, or the
+   impostors keep drawing after the world they belong to is gone. */
+const kindMeshes=K=>K?[...(K.meshes||[]),...(K.lowMeshes||[]),...(K.shadowMeshes||[]),...(K.impMesh?[K.impMesh]:[])]:[];
 const NO_SELF_SHADOW_RECEIVE=new Set(['rock','sandrock','basalt','grass','tallgrass','flower','daisy','tulip','lavender','pine','oak','birch','palm','shrub','spruce','krumm','juniper','saguaro','barrel','prickly','acacia','joshua','agave','sage','deadtree','ashbush','treefern','fern']);
 const SHADOW_PROXY_STRIDE=8;
 
@@ -944,16 +1079,16 @@ function storedLodFullDistance(){try{const v=Number(localStorage.getItem(LOD_FUL
 function setLodFullDistance(v){lodFullDistance=cl(Math.round(Number(v)||750),250,2500);try{localStorage.setItem(LOD_FULL_KEY,String(lodFullDistance))}catch{}lodPending=true;lodSettled=false;lodMotionAt=-1e9}
 function buildLowDetail(fn){const saved={...DQ};Object.assign(DQ,{leaf:Math.max(.42,saved.leaf*.42),seg:Math.max(.55,saved.seg*.62),rock:Math.max(.5,saved.rock*.6)});try{return fn()}finally{Object.assign(DQ,saved)}}
 let detail=2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
-function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);const saved={};
-for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};[...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])].forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
+function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);if(typeof resetImpostors==='function')resetImpostors();const saved={};
+for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};kindMeshes(K).forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
 for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);
 buildEager();
 for(const k in saved){const K=KIND[k]||ensure(k);if(!K)continue;K.size=saved[k].size;K.vr=saved[k].vr;K.tint=saved[k].tint;K.list=saved[k].list;if(Math.max(saved[k].max||0,K.list.length)>K.max)growManualCapacity(k,Math.max(saved[k].max||0,K.list.length))}
-if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
+if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of kindMeshes(K))m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
 const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];window.__feFoliageLodDirty=true;if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}try{window.FELandscapeRealism&&window.FELandscapeRealism.refreshKind(k)}catch(e){}try{window.__feGrowSpecies&&window.__feGrowSpecies()}catch(e){}}return KIND[k]}
 const simple=(g,c)=>{const n=g.attributes.position.count,a=new Float32Array(n*3);for(let i=0;i<n;i++){a[i*3]=c[0];a[i*3+1]=c[1];a[i*3+2]=c[2]}g.setAttribute('color',new THREE.BufferAttribute(a,3));return g};
 let MODELS_ERR=null;
-function fallbackModels(){for(const k in KIND){[...KIND[k].meshes,...(KIND[k].lowMeshes||[]),...(KIND[k].shadowMeshes||[])].forEach(m=>scene.remove(m));delete KIND[k]}
+function fallbackModels(){for(const k in KIND){kindMeshes(KIND[k]).forEach(m=>scene.remove(m));delete KIND[k]}
 const sp=(r,y)=>simple(new THREE.SphereGeometry(r,8,6).translate(0,y,0),[1,1,1]);
 mk('grass',9000,[[simple(co(.3,1,4).translate(0,.5,0),[.3,.55,.15]),{ds:1}]],false);
 mk('flower',3000,[[simple(new THREE.SphereGeometry(.12,6,5).translate(0,.5,0),[.9,.4,.6]),{}]],false);
