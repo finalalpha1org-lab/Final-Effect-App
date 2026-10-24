@@ -24,6 +24,8 @@ is the contract below.
 | `animation` | `fe_anim_insert_keyframe`, `fe_anim_evaluate_channel`, `fe_anim_bake_samples` |
 | `ocean` | `fe_ocean_configure`, `fe_ocean_update`, `fe_ocean_resolution` |
 | `terrain` | `fe_terrain_erode_brush`, `fe_terrain_erode_hydraulic`, `fe_erosion_begin`, `fe_erosion_step`, `fe_erosion_dirty_ptr`, `fe_lod_visible`, `fe_lod_visible_index_ptr`, `fe_lod_visible_tier_ptr` |
+| `lod` | `fe_lod_tree_build`, `fe_lod_tree_cull`, `fe_lod_tree_index_ptr`, `fe_lod_tree_tier_ptr`, `fe_lod_tree_stats_ptr`, `fe_lod_tree_pool_ptr` |
+| `impostor` | `fe_impostor_build`, `fe_impostor_pixels_ptr`, `fe_impostor_bounds_ptr`, `fe_impostor_column` |
 | `surface` | `fe_surface_pbr`, `fe_surface_detail`, `fe_water_optical` |
 | `flora` | `fe_flora_tree`, `fe_flora_rock`, `fe_flora_card_pos_ptr`, `fe_flora_card_idx_ptr`, `fe_flora_part_ptr`, `fe_flora_leaf_ptr`, `fe_flora_sway_ptr`, `fe_flora_phase_ptr`, `fe_flora_lsystem`, `fe_flora_lsystem_load`, `fe_flora_lsystem_run`, `fe_flora_lsystem_reset`, `fe_flora_lsystem_plant`, `fe_flora_set_shape`, `fe_build`, `fe_build_kind_count` |
 | `climate` | `fe_climate_at`, `fe_climate_weather`, `fe_climate_biome`, `fe_climate_biome_grid` |
@@ -31,7 +33,7 @@ is the contract below.
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1632395` bytes, ABI v1, **363 exports**; every group above
+The shipped build is `1681654` bytes, ABI v1, **381 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 ## When a row is red
@@ -51,7 +53,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1632395 bytes, ABI v1, 363 exports)`.
+that passes `Validated fe_core_engine.wasm (1681654 bytes, ABI v1, 381 exports)`.
 
 ## Verification
 
