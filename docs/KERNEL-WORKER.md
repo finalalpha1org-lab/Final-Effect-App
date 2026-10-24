@@ -54,11 +54,16 @@ and the test harness are the hard parts, and they exist now.
 ## Honest limits
 
 - **Two instances, two memories.** Each instance reserves the module's static
-  memory (currently ≈169 MiB of zeroed BSS — the ocean fields, the edit-mesh
-  undo pool, the terrain grid and the 24 MiB scratch arena). Browsers commit
-  zero pages lazily, but the reservation is real and a low-memory device can
-  refuse the second instance; the channel then reports `inline` and the app
-  keeps working. Shrinking that footprint is a separate, worthwhile job.
+  memory, which is now **86.6 MiB** — down from 169.4 — and no longer carries
+  the buffers a subsystem only needs once it is opened: the path tracer's
+  targets (49 MiB), the surface-reconstruction grid (14.6 MiB), the smoke
+  solver (9.5 MiB), the ocean FFT cascades (10.8 MiB), the Edit Mode undo pool
+  (6 MiB) and the surface detail map (4 MiB) all come from the lazily grown
+  heap described in `docs/ENGINE-ARTIFACT.md`. A worker that only bakes
+  impostor atlases never grows past boot, and a low-memory device that still
+  refuses the second instance gets `inline` — the app keeps working, slower.
+  What is left in BSS is what both studios really use: the terrain grid
+  (≈22 MiB) and the JavaScript marshalling arena (24 MiB).
 - **No shared memory, no threads inside C++.** This is message passing between
   two single-threaded instances, not `SharedArrayBuffer` + wasm threads, so it
   needs no cross-origin isolation headers and works on the deployed origin

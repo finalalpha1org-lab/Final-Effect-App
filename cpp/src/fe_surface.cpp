@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_math.hpp"
 
 /* =========================================================================
@@ -99,8 +100,23 @@ enum DetailKind {
 };
 
 constexpr int kMaxDetail = 512;
-static float gDetail[kMaxDetail * kMaxDetail * 4];
+/* Four megabytes of normal/roughness texels, produced on demand for the size
+   the caller asked for. Only the landscaping studio's surface detail map needs
+   it, so it is taken from the lazy heap instead of being reserved by every
+   session. */
+static float* gDetail = nullptr;
+static uint32_t gDetailCap = 0;
 static int gDetailW = 0, gDetailH = 0;
+
+static bool ensure_detail(uint32_t texels) {
+  if (gDetail != nullptr && gDetailCap >= texels) return true;
+  gDetail = reinterpret_cast<float*>(fe::heap::alloc(texels * 4u * 4u, 16));
+  if (gDetail == nullptr) return false;
+  gDetailCap = texels;
+  gDetailW = 0;
+  gDetailH = 0;
+  return true;
+}
 
 /* ------------------------------------------------------------------ */
 /* Periodic noise: every lattice frequency is an integer, so the tile   */
@@ -363,6 +379,7 @@ FE_EXPORT int32_t fe_surface_count(void) { return SURF_COUNT; }
  * ------------------------------------------------------------------------- */
 FE_EXPORT int32_t fe_surface_detail(int32_t kind, int32_t width, int32_t height, uint32_t seed, float strength) {
   if (width <= 0 || height <= 0 || width > kMaxDetail || height > kMaxDetail) return 0;
+  if (!ensure_detail(uint32_t(width) * uint32_t(height))) return -1;
   const int k = (kind < 0 || kind >= DET_COUNT) ? int(DET_TURF) : int(kind);
   const float s = clampf(strength <= 0.f ? 1.f : strength, 0.05f, 4.f);
   const float du = 1.f / float(width), dv = 1.f / float(height);

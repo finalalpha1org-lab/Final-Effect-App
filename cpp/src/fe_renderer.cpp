@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_math.hpp"
 
 namespace {
@@ -85,29 +86,59 @@ static CameraState  g_cam = {
 static uint32_t     g_fb_w = 0;
 static uint32_t     g_fb_h = 0;
 static uint32_t     g_accum_samples = 0;
-static float        g_accum_rgb[kMaxPathPixels * 3];
-static uint8_t      g_resolved_rgba[kMaxPathPixels * 4];
+
+/* ---- Render targets are allocated for the frame that was asked for --------
+ * These six buffers were 48.6 MB of BSS sized for the largest frame the tracer
+ * accepts, reserved by every instance of the artifact whether or not a still
+ * was ever rendered — and the kernel worker, which only bakes impostor atlases,
+ * paid the same 48.6 MB for a 64x128 image it never touches.
+ *
+ * They now come from the lazy heap, in one block, sized to width*height of the
+ * frame the caller actually asked for: a 1280x720 still needs 22 MiB instead
+ * of 48.6, and a session that never opens the renderer needs none of it. The
+ * block is only reallocated when a larger frame arrives, and the old one is
+ * left in place (this is a bump allocator) so that a pointer already handed to
+ * JavaScript never moves.
+ *
+ * Layout, in bytes per pixel: accum rgb 12, resolved rgba 4, samples 2, caps 2,
+ * depth 2, albedo 3 = 25. */
+static float*       g_accum_rgb = nullptr;
+static uint8_t*     g_resolved_rgba = nullptr;
+static uint16_t*    g_pixel_samples = nullptr;
+static uint16_t*    g_pixel_cap = nullptr;
+static uint16_t*    g_depth16 = nullptr;
+static uint8_t*     g_albedo8 = nullptr;
+static uint32_t     g_target_pixels = 0;
+constexpr uint32_t  kTargetBytesPerPixel = 25u;
+
+static bool ensure_render_targets(uint32_t pixels) {
+  if (g_accum_rgb != nullptr && g_target_pixels >= pixels) return true;
+  if (pixels == 0 || pixels > kMaxPathPixels) return false;
+  const uint64_t bytes = static_cast<uint64_t>(pixels) * kTargetBytesPerPixel + 64u;
+  uint8_t* base = reinterpret_cast<uint8_t*>(fe::heap::alloc(static_cast<uint32_t>(bytes), 16));
+  if (base == nullptr) return false;
+  g_accum_rgb      = reinterpret_cast<float*>(base);
+  g_resolved_rgba  = base + static_cast<uint64_t>(pixels) * 12u;
+  g_pixel_samples  = reinterpret_cast<uint16_t*>(base + static_cast<uint64_t>(pixels) * 16u);
+  g_pixel_cap      = reinterpret_cast<uint16_t*>(base + static_cast<uint64_t>(pixels) * 18u);
+  g_depth16        = reinterpret_cast<uint16_t*>(base + static_cast<uint64_t>(pixels) * 20u);
+  g_albedo8        = base + static_cast<uint64_t>(pixels) * 22u;
+  g_target_pixels  = pixels;
+  return true;
+}
 
 /* Per-pixel sample counts. A cube is mostly flat surfaces and sky: after two
    samples the sky has converged and every extra sample spent on it is waste
    that the picture never shows. These make the tracer spend its budget on the
-   pixels that are actually still moving — the shadows and the edges. */
-static uint16_t     g_pixel_samples[kMaxPathPixels];
-static uint16_t     g_pixel_cap[kMaxPathPixels];
+   pixels that are actually still moving — the shadows and the edges.
+   The distance and albedo passes live in the same block for the same reason:
+   the denoiser is told which luminance steps are geometry and which are
+   material, exactly as a production denoiser that is handed albedo and normal
+   passes. */
 
-/* Primary-hit distance, quantised to 16 bits over 0..64 m. The denoiser needs
-   it to tell a cube edge from noise on the same surface, and 3 MB of uint16 is
-   cheap next to a float buffer. 0xFFFF means "sky". */
-static uint16_t     g_depth16[kMaxPathPixels];
+/* Primary-hit distance, quantised to 16 bits over 0..64 m. 0xFFFF means "sky". */
 constexpr uint16_t  kDepthFar = 0xFFFFu;
 constexpr float     kDepthScale = 1023.0f;   /* 64 m / 0xFFFF-ish */
-
-/* Primary-hit albedo, 8 bits per channel. A colour-weighted filter cannot tell
-   a painted line from noise on its own — both are sharp luminance steps — so
-   the filter is told which steps are geometry and which are material. This is
-   the same trick production denoisers use when they are handed albedo and
-   normal passes; 5 MB buys the whole floor grid back. */
-static uint8_t      g_albedo8[kMaxPathPixels * 3];
 
 /* Lights that are actually on. Iterating four slots and skipping the empty
    ones is cheap per sample and was not cheap per bounce. */
@@ -867,6 +898,7 @@ FE_EXPORT uint32_t fe_render_get_triangle_count(void) {
 
 FE_EXPORT int32_t fe_render_init_framebuffer(uint32_t width, uint32_t height) {
   if (width == 0 || height == 0 || width * height > kMaxPathPixels) return -1;
+  if (!ensure_render_targets(width * height)) return -2;   /* the device refused the memory */
   g_fb_w = width;
   g_fb_h = height;
   fe_render_reset_accumulation();
@@ -880,6 +912,7 @@ FE_EXPORT int32_t fe_render_init_framebuffer(uint32_t width, uint32_t height) {
 
 FE_EXPORT void fe_render_reset_accumulation(void) {
   g_accum_samples = 0;
+  if (g_accum_rgb == nullptr) return;
   const uint32_t n = g_fb_w * g_fb_h * 3;
   for (uint32_t i = 0; i < n; ++i) g_accum_rgb[i] = 0.0f;
   const uint32_t pixels = g_fb_w * g_fb_h;
@@ -895,7 +928,7 @@ FE_EXPORT uint32_t fe_render_trace_samples(
   uint32_t tile_y_start,
   uint32_t tile_height
 ) {
-  if (g_fb_w == 0 || g_fb_h == 0 || sample_count == 0) return g_accum_samples;
+  if (g_fb_w == 0 || g_fb_h == 0 || sample_count == 0 || g_accum_rgb == nullptr) return g_accum_samples;
   const uint32_t bounces = max_bounces > 5 ? 5 : max_bounces;
   const uint32_t y0 = tile_y_start < g_fb_h ? tile_y_start : 0;
   const uint32_t y1 = (tile_height == 0 || y0 + tile_height > g_fb_h) ? g_fb_h : (y0 + tile_height);
@@ -1113,7 +1146,7 @@ FE_EXPORT void fe_render_denoise_config(float lum, float alb, float dep) {
 }
 
 FE_EXPORT uint32_t fe_render_denoise(uint32_t iterations, uint32_t strength) {
-  if (g_fb_w == 0 || g_fb_h == 0 || g_accum_samples == 0) return 0;
+  if (g_fb_w == 0 || g_fb_h == 0 || g_accum_samples == 0 || g_accum_rgb == nullptr) return 0;
   if (g_fb_w > kDenoiseMaxRow || iterations == 0) return 0;
   const uint32_t passes = iterations > 3 ? 3 : iterations;
   (void)strength;
@@ -1138,7 +1171,7 @@ FE_EXPORT uint32_t fe_render_denoise(uint32_t iterations, uint32_t strength) {
    Threshold is in linear light against the mean level, so it behaves the same
    in a bright sky and a dim corner. */
 FE_EXPORT uint32_t fe_render_update_convergence(float tolerance) {
-  if (g_fb_w == 0 || g_fb_h == 0) return 0;
+  if (g_fb_w == 0 || g_fb_h == 0 || g_accum_rgb == nullptr) return 0;
   const float tol = fe::clampf(tolerance, 0.0005f, 0.5f);
   uint32_t converged = 0;
 
@@ -1181,6 +1214,7 @@ FE_EXPORT uint32_t fe_render_update_convergence(float tolerance) {
    converged, and the render can stop before its sample target: there is
    nothing left for another pass to improve. */
 FE_EXPORT uint32_t fe_render_active_pixels(void) {
+  if (g_pixel_samples == nullptr) return 0;
   const uint32_t n = g_fb_w * g_fb_h;
   uint32_t active = 0;
   for (uint32_t i = 0; i < n; ++i) {
@@ -1190,7 +1224,7 @@ FE_EXPORT uint32_t fe_render_active_pixels(void) {
 }
 
 FE_EXPORT uint32_t fe_render_get_pixel_samples(uint32_t x, uint32_t y) {
-  if (x >= g_fb_w || y >= g_fb_h) return 0;
+  if (g_pixel_samples == nullptr || x >= g_fb_w || y >= g_fb_h) return 0;
   return g_pixel_samples[y * g_fb_w + x];
 }
 
@@ -1209,7 +1243,7 @@ FE_EXPORT uint32_t fe_render_resolve_rgba8(
   float chromatic_aberration,
   float film_grain
 ) {
-  if (g_fb_w == 0 || g_fb_h == 0) return 0;
+  if (g_fb_w == 0 || g_fb_h == 0 || g_accum_rgb == nullptr || g_resolved_rgba == nullptr) return 0;
 
   /* The accumulation buffer holds radiance means, so there is nothing to
      normalise here and the bloom threshold is a real luminance. */
@@ -1301,6 +1335,9 @@ FE_EXPORT int32_t fe_postprocess_rgba8(
   if (!rgba_pixels || width == 0 || height == 0) return -1;
   const uint32_t count = width * height;
   if (count > kMaxPathPixels) return -2;
+  /* Post-processing a frame this size needs the same working block the tracer
+     uses; it is allocated on the first still rather than at boot. */
+  if (!ensure_render_targets(count)) return -3;
 
   /* Convert sRGB8 -> linear float in g_accum_rgb */
   for (uint32_t i = 0; i < count; ++i) {

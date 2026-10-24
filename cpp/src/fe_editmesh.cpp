@@ -10,6 +10,7 @@
  * ========================================================================= */
 
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_editmesh_internal.hpp"
 
 namespace fe_edit {
@@ -71,8 +72,22 @@ constexpr uint32_t kNoFace = 0xFFFFFFFFu;
 
 uint32_t g_hash[kHashSize];
 
-uint8_t g_pool[kMaxUndoBytes];
+/* The undo pool. Six megabytes of snapshots that only exist once the studio is
+   in Edit Mode, so it is taken from the lazy heap on the first snapshot rather
+   than reserved by every session — and by the kernel worker, which never edits
+   a mesh. A session that cannot get the block simply records no undo steps:
+   fe_edit_undo then reports that there is nothing to undo, which is the
+   degraded behaviour the caller already handles. */
+uint8_t* g_pool = nullptr;
 uint32_t g_poolUsed = 0;
+
+static bool ensure_undo_pool(void) {
+  if (g_pool != nullptr) return true;
+  g_pool = reinterpret_cast<uint8_t*>(fe::heap::alloc(kMaxUndoBytes, 16));
+  if (g_pool == nullptr) return false;
+  g_poolUsed = 0;
+  return true;
+}
 
 struct Snapshot {
   uint32_t offset;
@@ -263,6 +278,7 @@ void compactPool(uint32_t needed) {
 }
 
 bool appendSnapshot(Snapshot* list, uint32_t& count, uint32_t size) {
+  if (!ensure_undo_pool()) return false;
   if (count >= kUndoSteps) {
     /* Drop the oldest entry; its bytes stay as dead space until compaction. */
     for (uint32_t i = 1; i < count; ++i) list[i - 1] = list[i];

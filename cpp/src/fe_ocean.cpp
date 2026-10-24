@@ -1,4 +1,5 @@
 #include "../include/fe_abi.h"
+#include "../include/fe_heap.hpp"
 #include "../include/fe_math.hpp"
 
 /* Ocean surface solver: Tessendorf spectrum build + inverse FFT producing the
@@ -59,17 +60,72 @@ double dLog(double x) {
   return 2.0 * sum + double(e) * 0.69314718055994530942;
 }
 
-float oceanH0R[OCEAN_CASCADES][OCEAN_MAX_CELLS];
-float oceanH0I[OCEAN_CASCADES][OCEAN_MAX_CELLS];
-float oceanOmega[OCEAN_CASCADES][OCEAN_MAX_CELLS];
-uint32_t oceanOpposite[OCEAN_CASCADES][OCEAN_MAX_CELLS];
-double oceanHr[OCEAN_MAX_CELLS], oceanHi[OCEAN_MAX_CELLS];
-double oceanXr[OCEAN_MAX_CELLS], oceanXi[OCEAN_MAX_CELLS];
-double oceanZr[OCEAN_MAX_CELLS], oceanZi[OCEAN_MAX_CELLS];
-float oceanData[OCEAN_CASCADES][OCEAN_MAX_CELLS * 4];
-float oceanDirX[OCEAN_MAX_CELLS], oceanDirZ[OCEAN_MAX_CELLS];
-float oceanFoam[OCEAN_CASCADES][OCEAN_MAX_CELLS];
-uint8_t oceanRgba[OCEAN_MAX_CELLS * 4];
+/* The three FFT cascades are 10.8 MB over the maximum 256x256 resolution, and
+   only the landscaping studio's water surface ever reads them. They come from
+   the lazy heap and are carved on the first fe_ocean_configure, so the 3D
+   workspace — and the kernel worker — do not reserve them. */
+float (*oceanH0R)[OCEAN_MAX_CELLS] = nullptr;
+float (*oceanH0I)[OCEAN_MAX_CELLS] = nullptr;
+float (*oceanOmega)[OCEAN_MAX_CELLS] = nullptr;
+uint32_t (*oceanOpposite)[OCEAN_MAX_CELLS] = nullptr;
+double* oceanHr = nullptr;
+double* oceanHi = nullptr;
+double* oceanXr = nullptr;
+double* oceanXi = nullptr;
+double* oceanZr = nullptr;
+double* oceanZi = nullptr;
+float (*oceanData)[OCEAN_MAX_CELLS * 4] = nullptr;
+float* oceanDirX = nullptr;
+float* oceanDirZ = nullptr;
+float (*oceanFoam)[OCEAN_MAX_CELLS] = nullptr;
+uint8_t* oceanRgba = nullptr;
+float* oceanJ = nullptr;
+
+constexpr uint32_t kOceanFieldFloatBytes = OCEAN_MAX_CELLS * 4u;
+constexpr uint32_t kOceanFieldDoubleBytes = OCEAN_MAX_CELLS * 8u;
+constexpr uint32_t kOceanBlockBytes =
+  OCEAN_CASCADES * kOceanFieldFloatBytes * 3u      /* H0 real, H0 imag, omega */
+  + OCEAN_CASCADES * OCEAN_MAX_CELLS * 4u          /* opposite corners */
+  + kOceanFieldDoubleBytes * 6u                    /* h, x, z re/im work pairs */
+  + OCEAN_CASCADES * kOceanFieldFloatBytes * 4u    /* per-cascade data quad */
+  + kOceanFieldFloatBytes * 2u                     /* wind direction */
+  + OCEAN_CASCADES * kOceanFieldFloatBytes        /* foam */
+  + OCEAN_MAX_CELLS * 4u                           /* upload pixels */
+  + kOceanFieldFloatBytes                          /* Jacobian test field */
+  + 512u;
+
+uint8_t* g_ocean_block = nullptr;
+uint32_t g_ocean_cursor = 0;
+
+inline void* oceanCarve(uint32_t bytes) {
+  uint8_t* p = g_ocean_block + g_ocean_cursor;
+  g_ocean_cursor = (g_ocean_cursor + bytes + 15u) & ~15u;
+  return p;
+}
+
+bool ensure_ocean_buffers(void) {
+  if (g_ocean_block != nullptr) return true;
+  g_ocean_block = reinterpret_cast<uint8_t*>(fe::heap::alloc(kOceanBlockBytes, 16));
+  if (g_ocean_block == nullptr) return false;
+  g_ocean_cursor = 0;
+  oceanH0R = static_cast<float (*)[OCEAN_MAX_CELLS]>(oceanCarve(OCEAN_CASCADES * kOceanFieldFloatBytes));
+  oceanH0I = static_cast<float (*)[OCEAN_MAX_CELLS]>(oceanCarve(OCEAN_CASCADES * kOceanFieldFloatBytes));
+  oceanOmega = static_cast<float (*)[OCEAN_MAX_CELLS]>(oceanCarve(OCEAN_CASCADES * kOceanFieldFloatBytes));
+  oceanOpposite = static_cast<uint32_t (*)[OCEAN_MAX_CELLS]>(oceanCarve(OCEAN_CASCADES * OCEAN_MAX_CELLS * 4u));
+  oceanHr = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanHi = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanXr = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanXi = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanZr = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanZi = static_cast<double*>(oceanCarve(kOceanFieldDoubleBytes));
+  oceanData = static_cast<float (*)[OCEAN_MAX_CELLS * 4]>(oceanCarve(OCEAN_CASCADES * kOceanFieldFloatBytes * 4u));
+  oceanDirX = static_cast<float*>(oceanCarve(kOceanFieldFloatBytes));
+  oceanDirZ = static_cast<float*>(oceanCarve(kOceanFieldFloatBytes));
+  oceanFoam = static_cast<float (*)[OCEAN_MAX_CELLS]>(oceanCarve(OCEAN_CASCADES * kOceanFieldFloatBytes));
+  oceanRgba = static_cast<uint8_t*>(oceanCarve(OCEAN_MAX_CELLS * 4u));
+  oceanJ = static_cast<float*>(oceanCarve(kOceanFieldFloatBytes));
+  return true;
+}
 
 uint32_t oceanResolution = 0, oceanCellCount = 0;
 float oceanLengths[OCEAN_CASCADES] = {256.f, 1024.f, 4096.f};
@@ -194,7 +250,6 @@ void buildSpectrum(uint32_t cascade) {
    whitecap coverage stays believable across amplitudes instead of vanishing or
    flooding the surface when the gain changes. Choppiness and wind scale both
    the coverage and the strength. */
-float oceanJ[OCEAN_MAX_CELLS];
 void computeFoam(uint32_t cascade, uint32_t n, float amplitude, float choppiness) {
   const float* d = oceanData[cascade];
   float* out = oceanFoam[cascade];
@@ -247,6 +302,7 @@ int32_t fe_ocean_configure(uint32_t resolution, float len0, float len1, float le
     if (!finite(lengths[i]) || lengths[i] < 1.f || lengths[i] > 100000.f) return -1;
   if (!finite(wind_speed) || wind_speed < 0.f || wind_speed > 80.f) return -1;
   if (!finite(wind_dir_deg) || wind_dir_deg < -720.f || wind_dir_deg > 720.f) return -1;
+  if (!ensure_ocean_buffers()) return -2;   /* the device refused the memory */
   oceanResolution = resolution;
   oceanCellCount = resolution * resolution;
   for (uint32_t i = 0; i < OCEAN_CASCADES; i++) oceanLengths[i] = lengths[i];

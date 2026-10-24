@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(FE_CORE_SOURCES
   cpp/src/fe_wasm_exports.cpp
+  cpp/src/fe_heap.cpp
   cpp/src/fe_animation.cpp
   cpp/src/fe_renderer.cpp
   cpp/src/fe_sculpt_touch.cpp

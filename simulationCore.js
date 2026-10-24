@@ -158,25 +158,19 @@
   }
 
   class WasmArena {
+    /* Buffers for the simulation core are taken from the kernel's own heap.
+     * This class used to be a second bump allocator that started at the end of
+     * linear memory and grew it itself; now that kernels allocate lazily from
+     * __heap_base, two allocators growing the same region would hand out the
+     * same address twice. fe_heap_alloc is the single owner. */
     constructor(exports) {
       this.memory = exports.memory;
-      const heap = exports.__heap_base;
-      const start = Number(heap?.value ?? heap ?? 65536);
-      /* Leave 16 MB headroom if sharing fe_core_engine.wasm scratch arena */
-      const minStart = exports.fe_core_abi_version ? Math.max(start + 256, this.memory.buffer.byteLength) : (start + 256);
-      this.next = align(minStart, 16);
+      this.allocRaw = (bytes, alignment) => exports.fe_heap_alloc(bytes, alignment);
     }
 
     alloc(byteLength, alignment = 4) {
-      const pointer = align(this.next, alignment);
-      const end = pointer + Math.max(byteLength, alignment);
-      if (!Number.isSafeInteger(end)) throw new Error('WASM memory allocation overflow');
-      const currentBytes = this.memory.buffer.byteLength;
-      if (end > currentBytes) {
-        const pages = Math.ceil((end - currentBytes) / 65536);
-        this.memory.grow(pages);
-      }
-      this.next = end;
+      const pointer = this.allocRaw(Math.max(1, byteLength), alignment);
+      if (!pointer) throw new Error('WASM memory allocation failed');
       return pointer;
     }
 
@@ -751,7 +745,7 @@
       const { instance } = await WebAssembly.instantiate(bytes, {});
       const exports = instance.exports;
       if (typeof exports.fe_core_abi_version === 'function') exports.fe_core_abi_version();
-      const required = ['memory', '__heap_base', 'sim_solver_abi_version', 'sim_solver_deformable_step', 'sim_solver_sph_step', 'sim_solver_buoyant_tracer_step'];
+      const required = ['memory', '__heap_base', 'fe_heap_alloc', 'sim_solver_abi_version', 'sim_solver_deformable_step', 'sim_solver_sph_step', 'sim_solver_buoyant_tracer_step'];
       for (const name of required) if (!exports[name]) throw new Error(`WASM solver export missing: ${name}`);
       const abiVersion = exports.sim_solver_abi_version();
       if (![1, 2, 3].includes(abiVersion)) throw new Error(`Unsupported solver ABI version ${abiVersion}`);

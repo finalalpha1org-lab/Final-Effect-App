@@ -33,8 +33,45 @@ is the contract below.
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1681654` bytes, ABI v1, **381 exports**; every group above
+The shipped build is `1691659` bytes, ABI v1, **384 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
+
+## Memory: you pay for the studios you open
+
+The artifact boots in **86.6 MiB** of linear memory. It used to boot in 169.4,
+because every kernel kept its working set in BSS whether or not anything used
+it — and the kernel worker, whose only job is baking a 64x128 impostor atlas,
+reserved a second copy of all of it.
+
+Those buffers now come from `fe::heap` (`cpp/include/fe_heap.hpp`,
+`cpp/src/fe_heap.cpp`): a bump allocator that starts at `__heap_base` and grows
+linear memory a page at a time with `memory.grow`. WebAssembly memory is zero
+filled, so an allocation never has to be cleared, and a pointer never moves.
+
+| Buffer | Was (BSS) | Now |
+| --- | --- | --- |
+| Path tracer targets (1280x720) | 48.65 MiB at every boot | 21.97 MiB on the first still |
+| Surface-reconstruction grid (97³ × 4) | 14.6 MiB | on the first liquid mesh |
+| Smoke solver (40³ lattice) | 9.5 MiB | on `fe_vol_init` |
+| Edit Mode undo pool | 6.0 MiB | on the first Edit Mode snapshot |
+| Surface detail map (512²) | 4.0 MiB | on the requested size |
+| Ocean FFT cascades (3 × 256²) | 10.8 MiB | on `fe_ocean_configure` |
+| **Boot** | **169.4 MiB** | **86.6 MiB** |
+
+`fe_heap_lazy_used()` reports what has been handed out and
+`fe_heap_lazy_capacity()` the room left before the next grow, so the working set
+is a measurement rather than a claim. `fe_heap_alloc` is also the single owner
+of that region: the simulation core's JavaScript arena used to be a second bump
+allocator starting at the end of memory, which after this change would have
+handed out the same address twice, so it now asks the kernel.
+
+What is deliberately still static is the working set both studios share: the
+terrain grid is 22 MiB of it and the JavaScript marshalling arena 24 MiB — the
+arena is a ring that callers keep long-lived pointers into, so splitting it or
+regrowing it is a redesign, not a one-line change, and it is the next largest
+block after the terrain. `tests/engine-memory.test.mjs` pins the boot
+reservation at under 100 MiB and asserts that a kernel nobody opened has
+allocated nothing.
 
 ## When a row is red
 
@@ -53,7 +90,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1681654 bytes, ABI v1, 381 exports)`.
+that passes `Validated fe_core_engine.wasm (1691659 bytes, ABI v1, 384 exports)`.
 
 ## Verification
 
@@ -64,6 +101,7 @@ node --test tests/landscape-flora.test.mjs        # 24 tests
 node --test tests/buildings.test.mjs               # 7 tests
 node --test tests/landscape-climate.test.mjs      # 15 tests
 node --test tests/landscape-settings-persistence.test.mjs  # 7 tests
-npm test                                          # 505 tests
+node --test tests/engine-memory.test.mjs           # 7 tests
+npm test                                          # 522 tests
 npm run build                                     # revalidates + copies the artifact
 ```

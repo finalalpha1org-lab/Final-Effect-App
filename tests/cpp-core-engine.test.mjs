@@ -40,6 +40,7 @@ test('native C++20 unit test suite compiles and passes under g++ when present', 
   execFileSync('g++', [
     '-std=c++20', '-O2', '-Wall', '-Wextra', '-Werror',
     'cpp/src/fe_wasm_exports.cpp',
+    'cpp/src/fe_heap.cpp',
     'cpp/src/fe_animation.cpp',
     'cpp/src/fe_renderer.cpp',
     'cpp/src/fe_sculpt_touch.cpp',
