@@ -407,34 +407,27 @@
    * costs a few milliseconds and a species only ever needs one. */
   const IMPOSTOR_VIEWS = 8;
   const impostorCache = new Map();
+  const impostorPending = new Map();
   function seedFor(kind) {
     const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
     if (id < 0) return undefined;
     return state.seeds[KINDS[id]];
   }
-  function impostor(kind, seed, detail) {
-    const c = core();
-    if (!c || typeof c.impostor !== 'function') return null;
-    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
-    if (id < 0 || id >= KINDS.length) return null;
+  /* Which plant, at which detail: the key that makes an atlas reusable. */
+  function impostorKey(id, seed, level) { return id + ':' + seed + ':' + level; }
+  function impostorSeed(id, seed) {
     /* Prefer the seed the near mesh was grown from; without one the species
        would pop into a different silhouette at the tier boundary. */
-    const fallback = seedFor(id);
-    const s = (seed === undefined || seed === null)
-      ? (fallback === undefined ? 7331 + id * 977 : fallback)
-      : (seed >>> 0);
-    const level = detailLevel(detail);
-    const key = id + ':' + s + ':' + level;
-    const hit = impostorCache.get(key);
-    if (hit) return hit;
-    let baked;
-    try { baked = c.impostor(id, s, level, IMPOSTOR_VIEWS); }
-    catch (error) { state.lastError = error && error.message; return null; }
-    if (!baked || !baked.pixels || !baked.views) return null;
+    if (seed !== undefined && seed !== null) return seed >>> 0;
+    const grown = seedFor(id);
+    return grown === undefined ? 7331 + id * 977 : grown;
+  }
+
+  /* The texture half: pure main-thread work, because a DataTexture cannot be
+     created anywhere else. Everything expensive has already happened. */
+  function atlasFromBake(baked, id) {
     const THREE = three();
-    if (!THREE) return null;
-    /* The baker prints linear-ish colour; mark the texture sRGB so it lands in
-       the same space as the materials it replaces. */
+    if (!THREE || !baked || !baked.pixels || !baked.views) return null;
     const tex = new THREE.DataTexture(baked.pixels, baked.width * baked.views, baked.height,
       THREE.RGBAFormat, THREE.UnsignedByteType);
     /* A distant plant is a few texels tall, so the atlas needs a mip chain or
@@ -449,7 +442,7 @@
        again on the way in. */
     if (THREE.LinearEncoding !== undefined) tex.encoding = THREE.LinearEncoding;
     tex.name = KINDS[id] + ' impostor';
-    const out = {
+    return {
       kind: KINDS[id],
       texture: tex,
       views: baked.views,
@@ -460,12 +453,83 @@
       coverage: baked.coverage,
       cropU: baked.cropU,
       cropV: baked.cropV,
-      offU: baked.offU
+      offU: baked.offU,
+      offThread: !!baked.offThread
     };
-    impostorCache.set(key, out);
+  }
+
+  /* The synchronous path. Used when there is no worker, and as the last resort
+     when one exists but will not run. */
+  function impostor(kind, seed, detail) {
+    const c = core();
+    if (!c || typeof c.impostor !== 'function') return null;
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return null;
+    const s = impostorSeed(id, seed);
+    const level = detailLevel(detail);
+    const key = impostorKey(id, s, level);
+    const hit = impostorCache.get(key);
+    if (hit) return hit;
+    let baked;
+    try { baked = c.impostor(id, s, level, IMPOSTOR_VIEWS); }
+    catch (error) { state.lastError = error && error.message; return null; }
+    const out = atlasFromBake(baked, id);
+    if (out) impostorCache.set(key, out);
     return out;
   }
+
+  /* ---- off-thread baking ------------------------------------------------ *
+   * One species' atlas is 20–36 ms of rasterising on this machine, which is a
+   * dropped frame on a phone. It is pure function-of-inputs work, so it runs on
+   * the kernel worker when there is one; the texture is still created here.
+   * Callers get a promise either way, and a species already cached or already
+   * baking resolves immediately to the same object. */
+  let kernelChannel = null;
+  function kernel() {
+    if (kernelChannel) return kernelChannel;
+    const api = root.FEKernelWorker;
+    if (!api || typeof api.create !== 'function') return null;
+    kernelChannel = api.create({ api: core() || root.FELandscapeCore });
+    return kernelChannel;
+  }
+  function impostorAsync(kind, seed, detail) {
+    const c = core();
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return Promise.resolve(null);
+    const s = impostorSeed(id, seed);
+    const level = detailLevel(detail);
+    const key = impostorKey(id, s, level);
+    const hit = impostorCache.get(key);
+    if (hit) return Promise.resolve(hit);
+    const running = impostorPending.get(key);
+    if (running) return running;
+    const channel = c ? kernel() : null;
+    if (!channel) return Promise.resolve(impostor(kind, s, level));
+    const task = channel.run('impostor', { kind: id, seed: s, detail: level, views: IMPOSTOR_VIEWS })
+      .then((baked) => {
+        impostorPending.delete(key);
+        if (!baked) return null;
+        baked.offThread = channel.mode() === 'worker';
+        const out = atlasFromBake(baked, id);
+        /* The detail preset can change while a bake is in flight; a stale atlas
+           must not be cached under the new key. */
+        if (!out) return null;
+        impostorCache.set(key, out);
+        return out;
+      })
+      .catch((error) => {
+        impostorPending.delete(key);
+        state.lastError = (error && error.message) || String(error);
+        /* A worker that accepts jobs and then fails is worse than none: fall
+           back to doing it here, once, and let the cache keep the result. */
+        const out = impostor(kind, s, level);
+        return out;
+      });
+    impostorPending.set(key, task);
+    return task;
+  }
   function impostorCount() { return impostorCache.size; }
+  function impostorBusy() { return impostorPending.size; }
   /* The detail preset changed: the near meshes are regrown, so the atlases
      baked from the old ones have to go with them. */
   function impostorReset() {
@@ -473,6 +537,7 @@
       try { entry.texture.dispose(); } catch (error) { state.lastError = error && error.message; }
     }
     impostorCache.clear();
+    impostorPending.clear();
   }
 
   function counts() {
@@ -501,7 +566,9 @@
     plantParts,
     grownAsset,
     impostor,
+    impostorAsync,
     impostorCount,
+    impostorBusy,
     impostorReset,
     seedFor,
     IMPOSTOR_VIEWS,

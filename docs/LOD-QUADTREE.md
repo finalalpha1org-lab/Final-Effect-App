@@ -160,10 +160,12 @@ atlases baked from the old meshes are dropped and rebaked on demand.
   practice rather than by construction.
 * **Eight azimuths, no elevation.** A camera looking straight down at a plant
   still samples a side view.
-* **Baking is a one-time hitch.** Eight supersampled views of a 9 000-vertex
-  oak cost about 50 ms (a conifer is a few milliseconds). It happens once per
-  species, on a settled camera, one species per frame, never mid-gesture — but
-  it is a dropped frame, not free. The atlas is then cached for the session.
+* **Baking used to be a one-time hitch.** Eight supersampled views of a
+  9 000-vertex oak cost 26–36 ms (a conifer is a few). It now runs on the kernel
+  worker with at most two bakes in flight, so it costs the main thread nothing;
+  see `docs/KERNEL-WORKER.md`. On a device where the worker cannot start it
+  still runs on this thread, one atlas per settle, and is then cached for the
+  session.
 * **No real-device measurement.** The timings above are Node numbers on a
   desktop CPU for the kernel alone. Nothing here is a phone FPS claim, and the
   Studio remains a **Very Early Demo**.

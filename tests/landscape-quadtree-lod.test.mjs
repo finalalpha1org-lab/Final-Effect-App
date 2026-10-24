@@ -283,7 +283,9 @@ test('the studio draws one billboard per plant, sized from the atlas, and never 
   assert.match(lodSource, /function setImpostors\(on\)\{/, 'and turning it off restores the low-detail mesh');
   assert.match(lodSource, /bakeQueuedImpostor\(\);/, 'the settle sweep bakes one atlas per frame');
   /* Atlases are optional: an artifact without the baker keeps the low mesh. */
-  assert.match(floraSource, /if \(!baked \|\| !baked\.pixels \|\| !baked\.views\) return null;/);
+  /* Atlases are optional: an artifact without the baker keeps the low mesh. */
+  assert.match(floraSource, /if \(!THREE \|\| !baked \|\| !baked\.pixels \|\| !baked\.views\) return null;/,
+    'a bake with no pixels produces no atlas, and the caller keeps its low mesh');
   /* The impostor must be included wherever a species' meshes are enumerated,
      or it keeps drawing after the world it belongs to is hidden. */
   const t1 = readFileSync('terrain-main-01.js', 'utf8');

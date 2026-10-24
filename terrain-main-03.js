@@ -405,6 +405,26 @@ function impostorMaterial(tex,views,crop,off,ref){
  };
  return mat;
 }
+/* Build the billboard once the atlas exists. Split from impostorMeshFor so the
+   async path can hand in pixels that arrived from the worker. */
+function impostorMeshFromAtlas(k,atlas){
+ const K=KIND[k];
+ if(!K||K.impMesh)return K?.impMesh||null;
+ if(!IMPOSTOR_KINDS.has(k)||!atlas||!atlas.texture)return null;
+ const quad=new THREE.PlaneGeometry(1,1,1,1);
+ const crop=atlas.cropU&&atlas.cropV?{x:atlas.cropU,y:atlas.cropV}:{x:1,y:1};
+ const off={x:atlas.offU||0,y:0};
+ const ref=sceneLightMix(new THREE.Color());
+ const m=new THREE.InstancedMesh(quad,impostorMaterial(atlas.texture,atlas.views,crop,off,ref),Math.max(1,K.max));
+ m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ m.instanceColor=new THREE.BufferAttribute(new Float32Array(Math.max(1,K.max)*3).fill(1),3);
+ m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+ m.count=0;m.frustumCulled=false;m.castShadow=false;m.receiveShadow=false;m.layers.mask=K.meshes[0]?.layers?.mask??1;
+ m.name=k+' impostor';m.userData={kind:k,impostor:true,quadW:atlas.quadW,quadH:atlas.quadH,views:atlas.views,offThread:!!atlas.offThread};
+ scene.add(m);K.impMesh=m;K.impAtlas=atlas;
+ return m;
+}
+/* The synchronous route, for an already-cached atlas. */
 function impostorMeshFor(k){
  const K=KIND[k];
  if(K.impMesh)return K.impMesh;
@@ -414,36 +434,38 @@ function impostorMeshFor(k){
  /* Same species, same seed, same detail as the mesh the studio is drawing —
    the atlas is a render of that plant, not of a different one like it. */
  const seed=typeof f.seedFor==='function'?f.seedFor(k):undefined;
- const atlas=f.impostor(k,seed,detail);
- if(!atlas||!atlas.texture)return null;
- const quad=new THREE.PlaneGeometry(1,1,1,1);
- quad.translate(0,0,0);
- const crop=atlas.cropU&&atlas.cropV?{x:atlas.cropU,y:atlas.cropV}:{x:1,y:1};
- const off={x:atlas.offU||0,y:0};
- const ref=sceneLightMix(new THREE.Color());
- const m=new THREE.InstancedMesh(quad,impostorMaterial(atlas.texture,atlas.views,crop,off,ref),Math.max(1,K.max));
- m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
- m.instanceColor=new THREE.BufferAttribute(new Float32Array(Math.max(1,K.max)*3).fill(1),3);
- m.instanceColor.setUsage(THREE.DynamicDrawUsage);
- m.count=0;m.frustumCulled=false;m.castShadow=false;m.receiveShadow=false;m.layers.mask=K.meshes[0]?.layers?.mask??1;
- m.name=k+' impostor';m.userData={kind:k,impostor:true,quadW:atlas.quadW,quadH:atlas.quadH,views:atlas.views};
- scene.add(m);K.impMesh=m;K.impAtlas=atlas;
- return m;
+ return impostorMeshFromAtlas(k,f.impostor(k,seed,detail));
 }
-/* Baking costs a few milliseconds, so it happens on the settle sweep, one
-   species per frame, and only for a species that actually has far instances. */
-let impostorBakeBusy=false;
+/* How many atlases may be baking at once. The worker runs them off the main
+   thread, so the only limit is memory: two in flight keeps the queue moving
+   without holding several instances' worth of species data at the same time. */
+const IMPOSTOR_INFLIGHT=2;
+let impostorBakes=0;
+/* Baking is 20–36 ms of rasterising per species, so it never happens in a
+   frame: it goes to the kernel worker, at most IMPOSTOR_INFLIGHT at a time, and
+   only for a species that actually has far instances. When the worker answers,
+   that species is re-routed immediately instead of waiting for the camera. */
 function bakeQueuedImpostor(){
- if(!impostorWanted.size)return;
- for(const k of impostorWanted){
-  impostorWanted.delete(k);
-  const K=KIND[k];
-  if(!K||K.impMesh||!K.list.length)continue;
-  /* The sweep may already have passed this species, so route it now rather
-     than leaving its far band on the low mesh until the camera moves. */
-  if(impostorMeshFor(k))sync(k);
-  return;
- }
+ if(!impostorWanted.size||impostorBakes>=IMPOSTOR_INFLIGHT)return;
+ const f=window.FELandscapeFlora;
+ const async=!!(f&&typeof f.impostorAsync==='function');
+ const k=impostorWanted.values().next().value;
+ if(k===undefined)return;
+ impostorWanted.delete(k);
+ const K=KIND[k];
+ if(!K||K.impMesh||!K.list.length)return;
+ if(!async){if(impostorMeshFor(k))sync(k);return}
+ const seed=typeof f.seedFor==='function'?f.seedFor(k):undefined;
+ impostorBakes++;
+ f.impostorAsync(k,seed,detail).then(atlas=>{
+  impostorBakes--;
+  if(!atlas){/* Nothing to draw with: the far band keeps the low mesh. */return}
+  if(!KIND[k])return;
+  if(impostorMeshFromAtlas(k,atlas))sync(k);
+ }).catch(error=>{
+  impostorBakes--;
+  if(typeof showErr==='function')showErr('Foliage impostor: '+(error&&error.message||error));
+ });
 }
 /* A new detail level grows every plant again, so the atlases that were baked
    from the old meshes are stale. The pixels are dropped, not just the meshes:

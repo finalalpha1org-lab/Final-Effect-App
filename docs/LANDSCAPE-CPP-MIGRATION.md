@@ -109,6 +109,11 @@ Beyond the far tier, species with a baked atlas are drawn as a single
 camera-facing quad sampling eight baked azimuths (`fe_impostor_build`). Both are
 described in `docs/LOD-QUADTREE.md`, including what they do not do.
 
+The atlas bake is also the first payload of the off-thread kernel channel
+(`kernel-worker.js`): a second instance of the same artifact runs the bake in a
+Worker and transfers the pixels back, so a 20–36 ms rasterise never lands in a
+frame. `docs/KERNEL-WORKER.md` has the numbers and the fallback rules.
+
 ## Strata terracing and C++ scatter candidates
 
 `fe_terrain_apply_strata` (previously declared in `fe_abi.h` but never
