@@ -530,17 +530,18 @@ function sync(k,allInstances=false){
   const soa=scatter.input;
   lay=scatter.aux;
   K._bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;
+  /* The root sink needs the height grid; one upload per settle covers every
+     instance, and ground cover (no root span) skips it entirely. */
+  if(ROOT_SPAN[k])core.instancingTerrain(H,N,S);
   for(let i=0;i<n;i++){
    const o=K.list[i],h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
-   let rootSink=0;const span=(ROOT_SPAN[k]||0)*s;
-   if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}
-   const bw=BLD[k]?K.size*o.a:s*o.a,b=i*11;
-   soa[b]=o.x;soa[b+1]=o.y-(RK[k] ? .12*s : 0)-rootSink;soa[b+2]=o.z;
+   const bw=BLD[k]?K.size*o.a:s*o.a,b=i*12;
+   soa[b]=o.x;soa[b+1]=o.y;soa[b+2]=o.z;
    soa[b+3]=bw;soa[b+4]=s;soa[b+5]=o.r;
    if(BLD[k]){soa[b+6]=0;soa[b+7]=1;soa[b+8]=0}
    else{const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1,g=groundNormal(o.x,o.z,align);soa[b+6]=g.x;soa[b+7]=g.y;soa[b+8]=g.z}
-   soa[b+9]=h2;soa[b+10]=h3;
-   const l=i*5;lay[l]=s;lay[l+1]=bw;lay[l+2]=rootSink;lay[l+3]=h2;lay[l+4]=h3;
+   soa[b+9]=h2;soa[b+10]=h3;soa[b+11]=(ROOT_SPAN[k]||0)*s;
+   const l=i*5;lay[l]=s;lay[l+1]=bw;lay[l+3]=h2;lay[l+4]=h3;
   }
  }
  let lodTiers=null,visOrder=null,visN=0,quadOk=false;
@@ -623,6 +624,14 @@ function sync(k,allInstances=false){
    /* An impostor is one quad for the whole plant, so only the first material
       slot owns it; the rest of the plant's slots skip these instances. */
    if(tier===2&&mi>0)continue;
+   /* The kernel applied the root sink itself; the object path still needs the
+      number, and so does the impostor quad. Only a few hundred far instances
+      take that branch, so the 24 samples are affordable there. */
+   if(lay&&ROOT_SPAN[k]&&(!useKernel||tier===2)){
+    let lowY=o.y;const span=(ROOT_SPAN[k]||0)*s;
+    for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}
+    rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span));
+   }
    /* The kernel has already written this instance's matrix. Only the impostor
       quad and an explicit transform still need the object path. */
    if(!useKernel||tier===2||o.fl){
@@ -659,11 +668,11 @@ function sync(k,allInstances=false){
      quadtree just produced goes back to the core as the gather order, and the
      matrices come back dense and ready for the instance buffer. */
   if(useKernel){
-   const ord=scatter.order,op=scatter.orderPtr,md=BLD[k]?0:1;
+   const ord=scatter.order,op=scatter.orderPtr,md=BLD[k]?0:1,fl=RK[k]?1:0;
    if(ci){for(let j=0;j<ci;j++)ord[j]=sourceListIndices[j];
-    const out=core.instancingMatrices(ci,op,tl,K._bend,md);if(out)m.instanceMatrix.array.set(out)}
+    const out=core.instancingMatrices(ci,op,tl,K._bend,md,fl);if(out)m.instanceMatrix.array.set(out)}
    if(low&&li){for(let j=0;j<li;j++)ord[j]=lowSourceListIndices[j];
-    const out=core.instancingMatrices(li,op,tl,K._bend,md);if(out)low.instanceMatrix.array.set(out)}
+    const out=core.instancingMatrices(li,op,tl,K._bend,md,fl);if(out)low.instanceMatrix.array.set(out)}
   }
   const impMesh=K.impMesh;
   if(impMesh&&mi===0){impMesh.count=ii;impMesh.visible=ii>0;impMesh.userData.sourceListIndices=impSourceListIndices;impMesh.instanceMatrix.needsUpdate=true;impMesh.instanceColor.needsUpdate=true}

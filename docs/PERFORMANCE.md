@@ -119,7 +119,7 @@ It is now `fe_scatter_begin` / `fe_scatter_matrices` (`cpp/src/fe_scatter.cpp`):
 | | before | after |
 | --- | --- | --- |
 | 30 000 instances, transform only | 12.1 ms | **3.8 ms** |
-| 30 000 instances, two meshes, with root-sink sampling | 84.4 ms | **34.9 ms** |
+| 30 000 instances, two meshes, with root-sink sampling | 85.1 ms | **19.7 ms** |
 
 The second row is a worst case, not a typical scene: it puts the root-sink loop
 on all 30 000 instances, while in a real world it runs only for woody species
@@ -135,11 +135,31 @@ therefore carries its own double-precision sin/cos, which brings the difference
 down to float32 rounding. Anything actually wrong (a flipped sign, tilt before
 yaw) shows up at 1e-1 and fails the test.
 
-**What is still in JavaScript, honestly:** the root-sink sampling in that second
-row is now the dominant cost, and it is still a per-instance loop of 24 `hgt()`
-lookups. It is the next candidate for the kernel — it needs the height grid
-uploaded once per settle (1 MB) and then 720 000 bilinear samples become 720 000
-adds inside the module.
+### The root sink is in the kernel too
+
+A tree is not placed at the height under its trunk. The studio lowers it by
+however far the ground falls away inside its root span — twelve directions, two
+radii, 24 samples of the height field — so a tree on a ridge does not hover.
+That was 24 `hgt()` lookups per instance in JavaScript, once per mesh, which is
+720 000 bilinear samples for 30 000 instances.
+
+`fe_scatter_terrain(n, size)` now owns a copy of the height grid; the studio
+hands the same heights the terrain mesh was built from over **once per settle**
+(1 MB for a 513² world, and only for species that have a root span), and the
+kernel does the sampling inline. The clamp, the two radii and the twelve
+directions are the studio's own formula, and `tests/scatter-layout.test.mjs`
+recomputes them in JavaScript from the same grid and compares the resulting
+`y` translation instance by instance.
+
+Rocks are bedded by a twelfth of their size (`flags` bit 0), which was also a
+per-instance `if` in the loop.
+
+**What is still in JavaScript, honestly:** the pre-pass itself — the two
+placement hashes and the ground normal for each instance. They are pure maths
+and could move too, but they feed the per-instance colour and the variant
+bucket, and `Math.sin` in the studio is not bit-identical to any polynomial the
+module could use: moving them would quietly re-tint the forest. The pre-pass is
+the ~19 ms that is left in the worst-case row above.
 
 ## The compacted visible-instance list
 
@@ -215,6 +235,36 @@ pass and is not in this budget.
 **Real-device profiling.** RenderDoc and Tracy cannot run in this sandbox (no
 GPU, no device). The in-page frame timings are the only measurements taken, so
 "120 FPS on a phone" is an unverified claim and is not made here.
+
+## The 3D Workspace viewport loop
+
+The landscaping loop already had the rule "a frame allocates nothing and does no
+DOM lookups" and a test that enforces it. The 3D Workspace loop had neither, and
+it was the worse of the two.
+
+* **Autofocus ran the UI every frame.** With *continuous autofocus* on, each
+  frame did two `getElementById` calls, a `toFixed(2)` string, two DOM writes and
+  a full `updateDoFFilter()` — which is **16 more DOM lookups, a
+  `querySelector` and a filter-chain rebuild** — whether or not the camera had
+  moved. In a still viewport that was 18 DOM lookups per frame, for a number that
+  had not changed. The elements are cached on the engine now (the autofocus
+  checkbox already was) and the whole block sits behind a one-centimetre change
+  check, so an idle viewport does one distance compare.
+* **Focus tracking to "center" allocated a `THREE.Vector3` per frame.** One
+  garbage object every 8 ms on a 120 Hz panel; the vector is cached.
+* **`stepPhysicsSimulations` allocated a closure per frame** —
+  `sc.children.forEach(child => ...)` before any other work in the frame. It is
+  an index loop now, and the scene walk is the same.
+
+`tests/workspace-frame-budget.test.mjs` pins all four: at most one `new THREE.*`
+in the loop and only behind a one-time guard, exactly three `getElementById`
+calls and each inside a `=== undefined` setup guard, one `updateDoFFilter()`
+call behind the change check, and the shadow tick plus the ⚙ metrics still
+wired.
+
+What that does **not** claim: the GPU cost of the viewport. TAA, the shadow
+pass and fill rate are untouched by this, and no GPU measurement is possible in
+this sandbox.
 
 ## Render time: why a cube took ten minutes
 

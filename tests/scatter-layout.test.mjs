@@ -29,8 +29,9 @@ async function boot() {
   return inst.exports;
 }
 
-/* The studio's stride: x, y, z, scale_xz, scale_y, yaw, nx, ny, nz, hash_x, hash_z. */
-const STRIDE = 11;
+/* The studio's stride: x, y, z, scale_xz, scale_y, yaw, nx, ny, nz, hash_x,
+   hash_z, root_span. `y` is the ground height; the root sink is the kernel's. */
+const STRIDE = 12;
 
 function writeInput(exp, rows) {
   const ptr = exp.fe_scatter_begin(rows.length);
@@ -40,8 +41,8 @@ function writeInput(exp, rows) {
   return ptr;
 }
 
-function matrices(exp, count, order, tilt, bend, mode) {
-  const ptr = exp.fe_scatter_matrices(count, order || 0, tilt, bend, mode);
+function matrices(exp, count, order, tilt, bend, mode, flags) {
+  const ptr = exp.fe_scatter_matrices(count, order || 0, tilt, bend, mode, flags || 0);
   assert.ok(ptr > 0, 'fe_scatter_matrices must return the output block');
   return new Float32Array(exp.memory.buffer, ptr, count * 16).slice();
 }
@@ -84,7 +85,7 @@ function rows(n, seed) {
       (rnd() - 0.5) * 900, rnd() * 40, (rnd() - 0.5) * 900,
       0.4 + rnd() * 3, 0.4 + rnd() * 3, rnd() * Math.PI * 2,
       (gx / len) * 0.7, ny / len, (gz / len) * 0.7,
-      rnd(), rnd(),
+      rnd(), rnd(), 0,
     ]);
   }
   return out;
@@ -176,11 +177,11 @@ test('a bad call refuses instead of writing garbage', async () => {
   input: {
     const input = rows(16, 1);
     writeInput(exp, input);
-    assert.equal(exp.fe_scatter_matrices(0, 0, 0, 0, 1), 0, 'a zero count is refused');
-    assert.equal(exp.fe_scatter_matrices(17, 0, 0, 0, 1), 0, 'more than reserved is refused');
+    assert.equal(exp.fe_scatter_matrices(0, 0, 0, 0, 1, 0), 0, 'a zero count is refused');
+    assert.equal(exp.fe_scatter_matrices(17, 0, 0, 0, 1, 0), 0, 'more than reserved is refused');
     const orderPtr = exp.fe_malloc(4);
     new Uint32Array(exp.memory.buffer, orderPtr, 1)[0] = 99;
-    assert.equal(exp.fe_scatter_matrices(1, orderPtr, 0, 0, 1), 0, 'an out-of-range index is refused');
+    assert.equal(exp.fe_scatter_matrices(1, orderPtr, 0, 0, 1, 0), 0, 'an out-of-range index is refused');
   }
 });
 
@@ -190,9 +191,9 @@ test('30 000 instances stay well inside a frame', async () => {
   writeInput(exp, input);
   /* Timed through the raw export: the test helper would clone the 1.9 MB output
      block on every call and that copy is the caller's blit, not the kernel. */
-  exp.fe_scatter_matrices(input.length, 0, 0.35, 0.18, 1);
+  exp.fe_scatter_matrices(input.length, 0, 0.35, 0.18, 1, 0);
   const t0 = performance.now();
-  for (let pass = 0; pass < 3; pass++) exp.fe_scatter_matrices(input.length, 0, 0.35, 0.18, 1);
+  for (let pass = 0; pass < 3; pass++) exp.fe_scatter_matrices(input.length, 0, 0.35, 0.18, 1, 0);
   const per = (performance.now() - t0) / 3;
   /* The JavaScript path this replaces measured 18.2 ms for the same count on
      this machine. The budget is deliberately loose (CI machines vary) but it
@@ -214,11 +215,12 @@ test('the studio lays instances out in the kernel and blits the block', () => {
   const body = SYNC.slice(start, end);
 
   assert.match(body, /core\.instancingBegin\(n\)/, 'the species block comes from the core');
-  assert.match(body, /core\.instancingMatrices\(ci,op,tl,K\._bend,md\)/, 'the full-detail block is one call');
-  assert.match(body, /core\.instancingMatrices\(li,op,tl,K\._bend,md\)/, 'the low-detail twin is one call');
+  assert.match(body, /core\.instancingMatrices\(ci,op,tl,K\._bend,md,fl\)/, 'the full-detail block is one call');
+  assert.match(body, /core\.instancingMatrices\(li,op,tl,K\._bend,md,fl\)/, 'the low-detail twin is one call');
   assert.match(body, /m\.instanceMatrix\.array\.set\(out\)/, 'the result is blitted, not copied per instance');
   assert.match(body, /if\(!useKernel\)target\.setMatrixAt\(i,dm\.matrix\);/, 'the three.js path stays as the fallback');
   assert.match(body, /if\(!useKernel\|\|tier===2\|\|o\.fl\)\{/, 'impostors and explicit transforms keep the object path');
+  assert.match(body, /if\(ROOT_SPAN\[k\]\)core\.instancingTerrain\(H,N,S\);/, 'the height grid goes over once per settle, and only for species with a root span');
 });
 
 test('the bridge does not fuse the instance kernel with the terrain scatter', () => {
@@ -239,7 +241,7 @@ test('the blit lands in the instance buffer three.js will upload', async () => {
   const orderPtr = exp.fe_scatter_order_ptr();
   const order = new Uint32Array(exp.memory.buffer, orderPtr, input.length);
   for (let i = 0; i < input.length; i++) order[i] = i;
-  const out = new Float32Array(exp.memory.buffer, exp.fe_scatter_matrices(input.length, orderPtr, 0.35, 0.18, 1), input.length * 16);
+  const out = new Float32Array(exp.memory.buffer, exp.fe_scatter_matrices(input.length, orderPtr, 0.35, 0.18, 1, 0), input.length * 16);
 
   /* Exactly what sync() does: the mesh owns the buffer, the kernel block is
      copied into it, and three.js reads the matrices back off the attribute. */
@@ -257,4 +259,71 @@ test('the blit lands in the instance buffer three.js will upload', async () => {
       assert.ok(Math.abs(m.elements[k] - want[k]) < 6e-5, `instance ${i} component ${k}`);
     }
   }
+});
+
+/* ---- root sink ----------------------------------------------------------
+ * A tree is not placed at the height under its trunk: it is lowered by however
+ * far the ground falls away inside its root span. That was 24 `hgt()` lookups
+ * per instance in JavaScript, once per mesh; it is now the kernel's job, from a
+ * grid uploaded once per settle. The reference below is the studio's own loop,
+ * including the two radii and the clamp. */
+
+function heightAt(H, n, size, x, z) {
+  const W = n + 1, d = size / n;
+  const u = Math.min(Math.max((x + size / 2) / d, 0), n - 0.001);
+  const v = Math.min(Math.max((z + size / 2) / d, 0), n - 0.001);
+  const i = u | 0, j = v | 0, a = u - i, b = v - j, k = j * W + i;
+  return H[k] * (1 - a) * (1 - b) + H[k + 1] * a * (1 - b) + H[k + W] * (1 - a) * b + H[k + W + 1] * a * b;
+}
+
+test('the root sink matches the studio formula, from the uploaded grid', async () => {
+  const exp = await boot();
+  const n = 64, size = 200, W = n + 1;
+  const H = new Float32Array(W * W);
+  for (let j = 0; j < W; j++) {
+    for (let i = 0; i < W; i++) {
+      const x = (i * size) / n - size / 2, z = (j * size) / n - size / 2;
+      H[j * W + i] = Math.sin(x * 0.05) * 6 + Math.cos(z * 0.07) * 4;
+    }
+  }
+  const gridPtr = exp.fe_scatter_terrain(n, size);
+  assert.ok(gridPtr > 0, 'the grid block must be handed back');
+  new Float32Array(exp.memory.buffer, gridPtr, W * W).set(H);
+
+  /* Instances on the slope, with a root span of 1.2 m scaled by their size. */
+  const input = [];
+  for (let t = 0; t < 40; t++) {
+    const x = -60 + t * 3, z = -30 + t * 1.5;
+    const y = heightAt(H, n, size, x, z);
+    const s = 0.8 + (t % 7) * 0.2;
+    input.push([x, y, z, s, s, t * 0.3, 0, 1, 0, 0.3, 0.6, 1.2 * s]);
+  }
+  writeInput(exp, input);
+  const got = matrices(exp, input.length, 0, 0.35, 0.18, 1, 0);
+
+  const expectedSink = [];
+  input.forEach((row, i) => {
+    const [x, y, z, , s, , , , , , , span] = row;
+    let lowY = y;
+    for (let q = 0; q < 12; q++) {
+      const a = (q * Math.PI) / 6;
+      for (const f of [0.5, 1]) {
+        lowY = Math.min(lowY, heightAt(H, n, size, x + Math.cos(a) * span * f, z + Math.sin(a) * span * f));
+      }
+    }
+    const sink = Math.min(Math.max(0, y - lowY - 0.08), Math.min(0.28 * s, 0.16 * span));
+    expectedSink.push(sink);
+    assert.ok(Math.abs(got[i * 16 + 13] - (y - sink)) < 1e-3, `instance ${i}: y ${got[i * 16 + 13]} must be ${y - sink}`);
+  });
+  assert.ok(expectedSink.some((v) => v > 0.01), 'the fixture has to actually sink something');
+});
+
+test('a rock is bedded into the ground by a twelfth of its size', async () => {
+  const exp = await boot();
+  const input = [[0, 5, 0, 1.5, 1.5, 0, 0, 1, 0, 0.5, 0.5, 0]];
+  writeInput(exp, input);
+  const plain = matrices(exp, 1, 0, 0, 0, 1, 0);
+  const rock = matrices(exp, 1, 0, 0, 0, 1, 1);
+  assert.ok(Math.abs(plain[13] - 5) < 1e-5, 'an upright instance sits on its ground height');
+  assert.ok(Math.abs(rock[13] - (5 - 0.12 * 1.5)) < 1e-5, 'a rock sits 0.12 * scale lower');
 });

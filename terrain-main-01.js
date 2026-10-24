@@ -699,10 +699,21 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
           order:new Uint32Array(ex.memory.buffer,op,count),orderPtr:op,
           aux:new Float32Array(ex.memory.buffer,ap,count*5)};
  };
- core.instancingMatrices=function(count,orderPtr,tilt,bend,mode){
+ core.instancingMatrices=function(count,orderPtr,tilt,bend,mode,flags){
   if(!core.has('fe_scatter_matrices')||!(count>0))return null;
-  const p=ex.fe_scatter_matrices(count|0,(orderPtr>>>0),+tilt||0,+bend||0,mode|0);
+  const p=ex.fe_scatter_matrices(count|0,(orderPtr>>>0),+tilt||0,+bend||0,mode|0,flags|0);
   return p?new Float32Array(ex.memory.buffer,p,count*16):null;
+ };
+ /* The root sink samples the same heights the terrain mesh was built from, so
+   the grid is handed over once per settle (1 MB for a 513^2 world) instead of
+   the studio doing 24 lookups per tree in JavaScript. */
+ core.instancingTerrain=function(heights,n,size){
+  if(!core.has('fe_scatter_terrain')||!heights||!(n>1))return false;
+  const p=ex.fe_scatter_terrain(n|0,+size||0);
+  if(!p)return false;
+  const cells=(n+1)*(n+1),view=new Float32Array(ex.memory.buffer,p,cells);
+  view.set(heights.length>cells?heights.subarray(0,cells):heights);
+  return true;
  };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;

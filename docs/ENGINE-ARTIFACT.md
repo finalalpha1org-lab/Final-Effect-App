@@ -33,13 +33,13 @@ is the contract below.
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1782476` bytes, ABI v1, **388 exports**; every group above
+The shipped build is `1788098` bytes, ABI v1, **389 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
-Four of the exports are not a kernel group: `fe_scatter_begin`,
-`fe_scatter_matrices`, `fe_scatter_order_ptr` and `fe_scatter_aux_ptr` are the
-instance-transform block the studio fills every time a camera pan settles. They
-carry no state between calls and are documented in `docs/PERFORMANCE.md`.
+Five of the exports are not a kernel group: `fe_scatter_begin`,
+`fe_scatter_matrices`, `fe_scatter_order_ptr`, `fe_scatter_aux_ptr` and
+`fe_scatter_terrain` are the instance-transform block the studio fills every
+time a camera pan settles. They are documented in `docs/PERFORMANCE.md`.
 
 ## Memory: you pay for the studios you open
 
@@ -95,7 +95,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1782476 bytes, ABI v1, 388 exports)`.
+that passes `Validated fe_core_engine.wasm (1788098 bytes, ABI v1, 389 exports)`.
 
 ## Verification
 

@@ -8279,7 +8279,7 @@ FE.register('core',{
       if (this.sceneCamera) {
         let focusTarget = null;
         if ((this.focusTracking === 'cube' || this.focusTracking === 'active') && this.cube) focusTarget = this.cube.position;
-        else if (this.focusTracking === 'center') focusTarget = new THREE.Vector3(0, 0, 0);
+        else if (this.focusTracking === 'center') focusTarget = this._originV3 || (this._originV3 = new THREE.Vector3(0, 0, 0));
         if (focusTarget) {
           this.sceneCamera.lookAt(focusTarget);
           this.sceneCamera.updateMatrixWorld(true);
@@ -8298,11 +8298,22 @@ FE.register('core',{
       const afCheck = this._afCheck;
       if (afCheck && afCheck.checked && this.sceneCamera && this.cube) {
         const dist = this.sceneCamera.position.distanceTo(this.cube.position);
-        const fDist = document.getElementById('cam-focus-distance');
-        if (fDist && document.activeElement !== fDist) {
-          fDist.value = dist.toFixed(2);
-          const o = out('out-focus-distance');
-          if (o) o.textContent = dist.toFixed(2) + ' m';
+        /* Autofocus used to do two DOM lookups, a string format, two DOM writes
+           and a full `updateDoFFilter()` - a dozen more lookups and a filter
+           rebuild - on every frame, whether or not anything had moved. The
+           elements are cached like `_afCheck` already was, and the block only
+           runs when the distance changed by more than a centimetre. An idle
+           viewport now does one distance compare. */
+        if (this._afDistEl === undefined) {
+          this._afDistEl = document.getElementById('cam-focus-distance');
+          this._afOutEl = document.getElementById('out-focus-distance');
+        }
+        const fDist = this._afDistEl;
+        if (fDist && document.activeElement !== fDist && Math.abs(dist - (this._afShown === undefined ? 1e9 : this._afShown)) > 0.01) {
+          this._afShown = dist;
+          const text = dist.toFixed(2);
+          fDist.value = text;
+          if (this._afOutEl) this._afOutEl.textContent = text + ' m';
           this.focusDistance = dist;
           updateDoFFilter();
         }
@@ -10400,14 +10411,18 @@ function stepPhysicsSimulations(dt) {
     const eng = FE.engines?.core;
     if (!eng || !eng.sc) return;
 
-    eng.sc.children.forEach(child => {
+    /* An index loop, not `forEach`: the callback was one closure allocated every
+       frame, and this runs before anything else in the viewport frame. */
+    const kids = eng.sc.children;
+    for (let ci = 0; ci < kids.length; ci++) {
+      const child = kids[ci];
       try {
-        if (child.userData?.simBake) return;
+        if (child.userData?.simBake) continue;
         if (child.userData?.clothSim) stepClothSim(child, dt);
         if (child.userData?.softBodySim) stepSoftBodySim(child, dt);
         if (child.userData?.fluidSim) stepFluidSim(child, dt);
       } catch(e) { console.error("Sim error:", e); }
-    });
+    }
   } catch(e) { console.error("Physics simulation error:", e); }
 }
 

@@ -31,8 +31,10 @@
  * returns a pointer to a `count * 11` float SoA, and `fe_scatter_matrices` reads
  * it back and writes `count * 16` floats directly behind it.
  *
- *   input, per instance (11 floats)
- *     x, y, z, scale_xz, scale_y, yaw, nx, ny, nz, hash_x, hash_z
+ *   input, per instance (12 floats)
+ *     x, y, z, scale_xz, scale_y, yaw, nx, ny, nz, hash_x, hash_z, root_span
+ *   `y` is the ground height under the instance; the root-sink correction is
+ *   applied here (see `fe_scatter_terrain`), not by the caller.
  *   output, per instance (16 floats)
  *     a column-major 4x4, exactly what `InstancedMesh.instanceMatrix` wants
  * ========================================================================= */
@@ -52,7 +54,7 @@ using namespace fe;
 uint8_t* g_scatter_block = nullptr;
 uint32_t g_scatter_count = 0;
 
-constexpr uint32_t kInStride = 11u;
+constexpr uint32_t kInStride = 12u;
 constexpr uint32_t kOutStride = 16u;
 
 inline float* scatterIn() { return reinterpret_cast<float*>(g_scatter_block); }
@@ -104,6 +106,52 @@ inline double dcos(double x) { return dsin(x + kHalfPiD); }
 
 inline float sinApprox(float x) { return static_cast<float>(dsin(static_cast<double>(x))); }
 inline float cosApprox(float x) { return static_cast<float>(dcos(static_cast<double>(x))); }
+
+/* ---- Root sink -----------------------------------------------------------
+ * A tree is not placed at the height under its trunk: the studio lowers it by
+ * however far the ground falls away inside its root span, so a tree on a ridge
+ * does not hover. That used to be 24 `hgt()` samples per instance, taken in
+ * JavaScript, once per mesh — 720 000 bilinear lookups for 30 000 instances,
+ * and a camera settle spent most of its time there.
+ *
+ * The grid is uploaded once per settle instead (1 MB for a 513^2 world) and the
+ * sampling happens here. `fe_scatter_terrain` owns the copy; the caller only
+ * has to hand over the same heights the terrain mesh was built from. */
+float* g_terrain = nullptr;
+uint32_t g_terrain_n = 0;
+float g_terrain_size = 0.0f;
+
+inline float hgtAt(float x, float z) {
+  if (g_terrain == nullptr || g_terrain_n < 2) return 0.0f;
+  const float n = static_cast<float>(g_terrain_n), w = n + 1.0f;
+  const uint32_t W = g_terrain_n + 1u;
+  const float d = g_terrain_size / n;
+  float u = (x + g_terrain_size * 0.5f) / d;
+  float v = (z + g_terrain_size * 0.5f) / d;
+  if (u < 0.0f) u = 0.0f; else if (u > n - 0.001f) u = n - 0.001f;
+  if (v < 0.0f) v = 0.0f; else if (v > n - 0.001f) v = n - 0.001f;
+  const uint32_t i = static_cast<uint32_t>(u), j = static_cast<uint32_t>(v);
+  const float a = u - static_cast<float>(i), b = v - static_cast<float>(j);
+  const float* k = g_terrain + j * W + i;
+  (void)w;
+  return k[0] * (1.0f - a) * (1.0f - b) + k[1] * a * (1.0f - b) + k[W] * (1.0f - a) * b +
+         k[W + 1] * a * b;
+}
+
+/* The twelve directions the studio samples, and the two radii on each. */
+struct Ring { float cos, sin; };
+Ring g_ring[12];
+bool g_ring_ready = false;
+
+inline void ensure_ring() {
+  if (g_ring_ready) return;
+  for (uint32_t q = 0; q < 12u; q++) {
+    const double a = static_cast<double>(q) * (kPiD / 6.0);
+    g_ring[q].cos = static_cast<float>(dcos(a));
+    g_ring[q].sin = static_cast<float>(dsin(a));
+  }
+  g_ring_ready = true;
+}
 
 /* three.js `Quaternion.setFromUnitVectors(+Y, n)`: the shortest arc between the
    two directions. `r` is dot + 1, so it degenerates only for a normal pointing
@@ -231,8 +279,24 @@ FE_EXPORT uint32_t fe_scatter_aux_ptr(void) {
       g_scatter_block + g_scatter_count * (kInStride + kOutStride + kOrderStride) * 4u));
 }
 
+/* Upload the height grid the root sink is sampled from: `n` cells per side with
+   `n + 1` vertices, spanning `size` metres centred on the origin — the same
+   numbers `hgt()` in the studio takes. Returns the pointer to fill, or 0.
+   The block is grown once and kept. */
+FE_EXPORT uint32_t fe_scatter_terrain(uint32_t n, float size) {
+  if (n < 2 || n > 2049 || !(size > 0.0f)) return 0;
+  if (g_terrain == nullptr || g_terrain_n != n) {
+    void* block = fe::heap::alloc((n + 1u) * (n + 1u) * 4u, 16);
+    if (block == nullptr) return 0;
+    g_terrain = reinterpret_cast<float*>(block);
+    g_terrain_n = n;
+  }
+  g_terrain_size = size;
+  return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_terrain));
+}
+
 FE_EXPORT uint32_t fe_scatter_matrices(uint32_t count, uint32_t order, float tilt, float bend,
-                                       uint32_t mode) {
+                                       uint32_t mode, uint32_t flags) {
   if (g_scatter_block == nullptr || count == 0 || count > g_scatter_count) return 0;
   const float* in = scatterIn();
   float* out = scatterOut();
@@ -242,10 +306,34 @@ FE_EXPORT uint32_t fe_scatter_matrices(uint32_t count, uint32_t order, float til
     const uint32_t s = (src_order != nullptr) ? src_order[i] : i;
     if (s >= g_scatter_count) return 0;
     const float* r = in + s * kInStride;
-    const float px = r[0], py = r[1], pz = r[2];
+    const float px = r[0], ground_y = r[1], pz = r[2];
     const float sxz = r[3], sy = r[4], yaw = r[5];
     const float nx = r[6], ny = r[7], nz = r[8];
     const float h2 = r[9], h3 = r[10];
+    const float span = r[11];
+
+    /* Root sink: how far the ground drops inside the plant's root span. The
+       two radii and twelve directions are exactly what the studio sampled. */
+    float root_sink = 0.0f;
+    if (span > 0.0f && g_terrain != nullptr) {
+      ensure_ring();
+      float low = ground_y;
+      for (uint32_t q = 0; q < 12u; q++) {
+        for (uint32_t f = 0; f < 2u; f++) {
+          const float reach = span * (f == 0u ? 0.5f : 1.0f);
+          const float hx = px + g_ring[q].cos * reach, hz = pz + g_ring[q].sin * reach;
+          const float sample = hgtAt(hx, hz);
+          if (sample < low) low = sample;
+        }
+      }
+      root_sink = ground_y - low - 0.08f;
+      if (root_sink < 0.0f) root_sink = 0.0f;
+      const float limit_s = 0.28f * sy, limit_span = 0.16f * span;
+      const float limit = limit_s < limit_span ? limit_s : limit_span;
+      if (root_sink > limit) root_sink = limit;
+    }
+    /* Rocks are bedded into the ground by a twelfth of their size. */
+    const float py = ground_y - (((flags & 1u) != 0u) ? 0.12f * sy : 0.0f) - root_sink;
 
     InstQuat q;
     if (mode == 0) {

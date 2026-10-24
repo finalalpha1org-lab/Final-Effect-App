@@ -95,6 +95,7 @@ const REQUIRED_EXPORTS = [
   'fe_scatter_matrices',
   'fe_scatter_order_ptr',
   'fe_scatter_aux_ptr',
+  'fe_scatter_terrain',
   'fe_lod_out_ptr',
   'fe_ocean_field_ptr',
   'fe_ocean_configure',
@@ -242,6 +243,7 @@ if (zig) {
     '-Wl,--export=fe_scatter_matrices',
     '-Wl,--export=fe_scatter_order_ptr',
     '-Wl,--export=fe_scatter_aux_ptr',
+    '-Wl,--export=fe_scatter_terrain',
     /* Edit Mode topology is only reachable from JS, so the linker has to be
        told to keep every entry point. */
     '-Wl,--export=fe_edit_reset','-Wl,--export=fe_edit_upload','-Wl,--export=fe_edit_vert_count',
