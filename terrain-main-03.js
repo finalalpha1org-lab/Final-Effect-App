@@ -514,6 +514,35 @@ function sync(k,allInstances=false){
  /* The core answers with a compacted list of instance indices plus their tier;
    the bridge never walks the invisible ones. */
  const core=window.FELandscapeCore,n=K.list.length;
+ /* Kernel instance layout. One pass builds the transform inputs for the whole
+    species and the core writes 16 floats per visible instance; the loop below
+    then only picks the target mesh and the colour. Falls back to the three.js
+    path when the core is missing, and for any species that has an instance
+    carrying an explicit transform (`o.fl`, a picked flower), which the kernel
+    does not model. */
+ let scatter=null,lay=null;
+ if(n&&core&&core.ready&&typeof core.instancingBegin==='function'){
+  let hasFl=false;
+  for(let i=0;i<n;i++)if(K.list[i].fl){hasFl=true;break}
+  if(!hasFl)scatter=core.instancingBegin(n);
+ }
+ if(scatter){
+  const soa=scatter.input;
+  lay=scatter.aux;
+  K._bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;
+  for(let i=0;i<n;i++){
+   const o=K.list[i],h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
+   let rootSink=0;const span=(ROOT_SPAN[k]||0)*s;
+   if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}
+   const bw=BLD[k]?K.size*o.a:s*o.a,b=i*11;
+   soa[b]=o.x;soa[b+1]=o.y-(RK[k] ? .12*s : 0)-rootSink;soa[b+2]=o.z;
+   soa[b+3]=bw;soa[b+4]=s;soa[b+5]=o.r;
+   if(BLD[k]){soa[b+6]=0;soa[b+7]=1;soa[b+8]=0}
+   else{const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1,g=groundNormal(o.x,o.z,align);soa[b+6]=g.x;soa[b+7]=g.y;soa[b+8]=g.z}
+   soa[b+9]=h2;soa[b+10]=h3;
+   const l=i*5;lay[l]=s;lay[l+1]=bw;lay[l+2]=rootSink;lay[l+3]=h2;lay[l+4]=h3;
+  }
+ }
  let lodTiers=null,visOrder=null,visN=0,quadOk=false;
  if(n&&!allInstances&&core&&core.ready){
   if(lodScratch.length<n*3)lodScratch=new Float32Array(n*3);
@@ -555,6 +584,9 @@ function sync(k,allInstances=false){
  }
  K.meshes.forEach((m,mi)=>{
   const pal=m.userData.pal,low=lowAll?.[mi]||null;
+  /* A dropped roof is scaled to zero per instance, which is not a transform the
+     kernel is given, so those meshes keep the three.js path. */
+  const useKernel=!!scatter&&!(BLD[k]&&m.userData.part==='roof');
   let ci=0,li=0,ii=0;
   const sourceListIndices=[],lowSourceListIndices=[],impSourceListIndices=[];
   /* Dense list: matrix index i is the visible slot, and sourceIndex is only
@@ -567,16 +599,14 @@ function sync(k,allInstances=false){
    const o=K.list[sourceIndex];
    const nv=m.userData.vn;
    if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
-   const h2=hh(o.z,o.x),h3=hh(o.x,o.z),s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
-   let rootSink=0,span=(ROOT_SPAN[k]||0)*s;
-   if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}
-   dm.position.set(o.x,o.y-(RK[k] ? .12*s : 0)-rootSink,o.z);
-   if(!BLD[k]){const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1;dm.quaternion.setFromUnitVectors(GROUND_UP,groundNormal(o.x,o.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,o.r);dm.quaternion.multiply(GROUND_Q);const bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dm.quaternion.multiply(GROUND_Q)}else dm.rotation.set((h2-.5)*tl,o.r,(h3-.5)*tl,'YXZ');
-   if(o.fl){dm.position.set(o.fl.x,o.fl.y,o.fl.z);if(o.fl.q)dm.quaternion.set(o.fl.q[0],o.fl.q[1],o.fl.q[2],o.fl.q[3]);else dm.rotation.set(o.fl.rx,o.fl.ry,o.fl.rz,'YXZ')}
-   const bw=BLD[k]?K.size*o.a:s*o.a;
-   dm.scale.set(bw,s,bw);
-   if(BLD[k]&&m.userData.part==='roof'&&o.roofGone)dm.scale.set(0,0,0);
-   dm.updateMatrix();
+   let h2,h3,s,bw,rootSink;
+   if(lay){const l=sourceIndex*5;h2=lay[l+3];h3=lay[l+4];s=lay[l];bw=lay[l+1];rootSink=lay[l+2]}
+   else{
+    h2=hh(o.z,o.x);h3=hh(o.x,o.z);s=cl(o.s*K.size,TREE_SIZE_MIN[k]||0,TREE_SIZE_MAX[k]||Infinity);
+    rootSink=0;const span=(ROOT_SPAN[k]||0)*s;
+    if(span){let lowY=o.y;for(let q=0;q<12;q++){const a=q*Math.PI/6;for(const f of [.5,1])lowY=Math.min(lowY,hgt(o.x+Math.cos(a)*span*f,o.z+Math.sin(a)*span*f))}rootSink=Math.min(Math.max(0,o.y-lowY-.08),Math.min(.28*s,.16*span))}
+    bw=BLD[k]?K.size*o.a:s*o.a;
+   }
    /* Three tiers: the grown mesh, its low twin, and the baked impostor. The
       kernel hands back the tier per instance; if the atlas for this species is
       not ready yet the far instances stay on the low mesh and the bake is
@@ -593,6 +623,16 @@ function sync(k,allInstances=false){
    /* An impostor is one quad for the whole plant, so only the first material
       slot owns it; the rest of the plant's slots skip these instances. */
    if(tier===2&&mi>0)continue;
+   /* The kernel has already written this instance's matrix. Only the impostor
+      quad and an explicit transform still need the object path. */
+   if(!useKernel||tier===2||o.fl){
+    dm.position.set(o.x,o.y-(RK[k] ? .12*s : 0)-rootSink,o.z);
+    if(!BLD[k]){const align=RK[k] ? .7 : ROOT_SPAN[k] ? .28+h2*.24 : NT[k] ? .28 : 1;dm.quaternion.setFromUnitVectors(GROUND_UP,groundNormal(o.x,o.z,align));GROUND_Q.setFromAxisAngle(GROUND_UP,o.r);dm.quaternion.multiply(GROUND_Q);const bend=k=='palm' ? .28 : (k=='acacia'||k=='joshua') ? .22 : (ROOT_SPAN[k]||NT[k]) ? .18 : .1;GROUND_E.set((h2-.5)*bend,0,(h3-.5)*bend,'YXZ');GROUND_Q.setFromEuler(GROUND_E);dm.quaternion.multiply(GROUND_Q)}else dm.rotation.set((h2-.5)*tl,o.r,(h3-.5)*tl,'YXZ');
+    if(o.fl){dm.position.set(o.fl.x,o.fl.y,o.fl.z);if(o.fl.q)dm.quaternion.set(o.fl.q[0],o.fl.q[1],o.fl.q[2],o.fl.q[3]);else dm.rotation.set(o.fl.rx,o.fl.ry,o.fl.rz,'YXZ')}
+    dm.scale.set(bw,s,bw);
+    if(BLD[k]&&m.userData.part==='roof'&&o.roofGone)dm.scale.set(0,0,0);
+    dm.updateMatrix();
+   }
    let target,i;
    if(tier===2&&imp){
     dmi.position.set(o.x,o.y-rootSink,o.z);
@@ -605,7 +645,7 @@ function sync(k,allInstances=false){
     const useLow=tier===1&&!!low;
     target=useLow?low:m;
     i=useLow?li++:ci++;
-    target.setMatrixAt(i,dm.matrix);
+    if(!useKernel)target.setMatrixAt(i,dm.matrix);
     (useLow?lowSourceListIndices:sourceListIndices)[i]=sourceIndex;
    }
    let c=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2];
@@ -615,6 +655,16 @@ function sync(k,allInstances=false){
   }
   m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;
   if(low){low.count=li;low.visible=li>0;low.userData.sourceListIndices=lowSourceListIndices;low.instanceMatrix.needsUpdate=true;low.instanceColor.needsUpdate=true}
+  /* One kernel call per target mesh, then one blit: the compacted index list the
+     quadtree just produced goes back to the core as the gather order, and the
+     matrices come back dense and ready for the instance buffer. */
+  if(useKernel){
+   const ord=scatter.order,op=scatter.orderPtr,md=BLD[k]?0:1;
+   if(ci){for(let j=0;j<ci;j++)ord[j]=sourceListIndices[j];
+    const out=core.instancingMatrices(ci,op,tl,K._bend,md);if(out)m.instanceMatrix.array.set(out)}
+   if(low&&li){for(let j=0;j<li;j++)ord[j]=lowSourceListIndices[j];
+    const out=core.instancingMatrices(li,op,tl,K._bend,md);if(out)low.instanceMatrix.array.set(out)}
+  }
   const impMesh=K.impMesh;
   if(impMesh&&mi===0){impMesh.count=ii;impMesh.visible=ii>0;impMesh.userData.sourceListIndices=impSourceListIndices;impMesh.instanceMatrix.needsUpdate=true;impMesh.instanceColor.needsUpdate=true}
   const shadow=K.shadowMeshes?.[mi];

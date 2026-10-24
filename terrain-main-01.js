@@ -676,6 +676,34 @@ function lsString(bytes){let s='';for(let i=0;i<bytes.length;i++)s+=String.fromC
  core.climateRankine=function(r,coreRadius,vmax){
   return core.has('fe_climate_rankine')?ex.fe_climate_rankine(+r||0,+coreRadius||0,+vmax||0):0;
  };
+ /* ---- Instanced transforms ------------------------------------------------
+   Every visible plant's matrix used to be composed through a THREE.Object3D:
+   shortest-arc quaternion to the ground normal, yaw about +Y, a YXZ tilt Euler,
+   then updateMatrix(). That is five quaternion operations and four
+   transcendental calls per instance through object property lookups — measured
+   at 18.2 ms for 30 000 instances on a desktop CPU, three to five times that on
+   a phone, and it runs every time a camera pan settles. The core does the same
+   arithmetic in one flat pass and hands back a dense block that is blitted into
+   the instance buffer with a single set(). tests/scatter-layout.test.mjs holds
+   the kernel to the three.js result element by element. */
+ core.instancingBegin=function(count){
+  if(!core.has('fe_scatter_begin')||!(count>0))return null;
+  const p=ex.fe_scatter_begin(count|0);
+  if(!p)return null;
+  const op=ex.fe_scatter_order_ptr(),ap=ex.fe_scatter_aux_ptr();
+  if(!op||!ap)return null;
+  /* Built after the call: growing the memory detaches any older view. The aux
+     block is the studio's per-instance scratch — placing it here is what keeps
+     a camera settle free of JavaScript allocations. */
+  return {input:new Float32Array(ex.memory.buffer,p,count*11),
+          order:new Uint32Array(ex.memory.buffer,op,count),orderPtr:op,
+          aux:new Float32Array(ex.memory.buffer,ap,count*5)};
+ };
+ core.instancingMatrices=function(count,orderPtr,tilt,bend,mode){
+  if(!core.has('fe_scatter_matrices')||!(count>0))return null;
+  const p=ex.fe_scatter_matrices(count|0,(orderPtr>>>0),+tilt||0,+bend||0,mode|0);
+  return p?new Float32Array(ex.memory.buffer,p,count*16):null;
+ };
  core.bytes=()=>wasmBytes;
  root.FELandscapeCore=core;
 })(globalThis);
@@ -697,7 +725,11 @@ let scatterDensity=1,scatterClustering=.35,shallowBrushDepth=1.5;try{const saved
 const VEGETATION_VIEW_FAR=16000;const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.5,VEGETATION_VIEW_FAR);cam.position.set(108,85,120);
 const ren=new THREE.WebGLRenderer({canvas:cv,antialias:true,powerPreference:'high-performance'});
 ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.setSize(innerWidth,innerHeight);
-ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;ren.toneMapping=THREE.ACESFilmicToneMapping;ren.outputEncoding=THREE.sRGBEncoding;ren.toneMappingExposure=1;
+ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;/* A shadow map is a second pass over every caster, and the sun barely moves:
+   it only follows the camera target in 2 m steps at most five times a second.
+   Refreshing it every frame bought nothing a 30 Hz cadence does not, so the
+   loop drives needsUpdate and this stays off. */
+ren.shadowMap.autoUpdate=false;ren.shadowMap.needsUpdate=true;ren.toneMapping=THREE.ACESFilmicToneMapping;ren.outputEncoding=THREE.sRGBEncoding;ren.toneMappingExposure=1;
 const oc=new THREE.OrbitControls(cam,cv);oc.enableDamping=true;oc.maxPolarAngle=Math.PI;oc.maxDistance=260;oc.target.set(0,4,0);
 const tc=new THREE.TransformControls(cam,cv);tc.userData.isEditorHelper=true;const TERRAIN_EDITOR_HELPERS=new Set([tc]);tc.addEventListener('dragging-changed',e=>{oc.enabled=exploreMode?false:!e.value;if(e.value)push()});scene.add(tc);
 const hemi=new THREE.HemisphereLight(0xcfe3ff,0x6a5a48,.6),envFill=new THREE.HemisphereLight(0xb9d4ff,0x62584a,0),sun=new THREE.DirectionalLight(0xfff0d8,1.2),sc=sun.shadow.camera;envFill.name='Environment fill light';

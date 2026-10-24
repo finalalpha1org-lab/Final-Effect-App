@@ -83,7 +83,18 @@ sun.color.setRGB(1,.7+.3*l,.45+.55*l);hemi.color.setRGB(...mx([.08,.1,.18],[.62,
 objs.forEach(o=>o.traverse(c=>{if(c.isPointLight)c.intensity=(1-day)*2.2}));
 clouds.forEach((g,i)=>{g.visible=false;g.children.forEach(s=>s.material.color.setRGB(...mx(mx([.1,.11,.16],[1,1,1],day),[1,.6,.4],dusk*.5)))})}
 let shadowFocusAt=0,shadowFocusX=NaN,shadowFocusY=NaN,shadowFocusZ=NaN,shadowFocusRadius=0;
-function updateDirectionalShadowFocus(now=performance.now()){if(now-shadowFocusAt<220)return;shadowFocusAt=now;const fx=oc.target.x,fz=oc.target.z,fy=0,radius=60;if(Math.abs(fx-shadowFocusX)<2&&Math.abs(fz-shadowFocusZ)<2&&Math.abs(fy-shadowFocusY)<2&&radius===shadowFocusRadius)return;shadowFocusX=fx;shadowFocusY=fy;shadowFocusZ=fz;shadowFocusRadius=radius;sun.target.position.set(fx,fy,fz);sun.position.copy(U.sd.value).multiplyScalar(160).add(sun.target.position);sun.target.updateMatrixWorld(true);sun.updateMatrixWorld(true);sc.left=sc.bottom=-radius;sc.right=sc.top=radius;sc.near=1;sc.far=360;sc.updateProjectionMatrix()}
+/* ---- Shadow cadence ----------------------------------------------------
+   The sun follows the camera target in 2 m steps, throttled to five times a
+   second, so the shadow map is usually the same picture as the frame before
+   it. three.js re-renders it every frame unless autoUpdate is off; it is off,
+   and this decides when to pay for it: immediately when the focus or the sun
+   actually moved, otherwise at 30 Hz so the wind sway in the depth material
+   stays alive. That halves the shadow pass on a phone, and on the frames
+   where nothing moved at all it removes it. */
+const SHADOW_INTERVAL_MS=33;
+let shadowDirty=true,shadowAt=0,shadowUpdates=0;
+function shadowCadence(now){if(!ren.shadowMap.enabled)return;if(shadowDirty||now-shadowAt>=SHADOW_INTERVAL_MS){ren.shadowMap.needsUpdate=true;shadowDirty=false;shadowAt=now;shadowUpdates++}}
+function updateDirectionalShadowFocus(now=performance.now()){if(now-shadowFocusAt<220)return;shadowFocusAt=now;const fx=oc.target.x,fz=oc.target.z,fy=0,radius=60;if(Math.abs(fx-shadowFocusX)<2&&Math.abs(fz-shadowFocusZ)<2&&Math.abs(fy-shadowFocusY)<2&&radius===shadowFocusRadius)return;shadowFocusX=fx;shadowFocusY=fy;shadowFocusZ=fz;shadowFocusRadius=radius;sun.target.position.set(fx,fy,fz);sun.position.copy(U.sd.value).multiplyScalar(160).add(sun.target.position);sun.target.updateMatrixWorld(true);sun.updateMatrixWorld(true);sc.left=sc.bottom=-radius;sc.right=sc.top=radius;sc.near=1;sc.far=360;sc.updateProjectionMatrix();shadowDirty=true}
 function shade(){const w=mode=='wire';[ter,water,...Object.values(KIND).flatMap(k=>kindMeshes(k)),...objs,...(mapRoot?[mapRoot]:[]),...(OW?[OW.group]:[])].forEach(r=>r.traverse(o=>{if(o.material)o.material.wireframe=w}));updSky()}
 /* city, 3D map import, bottom panel */
 let panelOpen=false,bt='terrain',cityTap=false,cityR=30,cityD=.8,cityLvl=true,cityRoad=true,cityAng=0;const cityCell=12;

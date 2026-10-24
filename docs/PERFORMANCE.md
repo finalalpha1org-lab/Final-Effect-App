@@ -36,6 +36,106 @@ this repository or explicitly marked as not done.
 | Rain → PBR roughness + puddle ripples | wet surfaces are a shader uniform, not a particle system |
 | Chunk-level *Fill unpainted ground only* | a painted 256 m tile is never speckled by a fill |
 
+## The two stalls that were actually measurable
+
+The landscaping studio had two costs that were large enough to measure on a
+desktop CPU, and neither of them was the one that looked expensive. Both were
+found by timing the call, not by reading the shader.
+
+**`fe_surface_detail` ran five noise evaluations per texel.** It is the kernel
+that bakes the triplanar detail normal/roughness field for every PBR surface
+(terrain 256², foliage and leaf cards 128²). Every texel sampled the same height
+noise five times — once for itself and once per Sobel neighbour — so a 512² bake
+re-evaluated its own height field 1.3 million times.
+
+It now runs two passes: pass one writes the height into a `w*h` float scratch
+buffer, pass two reads that buffer through the *same* wrapped `iL/iR/jD/jU`
+indices and the same 5-tap sign convention. The output is **bit-identical**, not
+approximately equal — the 12 baseline hashes in `tests/surface-detail.test.mjs`
+(4 surface kinds × 3 sizes) were compared byte for byte against the old build,
+because a different kernel would silently change every surface in the app.
+
+| Bake | Before | After |
+| --- | --- | --- |
+| 256 × 256 | 75.9 ms | **13.3 ms** |
+| 512 × 512 | 302.6 ms | **43.1 ms** |
+
+**The landscaping renderer was re-rendering the shadow map every frame.** The
+3D workspace viewport already gated its shadow pass to 30 Hz, but the studio's
+`renderer.shadowMap.autoUpdate` was still on, so a static scene paid for a full
+2048² depth pass at display refresh rate. It now uses the workspace rule:
+
+* `autoUpdate = false`; `shadowCadence(now)` arms `needsUpdate` when the light
+  rig reports dirty or when 33 ms have passed since the last update;
+* only `updateDirectionalShadowFocus` sets dirty, and it already throttles
+  itself to 220 ms with a ±2 m snap, so panning the camera does not smear the
+  shadow;
+* latency when the user actually moves the sun is ≤ 33 ms, i.e. one or two
+  frames — no visible lag, and no blur filter paying for a stale map.
+
+`tests/shadow-cadence.test.mjs` slices the real function out of
+`terrain-main-04.js` and drives it with a fake renderer, so the test fails if
+someone raises the interval or forgets to arm the first update.
+
+## Instance transforms: the settle stutter
+
+Every plant in the studio is one instance in an `InstancedMesh`, and the matrix
+that places it used to be composed in JavaScript through a `THREE.Object3D`:
+
+```js
+dm.quaternion.setFromUnitVectors(UP, groundNormal(x, z, align)); // sqrt + rsqrt
+dm.quaternion.multiply(axisAngle(UP, o.r));                      // 2 trig calls
+dm.quaternion.multiply(euler(tiltX, 0, tiltZ, 'YXZ'));           // 2 trig calls
+dm.scale.set(bw, s, bw);
+dm.updateMatrix();                                               // 4x4 compose
+mesh.setMatrixAt(i, dm.matrix);                                  // 16 float copy
+```
+
+That is correct, and it was measured: **18.2 ms for 30 000 instances** on a
+desktop CPU, and a phone is three to five times slower. It runs on every camera
+settle (the quadtree re-culls 240 ms after the camera stops) and after every
+edit that regrows a species — so it is felt as a stutter, not as a lower frame
+rate. Two things were wrong with it beyond the raw cost:
+
+* it ran **once per mesh**. A species with a wood mesh and a leaf mesh walked
+  its whole instance list twice, so the terrain sampling for the root sink (24
+  `hgt()` lookups per tree) was done twice as well;
+* it allocated and wrote through JS objects — property lookups, a shared
+  `Object3D`, a `Matrix4` — for arithmetic that is a pure function of the
+  instance and the ground under it.
+
+It is now `fe_scatter_begin` / `fe_scatter_matrices` (`cpp/src/fe_scatter.cpp`):
+
+* one pre-pass per species fills a structure-of-arrays block — position, both
+  scales, yaw, the terrain normal it is aligned to, and the two placement
+  hashes — while it writes the per-instance scratch the colour and the impostor
+  quad need (`fe_scatter_aux_ptr`). **No JavaScript allocation**, and the root
+  sink is sampled once instead of once per mesh;
+* the kernel turns that block into `count * 16` floats in one flat loop, reading
+  the compacted visible index list the quadtree just produced
+  (`fe_scatter_order_ptr`) so invisible instances are never touched;
+* the caller blits the block into `instanceMatrix.array` with a single `set()`.
+
+| | before | after |
+| --- | --- | --- |
+| 30 000 instances, transform only | 12.1 ms | **3.8 ms** |
+| 30 000 instances, two meshes, with root-sink sampling | 84.4 ms | **34.9 ms** |
+
+The kernel reproduces the three.js transform, it does not approximate it:
+`tests/scatter-layout.test.mjs` compares every one of the 16 components against
+an `Object3D` driven the old way, for both rotation modes, and checks scale,
+orthogonality and the compacted order. The tolerance is 6e-5 because the module
+is compiled freestanding and cannot call a platform libm — `cpp/src/fe_scatter.cpp`
+therefore carries its own double-precision sin/cos, which brings the difference
+down to float32 rounding. Anything actually wrong (a flipped sign, tilt before
+yaw) shows up at 1e-1 and fails the test.
+
+**What is still in JavaScript, honestly:** the root-sink sampling in that second
+row is now the dominant cost, and it is still a per-instance loop of 24 `hgt()`
+lookups. It is the next candidate for the kernel — it needs the height grid
+uploaded once per settle (1 MB) and then 720 000 bilinear samples become 720 000
+adds inside the module.
+
 ## The compacted visible-instance list
 
 `fe_lod_visible(count, xyz, vp, camX, camY, camZ, fullDistance, cullRadius,

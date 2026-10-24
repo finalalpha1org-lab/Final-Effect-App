@@ -19,6 +19,7 @@ const CPP_SOURCES = [
   'cpp/src/fe_flora.cpp',
   'cpp/src/fe_climate.cpp',
   'cpp/src/fe_lod.cpp',
+  'cpp/src/fe_scatter.cpp',
   'cpp/src/fe_impostor.cpp',
   'cpp/src/fe_editmesh.cpp',
   'cpp/src/fe_editmesh_tools.cpp'
@@ -90,6 +91,10 @@ const REQUIRED_EXPORTS = [
   'fe_lod_visible',
   'fe_lod_visible_index_ptr',
   'fe_lod_visible_tier_ptr',
+  'fe_scatter_begin',
+  'fe_scatter_matrices',
+  'fe_scatter_order_ptr',
+  'fe_scatter_aux_ptr',
   'fe_lod_out_ptr',
   'fe_ocean_field_ptr',
   'fe_ocean_configure',
@@ -233,6 +238,10 @@ if (zig) {
     '-Wl,--export=fe_render_active_pixels',
     '-Wl,--export=fe_render_denoise_config',
     '-Wl,--export=fe_terrain_compute_normals_region',
+    '-Wl,--export=fe_scatter_begin',
+    '-Wl,--export=fe_scatter_matrices',
+    '-Wl,--export=fe_scatter_order_ptr',
+    '-Wl,--export=fe_scatter_aux_ptr',
     /* Edit Mode topology is only reachable from JS, so the linker has to be
        told to keep every entry point. */
     '-Wl,--export=fe_edit_reset','-Wl,--export=fe_edit_upload','-Wl,--export=fe_edit_vert_count',
