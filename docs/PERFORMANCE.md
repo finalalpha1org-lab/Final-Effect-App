@@ -121,6 +121,11 @@ It is now `fe_scatter_begin` / `fe_scatter_matrices` (`cpp/src/fe_scatter.cpp`):
 | 30 000 instances, transform only | 12.1 ms | **3.8 ms** |
 | 30 000 instances, two meshes, with root-sink sampling | 84.4 ms | **34.9 ms** |
 
+The second row is a worst case, not a typical scene: it puts the root-sink loop
+on all 30 000 instances, while in a real world it runs only for woody species
+(a few thousand trees). The row that matters for the frame is the first one —
+ground cover is where the instance counts are.
+
 The kernel reproduces the three.js transform, it does not approximate it:
 `tests/scatter-layout.test.mjs` compares every one of the 16 components against
 an `Object3D` driven the old way, for both rotation modes, and checks scale,

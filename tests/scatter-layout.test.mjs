@@ -231,3 +231,30 @@ test('the bridge does not fuse the instance kernel with the terrain scatter', ()
   assert.match(BRIDGE, /if\(!core\.has\('fe_scatter_begin'\)\|\|!\(count>0\)\)return null;/, 'and it degrades to null without the core');
   assert.match(BRIDGE, /new Float32Array\(ex\.memory\.buffer,p,count\*11\)/, 'the SoA view is rebuilt after the call');
 });
+
+test('the blit lands in the instance buffer three.js will upload', async () => {
+  const exp = await boot();
+  const input = rows(300, 13);
+  const ptr = writeInput(exp, input);
+  const orderPtr = exp.fe_scatter_order_ptr();
+  const order = new Uint32Array(exp.memory.buffer, orderPtr, input.length);
+  for (let i = 0; i < input.length; i++) order[i] = i;
+  const out = new Float32Array(exp.memory.buffer, exp.fe_scatter_matrices(input.length, orderPtr, 0.35, 0.18, 1), input.length * 16);
+
+  /* Exactly what sync() does: the mesh owns the buffer, the kernel block is
+     copied into it, and three.js reads the matrices back off the attribute. */
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(9), 3));
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial(), input.length);
+  mesh.instanceMatrix.array.set(out);
+  mesh.count = input.length;
+
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < input.length; i++) {
+    mesh.getMatrixAt(i, m);
+    const want = reference(input[i], 0.35, 0.18, 1);
+    for (let k = 0; k < 16; k++) {
+      assert.ok(Math.abs(m.elements[k] - want[k]) < 6e-5, `instance ${i} component ${k}`);
+    }
+  }
+});
