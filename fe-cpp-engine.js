@@ -902,7 +902,17 @@
 
       /* C++ Progressive BVH Path Tracer */
       const triCount = this.uploadWorkspaceSceneToCpp(width / height);
-      this.exports.fe_render_init_framebuffer(width, height);
+      /* The tracer's targets are allocated on demand now, so a device with no
+         room for a frame this size can refuse it. Say so instead of rendering
+         into a buffer that was never allocated. */
+      if (this.exports.fe_render_init_framebuffer(width, height) !== 1) {
+        const message = `Not enough memory for a ${width}×${height} render. Lower the resolution and try again.`;
+        if (statusEl) statusEl.textContent = message;
+        if (barEl) barEl.style.width = '0%';
+        window.FE?.toast?.(message);
+        this.renderState.isRendering = false;
+        return;
+      }
       this.renderState.isRendering = true;
       this.renderState.cancelRequested = false;
 
@@ -1193,7 +1203,7 @@
 
         if (usePath) {
           this.uploadWorkspaceSceneToCpp(width / height);
-          this.exports.fe_render_init_framebuffer(width, height);
+          if (this.exports.fe_render_init_framebuffer(width, height) !== 1) { cancelled = true; break; }
           const traced = await traceWholeFrame();
           if (!traced) { cancelled = true; break; }
           if (seqDenoise && this.exports.fe_render_denoise) this.exports.fe_render_denoise(2, 1);
@@ -3352,7 +3362,12 @@
           : 'Smoke & fire solver unavailable in this build';
       } else {
         const grid = 16, cells = grid * grid * grid;
-        smokeExports.fe_vol_init(grid, grid, grid);
+        /* The solver's lattice is allocated on demand now. A device that cannot
+           give back the 9.5 MB gets a failed row that says so, not a read
+           through a pointer that was never handed out. */
+        if (smokeExports.fe_vol_init(grid, grid, grid) !== 0) {
+          throw new Error('smoke solver could not allocate its grid on this device');
+        }
         smokeExports.fe_vol_source(0.5, 0.2, 0.5, 0.16, 1.2, 0.6, 0.8);
         for (let step = 0; step < 4; step++) smokeExports.fe_vol_step(1 / 60, 4, 1, 0.2, 0.3, 24);
         const stats = new Float32Array(smokeExports.memory.buffer, smokeExports.fe_vol_stats_ptr(), 6);
