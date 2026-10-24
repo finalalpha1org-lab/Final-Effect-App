@@ -68,7 +68,9 @@ test('vegetation keeps leaves in high detail nearer to the camera and fades to l
 test('camera zoom defers foliage LOD and adaptive resolution until motion settles',()=>{
   const vec=(x=0,y=0,z=0)=>({x,y,z,clone(){return vec(this.x,this.y,this.z)},copy(o){this.x=o.x;this.y=o.y;this.z=o.z;return this},distanceToSquared(o){return (this.x-o.x)**2+(this.y-o.y)**2+(this.z-o.z)**2}});
   const lodStart=html.indexOf('const LOD_KINDS='),lodEnd=html.indexOf('let season=',lodStart),lodCalls=[];
-  const lodCtx={LOD_BOTANICAL:new Set(['grass']),LOD_GROUND:new Set(['grass']),LOD_TREES:new Set(),KIND:{grass:{list:[{}]}},cam:{position:vec()},lodFullDistance:750,cl:(v,a,b)=>Math.min(b,Math.max(a,v)),hh:()=>.5,sync:k=>lodCalls.push(k),localStorage:{setItem(){}}};
+  /* `bakeQueuedImpostor` lives above the sliced region; a stub is enough here
+     because this test is about the settle timer, not about atlas baking. */
+  const lodCtx={LOD_BOTANICAL:new Set(['grass']),LOD_GROUND:new Set(['grass']),LOD_TREES:new Set(),KIND:{grass:{list:[{}]}},cam:{position:vec()},lodFullDistance:750,cl:(v,a,b)=>Math.min(b,Math.max(a,v)),hh:()=>.5,sync:k=>lodCalls.push(k),localStorage:{setItem(){}},bakeQueuedImpostor(){},impostorWanted:new Set()};
   vm.runInNewContext(html.slice(lodStart,lodEnd)+';this.step=updateFoliageLOD',lodCtx);
   lodCtx.cam.position.x=.1;lodCtx.step(100);assert.equal(lodCalls.length,0,'no mesh-tier changes occur during zoom');
   lodCtx.step(300);assert.equal(lodCalls.length,0,'LOD remains queued inside the settle delay');

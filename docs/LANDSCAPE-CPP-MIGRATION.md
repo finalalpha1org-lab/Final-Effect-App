@@ -101,6 +101,14 @@ per-instance threshold and hysteresis band. A Quality-tab slider controls the
 doubles for LOD species - important on phones. This is not mesh decimation for
 trees; their low tier reuses the same geometry with a cheaper material.
 
+That sentence used to continue "there is no quadtree over the foliage itself".
+There is now: `fe_lod_tree_build`/`fe_lod_tree_cull` index each species once and
+answer the same visible list and tiers as the flat kernel, exactly, with the
+brute-force comparison in `tests/landscape-quadtree-lod.test.mjs` as the proof.
+Beyond the far tier, species with a baked atlas are drawn as a single
+camera-facing quad sampling eight baked azimuths (`fe_impostor_build`). Both are
+described in `docs/LOD-QUADTREE.md`, including what they do not do.
+
 ## Strata terracing and C++ scatter candidates
 
 `fe_terrain_apply_strata` (previously declared in `fe_abi.h` but never

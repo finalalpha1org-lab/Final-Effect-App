@@ -74,7 +74,11 @@
     ready: false,
     used: 0,
     fallbacks: 0,
-    lastError: null
+    lastError: null,
+    /* The seed each species was actually grown from. The impostor has to be
+       baked from the very same plant, or a tree changes shape as it crosses
+       the far-tier boundary. */
+    seeds: {}
   };
 
   function core() {
@@ -293,6 +297,7 @@
     const name = KINDS[id];
     const plan = planOverride || PART_PLAN[name] || [];
     const s = (seed === undefined || seed === null) ? ((Math.random() * 4294967295) >>> 0) : (seed >>> 0);
+    state.seeds[name] = s;
     const indexOf = (idx, partArr, part) => {
       const out = [];
       for (let i = 0; i < idx.length; ++i) if (Math.round(partArr[idx[i]]) === part) out.push(idx[i]);
@@ -391,6 +396,85 @@
     }
   }
 
+  /* ---- impostors -------------------------------------------------------- *
+   * A tree three kilometres away is a handful of pixels. The kernel bakes it
+   * from the same mesh it just grew — eight azimuths, key-lit, supersampled —
+   * and hands back the atlas plus the quad size in metres. This turns that into
+   * the texture the studio samples; no art is authored here, and a species that
+   * has not been baked falls back to its low-detail mesh.
+   *
+   * The atlas is cached per kind and seed, because baking a 9 000-vertex oak
+   * costs a few milliseconds and a species only ever needs one. */
+  const IMPOSTOR_VIEWS = 8;
+  const impostorCache = new Map();
+  function seedFor(kind) {
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0) return undefined;
+    return state.seeds[KINDS[id]];
+  }
+  function impostor(kind, seed, detail) {
+    const c = core();
+    if (!c || typeof c.impostor !== 'function') return null;
+    const id = typeof kind === 'number' ? kind : KINDS.indexOf(kind);
+    if (id < 0 || id >= KINDS.length) return null;
+    /* Prefer the seed the near mesh was grown from; without one the species
+       would pop into a different silhouette at the tier boundary. */
+    const fallback = seedFor(id);
+    const s = (seed === undefined || seed === null)
+      ? (fallback === undefined ? 7331 + id * 977 : fallback)
+      : (seed >>> 0);
+    const level = detailLevel(detail);
+    const key = id + ':' + s + ':' + level;
+    const hit = impostorCache.get(key);
+    if (hit) return hit;
+    let baked;
+    try { baked = c.impostor(id, s, level, IMPOSTOR_VIEWS); }
+    catch (error) { state.lastError = error && error.message; return null; }
+    if (!baked || !baked.pixels || !baked.views) return null;
+    const THREE = three();
+    if (!THREE) return null;
+    /* The baker prints linear-ish colour; mark the texture sRGB so it lands in
+       the same space as the materials it replaces. */
+    const tex = new THREE.DataTexture(baked.pixels, baked.width * baked.views, baked.height,
+      THREE.RGBAFormat, THREE.UnsignedByteType);
+    /* A distant plant is a few texels tall, so the atlas needs a mip chain or
+       it boils as the camera drifts. Both tile dimensions are powers of two, so
+       the chain is valid everywhere. */
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    /* The bytes are already display-encoded, so they must not be decoded
+       again on the way in. */
+    if (THREE.LinearEncoding !== undefined) tex.encoding = THREE.LinearEncoding;
+    tex.name = KINDS[id] + ' impostor';
+    const out = {
+      kind: KINDS[id],
+      texture: tex,
+      views: baked.views,
+      width: baked.width,
+      height: baked.height,
+      quadW: baked.quadW,
+      quadH: baked.quadH,
+      coverage: baked.coverage,
+      cropU: baked.cropU,
+      cropV: baked.cropV,
+      offU: baked.offU
+    };
+    impostorCache.set(key, out);
+    return out;
+  }
+  function impostorCount() { return impostorCache.size; }
+  /* The detail preset changed: the near meshes are regrown, so the atlases
+     baked from the old ones have to go with them. */
+  function impostorReset() {
+    for (const [, entry] of impostorCache) {
+      try { entry.texture.dispose(); } catch (error) { state.lastError = error && error.message; }
+    }
+    impostorCache.clear();
+  }
+
   function counts() {
     const c = core();
     if (!c || typeof c.floraCounts !== 'function') return { species: 0, rocks: 0 };
@@ -416,6 +500,11 @@
     toGeometry,
     plantParts,
     grownAsset,
+    impostor,
+    impostorCount,
+    impostorReset,
+    seedFor,
+    IMPOSTOR_VIEWS,
     BUILDINGS,
     BUILDING_PLAN,
     buildingAsset,

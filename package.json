@@ -12,6 +12,7 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "@shaderfrog/glsl-parser": "7.0.1",
     "esbuild": "^0.28.2",
     "three": "0.128.0",
     "three-csg-ts": "3.0.1",

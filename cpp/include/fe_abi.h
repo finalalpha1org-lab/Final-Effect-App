@@ -689,6 +689,40 @@ FE_EXPORT int32_t fe_ow_surface_grid(uint32_t segments, float origin_x, float or
 /* Nearest-first chunk ring for the stream scheduler: cx, cz, ring distance^2. */
 FE_EXPORT int32_t fe_ow_plan_chunks(int32_t center_cx, int32_t center_cz, uint32_t radius,
                                     float chunk_size, float world_half);
+/* ---- Quadtree LoD (cpp/src/fe_lod.cpp) ----------------------------------
+ * One spatial index per species. `fe_lod_tree_build` copies the placements
+ * into the caller's scratch buffer and builds only when the generation
+ * checksum changed; `fe_lod_tree_cull` walks that tree and returns a compacted
+ * list of instance indices and their tier (0 grown, 1 low twin, 2 impostor).
+ * Both return a count, or a negative value on bad input. */
+FE_EXPORT int32_t fe_lod_tree_build(int32_t slot, uint32_t count, const float* xyz, uint32_t generation);
+FE_EXPORT int32_t fe_lod_tree_cull(int32_t slot, const float* xyz, const float* vp,
+                                   float cam_x, float cam_y, float cam_z,
+                                   float mid, float far_distance, float cull_radius,
+                                   float margin, uint32_t options);
+FE_EXPORT uint32_t* fe_lod_tree_index_ptr(void);
+FE_EXPORT uint8_t* fe_lod_tree_tier_ptr(void);
+FE_EXPORT int32_t* fe_lod_tree_stats_ptr(int32_t slot);
+FE_EXPORT int32_t fe_lod_tree_node_count(int32_t slot);
+FE_EXPORT int32_t fe_lod_tree_leaf_capacity(void);
+FE_EXPORT int32_t fe_lod_tree_max_instances(void);
+FE_EXPORT int32_t fe_lod_tree_slot_count(void);
+FE_EXPORT int32_t* fe_lod_tree_pool_ptr(void);
+
+/* ---- Foliage impostors (cpp/src/fe_impostor.cpp) -------------------------
+ * Renders the mesh fe_flora_tree() just grew — wood and leaf cards — into an
+ * eight-azimuth RGBA atlas. Colours are display-encoded bytes; alpha is
+ * coverage. `fe_impostor_bounds_ptr` returns [quad w m, quad h m, coverage,
+ * base y, crop u, crop v, u offset, reserved]. */
+FE_EXPORT int32_t fe_impostor_build(int32_t kind, uint32_t seed, int32_t detail, int32_t views);
+FE_EXPORT int32_t fe_impostor_width(void);
+FE_EXPORT int32_t fe_impostor_height(void);
+FE_EXPORT int32_t fe_impostor_view_count(void);
+FE_EXPORT int32_t fe_impostor_max_views(void);
+FE_EXPORT uint8_t* fe_impostor_pixels_ptr(void);
+FE_EXPORT float* fe_impostor_bounds_ptr(void);
+FE_EXPORT int32_t fe_impostor_column(float cam_dx, float cam_dz);
+
 /* Bulk foliage terrain-LOD classification: 0 = full, 1 = low tier, -1 = culled. */
 FE_EXPORT int8_t* fe_lod_out_ptr(void);
 FE_EXPORT int32_t fe_lod_classify(uint32_t count, const float* xyz, float cam_x, float cam_y,

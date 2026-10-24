@@ -17,6 +17,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_surface.cpp',
   'cpp/src/fe_flora.cpp',
   'cpp/src/fe_climate.cpp',
+  'cpp/src/fe_lod.cpp',
+  'cpp/src/fe_impostor.cpp',
   'cpp/src/fe_editmesh.cpp',
   'cpp/src/fe_editmesh_tools.cpp'
 ];
@@ -132,7 +134,11 @@ const REQUIRED_EXPORTS = [
   'fe_climate_step','fe_climate_clock','fe_climate_sea_level_temp','fe_climate_snow_line',
   'fe_climate_at','fe_climate_weather','fe_climate_biome','fe_climate_biome_count',
   'fe_climate_biome_on_slope','fe_climate_tornado','fe_climate_rankine','fe_climate_tsunami',
-  'fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_ow_visible_count',
+  'fe_lod_visible','fe_lod_visible_index_ptr','fe_lod_visible_tier_ptr','fe_lod_tree_build','fe_lod_tree_cull','fe_lod_tree_index_ptr','fe_lod_tree_tier_ptr',
+  'fe_lod_tree_stats_ptr','fe_lod_tree_node_count','fe_lod_tree_leaf_capacity',
+  'fe_lod_tree_max_instances','fe_lod_tree_slot_count','fe_lod_tree_pool_ptr',
+  'fe_impostor_build','fe_impostor_width','fe_impostor_height','fe_impostor_view_count',
+  'fe_impostor_pixels_ptr','fe_impostor_bounds_ptr','fe_impostor_column','fe_ow_visible_count',
   /* Time-sliced erosion (fe_landscape.cpp) */
   'fe_erosion_begin','fe_erosion_set_region','fe_erosion_step','fe_erosion_dirty_ptr','fe_erosion_dirty_reset',
   'fe_erosion_remaining','fe_erosion_total','fe_erosion_active','fe_erosion_cancel',
@@ -267,6 +273,15 @@ if (zig) {
     '-Wl,--export=fe_ow_visible_count',
     '-Wl,--export=fe_lod_visible_index_ptr',
     '-Wl,--export=fe_lod_visible_tier_ptr',
+    '-Wl,--export=fe_lod_tree_build','-Wl,--export=fe_lod_tree_cull',
+    '-Wl,--export=fe_lod_tree_index_ptr','-Wl,--export=fe_lod_tree_tier_ptr',
+    '-Wl,--export=fe_lod_tree_stats_ptr','-Wl,--export=fe_lod_tree_node_count',
+    '-Wl,--export=fe_lod_tree_leaf_capacity','-Wl,--export=fe_lod_tree_max_instances',
+    '-Wl,--export=fe_lod_tree_slot_count','-Wl,--export=fe_lod_tree_pool_ptr',
+    '-Wl,--export=fe_impostor_build','-Wl,--export=fe_impostor_width',
+    '-Wl,--export=fe_impostor_height','-Wl,--export=fe_impostor_view_count',
+    '-Wl,--export=fe_impostor_max_views','-Wl,--export=fe_impostor_pixels_ptr',
+    '-Wl,--export=fe_impostor_bounds_ptr','-Wl,--export=fe_impostor_column',
     ...CPP_SOURCES,
     '-o', 'wasm/fe_core_engine.wasm'
   ], { stdio: 'inherit' });

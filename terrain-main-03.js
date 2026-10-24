@@ -8,7 +8,7 @@ function groundNormal(x,z,alignment=1){if(OW?.active)return OW.normalAt(x,z,alig
 
 
 
-function growManualCapacity(k,required){const K=KIND[k];if(!K||required<=K.max)return true;const cap=Math.max(required,Math.ceil(Math.max(K.max,1)*1.5),K.max+1024),resize=old=>{const m=new THREE.InstancedMesh(old.geometry,old.material,cap);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0,Math.min(old.instanceMatrix.array.length,m.instanceMatrix.array.length)));m.instanceColor=new THREE.BufferAttribute(new Float32Array(cap*3),3);m.instanceColor.array.set(old.instanceColor.array.subarray(0,Math.min(old.instanceColor.array.length,m.instanceColor.array.length)));m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=Math.min(old.count,cap);m.frustumCulled=old.frustumCulled;m.castShadow=old.castShadow;m.receiveShadow=old.receiveShadow;m.userData={...old.userData};m.customDepthMaterial=old.customDepthMaterial;m.renderOrder=old.renderOrder;m.name=old.name;m.position.copy(old.position);m.quaternion.copy(old.quaternion);m.scale.copy(old.scale);m.layers.mask=old.layers.mask;m.updateMatrix();return m},next=[];try{for(const old of K.meshes)next.push(resize(old))}catch(e){if(!K.capacityWarned){K.capacityWarned=true;console.warn('Device memory is full; existing foliage was kept.');}return false}for(let i=0;i<K.meshes.length;i++){scene.remove(K.meshes[i]);scene.add(next[i])}K.meshes=next;if(K.lowMeshes){for(const low of K.lowMeshes){scene.remove(low);low.dispose?.();low.material?.dispose?.()}K.lowMeshes=null}K.max=cap;K.capacityWarned=false;return true}
+function growManualCapacity(k,required){const K=KIND[k];if(!K||required<=K.max)return true;const cap=Math.max(required,Math.ceil(Math.max(K.max,1)*1.5),K.max+1024),resize=old=>{const m=new THREE.InstancedMesh(old.geometry,old.material,cap);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceMatrix.array.set(old.instanceMatrix.array.subarray(0,Math.min(old.instanceMatrix.array.length,m.instanceMatrix.array.length)));m.instanceColor=new THREE.BufferAttribute(new Float32Array(cap*3),3);m.instanceColor.array.set(old.instanceColor.array.subarray(0,Math.min(old.instanceColor.array.length,m.instanceColor.array.length)));m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=Math.min(old.count,cap);m.frustumCulled=old.frustumCulled;m.castShadow=old.castShadow;m.receiveShadow=old.receiveShadow;m.userData={...old.userData};m.customDepthMaterial=old.customDepthMaterial;m.renderOrder=old.renderOrder;m.name=old.name;m.position.copy(old.position);m.quaternion.copy(old.quaternion);m.scale.copy(old.scale);m.layers.mask=old.layers.mask;m.updateMatrix();return m},next=[];try{for(const old of K.meshes)next.push(resize(old))}catch(e){if(!K.capacityWarned){K.capacityWarned=true;console.warn('Device memory is full; existing foliage was kept.');}return false}for(let i=0;i<K.meshes.length;i++){scene.remove(K.meshes[i]);scene.add(next[i])}K.meshes=next;if(K.lowMeshes){for(const low of K.lowMeshes){scene.remove(low);low.dispose?.();low.material?.dispose?.()}K.lowMeshes=null}if(K.impMesh){scene.remove(K.impMesh);K.impMesh.geometry?.dispose?.();K.impMesh.material?.dispose?.();K.impMesh=null;K.impAtlas=null;impostorWanted.delete(k)}K.max=cap;K.capacityWarned=false;return true}
 const mAt=(x,z)=>OW?.active?OW.mIdx(x,z):mIdx(cl(Math.round((x+S/2)/D),0,N),cl(Math.round((z+S/2)/D),0,N));
 const slope=(x,z)=>Math.hypot(hgt(x+1,z)-hgt(x-1,z),hgt(x,z+1)-hgt(x,z-1))/2;
 const RULE={grass:[.8,0],tallgrass:[.82,0],flower:[.6,0],daisy:[.6,0],tulip:[.6,0],lavender:[.65,0],shrub:[.9,1.4],pine:[.75,3],oak:[.6,4.2],birch:[.6,2.8],palm:[.5,3.5],rock:[9,0],house:[.32,0],block:[.28,0],mid:[.27,0],tower:[.26,0]},BLD={house:4,block:5.6,mid:6.2,tower:4.4},bY=(x,z,b)=>Math.min(hgt(x,z),...[[1,1],[1,-1],[-1,1],[-1,-1]].map(([a,c])=>hgt(x+a*b*.6,z+c*b*.6))),SM={house:1,block:1,mid:1,tower:1,grass:1.35,tallgrass:1.05,flower:1.05,daisy:1,tulip:1,lavender:1, pine:1.05,oak:1.05,birch:1.05,palm:1.05,shrub:1.05,rock:.8};
@@ -231,8 +231,8 @@ if(planCore&&planCore.count){for(let i=0;i<planCore.count;i++){const ax=planCore
 else for(let dz=-OW.radius;dz<=OW.radius;dz++)for(let dx=-OW.radius;dx<=OW.radius;dx++){const ax=cx+dx,az=cz+dz,key=owKey(ax,az);if(!owValidChunk(ax,az))continue;desired.add(key);if(!OW.chunks.has(key)&&!OW.queue.some(q=>q.key===key))jobs.push({cx:ax,cz:az,key,d:dx*dx+dz*dz})}for(const [key,c] of OW.chunks){if(!desired.has(key)){owDisposeChunk(c);OW.chunks.delete(key)}}OW.queue=OW.queue.filter(q=>desired.has(q.key));if(OW.activeJob&&!desired.has(OW.activeJob.key))OW.activeJob=null;jobs.sort((a,b)=>a.d-b.d);OW.queue.push(...jobs);water.position.x=cx*OW.chunkSize;water.position.z=cz*OW.chunkSize;OW.waterMapsDirty=true;if(OW.queue.length&&!OW.generating){OW.generating=true;const token=OW.token;requestAnimationFrame(()=>owPump(token))}if(!OW.queue.length)owStatus('Ready · '+OW.chunks.size+' chunks loaded')}
 function owCurrentSettings(){return{sizeKm:cl(+OW.config.sizeKm,1,50),seed:Math.round(cl(+OW.config.seed,1,999999)),blend:cl(+OW.config.blend,0,1),mountainHeight:cl(+OW.config.mountainHeight,0,100),waterCoverage:cl(+OW.config.waterCoverage,0,100),waterLevel:cl(+OW.config.waterLevel,-80,0),vegetationDensity:cl(+OW.config.vegetationDensity,0,2.5),biomeMix:{hills:cl(+OW.config.biomeMix.hills,0,2),alpine:cl(+OW.config.biomeMix.alpine,0,2),desert:cl(+OW.config.biomeMix.desert,0,2),volc:cl(+OW.config.biomeMix.volc,0,2)}}}
 function owSameSettings(a,b){return!!a&&!!b&&Object.keys(a).every(k=>k==='biomeMix'?Object.keys(a.biomeMix||{}).every(n=>a.biomeMix[n]===b.biomeMix?.[n]):a[k]===b[k])}
-function owStart(){const next=owCurrentSettings(),resume=OW.generated&&!OW.active&&owSameSettings(next,OW.currentConfig);if(exploreMode)deactivateExplore(false);if(!OW.active){OW.savedScene={visibility:new Map(),camera:{position:cam.position.clone(),target:oc.target.clone(),maxDistance:oc.maxDistance},water:water.position.clone(),waterLevel:wl,waterLevelUserSet:wlUserSet};const keep=[ter,...Object.values(KIND).flatMap(K=>[...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])]),...objs,...(mapRoot?[mapRoot]:[]),...(typeof SBM!=='undefined'?[SBM]:[])];for(const o of keep){OW.savedScene.visibility.set(o,o.visible);o.visible=false}}if(!resume){OW.config=next;OW.currentConfig={...next,biomeMix:{...next.biomeMix}};for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.editStore.clear();OW.history.length=OW.redo.length=0;OW.queue.length=0;OW.activeJob=null;OW.generated=false}OW.active=true;OW.group.visible=true;water.visible=true;setOpenWorldWaterRadius(true);wl=OW.config.waterLevel;U.wy.value=wl;water.position.y=wl;OW.segments=detail>=3?128:detail>=2?96:64;OW.lastCenterX=OW.lastCenterZ=NaN;const spawn=owFindSpawn(),dx=spawn.x-oc.target.x,dz=spawn.z-oc.target.z;oc.target.x=spawn.x;oc.target.z=spawn.z;cam.position.x+=dx;cam.position.z+=dz;const dy=spawn.y+6-oc.target.y;oc.target.y+=dy;cam.position.y+=dy;OW.token++;OW.generating=false;OW.activeJob=null;waterReflectionReady=false;water.position.y=wl;bt=tab==='plants'?'plants':tab==='terrain'?'terrain':'openworld';nav=false;setNav();owRefresh(true);msg(resume?'Resuming Open World':'Generating streamed Open World');build();}
-function owDeactivate(){if(!OW?.active)return;OW.token++;OW.queue.length=0;OW.activeJob=null;OW.generating=false;for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.group.visible=false;OW.active=false;OW.waterMapsDirty=false;setOpenWorldWaterRadius(false);if(OW.savedScene){for(const[o,v]of OW.savedScene.visibility)o.visible=v;for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=m.count>0;cam.position.copy(OW.savedScene.camera.position);oc.target.copy(OW.savedScene.camera.target);oc.maxDistance=OW.savedScene.camera.maxDistance;wl=OW.savedScene.waterLevel;wlUserSet=OW.savedScene.waterLevelUserSet===true;U.wy.value=wl;water.position.copy(OW.savedScene.water);U.hm.value=hmTex;U.hm2.value=SBT;U.uTerrainOrigin.value.set(0,0);cam.updateMatrixWorld(true);oc.update();OW.savedScene=null}OW.selected=null;waterReflectionReady=false;ring.visible=false;owStatus('Open World paused; generated chunks and edits are retained.');}
+function owStart(){const next=owCurrentSettings(),resume=OW.generated&&!OW.active&&owSameSettings(next,OW.currentConfig);if(exploreMode)deactivateExplore(false);if(!OW.active){OW.savedScene={visibility:new Map(),camera:{position:cam.position.clone(),target:oc.target.clone(),maxDistance:oc.maxDistance},water:water.position.clone(),waterLevel:wl,waterLevelUserSet:wlUserSet};const keep=[ter,...Object.values(KIND).flatMap(K=>kindMeshes(K)),...objs,...(mapRoot?[mapRoot]:[]),...(typeof SBM!=='undefined'?[SBM]:[])];for(const o of keep){OW.savedScene.visibility.set(o,o.visible);o.visible=false}}if(!resume){OW.config=next;OW.currentConfig={...next,biomeMix:{...next.biomeMix}};for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.editStore.clear();OW.history.length=OW.redo.length=0;OW.queue.length=0;OW.activeJob=null;OW.generated=false}OW.active=true;OW.group.visible=true;water.visible=true;setOpenWorldWaterRadius(true);wl=OW.config.waterLevel;U.wy.value=wl;water.position.y=wl;OW.segments=detail>=3?128:detail>=2?96:64;OW.lastCenterX=OW.lastCenterZ=NaN;const spawn=owFindSpawn(),dx=spawn.x-oc.target.x,dz=spawn.z-oc.target.z;oc.target.x=spawn.x;oc.target.z=spawn.z;cam.position.x+=dx;cam.position.z+=dz;const dy=spawn.y+6-oc.target.y;oc.target.y+=dy;cam.position.y+=dy;OW.token++;OW.generating=false;OW.activeJob=null;waterReflectionReady=false;water.position.y=wl;bt=tab==='plants'?'plants':tab==='terrain'?'terrain':'openworld';nav=false;setNav();owRefresh(true);msg(resume?'Resuming Open World':'Generating streamed Open World');build();}
+function owDeactivate(){if(!OW?.active)return;OW.token++;OW.queue.length=0;OW.activeJob=null;OW.generating=false;for(const c of OW.chunks.values())owDisposeChunk(c);OW.chunks.clear();OW.group.visible=false;OW.active=false;OW.waterMapsDirty=false;setOpenWorldWaterRadius(false);if(OW.savedScene){for(const[o,v]of OW.savedScene.visibility)o.visible=v;for(const K of Object.values(KIND))for(const m of kindMeshes(K))m.visible=m.count>0;cam.position.copy(OW.savedScene.camera.position);oc.target.copy(OW.savedScene.camera.target);oc.maxDistance=OW.savedScene.camera.maxDistance;wl=OW.savedScene.waterLevel;wlUserSet=OW.savedScene.waterLevelUserSet===true;U.wy.value=wl;water.position.copy(OW.savedScene.water);U.hm.value=hmTex;U.hm2.value=SBT;U.uTerrainOrigin.value.set(0,0);cam.updateMatrixWorld(true);oc.update();OW.savedScene=null}OW.selected=null;waterReflectionReady=false;ring.visible=false;owStatus('Open World paused; generated chunks and edits are retained.');}
 function owHeightBrush(p,dt){const r=Math.max(.1,br.r),changed=new Set();for(const c of OW.chunks.values()){const row=c.segments+1,step=c.size/c.segments,src=br.tool==='smooth'||br.tool==='erode'?c.heights.slice():null;let minI=c.segments,maxI=0,minJ=c.segments,maxJ=0,any=false;for(let j=0;j<=c.segments;j++)for(let i=0;i<=c.segments;i++){const wx=c.originX-c.size*.5+i*step,wz=c.originZ-c.size*.5+j*step,d=Math.hypot(wx-p.x,wz-p.z)/r;if(d>=1)continue;const f=(1-d*d)**2,k=j*row+i,old=c.heights[k];if(['biome','paint'].includes(br.tool)){if(br.tool==='biome'||normalWorldMaterialBrush){const amount=cl(f*2*br.str,0,1),base=k*12,total=c.surfaceWeights.subarray(base,base+12).reduce((a,b)=>a+b,0),fade=1-amount;if(total>.001)for(let q=0;q<12;q++)c.surfaceWeights[base+q]=c.surfaceWeights[base+q]/total*fade;else for(let q=0;q<12;q++)c.surfaceWeights[base+q]=0;let id=br.tool==='biome'||normalWorldMaterialBrush?normalWorldMaterial:[6,1,5,7,1,10][br.tex]||0;c.surfaceWeights[base+id]+=amount}else if(f>.2){const base=k*12;for(let q=0;q<12;q++)c.surfaceWeights[base+q]=q===[6,1,5,7,1,10][br.tex]?1:0}any=true}else{switch(br.tool){case'raise':c.heights[k]+=br.str*f*dt*10;break;case'lower':c.heights[k]-=br.str*f*dt*10;break;case'flat':c.heights[k]+=(fl-old)*Math.min(1,f*dt*10*br.str);break;case'smooth':case'erode':{const a=(src[k-(i>0)]+src[k+(i<c.segments)]+src[k-(j>0)*row]+src[k+(j<c.segments)*row])/4;c.heights[k]+=(a-old)*Math.min(1,f*dt*(br.tool==='erode'?5:14)*br.str)}break;case'terrace':c.heights[k]+=(Math.round(old/3)*3-old)*Math.min(1,f*dt*10*br.str);break;default:break}if(c.heights[k]!==old)any=true}if(any){minI=Math.min(minI,i);maxI=Math.max(maxI,i);minJ=Math.min(minJ,j);maxJ=Math.max(maxJ,j)}}if(!any)continue;c.dirty=true;if(!['biome','paint'].includes(br.tool))c.dirtyTerrain=true;const pos=c.terrain.geometry.attributes.position,color=c.terrain.geometry.attributes.color.array;for(let j=minJ;j<=maxJ;j++)for(let i=minI;i<=maxI;i++){const k=j*row+i;pos.setY(k,c.heights[k]);const col=owColor(c.surfaceWeights,k);color[k*3]=col[0];color[k*3+1]=col[1];color[k*3+2]=col[2]}pos.needsUpdate=true;c.terrain.geometry.attributes.color.needsUpdate=true;c.terrain.geometry.computeVertexNormals();c.terrain.geometry.computeBoundingSphere();if(!['biome','paint'].includes(br.tool))owQueueSync(c);changed.add(c)}return changed}
 function owBrush(p,dt,from){if(bt==='plants')return owPlantAt(p,from);const touched=owHeightBrush(p,dt);if(touched.size)waterReflectionReady=false}
 function owSelectFoliageAt(e){const rect=cv.getBoundingClientRect();m2.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(m2,cam);const hits=ray.intersectObjects([OW.group],true),hit=hits.find(h=>h.object?.isInstancedMesh&&h.object.userData?.kind&&Number.isInteger(h.instanceId));if(!hit){OW.selected=null;selectedFoliage=null;ring.visible=false;updateFoliageGlow();build();msg('No Open World foliage hit. Zoom in or tap closer to a plant.');return false}const refs=hit.object.userData.sourcePlants,item=refs?.[hit.instanceId],chunk=OW.chunks.get(hit.object.userData.chunkKey);if(!item||!chunk){OW.selected=null;return false}OW.selected={kind:hit.object.userData.kind,item,chunk};selectedFoliage=null;updateFoliageGlow();ring.position.set(item.x,item.y+.08,item.z);ring.scale.setScalar(cl((ROOT_SPAN[OW.selected.kind]||1)*item.s*.22,.55,4));ring.visible=true;build();msg('Selected '+(LBL[OW.selected.kind]||OW.selected.kind)+' in Open World.');return true}
@@ -278,6 +278,10 @@ function resnap(){for(const k in KIND){KIND[k].list.forEach(o=>o.y=BLD[k]?bY(o.x
 
 
 
+/* Species slot in the kernel for every kind the quadtree can index. Built once
+   from the flora table, so a kind without a species (rocks, buildings) simply
+   misses and keeps the flat culling path. */
+const FLORA_SLOT=(()=>{const t={},f=window.FELandscapeFlora;if(f&&Array.isArray(f.KINDS))f.KINDS.forEach((n,i)=>{t[n]=i});return t})();
 const LOD_GROUND=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);
 const LOD_TREES=new Set(['pine','oak','birch','palm','spruce','krumm','juniper','acacia','joshua','saguaro','barrel','prickly','treefern','deadtree']);
 const LOD_BOTANICAL=new Set([...LOD_GROUND,...LOD_TREES,'shrub','fern','ashbush','agave','sage']);
@@ -288,6 +292,171 @@ function plantLodTier(k,d,x=0,z=0,full=750,wasLow){
  if(wasLow===undefined)return d<=threshold?0:1;
  return wasLow?(d<threshold-band?0:1):(d<=threshold+band?0:1);
 }
+/* ---- foliage impostors -------------------------------------------------- *
+ * Past the low-detail band a tree is a few pixels tall, so it is drawn as one
+ * camera-facing quad sampling an atlas the kernel baked from that very tree.
+ *
+ * Three things make this an impostor rather than a sticker:
+ *   - the atlas is a real render of the grown mesh (wood *and* leaf cards),
+ *     supersampled and key-lit by the same light the scene uses;
+ *   - the quad billboards around Y only, because foliage does not look right
+ *     tipping over as the camera tilts;
+ *   - the column is chosen from the camera's azimuth, and the kernel owns that
+ *     formula (fe_impostor_column) so the shader, the studio and the tests
+ *     cannot drift apart.
+ * Atlases are baked one per frame, on demand, and cached per species and seed. */
+const IMPOSTOR_KINDS=new Set(['oak','birch','acacia','shrub','ashbush','deadtree','treefern','fern',
+ 'pine','spruce','krumm','juniper','palm','joshua','sage','saguaro','barrel','prickly','agave']);
+const impostorWanted=new Set();
+/* A layer of the picture, so it is a setting like every other one: off means
+   the far band keeps the low-detail mesh it had before impostors existed. */
+const IMPOSTOR_KEY='final3d.impostors.v1';
+let impostorsOn=(()=>{try{return localStorage.getItem(IMPOSTOR_KEY)!=='0'}catch{return true}})();
+function setImpostors(on){
+ impostorsOn=!!on;
+ try{localStorage.setItem(IMPOSTOR_KEY,impostorsOn?'1':'0')}catch{}
+ for(const k in KIND){if(KIND[k].impMesh){KIND[k].impMesh.visible=false;KIND[k].impMesh.count=0}}
+ impostorWanted.clear();
+ for(const k of LOD_BOTANICAL)if(KIND[k])sync(k);
+}
+/* The atlas is baked under a fixed key light, so the billboard carries a light
+   ratio instead of a light model: whatever the sun and sky are doing now,
+   divided by what they were doing when the atlas was baked. A noon impostor is
+   therefore matched exactly, and a dusk one darkens with the trees beside it. */
+function sceneLightMix(out){
+ let r=0,g=0,b=0;
+ try{
+  if(typeof sun!=='undefined'&&sun){const k=Math.max(0,sun.intensity);r+=sun.color.r*k;g+=sun.color.g*k;b+=sun.color.b*k}
+  if(typeof hemi!=='undefined'&&hemi){const k=Math.max(0,hemi.intensity)*.5;r+=hemi.color.r*k;g+=hemi.color.g*k;b+=hemi.color.b*k}
+  if(typeof envFill!=='undefined'&&envFill){const k=Math.max(0,envFill.intensity)*.35;r+=envFill.color.r*k;g+=envFill.color.g*k;b+=envFill.color.b*k}
+ }catch{}
+ return out.setRGB(Math.max(r,.02),Math.max(g,.02),Math.max(b,.02));
+}
+function impostorMaterial(tex,views,crop,off,ref){
+ const mat=new THREE.ShaderMaterial({
+  uniforms:{uAtlas:{value:tex},uViews:{value:views},
+   /* Which part of the tile the plant occupies. */
+   uCrop:{value:new THREE.Vector2(crop.x,crop.y)},uOff:{value:new THREE.Vector2(off.x,off.y)},
+   uLight:{value:new THREE.Color(1,1,1)},
+   uT:WU,uW:WW,uWindDir:U.uWindDir},
+  fog:true,
+  side:THREE.DoubleSide,
+  vertexShader:`
+   uniform float uViews;uniform float uT;uniform float uW;
+   uniform vec2 uWindDir;uniform vec2 uCrop;uniform vec2 uOff;
+   varying vec2 vUvA;varying vec2 vUvB;varying float vMix;varying vec3 vTint;
+   #include <fog_pars_vertex>
+   void main(){
+    vec3 root=(instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;
+    float sx=length(instanceMatrix[0].xyz);
+    float sy=length(instanceMatrix[1].xyz);
+    vec3 toCam=vec3(cameraPosition.x-root.x,0.0,cameraPosition.z-root.z);
+    float d=length(toCam);
+    toCam=d>0.0001?toCam/d:vec3(0.0,0.0,1.0);
+    vec3 side=normalize(cross(vec3(0.0,1.0,0.0),toCam));
+    /* One quad per plant, standing on the instance origin. */
+    vec3 pos=root+side*(position.x*sx)+vec3(0.0,1.0,0.0)*((position.y+0.5)*sy);
+    /* Foliage sways from the base: the top of the quad moves, the foot does not. */
+    float h=clamp(position.y+0.5,0.0,1.0);
+    float sway=sin(uT*1.7+root.x*0.11+root.z*0.07)+0.4*sin(uT*2.9+root.z*0.05);
+    pos.xz+=uWindDir*(sway*uW*0.06*h*h*sy);
+    /* Which baked azimuth we are looking from, wrapping like the kernel does. */
+    float a=atan(toCam.x,toCam.z);
+    a=a<0.0?a+6.28318530718:a;
+    float u=a/(6.28318530718/uViews);
+    float col=floor(u);
+    /* Blend to the next column with the sub-view angle, so an orbit dissolves
+       from one azimuth to the next instead of snapping between eight poses. */
+    float frac=u-col;
+    /* Map the quad onto the cropped part of the tile; no transparent margin is
+       ever drawn, and every view shares one quad size. */
+    vec2 inner=vec2(uOff.x+uv.x*uCrop.x,uOff.y+uv.y*uCrop.y);
+    vUvA=vec2((col+inner.x)/uViews,inner.y);
+    vUvB=vec2((mod(col+1.0,uViews)+inner.x)/uViews,inner.y);
+    vMix=frac;
+    #ifdef USE_INSTANCING_COLOR
+     vTint=instanceColor;
+    #else
+     vTint=vec3(1.0);
+    #endif
+    vec4 mvPosition=viewMatrix*vec4(pos,1.0);
+    gl_Position=projectionMatrix*mvPosition;
+    #include <fog_vertex>
+   }`,
+  fragmentShader:`
+   uniform sampler2D uAtlas;uniform vec3 uLight;
+   varying vec2 vUvA;varying vec2 vUvB;varying float vMix;varying vec3 vTint;
+   #include <fog_pars_fragment>
+   void main(){
+    vec4 t=mix(texture2D(uAtlas,vUvA),texture2D(uAtlas,vUvB),vMix);
+    /* The atlas alpha is coverage, so the cutout is the silhouette of the
+       model and not a rectangle with a tree painted on it. */
+    if(t.a<0.30)discard;
+    vec3 c=t.rgb*vTint*uLight;
+    gl_FragColor=vec4(c,1.0);
+    #include <fog_fragment>
+   }`
+ });
+ mat.userData.ref=ref;mat.userData.now=new THREE.Color();
+ mat.onBeforeRender=()=>{
+  const now=sceneLightMix(mat.userData.now),r=mat.userData.ref;
+  const u=mat.uniforms.uLight.value;
+  u.setRGB(cl(now.r/r.r,.05,2.5),cl(now.g/r.g,.05,2.5),cl(now.b/r.b,.05,2.5));
+ };
+ return mat;
+}
+function impostorMeshFor(k){
+ const K=KIND[k];
+ if(K.impMesh)return K.impMesh;
+ if(!IMPOSTOR_KINDS.has(k))return null;
+ const f=window.FELandscapeFlora;
+ if(!f||typeof f.impostor!=='function')return null;
+ /* Same species, same seed, same detail as the mesh the studio is drawing —
+   the atlas is a render of that plant, not of a different one like it. */
+ const seed=typeof f.seedFor==='function'?f.seedFor(k):undefined;
+ const atlas=f.impostor(k,seed,detail);
+ if(!atlas||!atlas.texture)return null;
+ const quad=new THREE.PlaneGeometry(1,1,1,1);
+ quad.translate(0,0,0);
+ const crop=atlas.cropU&&atlas.cropV?{x:atlas.cropU,y:atlas.cropV}:{x:1,y:1};
+ const off={x:atlas.offU||0,y:0};
+ const ref=sceneLightMix(new THREE.Color());
+ const m=new THREE.InstancedMesh(quad,impostorMaterial(atlas.texture,atlas.views,crop,off,ref),Math.max(1,K.max));
+ m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+ m.instanceColor=new THREE.BufferAttribute(new Float32Array(Math.max(1,K.max)*3).fill(1),3);
+ m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+ m.count=0;m.frustumCulled=false;m.castShadow=false;m.receiveShadow=false;m.layers.mask=K.meshes[0]?.layers?.mask??1;
+ m.name=k+' impostor';m.userData={kind:k,impostor:true,quadW:atlas.quadW,quadH:atlas.quadH,views:atlas.views};
+ scene.add(m);K.impMesh=m;K.impAtlas=atlas;
+ return m;
+}
+/* Baking costs a few milliseconds, so it happens on the settle sweep, one
+   species per frame, and only for a species that actually has far instances. */
+let impostorBakeBusy=false;
+function bakeQueuedImpostor(){
+ if(!impostorWanted.size)return;
+ for(const k of impostorWanted){
+  impostorWanted.delete(k);
+  const K=KIND[k];
+  if(!K||K.impMesh||!K.list.length)continue;
+  /* The sweep may already have passed this species, so route it now rather
+     than leaving its far band on the low mesh until the camera moves. */
+  if(impostorMeshFor(k))sync(k);
+  return;
+ }
+}
+/* A new detail level grows every plant again, so the atlases that were baked
+   from the old meshes are stale. The pixels are dropped, not just the meshes:
+   otherwise a tree keeps its old silhouette until the next reload. */
+function resetImpostors(){
+ for(const k in KIND){const K=KIND[k];if(!K.impMesh)continue;
+  scene.remove(K.impMesh);K.impMesh.geometry?.dispose?.();K.impMesh.material?.dispose?.();
+  K.impMesh=null;K.impAtlas=null}
+ impostorWanted.clear();
+ const f=window.FELandscapeFlora;if(f&&typeof f.impostorReset==='function')f.impostorReset();
+}
+function requestImpostor(k){if(IMPOSTOR_KINDS.has(k)&&!KIND[k]?.impMesh)impostorWanted.add(k)}
+
 function lowMeshesFor(k){
  const K=KIND[k];
  if(K.lowMeshes)return K.lowMeshes;
@@ -323,28 +492,49 @@ function sync(k,allInstances=false){
  /* The core answers with a compacted list of instance indices plus their tier;
    the bridge never walks the invisible ones. */
  const core=window.FELandscapeCore,n=K.list.length;
- let lodTiers=null,visOrder=null,visN=0;
+ let lodTiers=null,visOrder=null,visN=0,quadOk=false;
  if(n&&!allInstances&&core&&core.ready){
   if(lodScratch.length<n*3)lodScratch=new Float32Array(n*3);
   const xyz=lodScratch;
-  for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z}
-  if(typeof core.lodVisible==='function'){
-   if(!vpMat)vpMat=new THREE.Matrix4();
-   cam.updateMatrixWorld();
-   vpMat.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);
-   const vis=core.lodVisible({count:n,xyz,vp:vpMat.elements,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,radius:VIEW_RADIUS[k]||2600,margin:Math.min(90,Math.max(6,(K.size||1)*2+shadowPadFor(K))),options:LOD_GROUND.has(k)?1:0});
+  /* One rolling checksum, computed while the positions are already being
+     copied. It is the quadtree's generation: a plant that moved changes it, a
+     camera that moved does not, so the tree survives every camera settle. */
+  let gen=2166136261;
+  for(let i=0;i<n;i++){const o=K.list[i];xyz[i*3]=o.x;xyz[i*3+1]=o.y;xyz[i*3+2]=o.z;
+   gen=Math.imul(gen^(o.x*8|0),16777619)^Math.imul(gen^(o.z*8|0),2246822519)}
+  const slot=FLORA_SLOT[k];
+  if(!vpMat)vpMat=new THREE.Matrix4();
+  cam.updateMatrixWorld();
+  vpMat.multiplyMatrices(cam.projectionMatrix,cam.matrixWorldInverse);
+  /* `far` must never be below `mid`: the core rejects the call outright, and a
+     ground-cover species (view radius 190 m) would be culled to nothing. Past
+     `far`, a tree is under ten pixels tall and the impostor takes over; that is
+     1.6x the full-detail radius, not some distant ring that a 1 km world never
+     reaches. */
+  const mid=lodFullDistance,radius=VIEW_RADIUS[k]||2600,far=Math.max(mid+60,Math.min(radius,Math.max(mid*1.6,mid+140))),
+   margin=Math.min(90,Math.max(6,(K.size||1)*2+shadowPadFor(K))),groundOpt=LOD_GROUND.has(k)?1:0;
+  if(slot!==undefined&&typeof core.lodTree==='function'){
+   const qt=core.lodTree({slot,count:n,xyz,generation:gen,vp:vpMat.elements,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,
+    mid,far,radius,margin,options:groundOpt});
+   /* Only the counts are kept: the index and tier arrays are views into the
+      core's memory and the next species overwrites them. */
+   if(qt&&qt.count>0){visOrder=qt.indices;lodTiers=qt.tiers;visN=qt.count;quadOk=true;
+    K.lodStats={visible:qt.count,nodes:qt.nodes,visited:qt.visited,scanned:qt.scanned,rebuilt:qt.rebuilt}}
+  }
+  if(!quadOk&&typeof core.lodVisible==='function'){
+   const vis=core.lodVisible({count:n,xyz,vp:vpMat.elements,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,radius,far,margin,options:groundOpt});
    /* A degenerate matrix must never empty the world: if the core reports
       nothing while the kind clearly has instances, fall back to no culling. */
    if(vis&&vis.count>0){visOrder=vis.indices;lodTiers=vis.tiers;visN=vis.count}
    else if(core.lodClassify)lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
-  }else if(lowAll&&LOD_BOTANICAL.has(k)&&core.lodClassify){
+  }else if(!quadOk&&lowAll&&LOD_BOTANICAL.has(k)&&core.lodClassify){
    lodTiers=core.lodClassify({count:n,xyz,camX:cam.position.x,camY:cam.position.y,camZ:cam.position.z,full:lodFullDistance,ground:LOD_GROUND.has(k)});
   }
  }
  K.meshes.forEach((m,mi)=>{
   const pal=m.userData.pal,low=lowAll?.[mi]||null;
-  let ci=0,li=0;
-  const sourceListIndices=[],lowSourceListIndices=[];
+  let ci=0,li=0,ii=0;
+  const sourceListIndices=[],lowSourceListIndices=[],impSourceListIndices=[];
   /* Dense list: matrix index i is the visible slot, and sourceIndex is only
      used to look the instance up (and to map a tap back to its plant). */
   const total=visOrder?visN:K.list.length;
@@ -365,16 +555,37 @@ function sync(k,allInstances=false){
    dm.scale.set(bw,s,bw);
    if(BLD[k]&&m.userData.part==='roof'&&o.roofGone)dm.scale.set(0,0,0);
    dm.updateMatrix();
-   let useLow=false;
+   /* Three tiers: the grown mesh, its low twin, and the baked impostor. The
+      kernel hands back the tier per instance; if the atlas for this species is
+      not ready yet the far instances stay on the low mesh and the bake is
+      queued, so a plant never disappears while its atlas is being drawn. */
+   let tier=0;
    if(!allInstances&&LOD_BOTANICAL.has(k)){
-    if(low){if(lodTiers){useLow=lodTiers[tierIndex]===1}
-     else{const cx=cam.position.x,cz=cam.position.z,d=Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz);
-      useLow=plantLodTier(k,d,o.x,o.z,lodFullDistance)===1}}
+    if(lodTiers)tier=lodTiers[tierIndex]|0;
+    else{const cx=cam.position.x,cz=cam.position.z,d=Math.hypot(o.x-cx,o.y-cam.position.y,o.z-cz);
+     tier=plantLodTier(k,d,o.x,o.z,lodFullDistance)}
+    if(tier<0)tier=0;
    }
-   const target=useLow?low:m;
-   const i=useLow?li++:ci++;
-   target.setMatrixAt(i,dm.matrix);
-   (useLow?lowSourceListIndices:sourceListIndices)[i]=sourceIndex;
+   const imp=impostorsOn?(K.impMesh||null):null;
+   if(tier===2&&!imp){tier=1;if(impostorsOn&&!allInstances)requestImpostor(k)}
+   /* An impostor is one quad for the whole plant, so only the first material
+      slot owns it; the rest of the plant's slots skip these instances. */
+   if(tier===2&&mi>0)continue;
+   let target,i;
+   if(tier===2&&imp){
+    dmi.position.set(o.x,o.y-rootSink,o.z);
+    dmi.quaternion.identity();
+    dmi.scale.set((K.impAtlas?.quadW||2)*bw,(K.impAtlas?.quadH||3)*s,1);
+    dmi.updateMatrix();
+    target=imp;i=ii++;impSourceListIndices[i]=sourceIndex;
+    target.setMatrixAt(i,dmi.matrix);
+   }else{
+    const useLow=tier===1&&!!low;
+    target=useLow?low:m;
+    i=useLow?li++:ci++;
+    target.setMatrixAt(i,dm.matrix);
+    (useLow?lowSourceListIndices:sourceListIndices)[i]=sourceIndex;
+   }
    let c=pal?pal[(h2*pal.length)|0]:[1.05-h2*.2,1,.9+h2*.2];
    if(gr&&!pal){const d=vn(o.x*.03+50,o.z*.03+20);c=[c[0]*(.85+d*.5),c[1]*(1-d*.15),c[2]*(1-d*.4)]}
    const v=o.v,t=pal||m.userData.nt?[1,1,1]:T,dmgTint=BLD[k]?1-(o.damage||0)*.14:1;
@@ -382,6 +593,8 @@ function sync(k,allInstances=false){
   }
   m.count=ci;m.visible=ci>0;m.userData.sourceListIndices=sourceListIndices;m.instanceMatrix.needsUpdate=true;m.instanceColor.needsUpdate=true;
   if(low){low.count=li;low.visible=li>0;low.userData.sourceListIndices=lowSourceListIndices;low.instanceMatrix.needsUpdate=true;low.instanceColor.needsUpdate=true}
+  const impMesh=K.impMesh;
+  if(impMesh&&mi===0){impMesh.count=ii;impMesh.visible=ii>0;impMesh.userData.sourceListIndices=impSourceListIndices;impMesh.instanceMatrix.needsUpdate=true;impMesh.instanceColor.needsUpdate=true}
   const shadow=K.shadowMeshes?.[mi];
   if(shadow){const stride=Math.max(SHADOW_PROXY_STRIDE,Math.ceil(ci/Math.max(1,shadow.instanceMatrix.count)));let si=0;for(let j=0;j<ci;j+=stride){shadow.instanceMatrix.array.set(m.instanceMatrix.array.subarray(j*16,j*16+16),si*16);shadow.instanceColor.array.set(m.instanceColor.array.subarray(j*3,j*3+3),si*3);si++}shadow.count=si;shadow.visible=si>0;shadow.instanceMatrix.needsUpdate=true;shadow.instanceColor.needsUpdate=true}
  });
@@ -414,6 +627,11 @@ function updateFoliageLOD(now){
  const moved=cam.position.distanceToSquared(lodCameraAnchor)>.0025;
  const turned=!!(lodQuat&&cam.quaternion)&&cam.quaternion.angleTo(lodQuat)>0.09;
  if(moved||turned){lodCameraAnchor.copy(cam.position);if(lodQuat&&cam.quaternion)lodQuat.copy(cam.quaternion);lodMotionAt=now;lodSettled=false;lodSweeping=false;return}
+ /* Queued atlases drain whenever the camera is still, not only inside a sweep:
+    a species queued on the last frame of one would otherwise wait for the next
+    camera move before its far band switched tiers. Baking is skipped while the
+    camera is moving, so it never costs a frame mid-gesture. */
+ if(impostorWanted.size)bakeQueuedImpostor();
  if(!lodSettled){
   if(now-lodMotionAt<240)return;
   lodSettled=true;lodSweeping=true;lodSweep=0;

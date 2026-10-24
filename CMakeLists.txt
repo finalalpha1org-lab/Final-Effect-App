@@ -19,6 +19,8 @@ set(FE_CORE_SOURCES
   cpp/src/fe_surface.cpp
   cpp/src/fe_flora.cpp
   cpp/src/fe_climate.cpp
+  cpp/src/fe_lod.cpp
+  cpp/src/fe_impostor.cpp
   # Edit Mode. Keep this list identical to CPP_SOURCES in
   # scripts/build-cpp-wasm.mjs; a source that only exists in one of the two
   # builds is a kernel that ships in the browser but never gets a native test.

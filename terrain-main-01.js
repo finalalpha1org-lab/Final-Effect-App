@@ -345,6 +345,53 @@
    indices:new Uint32Array(ex.memory.buffer,ex.fe_lod_visible_index_ptr(),got),
    tiers:new Uint8Array(ex.memory.buffer,ex.fe_lod_visible_tier_ptr(),got)};
  };
+ /* Quadtree LoD: the same answer as lodVisible, reached through a spatial index
+   the kernel built once per species. `generation` is a checksum of the instance
+   positions, so the tree is rebuilt only when a plant actually moved; a settled
+   camera re-walks the existing tree and pays for the tree, not the world. */
+ core.lodTree=function(state){
+  if(!core.ready||!state||!state.xyz||!state.vp||!core.has('fe_lod_tree_cull'))return null;
+  const count=Math.min(state.xyz.length/3|0,state.count|0);
+  if(count<=0)return{count:0,indices:EMPTY_U32,tiers:EMPTY_U8,nodes:0};
+  const slot=state.slot|0;
+  const bytes=count*12;
+  if(bytes>visBytes){visPtr=ex.fe_malloc(bytes);visBytes=visPtr?bytes:visBytes}
+  if(!visPtr)return null;
+  if(!visVpPtr){visVpPtr=ex.fe_malloc(64);if(!visVpPtr)return null}
+  new Float32Array(ex.memory.buffer,visPtr,count*3).set(state.xyz.subarray(0,count*3));
+  new Float32Array(ex.memory.buffer,visVpPtr,16).set(state.vp);
+  const built=ex.fe_lod_tree_build(slot,count,visPtr,state.generation>>>0);
+  if(built<0){core.error='Quadtree build returned '+built;return null}
+  const got=ex.fe_lod_tree_cull(slot,visPtr,visVpPtr,state.camX,state.camY,state.camZ,
+   state.mid,state.far,state.radius,state.margin,state.options|0);
+  if(got<0){core.error='Quadtree cull returned '+got;return null}
+  const stats=new Int32Array(new Int32Array(ex.memory.buffer,ex.fe_lod_tree_stats_ptr(slot),5));
+  return{count:got,nodes:stats[0],visited:stats[1],culled:stats[2],scanned:stats[4],rebuilt:built>0,
+   indices:new Uint32Array(ex.memory.buffer,ex.fe_lod_tree_index_ptr(),got),
+   tiers:new Uint8Array(ex.memory.buffer,ex.fe_lod_tree_tier_ptr(),got)};
+ };
+ /* Foliage impostor atlas for one species, baked in the kernel from the very
+   mesh it just grew. Returns the pixels and the quad size the studio draws;
+   null when the artifact predates the baker. */
+ core.impostor=function(kind,seed,detail,views){
+  if(!core.has('fe_impostor_build'))return null;
+  const n=ex.fe_impostor_build(kind|0,(seed>>>0)||1,detail|0,views|0);
+  if(n<1)return null;
+  const w=ex.fe_impostor_width(),h=ex.fe_impostor_height();
+  const bounds=new Float32Array(new Float32Array(ex.memory.buffer,ex.fe_impostor_bounds_ptr(),8));
+  /* crop/offset describe which part of the tile holds the plant; the quad is
+     sized to that rectangle so a wide tree is not drawn on a too-tall card. */
+  return{views:n,width:w,height:h,
+   pixels:new Uint8Array(new Uint8Array(ex.memory.buffer,ex.fe_impostor_pixels_ptr(),w*h*n*4)),
+   quadW:bounds[0],quadH:bounds[1],coverage:bounds[2],baseY:bounds[3],
+   cropU:bounds[4],cropV:bounds[5],offU:bounds[6]};
+ };
+ /* The atlas column a camera sees a plant from, computed by the kernel so the
+   billboard shader and any CPU-side check agree on the convention. */
+ core.impostorColumn=function(dx,dz){
+  if(!core.has('fe_impostor_column'))return -1;
+  return ex.fe_impostor_column(+dx||0,+dz||0)|0;
+ };
  core.lodClassify=function(state){
   if(!core.ready||!state||!state.xyz)return null;
   const count=Math.min(state.xyz.length/3|0,state.count|0);
@@ -949,7 +996,11 @@ const wob=(g,a)=>{const p=g.attributes.position;for(let i=0;i<p.count;i++){const
 const blob=(r,x,y,z,a)=>{const g=new THREE.SphereGeometry(1,12,9),p=g.attributes.position;for(let i=0;i<p.count;i++){const X=p.getX(i),Y=p.getY(i),Z=p.getZ(i),k=r*(1+a*Math.sin(X*3.1+Y*2.3+x)*Math.sin(Z*2.7+X*1.9+y));p.setXYZ(i,X*k,Y*k*.85,Z*k)}return g.translate(x,y,z)};
 const PALF=[[1,.35,.5],[1,.85,.2],[1,1,1],[.65,.45,.95],[1,.5,.15]];
 const BMAT=[];
-const KIND={},dm=new THREE.Object3D(),tcol=new THREE.Color(),WU={value:0},WW={value:1};
+const KIND={},dm=new THREE.Object3D(),dmi=new THREE.Object3D(),tcol=new THREE.Color(),WU={value:0},WW={value:1};
+/* Every mesh a kind owns, whatever tier it belongs to. Anything that hides,
+   disposes or reconfigures a species has to see all three tiers, or the
+   impostors keep drawing after the world they belong to is gone. */
+const kindMeshes=K=>K?[...(K.meshes||[]),...(K.lowMeshes||[]),...(K.shadowMeshes||[]),...(K.impMesh?[K.impMesh]:[])]:[];
 const NO_SELF_SHADOW_RECEIVE=new Set(['rock','sandrock','basalt','grass','tallgrass','flower','daisy','tulip','lavender','pine','oak','birch','palm','shrub','spruce','krumm','juniper','saguaro','barrel','prickly','acacia','joshua','agave','sage','deadtree','ashbush','treefern','fern']);
 const SHADOW_PROXY_STRIDE=8;
 
@@ -985,16 +1036,16 @@ function storedLodFullDistance(){try{const v=Number(localStorage.getItem(LOD_FUL
 function setLodFullDistance(v){lodFullDistance=cl(Math.round(Number(v)||750),250,2500);try{localStorage.setItem(LOD_FULL_KEY,String(lodFullDistance))}catch{}lodPending=true;lodSettled=false;lodMotionAt=-1e9}
 function buildLowDetail(fn){const saved={...DQ};Object.assign(DQ,{leaf:Math.max(.42,saved.leaf*.42),seg:Math.max(.55,saved.seg*.62),rock:Math.max(.5,saved.rock*.6)});try{return fn()}finally{Object.assign(DQ,saved)}}
 let detail=2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
-function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);const saved={};
-for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};[...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])].forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
+function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);if(typeof resetImpostors==='function')resetImpostors();const saved={};
+for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};kindMeshes(K).forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
 for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);
 buildEager();
 for(const k in saved){const K=KIND[k]||ensure(k);if(!K)continue;K.size=saved[k].size;K.vr=saved[k].vr;K.tint=saved[k].tint;K.list=saved[k].list;if(Math.max(saved[k].max||0,K.list.length)>K.max)growManualCapacity(k,Math.max(saved[k].max||0,K.list.length))}
-if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of [...K.meshes,...(K.lowMeshes||[]),...(K.shadowMeshes||[])])m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
+if(mode=='wire')shade();for(const k in KIND)sync(k);if(OW?.active){for(const K of Object.values(KIND))for(const m of kindMeshes(K))m.visible=false;for(const c of OW.chunks.values())OW.syncChunk(c);OW.applyQuality()}if(foliageSelectMode)updateFoliageGlow();updSky();if(window.OW_API?.refreshFar)window.OW_API.refreshFar()}
 const LAZY={};function ensure(k){if(KIND[k])return KIND[k];const f=LAZY[k];window.__feFoliageLodDirty=true;if(f){LAZY[k]=null;try{f()}catch(e){showErr('Species '+k+': '+e.message)}try{window.FELandscapeRealism&&window.FELandscapeRealism.refreshKind(k)}catch(e){}try{window.__feGrowSpecies&&window.__feGrowSpecies()}catch(e){}}return KIND[k]}
 const simple=(g,c)=>{const n=g.attributes.position.count,a=new Float32Array(n*3);for(let i=0;i<n;i++){a[i*3]=c[0];a[i*3+1]=c[1];a[i*3+2]=c[2]}g.setAttribute('color',new THREE.BufferAttribute(a,3));return g};
 let MODELS_ERR=null;
-function fallbackModels(){for(const k in KIND){[...KIND[k].meshes,...(KIND[k].lowMeshes||[]),...(KIND[k].shadowMeshes||[])].forEach(m=>scene.remove(m));delete KIND[k]}
+function fallbackModels(){for(const k in KIND){kindMeshes(KIND[k]).forEach(m=>scene.remove(m));delete KIND[k]}
 const sp=(r,y)=>simple(new THREE.SphereGeometry(r,8,6).translate(0,y,0),[1,1,1]);
 mk('grass',9000,[[simple(co(.3,1,4).translate(0,.5,0),[.3,.55,.15]),{ds:1}]],false);
 mk('flower',3000,[[simple(new THREE.SphereGeometry(.12,6,5).translate(0,.5,0),[.9,.4,.6]),{}]],false);

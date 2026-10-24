@@ -27,6 +27,7 @@
  * ========================================================================= */
 
 #include "../include/fe_abi.h"
+#include "../include/fe_flora_geom.hpp"
 #include "../include/fe_math.hpp"
 
 namespace {
@@ -2611,3 +2612,22 @@ FE_EXPORT int32_t fe_flora_species_info(int32_t kind, float* out) {
 }
 
 }  // extern "C"
+
+/* Internal door for the impostor baker. The buffers above are private to this
+ * translation unit; these accessors are hidden so the linker keeps them out of
+ * the WebAssembly export list. The mesh is only valid until the next
+ * fe_flora_tree() call, which is exactly how the impostor baker uses it. */
+namespace fe_flora_geom {
+__attribute__((visibility("hidden"))) const float* pos() { return gPos; }
+__attribute__((visibility("hidden"))) const float* nrm() { return gNrm; }
+__attribute__((visibility("hidden"))) const float* col() { return gCol; }
+__attribute__((visibility("hidden"))) const uint32_t* idx() { return gIdx; }
+__attribute__((visibility("hidden"))) int32_t verts() { return gVert; }
+__attribute__((visibility("hidden"))) int32_t indices() { return gIdxN; }
+__attribute__((visibility("hidden"))) const float* card_pos() { return gCardPos; }
+__attribute__((visibility("hidden"))) const float* card_nrm() { return gCardNrm; }
+__attribute__((visibility("hidden"))) const float* card_col() { return gCardCol; }
+__attribute__((visibility("hidden"))) const uint32_t* card_idx() { return gCardIdx; }
+__attribute__((visibility("hidden"))) int32_t card_verts() { return gCardV; }
+__attribute__((visibility("hidden"))) int32_t card_indices() { return gCardI; }
+}  // namespace fe_flora_geom
