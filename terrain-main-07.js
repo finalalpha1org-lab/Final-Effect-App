@@ -129,7 +129,19 @@ function seaStateText(){
  return`Wind ${p.wind.toFixed(1)} m/s · significant wave height ${ampUser.toFixed(2)} m · peak period ${waterWavePeriod.toFixed(1)} s · wavelength ${p.length.toFixed(0)} m`;
 }
 function updateSeaState(){const el=document.getElementById('fe-sea-state');if(el)el.textContent=seaStateText()}
-function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
+/* One throw inside a sheet builder used to leave the drawer empty and the sheet
+   useless, with the error only in the console. The sheet now reports which tab
+   failed and still opens, so the rest of the studio stays reachable. */
+function build(){
+ nfs=[];
+ const make=PN[tab];
+ if(typeof make!=='function'){showErr('Panel: no builder for '+tab);return}
+ let nodes;
+ try{nodes=make()}
+ catch(error){showErr('Panel ('+tab+'): '+String((error&&(error.stack||error.message))||error).slice(0,700));return}
+ try{$('#dr').replaceChildren(...nodes)}
+ catch(error){showErr('Panel ('+tab+'): '+String((error&&(error.stack||error.message))||error).slice(0,700))}
+}
 /* ---- studio settings: one JSON document -------------------------------
    Every landscape sheet writes straight into a live variable, so until now a
    reload threw the whole studio back to its defaults. The full set is now
