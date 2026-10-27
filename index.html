@@ -4945,8 +4945,9 @@ function importLandscapeIntoWorkspace(payload, reply) {
       const group = buildLandscapeFromPayload(payload, eng.sc, THREE);
       if (!group) throw new Error('Landscape import produced no scene group.');
       const summary = { terrain:!!group.getObjectByName('Terrain Mesh'), water:!!group.getObjectByName('Water Surface'), foliage:group.children.filter(o=>o.isInstancedMesh).length, objects:group.userData.importedObjectCount||0 };
-      FE.toast('Landscaping scene imported into Workspace');
-      reply?.({ success:true, summary });
+      const label=payload.source==='planet'?'Planet':payload.source==='world'?'Open world':'Landscaping scene';
+      FE.toast(label+' imported into Workspace');
+      reply?.({ success:true, summary:Object.assign({source:payload.source||'terrain'},summary) });
     } catch (error) {
       console.error('[Landscape Import] Failed:',error);
       FE.toast('Landscape import failed: '+(error?.message||error));
@@ -5138,7 +5139,12 @@ function buildLandscapeWater(settings,terrain,T,weather={}){
 function buildLandscapeFromPayload(payload, targetScene, T) {
   if (!payload || !targetScene) return;
   const oldGroup = targetScene.getObjectByName('ImportedLandscape');
-  if (!payload.terrain?.heights) throw new Error('Landscaping payload is missing terrain height data.');
+  /* Three kinds of scene can arrive now: the root grid, a generated open
+     world (already merged into one heightfield by the studio) and a procedural
+     planet (radii per sphere vertex). Each is a `Terrain Mesh` in the group, so
+     framing, water, sky and the object chips stay identical for all three. */
+  const planetImport = payload.planet && payload.planet.radii ? payload.planet : null;
+  if (!payload.terrain?.heights && !planetImport) throw new Error('Landscaping payload is missing terrain height data.');
   const worldRestore=oldGroup?._landscapeWorldRestore||{background:targetScene.background,environment:targetScene.environment,fog:targetScene.fog};
 
   const group = new T.Group();
@@ -5149,7 +5155,32 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
   const importedObjectEntries = [];
 
   // 1. BASE TERRAIN MESH (Ground geometry with its exact heightmap & material)
-  if (payload.terrain && payload.terrain.heights) {
+  if (planetImport) {
+    try {
+      const radius=Number(planetImport.radius)||60,segments=Math.max(8,Math.round(Number(planetImport.segments)||192)),rings=Math.max(4,Math.round(Number(planetImport.rings)||96));
+      const globeGeom=new T.SphereGeometry(radius,segments,rings),globePos=globeGeom.attributes.position,radii=decodeLandscapeArray(planetImport.radii,Float32Array);
+      if(radii.length<globePos.count)throw new Error('The imported planet is missing its elevation data.');
+      for(let k=0;k<globePos.count;k++){
+        const x=globePos.getX(k),y=globePos.getY(k),z=globePos.getZ(k),length=Math.hypot(x,y,z)||1,r=Number.isFinite(radii[k])?radii[k]:radius;
+        globePos.setXYZ(k,x/length*r,y/length*r,z/length*r);
+      }
+      globePos.needsUpdate=true;
+      if(planetImport.normals){const packed=decodeLandscapeArray(planetImport.normals,Int8Array);if(packed.length>=globePos.count*3)globeGeom.setAttribute('normal',new T.BufferAttribute(packed,3,true))}
+      else globeGeom.computeVertexNormals();
+      const globeColors=planetImport.colors?decodeLandscapeArray(planetImport.colors,Uint8Array):null;
+      if(globeColors&&globeColors.length>=globePos.count*3)globeGeom.setAttribute('color',new T.BufferAttribute(globeColors,3,true));
+      globeGeom.computeBoundingSphere();globeGeom.computeBoundingBox();
+      const globeMat=new T.MeshStandardMaterial({color:0xffffff,vertexColors:!!globeColors,roughness:.86,metalness:.03,side:T.FrontSide});
+      const globeMesh=new T.Mesh(globeGeom,globeMat);
+      globeMesh.name='Terrain Mesh';
+      globeMesh.userData.isLandscape=true;
+      globeMesh.userData.planetImport=true;
+      globeMesh.castShadow=globeMesh.receiveShadow=true;
+      group.add(globeMesh);
+    } catch (e) {
+      console.warn('Failed to build the imported planet:', e);
+    }
+  } else if (payload.terrain && payload.terrain.heights) {
     try {
       let heights;
       if (typeof payload.terrain.heights === 'string') {
@@ -5270,10 +5301,19 @@ function buildLandscapeFromPayload(payload, targetScene, T) {
           if (!item) continue;
           if (Array.isArray(item.parts) && item.parts.length) {
             for (const part of item.parts) {
-              if (!part.count || !part.geometry || !part.matrices) continue;
-              const geom=buildLandscapeGeometry(part.geometry,T),mat=buildLandscapeMaterial(part.material,T),instMesh=new T.InstancedMesh(geom,mat,part.count),matrices=decodeLandscapeArray(part.matrices,Float32Array),matrix=new T.Matrix4();
+              if (!part.count || !part.geometry || (!part.matrices && !part.transforms)) continue;
+              const geom=buildLandscapeGeometry(part.geometry,T),mat=buildLandscapeMaterial(part.material,T),instMesh=new T.InstancedMesh(geom,mat,part.count),matrix=new T.Matrix4();
               instMesh.name=`${k}_${part.name||part.part||'foliage'}`;instMesh.userData.isLandscape=true;instMesh.frustumCulled=false;instMesh.castShadow=true;instMesh.receiveShadow=true;
-              for(let i=0;i<part.count;i++){matrix.fromArray(matrices,i*16);instMesh.setMatrixAt(i,matrix)}
+              if(part.transforms){
+                /* An open world sends position + quaternion + scale; recomposing
+                   it here is the same transform without the 6 matrix slots that
+                   were always 0,0,0,1. */
+                const transforms=decodeLandscapeArray(part.transforms,Float32Array),placed=new T.Object3D();
+                for(let i=0;i<part.count;i++){const o=i*10;placed.position.set(transforms[o],transforms[o+1],transforms[o+2]);placed.quaternion.set(transforms[o+3],transforms[o+4],transforms[o+5],transforms[o+6]);placed.scale.set(transforms[o+7],transforms[o+8],transforms[o+9]);placed.updateMatrix();instMesh.setMatrixAt(i,placed.matrix)}
+              } else {
+                const matrices=decodeLandscapeArray(part.matrices,Float32Array);
+                for(let i=0;i<part.count;i++){matrix.fromArray(matrices,i*16);instMesh.setMatrixAt(i,matrix)}
+              }
               if(part.colors){const colors=decodeLandscapeArray(part.colors,Float32Array);instMesh.instanceColor=new T.InstancedBufferAttribute(colors,3);instMesh.instanceColor.needsUpdate=true}
               addLandscapeWind(instMesh,payload.weather,payload.water,T);instMesh.instanceMatrix.needsUpdate=true;group.add(instMesh);
             }

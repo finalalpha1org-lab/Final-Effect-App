@@ -1,6 +1,6 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v41';
+const CACHE_NAME = 'final-effect-cpp-v42';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ const CORE_ASSETS = [
   './celestial-math.js',
   './scatter-spacing.js',
   './open-world-generator.js',
+  './landscape-export-pack.js',
   './open-world.js',
   './terrain-main-01.js',
   './terrain-main-02.js',

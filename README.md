@@ -19,12 +19,13 @@ All heavy numerical, animation, rendering, sculpting, and performance systems li
   - C++ multi-touch gesture filter + adaptive frame-time governor (`Auto`, `Low`, `Medium`, `High` GPU tiers) that dynamically adjusts pixel ratio and shadow map budgets on mobile GPUs.
 - **C++20 Edit Mode Kernel (`cpp/src/fe_editmesh.cpp`, `cpp/src/fe_editmesh_tools.cpp`)**: real vertex / edge / face editing — extrude, inset, subdivide, bevel, poke, duplicate, split, fill, bridge, merge, weld, collapse, bisect, symmetrize, loop select, proportional editing, snap, and a 48-step undo pool, all in C++ with a triangle-soup topology core. See `docs/EDIT-MODE.md`.
 - **Thin HTML/JS Presentation Layer (`index.html`, `fe-cpp-engine.js`, `edit-mode.js`, `Terrain_system_.html`)**:
+  - **Import carries the scene you built**, not the default grid: the root terrain, every resident open-world chunk merged into one heightfield (with its plants as world-space instance transforms), or the procedural planet as a displaced globe. See `docs/SCENE-IMPORT.md`.
   - Responsive Portrait & Landscape touch UI, installable offline-capable **PWA (`manifest.webmanifest`, `sw.js`)**, and **Capacitor (`capacitor.config.json`)** configuration for native Android/iOS packaging.
 
 ## Build & Test Commands
 
 ```bash
-# Compile/validate C++20 WASM + run all 505 automated tests + build production bundle
+# Compile/validate C++20 WASM + run all 588 automated tests + build production bundle
 npm run build
 
 # Run C++20 WASM + JS/Three.js test suite

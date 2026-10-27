@@ -1,6 +1,6 @@
-export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,landscapeRealism,landscapeFlora,landscapeWeather,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
+export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,landscapeExportPack,landscapeRealism,landscapeFlora,landscapeWeather,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
   if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],['landscape-realism.js',landscapeRealism],['landscape-flora.js',landscapeFlora],['landscape-weather.js',landscapeWeather],...terrainMainParts,['open-world.js',openWorldAddon]];
+  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],['landscape-export-pack.js',landscapeExportPack],['landscape-realism.js',landscapeRealism],['landscape-flora.js',landscapeFlora],['landscape-weather.js',landscapeWeather],...terrainMainParts,['open-world.js',openWorldAddon]];
   let out=html;
   for(const [name,source] of helpers){
     const tag=`<script src="./${name}"></script>`;
