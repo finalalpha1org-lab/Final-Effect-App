@@ -54,9 +54,25 @@ mirror them; never reorder either side.
 * Snow ageing grows the grain radius as `50 + 26·√t` nm and attenuates albedo
   exponentially with radius, which is the Warren & Wiscombe 1980 result
   simplified to one band.
-* Water absorption is Jerlov's five water types at 650 / 550 / 450 nm. Red goes
-  first, which is why anything below a few metres reads blue; turbid types add
-  CDOM absorption in the blue so an estuary turns green-brown instead.
+* Water absorption is Jerlov's eight water types (I, IA, IB, II, III, 1C, 3C,
+  5C) at 650 / 550 / 450 nm. Red goes first, which is why anything below a few
+  metres reads blue; turbid types plus a separate CDOM term absorb in the blue
+  so an estuary turns green-brown and a peat bog turns tea-brown.
+* The studio's eight water presets are **derived from those optics**, not
+  hand-mixed: each one names a Jerlov type, a CDOM load, a suspended-sediment
+  load, a Beaufort sea state, a temperature and a salinity, and its deep,
+  shallow and turbid colours come out of Beer–Lambert against the kernel
+  (deep = the column at 12 m, shallow = a sand bed seen through 3 m, turbid =
+  the silt reflectance). The authored colours survive only as the peak-channel
+  exposure, so a preset keeps the brightness it was tuned to while its hue is
+  physical. Secchi depth is `1.44 / Kd` with `Kd` from the green/blue
+  attenuation, which is why the ocean reads clear and a harbour does not.
+* Flame colour is a blackbody, not a gradient: the volume and billboard paths
+  integrate the Planck spectrum against analytic CIE 1931 fits (Wyman, Sloan
+  and Shirley 2013), convert XYZ to linear Rec.709 and sample a 128×1 LUT over
+  each preset's real Kelvin range (candle 800–1700 K, campfire 900–1900 K,
+  torch 1200–2300 K, gas 1500–2600 K). Both paths share the same function, so
+  they cannot disagree.
 * **Not modelled:** subsurface multiple scattering, specular sheen / velvet
   lobes on foliage, per-species BSSRDF, spectral (multi-band) rendering, and
   real measured textures. These are approximations, documented as such.
