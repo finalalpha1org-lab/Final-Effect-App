@@ -25,7 +25,7 @@ All heavy numerical, animation, rendering, sculpting, and performance systems li
 ## Build & Test Commands
 
 ```bash
-# Compile/validate C++20 WASM + run all 588 automated tests + build production bundle
+# Compile/validate C++20 WASM + run all 599 automated tests + build production bundle
 npm run build
 
 # Run C++20 WASM + JS/Three.js test suite

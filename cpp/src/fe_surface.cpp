@@ -466,7 +466,8 @@ FE_EXPORT int32_t fe_surface_detail_size(void) { return gDetailW * gDetailH; }
 
 /* -------------------------------------------------------------------------
  * Jerlov water types. out = absorption R,G,B (1/m) then scattering R,G,B.
- * 0 = I (clear ocean), 1 = II, 2 = 1C (coastal), 3 = 3C, 4 = 5C (turbid)
+ * 0 = I (clear ocean), 1 = II, 2 = 1C (coastal), 3 = 3C, 4 = 5C (turbid),
+ * 5 = IA, 6 = IB, 7 = III (green shelf). Out-of-range falls back to I.
  * ------------------------------------------------------------------------- */
 FE_EXPORT int32_t fe_water_optical(int32_t type, float* out) {
   if (!out) return 0;
@@ -474,15 +475,22 @@ FE_EXPORT int32_t fe_water_optical(int32_t type, float* out) {
      Red goes first: that is why everything below a few metres reads blue. The
      turbid types add CDOM (yellow substance) absorption in the blue, which is
      what turns an estuary green-brown instead of blue. */
-  static const float kAbsorb[5][3] = {
-    { 0.3050f, 0.0545f, 0.0145f },  /* I    — open ocean */
-    { 0.3500f, 0.0750f, 0.0200f },  /* II   — clear coastal */
-    { 0.4200f, 0.1100f, 0.0450f },  /* 1C   — coastal */
-    { 0.5500f, 0.2000f, 0.1150f },  /* 3C   — turbid coastal */
-    { 0.7200f, 0.3600f, 0.3000f }   /* 5C   — harbour / estuary */
+  /* Appended types keep the historical 0-4 indices, because the studio's three
+     original presets and the realism tests address them by number; IA, IB and
+     III were added for the newer presets (clear polar lake, cold deep lake,
+     green shelf water). */
+  static const float kAbsorb[8][3] = {
+    { 0.3050f, 0.0545f, 0.0145f },  /* 0  I    — open ocean */
+    { 0.3500f, 0.0750f, 0.0200f },  /* 1  II   — clear coastal */
+    { 0.4200f, 0.1100f, 0.0450f },  /* 2  1C   — coastal */
+    { 0.5500f, 0.2000f, 0.1150f },  /* 3  3C   — turbid coastal */
+    { 0.7200f, 0.3600f, 0.3000f },  /* 4  5C   — harbour / estuary */
+    { 0.3250f, 0.0620f, 0.0180f },  /* 5  IA   — clear ocean, high latitude */
+    { 0.3850f, 0.0680f, 0.0280f },  /* 6  IB   — slightly green open water */
+    { 0.4800f, 0.1450f, 0.0850f }   /* 7  III  — green shelf / upwelling */
   };
-  static const float kScatter[5] = { 0.0030f, 0.0100f, 0.0500f, 0.3500f, 1.2000f };
-  const int t = (type < 0 || type > 4) ? 0 : int(type);
+  static const float kScatter[8] = { 0.0030f, 0.0100f, 0.0500f, 0.3500f, 1.2000f, 0.0045f, 0.0070f, 0.0900f };
+  const int t = (type < 0 || type > 7) ? 0 : int(type);
   out[0] = kAbsorb[t][0];
   out[1] = kAbsorb[t][1];
   out[2] = kAbsorb[t][2];

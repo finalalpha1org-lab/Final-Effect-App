@@ -315,3 +315,66 @@ test('Detail Contrast and Fire Tint are real shader controls',()=>{
   assert.ok(shader.includes('uDetailContrast'),'contrast pivots the tile around 0.5');
   assert.ok(shader.includes('blackbody(heat) * uFireTint'),'the tint multiplies the Planckian ramp');
 });
+
+test('flame colour is the Planckian locus, so temperature decides hue', () => {
+  const { sandbox } = boot(null);
+  const { blackbodyRGB, planckianXY, fireTemperatureRange } = sandbox.SimulationEngine;
+
+  /* A blackbody near 6500 K is the standard white point: x 0.3127, y 0.3290.
+     The analytic colour-matching fit lands within a couple of thousandths. */
+  const [wx, wy] = planckianXY(6500);
+  assert.ok(Math.abs(wx - 0.3127) < 0.01, `white point x was ${wx}`);
+  assert.ok(Math.abs(wy - 0.329) < 0.01, `white point y was ${wy}`);
+
+  /* A 900 K ember is red and has essentially no green or blue in it, while a
+     3000 K flame is close to white. The old four-stop ramp could not express
+     the difference because it had no temperature in it. */
+  const ember = blackbodyRGB(900);
+  const wood = blackbodyRGB(1900);
+  const hot = blackbodyRGB(3000);
+  const blue = blackbodyRGB(10000);
+  assert.equal(Math.max(...ember), 1, 'the hottest channel is normalised to 1');
+  assert.ok(ember[1] < 0.25 && ember[2] < 0.05, 'an ember is red, not orange');
+  assert.ok(wood[1] > ember[1] + 0.2 && wood[1] < 0.7, 'wood fire adds green, not blue');
+  assert.ok(wood[2] < 0.05, 'a 1900 K flame has no blue left');
+  assert.ok(hot[2] > wood[2] + 0.2 && hot[1] > 0.6, 'a 3000 K flame is warm white');
+  assert.ok(blue[2] > 0.9 && blue[0] < 0.9, 'a 10000 K body is bluish white');
+  for (const rgb of [ember, wood, hot, blue]) {
+    for (const channel of rgb) assert.ok(channel >= 0 && channel <= 1, 'channels stay in range');
+  }
+  /* Monotonic along the locus: blue only appears once the body is hot. */
+  const blues = [900, 1400, 1900, 2400, 3200].map((k) => blackbodyRGB(k)[2]);
+  for (let i = 1; i < blues.length; i++) assert.ok(blues[i] >= blues[i - 1], `blue rose at sample ${i}`);
+  const reds = [1200, 2000, 3000, 5000, 8000].map((k) => planckianXY(k)[0]);
+  for (let i = 1; i < reds.length; i++) assert.ok(reds[i] < reds[i - 1], 'the locus marches away from red as it heats');
+
+  /* Presets carry real Kelvin ranges, and every one sits inside the LUT. */
+  const torch = fireTemperatureRange('Torch');
+  const campfire = fireTemperatureRange('Campfire');
+  assert.ok(torch[0] < torch[1] && torch[1] > campfire[1], 'a torch burns hotter than a campfire');
+  assert.deepEqual(fireTemperatureRange('No Such Fire'), campfire, 'an unknown preset falls back to a campfire');
+  for (const name of ['Campfire', 'Wildfire', 'Torch', 'Gas Flame', 'Candle']) {
+    const [low, high] = fireTemperatureRange(name);
+    assert.ok(low >= 700 && high <= 3000, `${name} stays inside the blackbody LUT`);
+  }
+});
+
+test('the volume shader reads flame colour from the blackbody LUT at the preset temperature', () => {
+  const { engine } = boot(cpp);
+  const rec = record();
+  assert.equal(engine.createVolumeSimulation(null, params, rec), true);
+  const gl = rec.visual.material;
+  assert.ok(gl.fragmentShader.includes('uniform sampler2D uBlackbody'), 'the shader owns a blackbody LUT');
+  assert.ok(gl.fragmentShader.includes('texture2D(uBlackbody, vec2(t, 0.5))'), 'flame colour is a LUT fetch, not a ramp');
+  assert.ok(gl.fragmentShader.includes('uHeatK0 + (uHeatK1 - uHeatK0) * clamp(heat'), 'heat is remapped to real Kelvin');
+  const lut = gl.uniforms.uBlackbody.value;
+  assert.equal(lut.width, 128, 'the LUT is one row of 128 temperatures');
+  assert.equal(lut.image.data.length, 128 * 4);
+  assert.equal(gl.uniforms.uHeatK0.value, 900, 'a campfire starts at 900 K');
+  assert.equal(gl.uniforms.uHeatK1.value, 1900, 'and peaks at 1900 K');
+  /* The first texel is the coldest, the last the hottest, and blue must rise
+     along the row or the LUT was built upside down. */
+  const data = lut.image.data;
+  assert.ok(data[1] < data[(127 * 4) + 1], 'green rises with temperature');
+  assert.equal(data[3], 255, 'the LUT is opaque');
+});

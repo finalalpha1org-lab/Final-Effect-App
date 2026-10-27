@@ -729,3 +729,63 @@ test('bark is scaled by circumference, so the crown is not smeared', () => {
   const ring = flora.slice(flora.indexOf('for (int32_t j = 0; j <= sides; ++j)'), flora.indexOf('const int32_t stride = sides + 1;'));
   assert.equal(ring.includes('float(j) / float(sides),'), false, 'the stretched uv is gone');
 });
+
+test('every triangle is wound outward, so bark and rock are not drawn inside-out', async () => {
+  const { core } = await bootBridge();
+  const meshes = [['oak', core.floraTree(0, 4242, 2)], ['birch', core.floraTree(1, 4242, 2)], ['pine', core.floraTree(18, 4242, 2)], ['rock', core.floraRock(0, 5150, 2)]];
+  for (const [name, mesh] of meshes) {
+    const pos = mesh.pos, nrm = mesh.nrm, idx = mesh.idx;
+    let agree = 0, triangles = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+      const e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+      const e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      if (Math.hypot(nx, ny, nz) < 1e-12) continue;
+      const vx = nrm[a] + nrm[b] + nrm[c], vy = nrm[a + 1] + nrm[b + 1] + nrm[c + 1], vz = nrm[a + 2] + nrm[b + 2] + nrm[c + 2];
+      triangles++;
+      if (nx * vx + ny * vy + nz * vz > 0) agree++;
+    }
+    /* The default material is FrontSide: a reversed winding culls the bark we
+       should see and draws the hollow inside of the trunk instead. */
+    assert.ok(triangles > 500, `${name} has triangles`);
+    assert.ok(agree === triangles, `${name}: ${triangles - agree} of ${triangles} triangles face inward`);
+  }
+});
+
+test('a tree grows out of the ground with a buttressed collar, not stood on it', async () => {
+  const { core } = await bootBridge();
+  const tree = core.floraTree(0, 4242, 2);
+  const pos = tree.pos;
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < tree.verts; i++) {
+    const y = pos[i * 3 + 1];
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  assert.ok(minY < -0.01, 'the foot is buried below the ground plane so it cannot float on a slope');
+  const radiusAt = (low, high) => {
+    let r = 0;
+    for (let i = 0; i < tree.verts; i++) {
+      const y = pos[i * 3 + 1];
+      if (y < low || y > high) continue;
+      r = Math.max(r, Math.hypot(pos[i * 3], pos[i * 3 + 2]));
+    }
+    return r;
+  };
+  const collar = radiusAt(minY - 1e-4, minY + 0.08);
+  const stem = radiusAt(maxY * 0.3, maxY * 0.34);
+  assert.ok(collar > stem * 1.15, `the collar (${collar.toFixed(3)}) must be visibly wider than the stem (${stem.toFixed(3)})`);
+});
+
+test('a lateral branch is rooted inside its parent instead of butted against it', async () => {
+  /* The join is in the kernel, so pin the rule rather than the pixels: a limb
+     that leaves at an angle is sunk back along its own axis and flares, a
+     leader continues the parent's line at the parent's radius. */
+  const cpp = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(cpp, /const bool leader = dot\(dir, pdir\) > 0\.75f;/);
+  assert.match(cpp, /const float sink = leader \? 0\.0f : r0 \* 0\.85f;/);
+  assert.match(cpp, /const float rootR = leader \? r0 \* 0\.98f : maxf\(r0 \* 0\.50f, r1 \* 1\.20f\);/);
+  /* Winding is fixed in one place for every emitter in the file. */
+  assert.match(cpp, /gIdx\[gIdxN\+\+\] = uint32_t\(a\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(c\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(b\);/);
+});

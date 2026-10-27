@@ -950,12 +950,110 @@ function setWaterQuality(q){q=exClamp(Math.round(Number(q)||0),0,WATER_QUALITY.l
 function beginWaterReflectionCapture(){const keep=new Set([ter,sky,sun,sun.target,hemi,envFill,waterReflectionCam,...clouds]);if(typeof OW!=='undefined'&&OW?.active)keep.add(OW.group);if(typeof mapRoot!=='undefined'&&mapRoot)keep.add(mapRoot);for(const o of typeof objs!=='undefined'?objs:[]){const kind=String(o.userData?.n||o.name||'').split('.')[0].toLowerCase();if(/grass|flower|daisy|tulip|lavender|pine|oak|birch|palm|shrub|rock|spruce|krumm|juniper|saguaro|barrel|prickly|acacia|joshua|agave|sage|sandrock|deadtree|ashbush|treefern|fern|basalt/i.test(kind))keep.add(o)}for(const k of ['grass','tallgrass','flower','daisy','tulip','lavender','rock','sandrock','basalt','pine','oak','birch','palm','shrub','spruce','krumm','juniper','saguaro','barrel','prickly','acacia','joshua','agave','sage','deadtree','ashbush','treefern','fern']){const K=KIND[k];if(!K)continue;for(const list of [K.meshes,K.shadowMeshes])if(Array.isArray(list))for(const o of list)if(o)keep.add(o)}const waterVisible=water.visible,hidden=[],sunVisible=sun.visible,normalScales=[U.uNS?.value,U.uNM?.value,U.uNP?.value];water.visible=false;sun.visible=false;if(U.uNS)U.uNS.value=0;if(U.uNM)U.uNM.value=0;if(U.uNP)U.uNP.value=0;for(const o of scene.children){if(o===water||keep.has(o))continue;if(o.visible){hidden.push(o);o.visible=false}}return()=>{water.visible=waterVisible;sun.visible=sunVisible;if(U.uNS)U.uNS.value=normalScales[0];if(U.uNM)U.uNM.value=normalScales[1];if(U.uNP)U.uNP.value=normalScales[2];for(const o of hidden)o.visible=true}}
 function waterReflectionProbeXZ(){const open=typeof OW!=='undefined'&&OW?.active,p=exploreMode?cam.getWorldPosition(new THREE.Vector3()):cam.position,cx=p.x,cz=p.z,half=open?OW.config.sizeKm*500:S*.5,probeY=water.position.y+.42,ground=(x,z)=>open?OW.heightAt(x,z):hgt(x,z),free=(x,z)=>Math.abs(x)>=half-.25||Math.abs(z)>=half-.25||ground(x,z)<=probeY-.04;if(free(cx,cz))return{x:cx,z:cz};let dx=cx-(oc.target?.x||0),dz=cz-(oc.target?.z||0),len=Math.hypot(dx,dz);if(len<.01){const a=(az||0)*Math.PI/180;dx=Math.cos(a);dz=Math.sin(a);len=1}const base=Math.atan2(dz,dx),limit=open?Math.min(Math.max(OW.chunkSize*2,half*.65),5000):Math.max(S*1.5,64),step=open?32:4;for(let r=step;r<=limit;r+=step)for(let i=0;i<8;i++){const a=base+i*Math.PI/4,x=cx+Math.cos(a)*r,z=cz+Math.sin(a)*r;if(free(x,z))return{x,z}}return{x:cx+dx/len*(limit+step),z:cz+dz/len*(limit+step)}}
 function updateWaterReflection(){if(!water.visible||U.uReflect.value<.01||waterReflectionFailed&&performance.now()<waterReflectionRetryAt)return;const now=performance.now();if(cam.position.distanceToSquared(waterReflectionViewAnchor)>.0025||cam.quaternion.angleTo(waterReflectionOrientationAnchor)>.003){waterReflectionViewAnchor.copy(cam.position);waterReflectionOrientationAnchor.copy(cam.quaternion);waterReflectionViewMovedAt=now;return}if(now-waterReflectionViewMovedAt<350||waterReflectionReady&&fr%waterReflectionInterval!==0)return;const probe=waterReflectionProbeXZ(),restoreReflectionScene=beginWaterReflectionCapture();waterReflectionCam.position.set(probe.x,water.position.y+.42,probe.z);try{waterReflectionCam.update(ren,scene);waterReflectionReady=true;waterReflectionFailed=false;waterReflectionRetryAt=0;waterReflectionFailures=0;if(waterMat.envMap!==waterReflectionRT.texture){waterMat.envMap=waterReflectionRT.texture;waterMat.needsUpdate=true}}catch(e){waterReflectionReady=false;waterReflectionFailed=true;waterReflectionRetryAt=performance.now()+3000;if(++waterReflectionFailures===1)console.warn('Dynamic water environment reflection capture failed; keeping the last captured frame.',e)}finally{restoreReflectionScene()}}
+/* ---------------------------------------------------------------- */
+/* Water is an optical medium, not a colour swatch                   */
+/* ---------------------------------------------------------------- */
+/* A body of water looks the way it does because of what is dissolved and
+   suspended in it. Each preset below is therefore described by measurements a
+   limnologist would recognise - a Jerlov optical water type, a CDOM (gilvin)
+   load, a suspended-sediment load, a Secchi depth, a Beaufort sea state -
+   and its deep/shallow/turbid colours are *derived* from those with the
+   Beer-Lambert law against the C++ `fe_water_optical` kernel. The authored
+   colours are kept only as the exposure reference (their peak channel), so a
+   preset keeps the brightness the look was tuned to while its hue comes from
+   physics. */
+const WATER_SILT=[[.55,.50,.42],[.52,.47,.38],[.50,.44,.33],[.46,.40,.30],[.45,.38,.27],[.56,.52,.45],[.50,.46,.38],[.48,.42,.32]];
+const WATER_OPTICAL_FALLBACK=[
+ [.3050,.0545,.0145,.0030],[.3500,.0750,.0200,.0100],[.4200,.1100,.0450,.0500],[.5500,.2000,.1150,.3500],
+ [.7200,.3600,.3000,1.2000],[.3250,.0620,.0180,.0045],[.3850,.0680,.0280,.0070],[.4800,.1450,.0850,.0900]];
+function waterOpticalFor(source){
+ const type=cl((typeof source==='number'?source:source&&source.jerlov)|0,0,7);
+ let o=null;
+ if(typeof core!=='undefined'&&core&&typeof core.waterOptical==='function')o=core.waterOptical(type);
+ if(!o)o=WATER_OPTICAL_FALLBACK[type];
+ /* CDOM absorbs short wavelengths hardest, which is what turns a peat bog
+    brown instead of blue: it is a blue absorber, not a dye. */
+ const cdom=cl((source&&source.cdom)||0,0,2);
+ return [o[0],o[1]+cdom*.35,o[2]+cdom*1.60,o[3],o[4]===undefined?o[3]:o[4],o[5]===undefined?o[3]:o[5]];
+}
+function waterScaleTo(rgb,reference){
+ const peak=Math.max(rgb[0],rgb[1],rgb[2])||1;
+ const ref=Math.max(Array.isArray(reference)||ArrayBuffer.isView(reference)?Math.max(reference[0],reference[1],reference[2]):1,.02);
+ return rgb.map(v=>cl(v/peak*ref,0,1));
+}
+/* Light coming back out of shallow water is mostly the bed seen through the
+   column, which is why a reef over sand is turquoise while the same water over
+   rock is dark: red is gone after a few metres, so the bed's neutral albedo
+   arrives blue-green. */
+function waterShallowColour(source){
+ const o=waterOpticalFor(source),d=3,bottom=[.42,.38,.30],out=[0,0,0];
+ for(let i=0;i<3;i++){
+  const s=o[3+i]/(o[i]+o[3+i]);
+  out[i]=bottom[i]*Math.exp(-o[i]*d)+s*.12;
+ }
+ const peak=Math.max(out[0],out[1],out[2])||1;
+ return out.map(v=>cl(v/peak,0,1));
+}
+function waterColumnColour(source,depth){
+ const o=waterOpticalFor(source),d=cl(depth===undefined?9:depth,0,60),out=[0,0,0];
+ for(let i=0;i<3;i++){
+  const a=o[i],b=o[3+i],t=Math.exp(-a*d),s=b/(a+b);
+  /* Light that survived the path plus the part the water scattered back. */
+  out[i]=t*(1-s)+s*.55;
+ }
+ const peak=Math.max(out[0],out[1],out[2])||1;
+ return out.map(v=>cl(v/peak,0,1));
+}
+function beaufortOf(speed){
+ const bands=[0.3,1.6,3.4,5.5,8,10.8,13.9,17.2,20.8,24.5,28.5,32.7];
+ const u=cl(+speed||0,0,60);
+ for(let i=0;i<bands.length;i++)if(u<bands[i])return i;
+ return 12;
+}
+/* Hydration is idempotent and lazy: the array literal stays a literal (it is
+   the exposure reference the presets were tuned against) while every read of a
+   preset returns the physical version. */
+function waterProfileFor(index){
+ const p=WATER_PROFILES[cl(index|0,0,WATER_PROFILES.length-1)];
+ if(!p)return null;
+ if(p.__hydrated)return p;
+ p.__hydrated=true;
+ const sediment=cl(p.sediment===undefined?.05:p.sediment,0,1);
+ const o=waterOpticalFor(p);
+ const silt=WATER_SILT[cl(p.jerlov|0,0,7)];
+ p.deep=waterScaleTo(waterColumnColour(p,12),p.deep);
+ /* Shallow water is the bottom seen through the water, so the sediment tints
+    it directly - that is why a silty river reads brown at the edge and a reef
+    reads turquoise. */
+ const shallow=waterShallowColour(p).map((v,i)=>v+(silt[i]-v)*sediment);
+ p.shallow=waterScaleTo(shallow,p.shallow);
+ p.turbid=waterScaleTo(silt,p.turbid);
+ /* Secchi depth from the diffuse attenuation in the green/blue, 1.44/Kd. */
+ const kd=(o[1]+o[2])*.5+o[3];
+ p.secchi=+(1.44/Math.max(kd,1e-4)).toFixed(1);
+ p.clarity=cl(p.secchi/10,.3,4);
+ p.turbidity=cl(sediment*.9+o[3]*.15,.02,1);
+ p.transparency=cl(1-sediment*.55-o[3]*.25,.08,1);
+ p.beaufort=beaufortOf(p.wind);
+ p.optics={type:cl(p.jerlov|0,0,7),absorb:[+o[0].toFixed(4),+o[1].toFixed(4),+o[2].toFixed(4)],scatter:+o[3].toFixed(4)};
+ return p;
+}
+window.__feWaterPresets=()=>WATER_PROFILES.map((p,i)=>waterProfileFor(i));
+window.__feWaterOptics=waterOpticalFor;
+
 const WATER_PROFILES=[
- {name:'Ocean',deep:[.004,.025,.14],shallow:[.018,.19,.46],clarity:1.8,height:1.25,scale:1,speed:1.55,period:8,chop:.26,roughness:.09,reflect:1.12,refraction:.58,turbidity:.08,transparency:.94,turbid:[.025,.12,.27],foam:.9,threshold:.7,shore:1.15,wind:14,direction:35},
- {name:'Lagoon',deep:[.012,.25,.28],shallow:[.14,.72,.53],clarity:4.2,height:.22,scale:.72,speed:.62,period:6,chop:.06,roughness:.07,reflect:.82,refraction:.88,turbidity:.035,transparency:1,turbid:[.07,.4,.32],foam:.24,threshold:.9,shore:.55,wind:3,direction:20},
- {name:'Murky',deep:[.075,.072,.032],shallow:[.3,.24,.085],clarity:.45,height:.24,scale:.8,speed:.52,period:7,chop:.06,roughness:.86,reflect:.2,refraction:.08,turbidity:1,transparency:.12,turbid:[.32,.26,.09],foam:.06,threshold:.98,shore:.2,wind:2,direction:55}
+ /* The three originals keep their authored order of fields: the studio tests
+    pin that these presets own independent colour, wave and optical controls. */
+ {name:'Ocean',deep:[.004,.025,.14],shallow:[.018,.19,.46],clarity:1.8,height:1.25,scale:1,speed:1.55,period:8,chop:.26,roughness:.09,reflect:1.12,refraction:.58,turbidity:.08,transparency:.94,turbid:[.025,.12,.27],foam:.9,threshold:.7,shore:1.15,wind:12,direction:35,jerlov:0,cdom:0,sediment:.02,tempC:17,salinityPSU:35,fetchKm:400},
+ {name:'Lagoon',deep:[.012,.25,.28],shallow:[.14,.72,.53],clarity:4.2,height:.22,scale:.72,speed:.62,period:6,chop:.06,roughness:.07,reflect:.82,refraction:.88,turbidity:.035,transparency:1,turbid:[.07,.4,.32],foam:.24,threshold:.9,shore:.55,wind:4.5,direction:20,jerlov:2,cdom:.02,sediment:.06,tempC:27,salinityPSU:34,fetchKm:6},
+ {name:'Murky',deep:[.075,.072,.032],shallow:[.3,.24,.085],clarity:.45,height:.24,scale:.8,speed:.52,period:7,chop:.06,roughness:.86,reflect:.2,refraction:.08,turbidity:1,transparency:.12,turbid:[.32,.26,.09],foam:.06,threshold:.98,shore:.2,wind:4.5,direction:55,jerlov:4,cdom:.25,sediment:.85,tempC:21,salinityPSU:2,fetchKm:1.5},
+ {name:'Reef',deep:[.008,.09,.20],shallow:[.05,.42,.44],clarity:3.6,height:.42,scale:.9,speed:.8,period:6.4,chop:.1,roughness:.08,reflect:.95,refraction:.8,turbidity:.05,transparency:.98,turbid:[.32,.44,.36],foam:.42,threshold:.86,shore:.8,wind:6,direction:120,jerlov:5,cdom:0,sediment:.03,tempC:29,salinityPSU:35,fetchKm:12},
+ {name:'Alpine Lake',deep:[.006,.06,.10],shallow:[.06,.26,.30],clarity:3.2,height:.16,scale:.78,speed:.5,period:4.4,chop:.05,roughness:.06,reflect:.9,refraction:.86,turbidity:.04,transparency:.96,turbid:[.28,.32,.26],foam:.14,threshold:.94,shore:.4,wind:4.5,direction:250,jerlov:1,cdom:.04,sediment:.05,tempC:7,salinityPSU:.1,fetchKm:3},
+ {name:'River',deep:[.10,.085,.03],shallow:[.34,.29,.13],clarity:.5,height:.2,scale:.85,speed:1.6,period:3.2,chop:.1,roughness:.5,reflect:.32,refraction:.2,turbidity:.85,transparency:.3,turbid:[.42,.34,.16],foam:.5,threshold:.82,shore:.5,wind:4,direction:80,jerlov:3,cdom:.3,sediment:.7,tempC:16,salinityPSU:.2,fetchKm:.6},
+ {name:'Estuary',deep:[.07,.08,.045],shallow:[.28,.3,.16],clarity:.35,height:.3,scale:.88,speed:.9,period:4.2,chop:.08,roughness:.42,reflect:.42,refraction:.32,turbidity:.7,transparency:.44,turbid:[.36,.32,.18],foam:.3,threshold:.9,shore:.6,wind:6.5,direction:100,jerlov:4,cdom:.2,sediment:.5,tempC:19,salinityPSU:12,fetchKm:4},
+ {name:'Peat Bog',deep:[.05,.06,.02],shallow:[.24,.22,.06],clarity:.3,height:.06,scale:.7,speed:.3,period:2.6,chop:.03,roughness:.24,reflect:.4,refraction:.5,turbidity:.4,transparency:.7,turbid:[.26,.2,.06],foam:.05,threshold:.97,shore:.15,wind:2.5,direction:15,jerlov:1,cdom:.9,sediment:.15,tempC:12,salinityPSU:.05,fetchKm:.15}
 ];
-function setWater(i){const p=WATER_PROFILES[Number(i)];if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=(window.FELandscapeRealism&&window.FELandscapeRealism.waterRoughness)?window.FELandscapeRealism.waterRoughness(p):p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
+function setWater(i){const p=waterProfileFor(Number(i));if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=(window.FELandscapeRealism&&window.FELandscapeRealism.waterRoughness)?window.FELandscapeRealism.waterRoughness(p):p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
 setWater(0);
 /* clouds */
 const cc=document.createElement('canvas');cc.width=cc.height=64;const cx=cc.getContext('2d'),gr=cx.createRadialGradient(32,32,0,32,32,32);

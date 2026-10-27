@@ -188,9 +188,17 @@ int32_t pushVert(V3 p, V3 n, float u, float v, float r, float g, float b, float 
 
 void pushTri(int32_t a, int32_t b, int32_t c) {
   if (a < 0 || b < 0 || c < 0 || gIdxN + 3 > MAX_IDX) return;
+  /* Counter-clockwise seen from outside, which is what OpenGL/WebGL want for
+     the front face. Every emitter in this file orders its quad corners as
+     (a, b, c, d) walking the surface the other way round, so the winding is
+     reversed here, once, rather than at two dozen call sites. Getting this
+     wrong is invisible in a wireframe but not in the picture: with the default
+     FrontSide material the engine culled the bark we should see and drew the
+     inside of every trunk, limb and rock instead -- the flat, hollow, plastic
+     look the trees were criticised for. */
   gIdx[gIdxN++] = uint32_t(a);
-  gIdx[gIdxN++] = uint32_t(b);
   gIdx[gIdxN++] = uint32_t(c);
+  gIdx[gIdxN++] = uint32_t(b);
 }
 
 /* Cylinder between two points. `hint` carries the previous ring's frame so a
@@ -441,7 +449,12 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
   const float lean = rng.range(-0.12f, 0.12f);
   const float leanZ = rng.range(-0.12f, 0.12f);
   const float wobble = rng.range(0.0f, 1.0f) * 0.35f;
-  int32_t prev = addNode(v3(0.0f, 0.0f, 0.0f), -1, 0.0f);
+  /* The foot of a tree is wider than the stem and buried a little, so the trunk
+     grows out of the ground instead of being stood on it: without the collar a
+     cylinder meeting a slope leaves a visible ring of daylight, and without the
+     burial an 8 cm trunk on a 20 cm dip in the terrain floats. */
+  const float footDepth = 0.10f + s.trunkRadius * 0.45f;
+  int32_t prev = addNode(v3(0.0f, -footDepth, 0.0f), -1, 0.0f);
   if (prev < 0) return -1;
   gNodePh[prev] = 0.0f;
   V3 frame = v3(1.0f, 0.0f, 0.0f);
@@ -452,7 +465,11 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
     const V3 p = v3(lean * y * y * 0.12f + sway, y, leanZ * y * y * 0.12f + sway * 0.6f);
     const int32_t idx = addNode(p, prev, s.trunkTop * t);
     if (idx < 0) return prev;
-    const float r0 = s.trunkRadius * (1.0f - 0.72f * float(i - 1) / float(s.segments));
+    /* Flare: 55% wider at the collar, gone by a fifth of the way up the trunk,
+       which is the buttress profile of an oak or an ash rather than a cone. */
+    const float flareT = clampf(1.0f - float(i - 1) / (float(s.segments) * 0.22f), 0.0f, 1.0f);
+    const float flare = 1.0f + 0.55f * flareT * flareT;
+    const float r0 = s.trunkRadius * (1.0f - 0.72f * float(i - 1) / float(s.segments)) * flare;
     const float r1 = s.trunkRadius * (1.0f - 0.72f * t);
     const float shade = 0.70f + 0.30f * clampf(p.y / (s.trunkTop + 1.0f), 0.0f, 1.0f);
     const float segLen = len(sub(p, gNodes[prev].p));
@@ -598,15 +615,33 @@ void meshBranches(const SpeciesSpec& s, Rng& rng, int32_t firstBranch, V3 hint) 
     const int32_t sides = int32_t(clampf(4.0f + r0 * 120.0f, floorSides, float(s.tubes)));
     const float gnarl = fbm(mul(b, 0.55f), 0x51ed270bu, 2) * 0.05f * r0;
     const V3 offset = norm(cross(sub(b, a), v3(0.0f, 1.0f, 0.0f)));
-    const V3 start = add(a, mul(offset, gnarl));
+    /* A branch is not a pipe pushed against a trunk: it is a cone that grows
+       out of the parent's wood. The old code started the child ring exactly on
+       the parent's axis with a radius 5% wider than the parent, so a disc of
+       the parent's own girth stuck out sideways at every fork -- the "joints
+       are not connected" complaint. Now the branch is rooted *inside* the
+       parent, sunk back along its own direction by most of the parent's radius,
+       and flares as it leaves so the union reads as one piece of timber. */
+    const V3 dir = norm(sub(b, a));
+    /* Does this child continue the parent's line, or leave from its side? A
+       leader continues (no sink, radius matched to the parent tip so the bark
+       flows over the collar); a lateral limb is rooted inside the parent and
+       flares out of it. Without this split a fat trunk would neck down to half
+       its girth at the first branch point. */
+    const int32_t grand = gNodes[parent].parent;
+    const V3 pdir = grand >= 0 ? norm(sub(a, gNodes[grand].p)) : v3(0.0f, 1.0f, 0.0f);
+    const bool leader = dot(dir, pdir) > 0.75f;
+    const float sink = leader ? 0.0f : r0 * 0.85f;
+    const V3 start = add(a, mul(dir, -sink));
+    const float rootR = leader ? r0 * 0.98f : maxf(r0 * 0.50f, r1 * 1.20f);
     const V3 end = add(b, mul(offset, -gnarl * 0.6f));
     const float shade = 0.70f + 0.30f * clampf(b.y / (s.crownY + s.crownRY), 0.0f, 1.0f);
     const float rnd = 0.15f + rng.f() * 0.85f;
     const float ph = gNodePh[parent] + len(sub(b, a)) * 1.6f;
     gNodePh[i] = ph;
-    frames[i] = tubeSegment(start, end, r0, r1, sides, gNodes[parent].len * 0.35f, 0.35f,
+    frames[i] = tubeSegment(start, end, rootR, r1, sides, gNodes[parent].len * 0.35f, 0.35f,
                             shade, rnd, frames[parent], gNodes[i].terminal != 0,
-                            swayOf(gNodes[parent].len, r0, s), swayOf(gNodes[i].len, r1, s), ph);
+                            swayOf(gNodes[parent].len, rootR, s), swayOf(gNodes[i].len, r1, s), ph);
   }
 }
 
