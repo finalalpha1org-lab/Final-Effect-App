@@ -269,7 +269,26 @@ int32_t fe_terrain_apply_strata(float strata_height,float strata_strength,float 
  return 0;
 }
 uint32_t fe_landscape_backend_magic(){return FE_LANDSCAPE_CPP_MAGIC;}
-int32_t fe_terrain_init(uint32_t n,float span){if(n<16||n>512||!finite(span)||span<=0)return -1;eroCancelRun();N=n;W=n+1;size=span;for(uint32_t k=0;k<W*W;k++){H[k]=0;materials[k]=255;for(int c=0;c<3;c++){normals[k*3+c]=c==1?1:0;colors[k*3+c]=.5f;for(int q=0;q<4;q++)weights[c][k*4+q]=0;}for(int q=0;q<4;q++)masks[k*4+q]=0;}return 0;}
+/* Resetting the grid is one pass over every array the kernels write, and it
+   runs whenever the resolution or the span changes. It used to be a single
+   loop over the cells with three c-branches and five different strides inside,
+   which no vectoriser can see through -- at 513x513 that is 20 MB of scattered
+   stores. Split per array so each one is a straight run the backend can widen;
+   the values are identical, cell for cell. */
+int32_t fe_terrain_init(uint32_t n,float span){
+ if(n<16||n>512||!finite(span)||span<=0)return -1;
+ eroCancelRun();N=n;W=n+1;size=span;
+ const uint32_t cells=W*W, attrs=cells*3;
+ for(uint32_t k=0;k<cells;k++){H[k]=0.f;materials[k]=255;}
+ for(uint32_t k=0;k<attrs;k+=3){normals[k]=0.f;normals[k+1]=1.f;normals[k+2]=0.f;}
+ for(uint32_t k=0;k<attrs;k++)colors[k]=.5f;
+ /* weights[3][CAP*4] is one contiguous block, so the three layers clear as a
+    single run of cells*12 floats. */
+ float* const w=&weights[0][0];
+ for(uint32_t k=0;k<cells*12;k++)w[k]=0.f;
+ for(uint32_t k=0;k<cells*4;k++)masks[k]=0;
+ return 0;
+}
 uint32_t fe_terrain_get_segments(){return N;}
 uint32_t fe_terrain_get_grid_width(){return W;}
 float* fe_terrain_get_height_ptr(){return H;}

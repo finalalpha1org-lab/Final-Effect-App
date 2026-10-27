@@ -1,6 +1,6 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v40';
+const CACHE_NAME = 'final-effect-cpp-v41';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -39,7 +39,18 @@ const CORE_ASSETS = [
   './landscape-flora.js',
   './landscape-weather.js',
   './favicon.svg',
-  './manifest.webmanifest'
+  './manifest.webmanifest',
+  /* The two pages load one bundle each instead of thirty separate scripts, and
+     three.js is served from this origin instead of a CDN, so the install has to
+     carry them or an offline client boots without a renderer. */
+  './landscape-app.js',
+  './workspace-app.js',
+  './vendor/three/three.min.js',
+  './vendor/three/OrbitControls.js',
+  './vendor/three/TransformControls.js',
+  './vendor/three/GLTFLoader.js',
+  './vendor/three/OBJLoader.js',
+  './vendor/three/RGBELoader.js'
 ];
 
 self.addEventListener('install', event => {

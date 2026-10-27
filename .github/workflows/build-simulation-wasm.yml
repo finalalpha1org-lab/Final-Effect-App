@@ -45,9 +45,10 @@ jobs:
           assert len(binary) > 8, 'empty WebAssembly module'
           print(f'WASM module validated: {len(binary)} bytes')
           PY
-          base64 -w0 wasm/simulation_solver.wasm > wasm/simulation_solver.wasm.b64
-          rm -f wasm/simulation_solver.wasm.b64.part-*
-          split -b 24000 -d -a 3 wasm/simulation_solver.wasm.b64 wasm/simulation_solver.wasm.b64.part-
+          # The module itself is the artifact. The base64 copies and their
+          # 24 kB split parts that used to live here were a way of getting a
+          # binary through review; the app fetches the .wasm directly, so they
+          # were 1.6 MB of byte-identical duplicates in every checkout.
 
       - name: Commit generated browser artifact
         run: |

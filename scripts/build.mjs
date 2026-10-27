@@ -53,6 +53,7 @@ if (hasPublicDir) {
     "fe_core_engine.wasm",
     "manifest.webmanifest",
     "sw.js",
+    "vendor",
     "assets"
   ];
   for (let i = 1; i <= 9; i++) {
@@ -122,17 +123,114 @@ for (const file of minifiableJs) {
 
 const optimizedIndexHtml = await minifyInlineScripts(readFileSync(srcPath("index.html"), "utf8"), "index.html");
 const optimizedTerrainHtml = await minifyInlineScripts(readFileSync(srcPath("Terrain_system_.html"), "utf8"), "Terrain_system_.html");
-writeFileSync("build/client/index.html", optimizedIndexHtml);
-writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml);
+/* ---- request count -------------------------------------------------------
+ * Each of these files is one HTTP request on the way to the first frame, and a
+ * phone pays for every one of them in DNS, TLS-less connect and header
+ * round-trips even when they arrive in parallel. They are plain classic scripts
+ * that share the global scope and must run in this order, so concatenating them
+ * is semantics-preserving — the browser then parses one stream instead of
+ * twenty. The sources stay split for editing and for the tests that slice them.
+ *
+ * three.js is deliberately *not* in these bundles: it never changes, so it
+ * should stay in the browser cache across deploys while the app bundle does
+ * not. */
+const STUDIO_SCRIPTS = [
+  "tessendorf-ocean.js",
+  "open-world-generator.js",
+  "terrain-main-01.js",
+  "kernel-worker.js",
+  "landscape-flora.js",
+  ...terrainMainFiles.slice(1),
+  "landscape-realism.js",
+  "landscape-weather.js",
+  "open-world.js",
+];
+
+const WORKSPACE_SCRIPTS = [
+  "fe-icons.js",
+  "edit-mode.js",
+  "render-capture.js",
+  "render-preview.js",
+  "render-export.js",
+  "workspace-export.js",
+  "fe-taa.js",
+  "volume-atlas.js",
+  "volume-library.js",
+  "simulationCore.js",
+  "modifier-engine.js",
+  "fe-cpp-engine.js",
+];
+
+async function bundleScripts(files, outName, html) {
+  /* Find every `<script src>` in the document, keep the ones that are not in
+     this group, and emit one bundle tag where the group's first member was.
+     A line-based scan rather than a lookbehind: the group is contiguous in both
+     shells, but this does not depend on that. */
+  const norm = (value) => String(value).replace(/^\.\//, "");
+  const wanted = new Set(files.map(norm));
+  const tag = /<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>\s*<\/script>\s*/g;
+  const parts = [];
+  let lastIndex = 0;
+  let emitted = false;
+  let included = 0;
+  for (const match of html.matchAll(tag)) {
+    if (!wanted.has(norm(match[1]))) continue;
+    parts.push(html.slice(lastIndex, match.index));
+    if (!emitted) {
+      parts.push(`<script src="./${outName}"></script>\n`);
+      emitted = true;
+    }
+    lastIndex = match.index + match[0].length;
+    included++;
+  }
+  parts.push(html.slice(lastIndex));
+  if (!emitted || included < 2) return html;
+  const codes = [];
+  for (const file of files) {
+    const inputPath = srcPath(file);
+    if (!existsSync(inputPath)) continue;
+    const { code } = await transform(readFileSync(inputPath, "utf8"), {
+      loader: "js",
+      target: "es2020",
+      minify: true,
+      legalComments: "none",
+      sourcefile: file,
+    });
+    codes.push(`/* ${file} */\n${code}`);
+  }
+  writeFileSync(`build/client/${outName}`, codes.join("\n"));
+  return parts.join("");
+}
+
+let bundlableTerrainHtml = optimizedTerrainHtml;
+let bundlableIndexHtml = optimizedIndexHtml;
+try {
+  bundlableTerrainHtml = await bundleScripts(STUDIO_SCRIPTS, "landscape-app.js", optimizedTerrainHtml);
+  bundlableIndexHtml = await bundleScripts(WORKSPACE_SCRIPTS, "workspace-app.js", optimizedIndexHtml);
+} catch (error) {
+  console.warn("Script bundling skipped:", error && error.message);
+}
+
+writeFileSync("build/client/index.html", bundlableIndexHtml);
+writeFileSync("build/client/Terrain_system_.html", bundlableTerrainHtml);
 
 const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
 const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
   ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
   : "";
 
-const terrainBootstrap = `<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(cppWasmBase64)};</script>`;
-if (!optimizedTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
-  writeFileSync("build/client/Terrain_system_.html", optimizedTerrainHtml.replace('<head>', `<head>\n${terrainBootstrap}`));
+/* The wasm is *not* inlined into the studio page any more. Base64 turns 1.83 MB
+   into 2.44 MB of HTML that must be downloaded, parsed and decoded before the
+   module can even start compiling, and it makes the shell uncacheable
+   independently of the binary. The studio streams the real artifact instead
+   (WebAssembly.instantiateStreaming, see terrain-main-01.js); only the
+   single-file artifact, which is a download and not the app, still embeds it. */
+if (!bundlableTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
+  const preload = '<link rel="preload" href="./fe_core_engine.wasm" as="fetch" crossorigin="anonymous">';
+  writeFileSync(
+    "build/client/Terrain_system_.html",
+    bundlableTerrainHtml.replace('<head>', `<head>\n${preload}`),
+  );
 }
 
 const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {

@@ -5,6 +5,30 @@ time. The bottleneck in a foliage scene is the cost of *submitting and shading*
 geometry, not of calling into the core. Everything below is either measured in
 this repository or explicitly marked as not done.
 
+## Cold start: what the studio waits for before the first frame
+
+"Loading" is not one cost. Measured in this repository (Node, same machine, so
+a phone is a multiple of these), the studio's boot was paying for four things
+that had nothing to do with the world it was building:
+
+| Cost | Before | After | What fixed it |
+| --- | --- | --- | --- |
+| five cross-origin CDN requests for three.js | one DNS + connect + download per file, and no boot at all offline | 0 requests; served from `vendor/three/` | the renderer is a dependency, not a service |
+| 2.44 MB of base64 wasm inlined into the page | downloaded, parsed and decoded before the module could start | 1.83 MB, streamed and compiled in chunks | the page loads `fe_core_engine.wasm` directly, `instantiateStreaming` compiles while it arrives; the base64 path survives only for the single-file download |
+| 21 (studio) / 12 (workspace) `<script>` tags | 21 handshakes, then 21 parse passes | 1 bundle each | `scripts/build.mjs` concatenates the classic scripts in order after minifying; `vendor/three/*` stays separate so it caches across deploys |
+| `new THREE.PlaneGeometry(1000,1000,512,512)` | **130 ms** — three pushes 263 169 positions and uvs into plain arrays and allocates a 1.57 million element JS array for the index | **8.5 ms** | `feGridGeometry()` writes the identical plane into typed arrays (see `tests/landscape-grid-geometry.test.mjs`, which pins the layout against three's own output) |
+| ~80 000 canvas operations of JS stand-in textures at module load | painted, then overwritten by the C++ surface kernels | painted in 5 ms idle slices, or dropped entirely when the kernels take over | `BOOT_PAINT` in `terrain-main-01.js` |
+| the surface upgrade ran **one texture job per frame** | ~20 consecutive hitches right after boot | one 6 ms slice per frame, starting after the first presented frame | `UPGRADE_SLICE_MS` in `landscape-realism.js` |
+
+The kernel itself was never the problem: compiling and instantiating the 1.83 MB
+module takes 6–8 ms, `fe_terrain_init(512)` was 2.7 ms warm and is 1.5 ms now
+(the reset is split per array so the backend can widen each run instead of
+walking a branchy loop with five different strides).
+
+What this does **not** claim: a real-device FPS or load number. Nothing in this
+repository can measure a phone. The numbers above are desktop measurements of
+work that has to happen on every device, removed or reduced.
+
 ## How foliage is drawn today
 
 * Every species is a `THREE.InstancedMesh` with a capacity fixed at build time
