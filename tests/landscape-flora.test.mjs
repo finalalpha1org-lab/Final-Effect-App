@@ -717,3 +717,15 @@ test('the crown of a real tree is thick enough to read as round', async () => {
     assert.ok(tree.verts <= 24000, `${SPECIES[kind]} stays inside the vertex buffer (got ${tree.verts})`);
   }
 });
+
+test('bark is scaled by circumference, so the crown is not smeared', () => {
+  /* `j / sides` wrapped one whole bark tile around every limb from a 2 cm twig
+     to a 1.2 m trunk. Along the branch the scale was metric (uvScale per metre),
+     across it was not, so the grain stretched sideways on exactly the thin wood
+     that fills a crown. */
+  const flora = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(flora, /const float uSpan = maxf\(0\.12f, kTwoPi \* \(\(r0 \+ r1\) \* 0\.5f\) \* uvScale\);/, 'the ring spans a metric arc length');
+  assert.match(flora, /\(float\(j\) \/ float\(sides\)\) \* uSpan/, 'and the facet uses it');
+  const ring = flora.slice(flora.indexOf('for (int32_t j = 0; j <= sides; ++j)'), flora.indexOf('const int32_t stride = sides + 1;'));
+  assert.equal(ring.includes('float(j) / float(sides),'), false, 'the stretched uv is gone');
+});

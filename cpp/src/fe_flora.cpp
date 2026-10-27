@@ -209,6 +209,12 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
   const V3 cen = mul(add(a, b), 0.5f);
   const float length = len(sub(b, a));
   const int32_t start = gVert;
+  /* Bark is scaled by circumference, not by facet index. `j / sides` stretched a
+     whole tile around a 2 cm twig and around a 1.2 m trunk alike, so the crown's
+     bark was smeared sideways by an order of magnitude -- part of why the limbs
+     read as painted planks. One tile per 1/uvScale metres of bark, both around
+     and along, keeps the grain the same size on every limb. */
+  const float uSpan = maxf(0.12f, kTwoPi * ((r0 + r1) * 0.5f) * uvScale);
 
   for (int32_t ring = 0; ring < 2; ++ring) {
     const V3 c = ring ? b : a;
@@ -219,7 +225,7 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
       const float th = (float(j) / float(sides)) * kTwoPi;
       const float cs = cosf(th), sn = sinf(th);
       const V3 n = v3(u.x * cs + w.x * sn, u.y * cs + w.y * sn, u.z * cs + w.z * sn);
-      pushVert(add(c, mul(n, r)), n, float(j) / float(sides), v0 + (ring ? length : 0.0f) * uvScale,
+      pushVert(add(c, mul(n, r)), n, (float(j) / float(sides)) * uSpan, v0 + (ring ? length : 0.0f) * uvScale,
                shade, rnd, cen);
     }
   }
