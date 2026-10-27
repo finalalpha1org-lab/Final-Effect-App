@@ -776,6 +776,12 @@ function showErr(t){const text=String(t==null?'Unknown error':t);const key=text.
 const seenRuntimeErrors=new Set();addEventListener('error',e=>{const masked=!e.filename&&!e.lineno&&!e.error&&(e.message==='Script error.'||!e.message);if(masked){if(!seenRuntimeErrors.has('anonymous-cross-origin')){seenRuntimeErrors.add('anonymous-cross-origin');console.warn('Browser masked an external script error; no source details were provided')}return}const file=(e.filename||'inline').split('/').pop(),key=(e.message||'error')+'|'+file+'|'+(e.lineno||0);if(seenRuntimeErrors.has(key))return;seenRuntimeErrors.add(key);const detail=e.error?.stack||`${e.message||'Script error'} (${file}:${e.lineno||0}:${e.colno||0})`;showErr('Runtime: '+String(detail).slice(0,900))});addEventListener('unhandledrejection',e=>{const r=e.reason,detail=r?.stack||r?.message||String(r||'Unhandled promise rejection');showErr('Unhandled promise: '+String(detail).slice(0,900))});
 const $=s=>document.querySelector(s),R=Math.random,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);function environmentFillLevel(on,day,cloud=0){return on?1.25-.35*cl(day,0,1)+.25*cl(cloud,0,1):0}
 const S=100,N=128,D=S/N,W=N+1,cv=$('#c');
+/* Device defaults. A handset should not start on the preset a desktop uses:
+   Standard detail is 96-segment streamed chunks with 22 000 plants instead
+   of 128 and 26 000, and 1024 px shadows is a quarter of the texels a 2048
+   map draws every time the focus moves. Both are chips in the sheet, so
+   anyone can raise them, and a saved setting wins over this. */
+const HANDSET=!!(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches)||(navigator.hardwareConcurrency||8)<=4;
 const localClock=new Date();
 let tab='terrain',mode='render',nav=false,place=null,sel=null,seed=1,wl=0,wlUserSet=false,tod=localClock.getHours()+localClock.getMinutes()/60+localClock.getSeconds()/3600,az=40,cov=.5,fogD=.004,wspd=1.8,wp=0,fl=0,waveChop=.22,ampUser=1.05,waterWindSpeed=14,waterWindDir=35,waterWavePeriod=6,waterWaveScale=1,waterQuality=((navigator.hardwareConcurrency||8)<=4||(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches))?0:2;
 
@@ -792,7 +798,7 @@ ren.shadowMap.autoUpdate=false;ren.shadowMap.needsUpdate=true;ren.toneMapping=TH
 const oc=new THREE.OrbitControls(cam,cv);oc.enableDamping=true;oc.maxPolarAngle=Math.PI;oc.maxDistance=260;oc.target.set(0,4,0);
 const tc=new THREE.TransformControls(cam,cv);tc.userData.isEditorHelper=true;const TERRAIN_EDITOR_HELPERS=new Set([tc]);tc.addEventListener('dragging-changed',e=>{oc.enabled=exploreMode?false:!e.value;if(e.value)push()});scene.add(tc);
 const hemi=new THREE.HemisphereLight(0xcfe3ff,0x6a5a48,.6),envFill=new THREE.HemisphereLight(0xb9d4ff,0x62584a,0),sun=new THREE.DirectionalLight(0xfff0d8,1.2),sc=sun.shadow.camera;envFill.name='Environment fill light';
-sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
+sun.castShadow=true;sun.shadow.mapSize.set(HANDSET?1024:2048,HANDSET?1024:2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
 scene.add(hemi,envFill,sun,sun.target);scene.fog=new THREE.FogExp2(0xbcd0e6,.004);
 const BG=new THREE.Color(0x3d3d3d),grid=new THREE.GridHelper(200,200,0x000000,0x555555);grid.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(grid);grid.position.y=.05;grid.material.transparent=true;grid.material.opacity=.5;grid.renderOrder=1;scene.add(grid);
 const gridAxes=[];
@@ -1207,7 +1213,7 @@ const DQ={leaf:1.6,seg:1.3,rock:1.3},DQP=[{leaf:.55,seg:.7,rock:.7},{leaf:1,seg:
 function storedLodFullDistance(){try{const v=Number(localStorage.getItem(LOD_FULL_KEY));return Number.isFinite(v)&&v>=250&&v<=2500?v:750}catch{return 750}}
 function setLodFullDistance(v){lodFullDistance=cl(Math.round(Number(v)||750),250,2500);try{localStorage.setItem(LOD_FULL_KEY,String(lodFullDistance))}catch{}lodPending=true;lodSettled=false;lodMotionAt=-1e9}
 function buildLowDetail(fn){const saved={...DQ};Object.assign(DQ,{leaf:Math.max(.42,saved.leaf*.42),seg:Math.max(.55,saved.seg*.62),rock:Math.max(.5,saved.rock*.6)});try{return fn()}finally{Object.assign(DQ,saved)}}
-let detail=2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
+let detail=HANDSET?1:2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
 function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);if(typeof resetImpostors==='function')resetImpostors();const saved={};
 for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};kindMeshes(K).forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
 for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);
