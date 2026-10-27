@@ -39,7 +39,12 @@
   };
 
   const DEFAULTS = {
-    enabled: true,
+    /* Off by default. While it was on, the kernel rewrote the studio's rain,
+       overcast, storm and snowfall targets on every tick, which is why those
+       sliders appeared to do nothing and why a fresh world was always wet. The
+       panel has a chip that turns this on; until then the studio's own weather
+       and its sliders are the only thing driving the scene. */
+    enabled: false,
     latitude: 32,        /* degrees, -70..70 */
     temperature: 22,     /* sea-level annual mean, C */
     humidity: 0.55,      /* 0..1 */

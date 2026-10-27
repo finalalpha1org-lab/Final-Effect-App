@@ -4823,6 +4823,34 @@ function exportOBJ() {
 }
 window.exportOBJ = exportOBJ;
 
+/* FBX. The sheet has offered this button since the export pass went in, but the
+   function behind it was never written: the reference below threw at load time
+   and everything after it in this script — the settings wiring included —
+   never ran. It now writes a real ASCII FBX 7.4 document from the same baked
+   node list the other two writers use. */
+function exportFBX() {
+  try {
+    const eng = FE.engines?.core;
+    if (!eng || !eng.sc) throw new Error('The 3D Workspace scene is not ready yet.');
+    const W = window.FEWorkspaceExport;
+    if (!W) throw new Error('The export module (workspace-export.js) did not load.');
+
+    setExportStatus('Collecting scene geometry…');
+    const { nodes, collected } = workspaceExportNodes(eng);
+    if (!nodes.length) throw new Error('Nothing to export yet — the workspace has no renderable mesh.');
+
+    const summary = exportSummary(nodes, collected);
+    const text = W.buildFBX(nodes, { sceneName: '3D Workspace' });
+    downloadBlob(new Blob([text], { type: 'application/octet-stream' }), 'FinalEffect-Workspace.fbx');
+    setExportStatus(`Exported FinalEffect-Workspace.fbx — ${summary}`);
+    FE.toast(`Exported FinalEffect-Workspace.fbx — ${summary}`);
+    setTimeout(closeExportModal, 1400);
+  } catch (err) {
+    console.error('FBX export failed:', err);
+    setExportStatus('FBX error: ' + err.message);
+    FE.toast('FBX error: ' + err.message);
+  }
+}
 window.exportFBX = exportFBX;
 
 $('#btn-global-settings').onclick=openGlobalSettings;
@@ -5116,7 +5144,7 @@ function addLandscapeWeather(payload,group,T,center,size){
   create('rain',rain);create('snow',snow);
 }
 function applyLandscapeWorld(payload,targetScene,T,group,center,size){
-  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.42+.62*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.12+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.8);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
+  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.16+.30*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.10+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.25);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
 }
 
 function buildLandscapeWater(settings,terrain,T,weather={}){
@@ -12257,5 +12285,56 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 window.addEventListener('pagehide',()=>runGlobalAutosave({silent:true}));
 emit('ready',{studios:Object.keys(STUDIOS)});
 </script>
+<!-- Render result viewer ---------------------------------------------------
+     The render engine used to hand every finished frame to a popup window. On a
+     phone that is a new tab: the result leaves the studio and there is no way
+     to fold it away. This is the same picture inside the page, with one-tap
+     fullscreen and a bottom-sheet mode that leaves the viewport usable. -->
+<div id="fe-render-viewer" class="frv" hidden>
+  <div class="frv-head">
+    <button type="button" class="frv-sheet" data-frv="sheet" aria-label="Expand the render sheet"></button>
+    <div class="frv-ttl"><strong class="frv-title">Render Result</strong><span class="frv-meta">waiting for a frame</span></div>
+    <div class="frv-tools">
+      <button type="button" class="frv-btn" data-frv="full" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button type="button" class="frv-btn" data-frv="min" aria-label="Minimise to a bottom sheet" title="Minimise"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v6"/></svg></button>
+      <button type="button" class="frv-btn danger" data-frv="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </div>
+  <div class="frv-bar"><div class="frv-fill"></div></div>
+  <div class="frv-stage">
+    <div class="frv-empty">No frame yet. Render from the 3D Workspace to fill this panel.</div>
+    <img class="frv-shot" alt="Rendered frame" hidden>
+  </div>
+  <div class="frv-foot"><span class="frv-status">Ready</span></div>
+</div>
+<style>
+#fe-render-viewer{position:fixed;left:0;right:0;bottom:0;top:96px;z-index:60;display:flex;flex-direction:column;
+  background:#0b0d14;color:#e2e8f0;border-top:1px solid #272d42;border-radius:16px 16px 0 0;overflow:hidden;
+  box-shadow:0 -18px 40px rgba(0,0,0,.45)}
+#fe-render-viewer[hidden]{display:none}
+#fe-render-viewer.full{top:0;border-radius:0}
+.frv-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#11141e;border-bottom:1px solid #272d42;flex:none;position:relative}
+.frv-sheet{position:absolute;left:50%;top:5px;transform:translateX(-50%);width:46px;height:5px;border:0;border-radius:3px;
+  background:#3b4257;padding:0;cursor:pointer}
+#fe-render-viewer.mini .frv-sheet{display:none}
+.frv-ttl{display:flex;flex-direction:column;min-width:0;margin-left:2px}
+.frv-title{font-size:13px;color:#f8fafc}
+.frv-meta{font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frv-tools{margin-left:auto;display:flex;gap:6px}
+.frv-btn{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;border:1px solid #2b3247;background:#161a26;color:#dbe3f0;cursor:pointer}
+.frv-btn:active{transform:scale(.96)}
+.frv-btn.danger{color:#fca5a5;border-color:#4a2a33}
+.frv-bar{height:2px;background:#1b2030;flex:none}
+.frv-fill{height:100%;width:0;background:linear-gradient(90deg,#6366f1,#22d3ee);transition:width .18s linear}
+.frv-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;background:#05070d;overflow:auto}
+.frv-empty{font-size:12px;color:#64748b;padding:24px;text-align:center}
+.frv-shot{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.frv-foot{flex:none;padding:6px 12px;font-size:11px;color:#94a3b8;background:#11141e;border-top:1px solid #272d42}
+#fe-render-viewer.mini{top:auto;height:86px;border-radius:14px 14px 0 0}
+#fe-render-viewer.mini .frv-stage{display:none}
+#fe-render-viewer.mini .frv-foot{display:none}
+#fe-render-viewer.mini .frv-head{border-bottom:0}
+@media (max-width:520px){.frv-title{font-size:12px}.frv-btn{width:32px;height:32px}}
+</style>
 </body>
 </html>

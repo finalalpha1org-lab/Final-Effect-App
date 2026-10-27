@@ -599,6 +599,199 @@
     return lines.join('\n') + '\n';
   }
 
+  /* ---- FBX ---------------------------------------------------------------
+     FBX is a binary container by default, but the ASCII form (7.4) is the same
+     data in text, and every importer — Blender, Maya, Unity, Unreal, Substance —
+     reads it. The button for it has always been in the export sheet and the
+     function behind it never existed, which threw on load and took the rest of
+     that script down with it. This writes the document properly: one Geometry,
+     Model and Material per node, wired with OO connections, normals and UVs per
+     vertex. Only what the scene actually has is emitted; nothing is faked. */
+
+  function fbxFloat(value) {
+    if (!isFinite(value)) return '0';
+    const rounded = Math.round(value * 1e5) / 1e5;
+    return String(rounded === 0 ? 0 : rounded);
+  }
+
+  function fbxArray(values) {
+    const parts = [];
+    for (let i = 0; i < values.length; i += 1) parts.push(fbxFloat(values[i]));
+    return `*${values.length} {\n\t\t\t\t${parts.join(',')}\n\t\t\t}`;
+  }
+
+  /* Every FBX string is quoted and has its backslashes doubled. */
+  function fbxName(text) {
+    return `"${String(text == null ? '' : text).replace(/\\/g, '\\\\').replace(/"/g, '')}"`;
+  }
+
+  function fbxProperty(name, type, subtype, flags, value) {
+    return `\t\t\tP: ${fbxName(name)}, ${fbxName(type)}, ${fbxName(subtype)}, ${fbxName(flags)},${value}\n`;
+  }
+
+  function buildFBX(nodes, options) {
+    const opts = options || {};
+    const list = (nodes || []).filter((node) => node && node.vertexCount > 0 && node.indices && node.indices.length >= 3);
+    const triangles = list.reduce((sum, node) => sum + Math.floor(node.indices.length / 3), 0);
+    const materials = materialsOf(list);
+    const time = '1970-01-01 10:00:00:000';
+    const out = [];
+
+    out.push('; FBX 7.4.0 project file');
+    out.push('; Final Effect 3D Workspace');
+    out.push(`; ${list.length} meshes, ${triangles} triangles, ${materials.length} materials`);
+    out.push('; ----------------------------------------------------');
+    out.push('');
+    out.push('FBXHeaderExtension:  {');
+    out.push('\tFBXHeaderVersion: 1003');
+    out.push('\tFBXVersion: 7400');
+    out.push('\tCreator: "Final Effect 3D Workspace"');
+    out.push(`\tCreationTimeStamp:  { Version: 1000 Year: 1970 Month: 1 Day: 1 Hour: 10 Minute: 0 Second: 0 Millisecond: 0 }`);
+    out.push('}');
+    out.push('GlobalSettings:  {');
+    out.push('\tVersion: 1000');
+    out.push('\tProperties70:  {');
+    out.push('\t\tP: "UpAxis", "int", "Integer", "",1');
+    out.push('\t\tP: "UpAxisSign", "int", "Integer", "",1');
+    out.push('\t\tP: "FrontAxis", "int", "Integer", "",2');
+    out.push('\t\tP: "FrontAxisSign", "int", "Integer", "",1');
+    out.push('\t\tP: "CoordAxis", "int", "Integer", "",0');
+    out.push('\t\tP: "CoordAxisSign", "int", "Integer", "",1');
+    out.push('\t\tP: "UnitScaleFactor", "double", "Number", "",100');
+    out.push('\t\tP: "AmbientColor", "ColorRGB", "Color", "",0,0,0');
+    out.push('\t\tP: "DefaultCamera", "KString", "", "", "Producer Perspective"');
+    out.push('\t\tP: "TimeMode", "enum", "", "",11');
+    out.push(`\t\tP: "TimeSpanStart", "KTime", "Time", "",0`);
+    out.push(`\t\tP: "TimeSpanStop", "KTime", "Time", "",${46186158000}`);
+    out.push('\t}');
+    out.push('}');
+    out.push('Documents:  {');
+    out.push('\tCount: 1');
+    out.push('\tDocument: 100000, "", "Scene" {');
+    out.push('\t\tProperties70:  {');
+    out.push('\t\t\tP: "SourceObject", "object", "", ""');
+    out.push('\t\t\tP: "ActiveAnimStackName", "KString", "", "", ""');
+    out.push('\t\t}');
+    out.push('\t\tRootNode: 0');
+    out.push('\t}');
+    out.push('}');
+    out.push('References:  {');
+    out.push('}');
+    out.push('Definitions:  {');
+    out.push('\tVersion: 100');
+    out.push(`\tCount: ${list.length * 2 + materials.length + 1}`);
+    out.push('\tObjectType: "GlobalSettings" {');
+    out.push('\t\tCount: 1');
+    out.push('\t}');
+    out.push('\tObjectType: "Model" {');
+    out.push(`\t\tCount: ${list.length}`);
+    out.push('\t}');
+    out.push('\tObjectType: "Geometry" {');
+    out.push(`\t\tCount: ${list.length}`);
+    out.push('\t}');
+    out.push('\tObjectType: "Material" {');
+    out.push(`\t\tCount: ${materials.length}`);
+    out.push('\t}');
+    out.push('}');
+    out.push('Objects:  {');
+
+    list.forEach((node, index) => {
+      const geometryId = 200000 + index * 2;
+      const modelId = geometryId + 1;
+      const indices = node.indices;
+      const polygon = new Array(indices.length);
+      for (let i = 0; i < indices.length; i += 1) {
+        /* The last index of a polygon is stored bitwise-negated. */
+        polygon[i] = (i % 3 === 2) ? ~indices[i] : indices[i];
+      }
+      out.push(`\tGeometry: ${geometryId}, "Geometry::${fbxName(node.name).slice(1, -1)}", "Mesh" {`);
+      out.push(`\t\tVertices: ${fbxArray(node.positions)}`);
+      out.push(`\t\tPolygonVertexIndex: ${fbxArray(polygon)}`);
+      out.push('\t\tGeometryVersion: 124');
+      if (node.normals && node.normals.length === node.positions.length) {
+        out.push('\t\tLayerElementNormal: 0 {');
+        out.push('\t\t\tVersion: 101');
+        out.push('\t\t\tName: ""');
+        out.push('\t\t\tMappingInformationType: "ByVertice"');
+        out.push('\t\t\tReferenceInformationType: "Direct"');
+        out.push(`\t\t\tNormals: ${fbxArray(node.normals)}`);
+        out.push('\t\t}');
+      }
+      if (node.uvs && node.uvs.length >= node.vertexCount * 2) {
+        out.push('\t\tLayerElementUV: 0 {');
+        out.push('\t\t\tVersion: 101');
+        out.push('\t\t\tName: "UVMap"');
+        out.push('\t\t\tMappingInformationType: "ByVertice"');
+        out.push('\t\t\tReferenceInformationType: "Direct"');
+        out.push(`\t\t\tUV: ${fbxArray(node.uvs)}`);
+        out.push('\t\t}');
+      }
+      out.push('\t\tLayerElementMaterial: 0 {');
+      out.push('\t\t\tVersion: 101');
+      out.push('\t\t\tName: ""');
+      out.push('\t\t\tMappingInformationType: "AllSame"');
+      out.push('\t\t\tReferenceInformationType: "IndexToDirect"');
+      out.push('\t\t\tMaterials: *1 {\n\t\t\t\t0\n\t\t\t}');
+      out.push('\t\t}');
+      out.push('\t\tLayer: 0 {');
+      out.push('\t\t\tVersion: 100');
+      if (node.normals) out.push('\t\t\tLayerElement:  { Type: "LayerElementNormal" TypedIndex: 0 }');
+      if (node.uvs) out.push('\t\t\tLayerElement:  { Type: "LayerElementUV" TypedIndex: 0 }');
+      out.push('\t\t\tLayerElement:  { Type: "LayerElementMaterial" TypedIndex: 0 }');
+      out.push('\t\t}');
+      out.push('\t}');
+
+      out.push(`\tModel: ${modelId}, "Model::${fbxName(node.name).slice(1, -1)}", "Mesh" {`);
+      out.push('\t\tVersion: 232');
+      out.push('\t\tProperties70:  {');
+      out.push(fbxProperty('Lcl Translation', 'Lcl Translation', '', 'A', '0,0,0'));
+      out.push(fbxProperty('Lcl Rotation', 'Lcl Rotation', '', 'A', '0,0,0'));
+      out.push(fbxProperty('Lcl Scaling', 'Lcl Scaling', '', 'A', '1,1,1'));
+      out.push(fbxProperty('DefaultAttributeIndex', 'int', 'Integer', '', '0'));
+      out.push('\t\t}');
+      out.push('\t\tShading: T');
+      out.push('\t\tCulling: "CullingOff"');
+      out.push('\t}');
+    });
+
+    const materialIdOf = new Map();
+    materials.forEach((material, index) => {
+      const id = 400000 + index;
+      materialIdOf.set(material, id);
+      const [r, g, b, a] = material.baseColor;
+      const shininess = Math.max(1, (1 - material.roughness) * 100);
+      out.push(`\tMaterial: ${id}, "Material::${fbxName(material.name).slice(1, -1)}", "" {`);
+      out.push('\t\tVersion: 102');
+      out.push('\t\tShadingModel: "phong"');
+      out.push('\t\tMultiLayer: 0');
+      out.push('\t\tProperties70:  {');
+      out.push(fbxProperty('DiffuseColor', 'Color', '', 'A', `${fbxFloat(r)},${fbxFloat(g)},${fbxFloat(b)}`));
+      out.push(fbxProperty('DiffuseFactor', 'Number', 'float', 'A', '1'));
+      out.push(fbxProperty('SpecularColor', 'Color', '', 'A', `${fbxFloat(1 - material.roughness)},${fbxFloat(1 - material.roughness)},${fbxFloat(1 - material.roughness)}`));
+      out.push(fbxProperty('SpecularFactor', 'Number', 'float', 'A', fbxFloat(1 - material.roughness * 0.8)));
+      out.push(fbxProperty('ShininessExponent', 'Number', 'float', 'A', fbxFloat(shininess)));
+      out.push(fbxProperty('TransparencyFactor', 'Number', 'float', 'A', fbxFloat(1 - a)));
+      out.push(fbxProperty('EmissiveColor', 'Color', '', 'A', material.emissive ? `${fbxFloat(material.emissive[0])},${fbxFloat(material.emissive[1])},${fbxFloat(material.emissive[2])}` : '0,0,0'));
+      out.push(fbxProperty('EmissiveFactor', 'Number', 'float', 'A', material.emissive && (material.emissive[0] || material.emissive[1] || material.emissive[2]) ? '1' : '0'));
+      out.push('\t\t}');
+      out.push('\t}');
+    });
+
+    out.push('}');
+    out.push('Connections:  {');
+    list.forEach((node, index) => {
+      const geometryId = 200000 + index * 2;
+      const modelId = geometryId + 1;
+      out.push(`\tC: "OO",${modelId},0`);
+      out.push(`\tC: "OO",${geometryId},${modelId}`);
+      const materialId = node.material ? materialIdOf.get(node.material) : undefined;
+      if (materialId !== undefined) out.push(`\tC: "OO",${materialId},${modelId}`);
+    });
+    out.push('}');
+    out.push('');
+    return out.join('\n');
+  }
+
   /* The distinct materials an OBJ export references, in file order, for MTL. */
   function materialsOf(nodes) {
     const seen = new Set();
@@ -631,6 +824,7 @@
     buildGLTF,
     buildOBJ,
     buildMTL,
+    buildFBX,
     materialsOf,
     align4
   };

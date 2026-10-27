@@ -349,6 +349,19 @@
     const ctx = canvas.getContext('2d');
     const tile = 256, gutter = 4, cell = tile + gutter * 2;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /* Fill every cell with its own surface colour before copying tiles in. The
+       atlas is updated tile by tile across idle slices, and clearing it to
+       transparent black meant that any frame rendered in between sampled a
+       black ground for every painted cell. A flat colour is a far better
+       placeholder than a hole. */
+    const defs = globals().OW_SURFACE_DEFS || [];
+    maps.forEach((texture, i) => {
+      const rgb = defs[i] && defs[i].rgb;
+      if (!rgb) return;
+      const px = (i % 4) * cell, py = Math.floor(i / 4) * cell;
+      ctx.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+      ctx.fillRect(px, py, cell, cell);
+    });
     maps.forEach((texture, i) => {
       const img = texture && texture.image;
       if (!img) return;

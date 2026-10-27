@@ -46,7 +46,14 @@ void mixInto(float& r,float& g,float& b,float tr,float tg,float tb,float t){
 }
 void terrainColorAt(uint32_t i,uint32_t j){
  const uint32_t k=j*W+i;const float h=H[k];
- const float sl=absf(H[(j<N?j+1:j)*W+i]-h)+absf(H[j*W+(i<N?i+1:i)]-h);
+ /* Rise over run over a 3 m central window, not the sum of two one-cell
+    deltas: the old form made every noisy cell a cliff, so over half the
+    island was painted rock and soil instead of grass. 1.0 is 45 deg. */
+ const float cell=size/float(N);
+ const uint32_t i0=i>2?i-2:0,i1=i+2<N?i+2:N,j0=j>2?j-2:0,j1=j+2<N?j+2:N;
+ const float gx=(H[j*W+i1]-H[j*W+i0])/maxf(float(i1-i0)*cell,1e-4f);
+ const float gz=(H[j1*W+i]-H[j0*W+i])/maxf(float(j1-j0)*cell,1e-4f);
+ const float sl=sqrtf(gx*gx+gz*gz);
  float total=0;for(int c=0;c<3;c++)for(int q=0;q<4;q++)total+=weights[c][k*4+q];
  float r=0,g=0,b=0;
  if(total>.001f){
@@ -64,7 +71,7 @@ void terrainColorAt(uint32_t i,uint32_t j){
   const float fine=noise(i*.36f-gSeed*.17f,j*.36f+gSeed*.31f,s);
   const float field=broad*.56f+mid*.3f+fine*.14f;
   const float ground=smoothstepf(.4f,.68f,field+clampf((h-12)*.002f,-.03f,.03f));
-  r=lerpf(gPal[0],gPal[3],ground*.62f);g=lerpf(gPal[1],gPal[4],ground*.62f);b=lerpf(gPal[2],gPal[5],ground*.62f);
+  r=lerpf(gPal[0],gPal[3],ground*.34f);g=lerpf(gPal[1],gPal[4],ground*.34f);b=lerpf(gPal[2],gPal[5],ground*.34f);
   const float rockThreshold=gRock+(broad-.5f)*.5f+(mid-.5f)*.25f;
   const float cliff=smoothstepf(rockThreshold-.25f,rockThreshold+1.15f,sl);
   const float outcrop=smoothstepf(.72f,.9f,field)*.25f;

@@ -54,8 +54,11 @@ function triangles(mesh) {
     maxY = Math.max(maxY, y);
     minY = Math.min(minY, y);
     maxR = Math.max(maxR, Math.hypot(p[i * 3], p[i * 3 + 2]));
-    minShade = Math.min(minShade, mesh.col[i * 3]);
-    maxShade = Math.max(maxShade, mesh.col[i * 3]);
+    /* Luma, not the red channel: the colour is now a leaf albedo, so a mid
+       green has a red component of 0.04 while the leaf is nowhere near black. */
+    const shade = 0.2126 * mesh.col[i * 3] + 0.7152 * mesh.col[i * 3 + 1] + 0.0722 * mesh.col[i * 3 + 2];
+    minShade = Math.min(minShade, shade);
+    maxShade = Math.max(maxShade, shade);
   }
   return { degenerate, minY, maxY, maxR, minShade, maxShade };
 }
@@ -102,7 +105,7 @@ test('every species grows a body with finite normals, sound triangles and no bla
     assert.ok(Array.from(tree.nrm).every(Number.isFinite), `${SPECIES[kind]} normals must be finite`);
     const t = triangles(tree);
     assert.equal(t.degenerate, 0, `${SPECIES[kind]} must not contain degenerate triangles`);
-    assert.ok(t.minShade > 0.05 && t.maxShade <= 1.4, `${SPECIES[kind]} procedural shade ${t.minShade.toFixed(2)}..${t.maxShade.toFixed(2)} must not contain black vertices`);
+    assert.ok(t.minShade > 0.02 && t.maxShade <= 1.4, `${SPECIES[kind]} shade luma ${t.minShade.toFixed(3)}..${t.maxShade.toFixed(3)} must not contain black vertices`);
     /* Real heights in metres, from the species' published size range. */
     const HEIGHT = { grass: [0.18, 0.42], tallgrass: [0.9, 2.0], daisy: [0.08, 0.20], tulip: [0.3, 0.5],
       lavender: [0.4, 0.7], saguaro: [4.5, 7.0], barrel: [0.6, 1.0], agave: [0.6, 1.3],

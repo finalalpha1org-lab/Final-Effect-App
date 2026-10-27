@@ -213,10 +213,18 @@ Weather weatherNow(float hour) {
   const float m = C.humidity;
   const float front = C.front;
 
-  w.cloud = clampf(0.08f + 0.92f * front * (0.35f + 0.65f * m), 0.0f, 1.0f);
-  /* Rain needs a front AND moisture; a weak front over dry air stays clear. */
-  const float wetness = clampf((front - 0.22f) / 0.78f, 0.0f, 1.0f);
-  w.rain = clampf(wetness * wetness * (0.25f + 0.9f * m) * w.cloud, 0.0f, 1.0f);
+  /* Fair weather is the *default*, not a gap between rain showers. The old
+     curve put cloud cover above 0.4 for a typical front and started rain at a
+     front of 0.22, so a freshly generated world was overcast and drizzling most
+     of the time -- "every time I load the default terrain it is raining". A
+     front now has to actually pass before the sky fills in, and rain needs a
+     fully developed one. */
+  const float cover = smoothstepf(0.30f, 0.95f, front);
+  w.cloud = clampf(0.03f + 1.02f * cover * (0.45f + 0.55f * m), 0.0f, 1.0f);
+  /* Rain needs a developed front AND moisture; a weak front over dry air stays
+     clear, and between showers the sky is simply blue. */
+  const float wetness = smoothstepf(0.55f, 0.92f, front);
+  w.rain = clampf(wetness * wetness * (0.30f + 0.85f * m) * w.cloud, 0.0f, 1.0f);
 
   /* Wind first: fog below needs the calm-air term. */
   w.windSpeed = C.windBase * (0.55f + 0.75f * front);

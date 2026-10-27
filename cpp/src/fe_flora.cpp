@@ -68,13 +68,25 @@ uint32_t gIdx[MAX_IDX];
 /* x, y, z, dir.x, dir.y, dir.z, size, colourT, sway, phase */
 constexpr int32_t LEAF_STRIDE = 10;
 float gLeaf[MAX_LEAF * LEAF_STRIDE];
+/* Albedo for a blade, frond and frondlet, in linear light. Every one of
+   these emitters used to write (shade, shade, shade) -- a grey vertex
+   colour -- and relied on a texture that lawns and ferns do not have, so
+   grass rendered as white spikes. The default is a mid leaf green
+   (sRGB 0.32, 0.48, 0.24) and each species overrides it. */
+float gLeafCol[3] = { 0.084f, 0.190f, 0.047f };
 
 /* Leaf cards are grown here too. The anchor buffer above says where a leaf sits
    and which way its twig points; this second buffer is the quad the renderer
    actually draws — four vertices, two triangles, the same roll, taper and
    crown-facing normal the studio used to compute in JavaScript. A card is 17
    floats, so 3200 anchors is well under a megabyte. */
-constexpr int32_t CARD_V = 4;
+/* A leaf card used to be one flat quad, which is why a crown read as a heap of
+   cardboard shards: every card was a single plane with a single normal, so it
+   either caught the sun as a whole or not at all. Six vertices now form a
+   two-by-three strip that arches along the midrib and folds across it, so one
+   leaf has a range of normals and the canopy breaks up into light and shadow
+   the way real foliage does. The JS side reads the stride from the kernel. */
+constexpr int32_t CARD_V = 6;
 constexpr int32_t CARD_I = 6;
 float gCardPos[MAX_LEAF * CARD_V * 3];
 float gCardNrm[MAX_LEAF * CARD_V * 3];
@@ -453,7 +465,7 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
      grows out of the ground instead of being stood on it: without the collar a
      cylinder meeting a slope leaves a visible ring of daylight, and without the
      burial an 8 cm trunk on a 20 cm dip in the terrain floats. */
-  const float footDepth = 0.10f + s.trunkRadius * 0.45f;
+  const float footDepth = 0.06f + s.trunkRadius * 0.22f;
   int32_t prev = addNode(v3(0.0f, -footDepth, 0.0f), -1, 0.0f);
   if (prev < 0) return -1;
   gNodePh[prev] = 0.0f;
@@ -467,8 +479,8 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
     if (idx < 0) return prev;
     /* Flare: 55% wider at the collar, gone by a fifth of the way up the trunk,
        which is the buttress profile of an oak or an ash rather than a cone. */
-    const float flareT = clampf(1.0f - float(i - 1) / (float(s.segments) * 0.22f), 0.0f, 1.0f);
-    const float flare = 1.0f + 0.55f * flareT * flareT;
+    const float flareT = clampf(1.0f - float(i - 1) / (float(s.segments) * 0.14f), 0.0f, 1.0f);
+    const float flare = 1.0f + 0.26f * flareT * flareT * flareT;
     const float r0 = s.trunkRadius * (1.0f - 0.72f * float(i - 1) / float(s.segments)) * flare;
     const float r1 = s.trunkRadius * (1.0f - 0.72f * t);
     const float shade = 0.70f + 0.30f * clampf(p.y / (s.trunkTop + 1.0f), 0.0f, 1.0f);
@@ -729,31 +741,56 @@ void pushCard(V3 b, V3 dir, float size, float roll, float c0r, float c0g, float 
   const float shadow = 0.85f + 0.30f * rnd;
   const float col[3] = { lerpf(c0r, c1r, t) * shadow, lerpf(c0g, c1g, t) * shadow,
                          lerpf(c0b, c1b, t) * shadow };
-  const V3 corner[4] = {
-    sub(b, mul(axis, h)), add(b, mul(axis, h)),
-    add(tip, mul(axis, h)), sub(tip, mul(axis, h))
-  };
-  const float uv[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
   const V3 centroid = mul(add(b, tip), 0.5f);
   const int32_t base = gCardV;
-  for (int32_t k = 0; k < 4; ++k) {
-    const int32_t i = gCardV++;
-    gCardPos[i * 3] = corner[k].x; gCardPos[i * 3 + 1] = corner[k].y; gCardPos[i * 3 + 2] = corner[k].z;
-    gCardNrm[i * 3] = n.x; gCardNrm[i * 3 + 1] = n.y; gCardNrm[i * 3 + 2] = n.z;
-    gCardCol[i * 3] = col[0]; gCardCol[i * 3 + 1] = col[1]; gCardCol[i * 3 + 2] = col[2];
-    gCardUv[i * 2] = uv[k][0]; gCardUv[i * 2 + 1] = uv[k][1];
-    gCardRnd[i] = rnd;
-    gCardCen[i * 3] = centroid.x; gCardCen[i * 3 + 1] = centroid.y; gCardCen[i * 3 + 2] = centroid.z;
-    gCardSway[i] = sway;
-    gCardPh[i] = phase;
-    gCardPart[i] = part;
+  /* 3 rows x 2 columns. The midrib droops, the two halves fold towards each
+     other, and the normal turns with the fold, so a single card shades across
+     its own width instead of flipping as one flat plane. */
+  const float droop = size * 0.10f;
+  for (int32_t r0 = 0; r0 < 3; ++r0) {
+    const float fr = float(r0) * 0.5f;
+    const V3 along = add(b, mul(sub(tip, b), fr));
+    const float width = h * (1.0f - 0.28f * fr);
+    for (int32_t c0 = 0; c0 < 2; ++c0) {
+      const float side = c0 ? 1.0f : -1.0f;
+      const int32_t i = gCardV++;
+      const V3 p = add(sub(along, mul(n, droop * fr * fr)), mul(axis, side * width));
+      const V3 vn = norm(add(add(n, mul(axis, side * 0.42f)), mul(v, (fr - 0.5f) * 0.22f)));
+      gCardPos[i * 3] = p.x; gCardPos[i * 3 + 1] = p.y; gCardPos[i * 3 + 2] = p.z;
+      gCardNrm[i * 3] = vn.x; gCardNrm[i * 3 + 1] = vn.y; gCardNrm[i * 3 + 2] = vn.z;
+      gCardCol[i * 3] = col[0]; gCardCol[i * 3 + 1] = col[1]; gCardCol[i * 3 + 2] = col[2];
+      gCardUv[i * 2] = c0 ? 1.0f : 0.0f; gCardUv[i * 2 + 1] = fr;
+      gCardRnd[i] = rnd;
+      gCardCen[i * 3] = centroid.x; gCardCen[i * 3 + 1] = centroid.y; gCardCen[i * 3 + 2] = centroid.z;
+      gCardSway[i] = sway;
+      gCardPh[i] = phase;
+      gCardPart[i] = part;
+    }
   }
-  gCardIdx[gCardI++] = uint32_t(base);
-  gCardIdx[gCardI++] = uint32_t(base + 1);
-  gCardIdx[gCardI++] = uint32_t(base + 2);
-  gCardIdx[gCardI++] = uint32_t(base);
-  gCardIdx[gCardI++] = uint32_t(base + 2);
-  gCardIdx[gCardI++] = uint32_t(base + 3);
+  /* Two quads. The card normal was flipped towards the outside of the crown a
+     moment ago, so the winding has to follow it: emitted blind, half the cards
+     ended up front-facing away from their own normal and were culled, which is
+     exactly the shard-of-cardboard look the crowns had. */
+  const V3 face = cross(axis, v);
+  const bool flip = dot(face, n) > 0.0f;
+  for (int32_t r0 = 0; r0 < 2; ++r0) {
+    const int32_t a = base + r0 * 2, bq = a + 1, c1 = a + 2, d = a + 3;
+    if (!flip) {
+      gCardIdx[gCardI++] = uint32_t(a);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(d);
+    } else {
+      gCardIdx[gCardI++] = uint32_t(a);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(d);
+      gCardIdx[gCardI++] = uint32_t(c1);
+    }
+  }
   ++gCardN;
 }
 
@@ -1256,7 +1293,9 @@ void blade(V3 root, V3 bendAxis, float length, float width, float lean,
       const V3 nrm = (cols == 2)
                         ? norm(add(n, mul(widthAxis, c == 0 ? -0.28f : 0.28f)))
                         : norm(add(n, mul(widthAxis, (c == 0) ? -0.55f : (c == 2 ? 0.55f : 0.0f))));
-      pushVert(v, nrm, float(c) * 0.5f, t, lerpf(shade0, shade1, t), rnd, cen);
+      const float bs = lerpf(shade0, shade1, t);
+      pushVert(v, nrm, float(c) * 0.5f, t, bs * gLeafCol[0], bs * gLeafCol[1],
+               bs * gLeafCol[2], rnd, cen);
     }
     if (r + 1 < rows) p = add(p, mul(tangent, ds));
   }
@@ -2090,8 +2129,28 @@ int32_t generateSage(uint32_t seed, int32_t detail) {
 /* ---------------------------------------------------------------- */
 /* Tree entry point                                                 */
 /* ---------------------------------------------------------------- */
+/* Linear albedo per kind. Foliage is never one green: a fern is darker and
+   bluer than a lawn, a sagebrush is grey-silver, a succulent is dusty
+   green and a palm frond is deep and slightly yellow. */
+void setLeafAlbedo(int32_t kind) {
+  float r = 0.084f, g = 0.190f, b = 0.047f;
+  switch (kind) {
+    case SP_TALLGRASS: case SP_FLOWER: r = 0.105f; g = 0.205f; b = 0.055f; break;
+    case SP_FERN: case SP_TREEFERN: r = 0.045f; g = 0.120f; b = 0.038f; break;
+    case SP_DAISY: case SP_TULIP: case SP_LAVENDER: r = 0.070f; g = 0.165f; b = 0.048f; break;
+    case SP_SAGUARO: case SP_BARREL: case SP_AGAVE: r = 0.095f; g = 0.150f; b = 0.085f; break;
+    case SP_SAGE: case SP_JUNIPER: r = 0.125f; g = 0.145f; b = 0.105f; break;
+    case SP_JOSHUA: r = 0.110f; g = 0.115f; b = 0.060f; break;
+    case SP_PALM: r = 0.050f; g = 0.125f; b = 0.036f; break;
+    case SP_PEBBLE: r = 0.320f; g = 0.310f; b = 0.290f; break;
+    default: break;
+  }
+  gLeafCol[0] = r; gLeafCol[1] = g; gLeafCol[2] = b;
+}
+
 int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   if (kind < 0 || kind >= SP_COUNT) return 0;
+  setLeafAlbedo(kind);
   gNodeN = 0;
   gAttN = 0;
   /* Habit-locked species first: a pine, a prickly pear and a sagebrush are
