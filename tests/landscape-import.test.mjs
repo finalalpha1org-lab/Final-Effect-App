@@ -54,6 +54,9 @@ test('Import exports whichever world the studio is showing, not the default grid
   assert.match(landscape,/const rgb=owColor\(weights,k\)/);
   /* Plants travel as the geometry and world-space matrices they were grown
      with, so the Workspace shows the same trees instead of placeholder cones. */
+  assert.match(landscape,/function landscapeExportWorldFoliage\(pack,centerX,centerZ\)/);
+  assert.match(landscape,/originX:c\.originX-centerX,originZ:c\.originZ-centerZ/);
+  assert.match(landscape,/landscapeExportWorldFoliage\(pack,plan\.centerX,plan\.centerZ\)/);
   assert.match(landscape,/pack\.matricesToTransforms\(entries\)/);
   assert.match(landscape,/transforms:part\.transforms,colors:part\.colors,geometry:packLandscapeGeometry\(info\.geometry\)/);
   assert.match(landscape,/for\(const mesh of c\.foliageMeshes\|\|\[\]\)/);

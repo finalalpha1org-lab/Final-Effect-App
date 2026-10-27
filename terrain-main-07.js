@@ -377,7 +377,10 @@ function landscapeExportTerrain(surface){
    group, with matrices relative to that chunk. Merging them into world space
    hands the Workspace the same geometry+matrix list the root grid sends, so the
    plants arrive as the trees that were grown, not as placeholder cones. */
-function landscapeExportWorldFoliage(pack){
+/* Everything the Workspace imports is placed around its own origin: the merged
+   heightfield is sampled in grid space, so the plants have to lose the same
+   world centre or they would sit beside the terrain instead of on it. */
+function landscapeExportWorldFoliage(pack,centerX,centerZ){
  const entries=[],meta=new Map(),totals=new Map(),lists=new Map();
  for(const c of OW.chunks.values()){
   for(const mesh of c.foliageMeshes||[]){
@@ -387,7 +390,7 @@ function landscapeExportWorldFoliage(pack){
    const part=src?.userData?.part||mesh.userData?.part||'body';
    const key=kind+'|'+part+'|'+(src?.userData?.vi??'');
    if(!meta.has(key))meta.set(key,{kind,part,geometry:mesh.geometry,material:mesh.material});
-   entries.push({key,count:mesh.count,matrices:mesh.instanceMatrix.array,colors:mesh.instanceColor?.array||null,originX:c.originX,originZ:c.originZ});
+   entries.push({key,count:mesh.count,matrices:mesh.instanceMatrix.array,colors:mesh.instanceColor?.array||null,originX:c.originX-centerX,originZ:c.originZ-centerZ});
    totals.set(kind,(totals.get(kind)||0)+mesh.count);
   }
   for(const kind in c.plants||{}){const list=c.plants[kind];if(Array.isArray(list)&&list.length)lists.set(kind,(lists.get(kind)||[]).concat(list))}
@@ -416,8 +419,8 @@ function landscapeExportWorld(surface){
  const weights=pack.sampleWorldField(records,plan,'surfaceWeights',12);
  const colors=new Float32Array(plan.vertices*3);
  for(let k=0;k<plan.vertices;k++){const rgb=owColor(weights,k);colors[k*3]=rgb[0];colors[k*3+1]=rgb[1];colors[k*3+2]=rgb[2]}
- return{source:'world',terrain:{size:plan.size,segments:plan.segments,vertexCount:plan.vertices,heights:b64(heights),colors:b64(colors),...surface},foliage:landscapeExportWorldFoliage(pack),water:landscapeExportWater(OW.config.waterLevel,plan.size),map:null,objects:[],
-  info:{chunks:records.length,sizeKm:OW.config.sizeKm,seed:OW.config.seed,worldSize:plan.size,worldSegments:plan.segments,vegetationDensity:OW.config.vegetationDensity}}
+ return{source:'world',terrain:{size:plan.size,segments:plan.segments,vertexCount:plan.vertices,heights:b64(heights),colors:b64(colors),...surface},foliage:landscapeExportWorldFoliage(pack,plan.centerX,plan.centerZ),water:landscapeExportWater(OW.config.waterLevel,plan.size),map:null,objects:[],
+  info:{chunks:records.length,sizeKm:OW.config.sizeKm,seed:OW.config.seed,worldSize:plan.size,worldSegments:plan.segments,worldCenter:[Math.round(plan.centerX*100)/100,Math.round(plan.centerZ*100)/100],vegetationDensity:OW.config.vegetationDensity}}
 }
 /* A planet cannot become a heightfield: the studio shows a globe, so the
    Workspace receives a globe — the same radius, the same `planetRelief`
