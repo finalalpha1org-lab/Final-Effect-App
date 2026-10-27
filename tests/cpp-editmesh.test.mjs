@@ -36,6 +36,7 @@ const CUBE_TRIS = new Uint32Array([
 const NATIVE_SOURCES = [
   'cpp/src/fe_heap.cpp',
   'cpp/src/fe_scatter.cpp',
+  'cpp/src/fe_skin.cpp',
   'cpp/src/fe_editmesh.cpp',
   'cpp/src/fe_editmesh_tools.cpp',
   'cpp/tests/fe_editmesh_tests.cpp'

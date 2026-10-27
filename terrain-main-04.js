@@ -128,7 +128,7 @@ $('#bg').onclick=()=>{if(exploreMode)closeExploreSheet();showPanel(!panelOpen);i
 $('#bw').onclick=()=>{closeExploreSheet();showPanel(false);cam.position.set(58,44,68);oc.target.set(0,4,0);try{(window.parent!==window?window.parent:window.opener)?.postMessage({type:'final-effect:workspace'},'*')}catch(e){}};
 
 /* ultra realism: terrain detail shader, depth-aware water, quality controls */
-let shQ=2048,pxQ=Math.min(devicePixelRatio,2),smoothPreviewAuto=false,adaptiveScale=1,adaptiveSlow=0,adaptiveFast=0,adaptiveLast=0,adaptiveFPS=60,previewCameraMovedAt=performance.now();let lastPreviewPixelRatio=ren.getPixelRatio();const previewCameraAnchor=cam.position.clone(),DET={value:.4};
+let shQ=HANDSET?1024:2048,pxQ=Math.min(devicePixelRatio,2),smoothPreviewAuto=false,adaptiveScale=1,adaptiveSlow=0,adaptiveFast=0,adaptiveLast=0,adaptiveFPS=60,previewCameraMovedAt=performance.now();let lastPreviewPixelRatio=ren.getPixelRatio();const previewCameraAnchor=cam.position.clone(),DET={value:.4};
 const TG=`uniform float uDet,uWy,uT,uWetG,uRainK,uSnowG,uAutG,uLit,uSurfacePaintEnabled;uniform sampler2D uTreeMap,uSurfAtlas;varying vec3 vW;varying vec4 vSurfaceWeightsA,vSurfaceWeightsB,vSurfaceWeightsC;
 float hs(vec2 p){vec3 p3=fract(vec3(p.xyx)*.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}float hs3(vec3 p){p=fract(p*.1031);p+=dot(p,p.zyx+31.32);return fract((p.x+p.y)*p.z);}
 float vn2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hs(i),hs(i+vec2(1.,0.)),f.x),mix(hs(i+vec2(0.,1.)),hs(i+vec2(1.,1.)),f.x),f.y);}

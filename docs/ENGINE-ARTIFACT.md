@@ -33,8 +33,17 @@ is the contract below.
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1788098` bytes, ABI v1, **389 exports**; every group above
+The shipped build is `1835021` bytes, ABI v1, **412 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
+
+Twenty of the exports are the rig (`cpp/src/fe_skin.cpp`): `fe_skin_begin`,
+`fe_skin_solve`, `fe_skin_deform`, `fe_skin_auto_weights`, the pointer getters
+and `fe_skin_bind_from_pose`. They are documented in `docs/SKELETON.md`.
+
+Three more are the chunk-normal helper (`fe_grid_normals`, `fe_grid_height_ptr`,
+`fe_grid_normal_ptr`, in `cpp/src/fe_landscape.cpp`): a streamed open-world tile
+recomputes its shading normals on every brush stroke, and the kernel runs the
+same central difference the root terrain uses so the two shade alike.
 
 Five of the exports are not a kernel group: `fe_scatter_begin`,
 `fe_scatter_matrices`, `fe_scatter_order_ptr`, `fe_scatter_aux_ptr` and
@@ -95,7 +104,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1788098 bytes, ABI v1, 389 exports)`.
+that passes `Validated fe_core_engine.wasm (1835021 bytes, ABI v1, 412 exports)`.
 
 ## Verification
 

@@ -8,7 +8,9 @@ import { appPath } from './app-paths.mjs';
 const html=readFileSync(appPath('Terrain_system_.html'),'utf8');
 
 test('normal Terrain settings panel builder and tabs remain wired',()=>{
-  assert.ok(html.includes("function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())"),'normal settings require their shared panel builder');
+  assert.ok(html.includes('function build(){\n nfs=[];'),'normal settings require their shared panel builder');
+  assert.ok(html.includes("$('#dr').replaceChildren(...nodes)"),'and the builder still fills the drawer');
+  assert.ok(html.includes("if(typeof make!=='function'){showErr('Panel: no builder for '+tab);return}"),'a missing builder reports itself instead of leaving an empty sheet');
   assert.ok(html.includes("$('#cls').onclick=()=>$('#bw').click();"),'the normal panel close control must remain wired');
   assert.match(html,/const TABS=\[\['terrain','⛰','Terrain'\]/,'normal Terrain remains the first tab');
   for(const label of ['Planet','Foliage','City','Quality','Lighting','Sky','Water','Weather','Objects','Import'])assert.ok(html.includes(`'${label}'`),`${label} settings remain available`);

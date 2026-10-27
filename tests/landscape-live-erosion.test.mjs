@@ -355,7 +355,9 @@ test('the panel and the frame loop are wired to the live run', () => {
   for (const id of ['fe_erosion_begin', 'fe_erosion_step', 'fe_erosion_dirty_ptr', 'fe_erosion_set_region', 'fe_erosion_cancel']) {
     assert.ok(cppBuild.includes(`'${id}'`), `${id} is a required export`);
   }
-  assert.match(loop, /updateFoliageLOD\(n\);liveErosionTick\(n\);/, 'the loop ticks the run once per frame');
+  assert.match(loop, /updateFoliageLOD\(n\);frameStage='erosion';liveErosionTick\(n\);frameStage='';/,
+    'the loop ticks the run once per frame, and names the stage so a fault can stop it');
+  assert.equal((loop.match(/liveErosionTick\(/g) || []).length, 1, 'exactly one tick per frame');
   assert.match(panel, /\['hydro','💧 Hydraulic erosion'\]/, 'the chip survives');
   assert.match(panel, /if\(mode==='hydro'\)\{/, 'and it starts the live run instead of the blocking pass');
   assert.match(panel, /sl\('Erosion area \(m\)'/, 'the patch size is a runtime control');

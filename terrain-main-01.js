@@ -42,24 +42,57 @@
   rect=ex.fe_malloc(16);palPtr=ex.fe_malloc(24*4);paintPtr=ex.fe_malloc(48);owMixPtr=ex.fe_malloc(16);owBioPtr=ex.fe_malloc(16);owState.key='';
   core.ready=true;core.backend='C++ WASM';core.span=0;
  }
- core.load=async function(){
+ /* Streaming compile: the browser compiles the module while it is still
+    downloading, so the studio does not sit idle waiting for 1.8 MB before the
+    compile even starts. The response is cloned first, because a second
+    instance (the kernel worker, the open-world add-on) still needs the bytes —
+    the clone buffers the same array the old code buffered, so this costs no
+    extra memory, only wall time. A host that serves the wrong MIME type falls
+    back to the buffered path. */
+ /* Single-file and file:// builds reach no server, so the artifact inlines the
+    module as base64. That is a download convenience, not the way the served app
+    boots: the 2.44 MB of base64 is only parsed when fetch actually fails. */
+ function bootEmbedded(){
   try{
-   const response=await fetch(new URL('./fe_core_engine.wasm',document.baseURI));
-   if(!response.ok)throw Error('Terrain WASM HTTP '+response.status);
-   const buffer=await response.arrayBuffer();wasmBytes=new Uint8Array(buffer.slice(0));
-   const {instance}=await WebAssembly.instantiate(buffer,{});
-   bind(instance);
-  }catch(error){core.error=String(error);core.backend='JS fallback';console.warn('Landscape C++ unavailable:',error)}
- };
- try{
-  const encoded=root.__FE_CPP_WASM_BASE64__;
-  if(typeof encoded==='string'&&encoded.length>64&&typeof root.atob==='function'){
+   const encoded=root.__FE_CPP_WASM_BASE64__;
+   if(typeof encoded!=='string'||encoded.length<=64||typeof root.atob!=='function')return false;
    const binary=root.atob(encoded),bytes=new Uint8Array(binary.length);
    for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
    wasmBytes=bytes;
    bind(new WebAssembly.Instance(new WebAssembly.Module(bytes),{}));
+   return true;
+  }catch(error){
+   core.error=String(error);
+   if(typeof console!=='undefined')console.warn('Embedded terrain WASM unavailable:',error);
+   return false;
   }
- }catch(error){core.error=String(error);console.warn('Embedded terrain WASM unavailable:',error)}
+ }
+ core.load=async function(){
+  const url=new URL('./fe_core_engine.wasm',document.baseURI);
+  try{
+   const response=await fetch(url);
+   if(!response.ok)throw Error('Terrain WASM HTTP '+response.status);
+   /* clone() is only used to keep the raw bytes for the kernel worker and the
+      open-world add-on. A host or a test stub that hands back a plain object
+      with just arrayBuffer() still works: it simply takes the buffered path. */
+   const cloneable=typeof response.clone==='function';
+   const forBytes=cloneable?response.clone():response;
+   if(cloneable&&typeof WebAssembly.instantiateStreaming==='function'){
+    try{
+     const {instance}=await WebAssembly.instantiateStreaming(response,{});
+     wasmBytes=new Uint8Array(await forBytes.arrayBuffer());
+     bind(instance);
+     return;
+    }catch(streamError){/* wrong MIME type: the clone still has every byte */}
+   }
+   const buffer=await forBytes.arrayBuffer();wasmBytes=new Uint8Array(buffer.slice(0));
+   const {instance}=await WebAssembly.instantiate(buffer,{});
+   bind(instance);
+  }catch(error){
+   if(bootEmbedded())return;
+   core.error=String(error);core.backend='JS fallback';console.warn('Landscape C++ unavailable:',error)
+  }
+ };
  core.loading=core.ready?Promise.resolve():core.load();
  function ensure(n,size){
   if(!core.ready)return false;
@@ -253,6 +286,21 @@
   if(count<0){core.error='C++ natural scatter returned '+count;return 0}
   if(count)state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_scatter_out_ptr(),count*4));
   return count;
+ };
+ /* Smooth normals for a streamed chunk grid (row x row heights, uniform step).
+    The open-world tiles recompute theirs on every brush stroke, and three's
+    computeVertexNormals allocates a fresh array and averages face normals;
+    the kernel uses the same central difference as the root terrain, so a tile
+    shades exactly like the world around it. */
+ core.gridNormals=function(state){
+  if(!core.ready||!core.has('fe_grid_normals')||!state||!state.heights||!state.output)return false;
+  const row=state.row|0,count=row*row;
+  if(row<2||row>129||state.heights.length<count||state.output.length<count*3)return false;
+  const step=state.step>0?state.step:1;
+  new Float32Array(ex.memory.buffer,ex.fe_grid_height_ptr(),count).set(state.heights.subarray(0,count));
+  if(ex.fe_grid_normals(row,step)!==0)return false;
+  state.output.set(new Float32Array(ex.memory.buffer,ex.fe_grid_normal_ptr(),count*3));
+  return true;
  };
  core.normals=function(state){
   if(!ensure(state.n,state.size))return false;
@@ -728,6 +776,12 @@ function showErr(t){const text=String(t==null?'Unknown error':t);const key=text.
 const seenRuntimeErrors=new Set();addEventListener('error',e=>{const masked=!e.filename&&!e.lineno&&!e.error&&(e.message==='Script error.'||!e.message);if(masked){if(!seenRuntimeErrors.has('anonymous-cross-origin')){seenRuntimeErrors.add('anonymous-cross-origin');console.warn('Browser masked an external script error; no source details were provided')}return}const file=(e.filename||'inline').split('/').pop(),key=(e.message||'error')+'|'+file+'|'+(e.lineno||0);if(seenRuntimeErrors.has(key))return;seenRuntimeErrors.add(key);const detail=e.error?.stack||`${e.message||'Script error'} (${file}:${e.lineno||0}:${e.colno||0})`;showErr('Runtime: '+String(detail).slice(0,900))});addEventListener('unhandledrejection',e=>{const r=e.reason,detail=r?.stack||r?.message||String(r||'Unhandled promise rejection');showErr('Unhandled promise: '+String(detail).slice(0,900))});
 const $=s=>document.querySelector(s),R=Math.random,cl=(v,a,b)=>Math.min(b,Math.max(a,v)),mx=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);function environmentFillLevel(on,day,cloud=0){return on?1.25-.35*cl(day,0,1)+.25*cl(cloud,0,1):0}
 const S=100,N=128,D=S/N,W=N+1,cv=$('#c');
+/* Device defaults. A handset should not start on the preset a desktop uses:
+   Standard detail is 96-segment streamed chunks with 22 000 plants instead
+   of 128 and 26 000, and 1024 px shadows is a quarter of the texels a 2048
+   map draws every time the focus moves. Both are chips in the sheet, so
+   anyone can raise them, and a saved setting wins over this. */
+const HANDSET=!!(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches)||(navigator.hardwareConcurrency||8)<=4;
 const localClock=new Date();
 let tab='terrain',mode='render',nav=false,place=null,sel=null,seed=1,wl=0,wlUserSet=false,tod=localClock.getHours()+localClock.getMinutes()/60+localClock.getSeconds()/3600,az=40,cov=.5,fogD=.004,wspd=1.8,wp=0,fl=0,waveChop=.22,ampUser=1.05,waterWindSpeed=14,waterWindDir=35,waterWavePeriod=6,waterWaveScale=1,waterQuality=((navigator.hardwareConcurrency||8)<=4||(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches))?0:2;
 
@@ -744,7 +798,7 @@ ren.shadowMap.autoUpdate=false;ren.shadowMap.needsUpdate=true;ren.toneMapping=TH
 const oc=new THREE.OrbitControls(cam,cv);oc.enableDamping=true;oc.maxPolarAngle=Math.PI;oc.maxDistance=260;oc.target.set(0,4,0);
 const tc=new THREE.TransformControls(cam,cv);tc.userData.isEditorHelper=true;const TERRAIN_EDITOR_HELPERS=new Set([tc]);tc.addEventListener('dragging-changed',e=>{oc.enabled=exploreMode?false:!e.value;if(e.value)push()});scene.add(tc);
 const hemi=new THREE.HemisphereLight(0xcfe3ff,0x6a5a48,.6),envFill=new THREE.HemisphereLight(0xb9d4ff,0x62584a,0),sun=new THREE.DirectionalLight(0xfff0d8,1.2),sc=sun.shadow.camera;envFill.name='Environment fill light';
-sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
+sun.castShadow=true;sun.shadow.mapSize.set(HANDSET?1024:2048,HANDSET?1024:2048);sun.shadow.radius=.8;sc.left=sc.bottom=-60;sc.right=sc.top=60;sc.near=1;sc.far=360;sun.shadow.bias=-.0002;sun.shadow.normalBias=.018;sun.layers.enable(1);sc.layers.enable(1);sc.updateProjectionMatrix();
 scene.add(hemi,envFill,sun,sun.target);scene.fog=new THREE.FogExp2(0xbcd0e6,.004);
 const BG=new THREE.Color(0x3d3d3d),grid=new THREE.GridHelper(200,200,0x000000,0x555555);grid.userData.isEditorHelper=true;TERRAIN_EDITOR_HELPERS.add(grid);grid.position.y=.05;grid.material.transparent=true;grid.material.opacity=.5;grid.renderOrder=1;scene.add(grid);
 const gridAxes=[];
@@ -896,12 +950,110 @@ function setWaterQuality(q){q=exClamp(Math.round(Number(q)||0),0,WATER_QUALITY.l
 function beginWaterReflectionCapture(){const keep=new Set([ter,sky,sun,sun.target,hemi,envFill,waterReflectionCam,...clouds]);if(typeof OW!=='undefined'&&OW?.active)keep.add(OW.group);if(typeof mapRoot!=='undefined'&&mapRoot)keep.add(mapRoot);for(const o of typeof objs!=='undefined'?objs:[]){const kind=String(o.userData?.n||o.name||'').split('.')[0].toLowerCase();if(/grass|flower|daisy|tulip|lavender|pine|oak|birch|palm|shrub|rock|spruce|krumm|juniper|saguaro|barrel|prickly|acacia|joshua|agave|sage|sandrock|deadtree|ashbush|treefern|fern|basalt/i.test(kind))keep.add(o)}for(const k of ['grass','tallgrass','flower','daisy','tulip','lavender','rock','sandrock','basalt','pine','oak','birch','palm','shrub','spruce','krumm','juniper','saguaro','barrel','prickly','acacia','joshua','agave','sage','deadtree','ashbush','treefern','fern']){const K=KIND[k];if(!K)continue;for(const list of [K.meshes,K.shadowMeshes])if(Array.isArray(list))for(const o of list)if(o)keep.add(o)}const waterVisible=water.visible,hidden=[],sunVisible=sun.visible,normalScales=[U.uNS?.value,U.uNM?.value,U.uNP?.value];water.visible=false;sun.visible=false;if(U.uNS)U.uNS.value=0;if(U.uNM)U.uNM.value=0;if(U.uNP)U.uNP.value=0;for(const o of scene.children){if(o===water||keep.has(o))continue;if(o.visible){hidden.push(o);o.visible=false}}return()=>{water.visible=waterVisible;sun.visible=sunVisible;if(U.uNS)U.uNS.value=normalScales[0];if(U.uNM)U.uNM.value=normalScales[1];if(U.uNP)U.uNP.value=normalScales[2];for(const o of hidden)o.visible=true}}
 function waterReflectionProbeXZ(){const open=typeof OW!=='undefined'&&OW?.active,p=exploreMode?cam.getWorldPosition(new THREE.Vector3()):cam.position,cx=p.x,cz=p.z,half=open?OW.config.sizeKm*500:S*.5,probeY=water.position.y+.42,ground=(x,z)=>open?OW.heightAt(x,z):hgt(x,z),free=(x,z)=>Math.abs(x)>=half-.25||Math.abs(z)>=half-.25||ground(x,z)<=probeY-.04;if(free(cx,cz))return{x:cx,z:cz};let dx=cx-(oc.target?.x||0),dz=cz-(oc.target?.z||0),len=Math.hypot(dx,dz);if(len<.01){const a=(az||0)*Math.PI/180;dx=Math.cos(a);dz=Math.sin(a);len=1}const base=Math.atan2(dz,dx),limit=open?Math.min(Math.max(OW.chunkSize*2,half*.65),5000):Math.max(S*1.5,64),step=open?32:4;for(let r=step;r<=limit;r+=step)for(let i=0;i<8;i++){const a=base+i*Math.PI/4,x=cx+Math.cos(a)*r,z=cz+Math.sin(a)*r;if(free(x,z))return{x,z}}return{x:cx+dx/len*(limit+step),z:cz+dz/len*(limit+step)}}
 function updateWaterReflection(){if(!water.visible||U.uReflect.value<.01||waterReflectionFailed&&performance.now()<waterReflectionRetryAt)return;const now=performance.now();if(cam.position.distanceToSquared(waterReflectionViewAnchor)>.0025||cam.quaternion.angleTo(waterReflectionOrientationAnchor)>.003){waterReflectionViewAnchor.copy(cam.position);waterReflectionOrientationAnchor.copy(cam.quaternion);waterReflectionViewMovedAt=now;return}if(now-waterReflectionViewMovedAt<350||waterReflectionReady&&fr%waterReflectionInterval!==0)return;const probe=waterReflectionProbeXZ(),restoreReflectionScene=beginWaterReflectionCapture();waterReflectionCam.position.set(probe.x,water.position.y+.42,probe.z);try{waterReflectionCam.update(ren,scene);waterReflectionReady=true;waterReflectionFailed=false;waterReflectionRetryAt=0;waterReflectionFailures=0;if(waterMat.envMap!==waterReflectionRT.texture){waterMat.envMap=waterReflectionRT.texture;waterMat.needsUpdate=true}}catch(e){waterReflectionReady=false;waterReflectionFailed=true;waterReflectionRetryAt=performance.now()+3000;if(++waterReflectionFailures===1)console.warn('Dynamic water environment reflection capture failed; keeping the last captured frame.',e)}finally{restoreReflectionScene()}}
+/* ---------------------------------------------------------------- */
+/* Water is an optical medium, not a colour swatch                   */
+/* ---------------------------------------------------------------- */
+/* A body of water looks the way it does because of what is dissolved and
+   suspended in it. Each preset below is therefore described by measurements a
+   limnologist would recognise - a Jerlov optical water type, a CDOM (gilvin)
+   load, a suspended-sediment load, a Secchi depth, a Beaufort sea state -
+   and its deep/shallow/turbid colours are *derived* from those with the
+   Beer-Lambert law against the C++ `fe_water_optical` kernel. The authored
+   colours are kept only as the exposure reference (their peak channel), so a
+   preset keeps the brightness the look was tuned to while its hue comes from
+   physics. */
+const WATER_SILT=[[.55,.50,.42],[.52,.47,.38],[.50,.44,.33],[.46,.40,.30],[.45,.38,.27],[.56,.52,.45],[.50,.46,.38],[.48,.42,.32]];
+const WATER_OPTICAL_FALLBACK=[
+ [.3050,.0545,.0145,.0030],[.3500,.0750,.0200,.0100],[.4200,.1100,.0450,.0500],[.5500,.2000,.1150,.3500],
+ [.7200,.3600,.3000,1.2000],[.3250,.0620,.0180,.0045],[.3850,.0680,.0280,.0070],[.4800,.1450,.0850,.0900]];
+function waterOpticalFor(source){
+ const type=cl((typeof source==='number'?source:source&&source.jerlov)|0,0,7);
+ let o=null;
+ if(typeof core!=='undefined'&&core&&typeof core.waterOptical==='function')o=core.waterOptical(type);
+ if(!o)o=WATER_OPTICAL_FALLBACK[type];
+ /* CDOM absorbs short wavelengths hardest, which is what turns a peat bog
+    brown instead of blue: it is a blue absorber, not a dye. */
+ const cdom=cl((source&&source.cdom)||0,0,2);
+ return [o[0],o[1]+cdom*.35,o[2]+cdom*1.60,o[3],o[4]===undefined?o[3]:o[4],o[5]===undefined?o[3]:o[5]];
+}
+function waterScaleTo(rgb,reference){
+ const peak=Math.max(rgb[0],rgb[1],rgb[2])||1;
+ const ref=Math.max(Array.isArray(reference)||ArrayBuffer.isView(reference)?Math.max(reference[0],reference[1],reference[2]):1,.02);
+ return rgb.map(v=>cl(v/peak*ref,0,1));
+}
+/* Light coming back out of shallow water is mostly the bed seen through the
+   column, which is why a reef over sand is turquoise while the same water over
+   rock is dark: red is gone after a few metres, so the bed's neutral albedo
+   arrives blue-green. */
+function waterShallowColour(source){
+ const o=waterOpticalFor(source),d=3,bottom=[.42,.38,.30],out=[0,0,0];
+ for(let i=0;i<3;i++){
+  const s=o[3+i]/(o[i]+o[3+i]);
+  out[i]=bottom[i]*Math.exp(-o[i]*d)+s*.12;
+ }
+ const peak=Math.max(out[0],out[1],out[2])||1;
+ return out.map(v=>cl(v/peak,0,1));
+}
+function waterColumnColour(source,depth){
+ const o=waterOpticalFor(source),d=cl(depth===undefined?9:depth,0,60),out=[0,0,0];
+ for(let i=0;i<3;i++){
+  const a=o[i],b=o[3+i],t=Math.exp(-a*d),s=b/(a+b);
+  /* Light that survived the path plus the part the water scattered back. */
+  out[i]=t*(1-s)+s*.55;
+ }
+ const peak=Math.max(out[0],out[1],out[2])||1;
+ return out.map(v=>cl(v/peak,0,1));
+}
+function beaufortOf(speed){
+ const bands=[0.3,1.6,3.4,5.5,8,10.8,13.9,17.2,20.8,24.5,28.5,32.7];
+ const u=cl(+speed||0,0,60);
+ for(let i=0;i<bands.length;i++)if(u<bands[i])return i;
+ return 12;
+}
+/* Hydration is idempotent and lazy: the array literal stays a literal (it is
+   the exposure reference the presets were tuned against) while every read of a
+   preset returns the physical version. */
+function waterProfileFor(index){
+ const p=WATER_PROFILES[cl(index|0,0,WATER_PROFILES.length-1)];
+ if(!p)return null;
+ if(p.__hydrated)return p;
+ p.__hydrated=true;
+ const sediment=cl(p.sediment===undefined?.05:p.sediment,0,1);
+ const o=waterOpticalFor(p);
+ const silt=WATER_SILT[cl(p.jerlov|0,0,7)];
+ p.deep=waterScaleTo(waterColumnColour(p,12),p.deep);
+ /* Shallow water is the bottom seen through the water, so the sediment tints
+    it directly - that is why a silty river reads brown at the edge and a reef
+    reads turquoise. */
+ const shallow=waterShallowColour(p).map((v,i)=>v+(silt[i]-v)*sediment);
+ p.shallow=waterScaleTo(shallow,p.shallow);
+ p.turbid=waterScaleTo(silt,p.turbid);
+ /* Secchi depth from the diffuse attenuation in the green/blue, 1.44/Kd. */
+ const kd=(o[1]+o[2])*.5+o[3];
+ p.secchi=+(1.44/Math.max(kd,1e-4)).toFixed(1);
+ p.clarity=cl(p.secchi/10,.3,4);
+ p.turbidity=cl(sediment*.9+o[3]*.15,.02,1);
+ p.transparency=cl(1-sediment*.55-o[3]*.25,.08,1);
+ p.beaufort=beaufortOf(p.wind);
+ p.optics={type:cl(p.jerlov|0,0,7),absorb:[+o[0].toFixed(4),+o[1].toFixed(4),+o[2].toFixed(4)],scatter:+o[3].toFixed(4)};
+ return p;
+}
+window.__feWaterPresets=()=>WATER_PROFILES.map((p,i)=>waterProfileFor(i));
+window.__feWaterOptics=waterOpticalFor;
+
 const WATER_PROFILES=[
- {name:'Ocean',deep:[.004,.025,.14],shallow:[.018,.19,.46],clarity:1.8,height:1.25,scale:1,speed:1.55,period:8,chop:.26,roughness:.09,reflect:1.12,refraction:.58,turbidity:.08,transparency:.94,turbid:[.025,.12,.27],foam:.9,threshold:.7,shore:1.15,wind:14,direction:35},
- {name:'Lagoon',deep:[.012,.25,.28],shallow:[.14,.72,.53],clarity:4.2,height:.22,scale:.72,speed:.62,period:6,chop:.06,roughness:.07,reflect:.82,refraction:.88,turbidity:.035,transparency:1,turbid:[.07,.4,.32],foam:.24,threshold:.9,shore:.55,wind:3,direction:20},
- {name:'Murky',deep:[.075,.072,.032],shallow:[.3,.24,.085],clarity:.45,height:.24,scale:.8,speed:.52,period:7,chop:.06,roughness:.86,reflect:.2,refraction:.08,turbidity:1,transparency:.12,turbid:[.32,.26,.09],foam:.06,threshold:.98,shore:.2,wind:2,direction:55}
+ /* The three originals keep their authored order of fields: the studio tests
+    pin that these presets own independent colour, wave and optical controls. */
+ {name:'Ocean',deep:[.004,.025,.14],shallow:[.018,.19,.46],clarity:1.8,height:1.25,scale:1,speed:1.55,period:8,chop:.26,roughness:.09,reflect:1.12,refraction:.58,turbidity:.08,transparency:.94,turbid:[.025,.12,.27],foam:.9,threshold:.7,shore:1.15,wind:12,direction:35,jerlov:0,cdom:0,sediment:.02,tempC:17,salinityPSU:35,fetchKm:400},
+ {name:'Lagoon',deep:[.012,.25,.28],shallow:[.14,.72,.53],clarity:4.2,height:.22,scale:.72,speed:.62,period:6,chop:.06,roughness:.07,reflect:.82,refraction:.88,turbidity:.035,transparency:1,turbid:[.07,.4,.32],foam:.24,threshold:.9,shore:.55,wind:4.5,direction:20,jerlov:2,cdom:.02,sediment:.06,tempC:27,salinityPSU:34,fetchKm:6},
+ {name:'Murky',deep:[.075,.072,.032],shallow:[.3,.24,.085],clarity:.45,height:.24,scale:.8,speed:.52,period:7,chop:.06,roughness:.86,reflect:.2,refraction:.08,turbidity:1,transparency:.12,turbid:[.32,.26,.09],foam:.06,threshold:.98,shore:.2,wind:4.5,direction:55,jerlov:4,cdom:.25,sediment:.85,tempC:21,salinityPSU:2,fetchKm:1.5},
+ {name:'Reef',deep:[.008,.09,.20],shallow:[.05,.42,.44],clarity:3.6,height:.42,scale:.9,speed:.8,period:6.4,chop:.1,roughness:.08,reflect:.95,refraction:.8,turbidity:.05,transparency:.98,turbid:[.32,.44,.36],foam:.42,threshold:.86,shore:.8,wind:6,direction:120,jerlov:5,cdom:0,sediment:.03,tempC:29,salinityPSU:35,fetchKm:12},
+ {name:'Alpine Lake',deep:[.006,.06,.10],shallow:[.06,.26,.30],clarity:3.2,height:.16,scale:.78,speed:.5,period:4.4,chop:.05,roughness:.06,reflect:.9,refraction:.86,turbidity:.04,transparency:.96,turbid:[.28,.32,.26],foam:.14,threshold:.94,shore:.4,wind:4.5,direction:250,jerlov:1,cdom:.04,sediment:.05,tempC:7,salinityPSU:.1,fetchKm:3},
+ {name:'River',deep:[.10,.085,.03],shallow:[.34,.29,.13],clarity:.5,height:.2,scale:.85,speed:1.6,period:3.2,chop:.1,roughness:.5,reflect:.32,refraction:.2,turbidity:.85,transparency:.3,turbid:[.42,.34,.16],foam:.5,threshold:.82,shore:.5,wind:4,direction:80,jerlov:3,cdom:.3,sediment:.7,tempC:16,salinityPSU:.2,fetchKm:.6},
+ {name:'Estuary',deep:[.07,.08,.045],shallow:[.28,.3,.16],clarity:.35,height:.3,scale:.88,speed:.9,period:4.2,chop:.08,roughness:.42,reflect:.42,refraction:.32,turbidity:.7,transparency:.44,turbid:[.36,.32,.18],foam:.3,threshold:.9,shore:.6,wind:6.5,direction:100,jerlov:4,cdom:.2,sediment:.5,tempC:19,salinityPSU:12,fetchKm:4},
+ {name:'Peat Bog',deep:[.05,.06,.02],shallow:[.24,.22,.06],clarity:.3,height:.06,scale:.7,speed:.3,period:2.6,chop:.03,roughness:.24,reflect:.4,refraction:.5,turbidity:.4,transparency:.7,turbid:[.26,.2,.06],foam:.05,threshold:.97,shore:.15,wind:2.5,direction:15,jerlov:1,cdom:.9,sediment:.15,tempC:12,salinityPSU:.05,fetchKm:.15}
 ];
-function setWater(i){const p=WATER_PROFILES[Number(i)];if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=(window.FELandscapeRealism&&window.FELandscapeRealism.waterRoughness)?window.FELandscapeRealism.waterRoughness(p):p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
+function setWater(i){const p=waterProfileFor(Number(i));if(!p)return;wp=Number(i);water.userData.waterProfile=p.name;U.deep.value.setRGB(...p.deep);U.shal.value.setRGB(...p.shallow);U.clar.value=p.clarity;U.amp.value=ampUser=p.height;waterWaveScale=p.scale;U.uWaveScale.value=p.scale;wspd=p.speed;waterWavePeriod=p.period;U.uWavePeriod.value=p.period;waveChop=p.chop;U.uChop.value=p.chop;U.uRoughness.value=(window.FELandscapeRealism&&window.FELandscapeRealism.waterRoughness)?window.FELandscapeRealism.waterRoughness(p):p.roughness;U.uReflect.value=p.reflect;U.uRefraction.value=p.refraction;U.uTurbidity.value=p.turbidity;U.uTransparency.value=p.transparency;U.uTurbidColor.value.setRGB(...p.turbid);U.uFoamAmt.value=p.foam;U.uFoamThreshold.value=p.threshold;U.uShoreFoam.value=p.shore;waterWindSpeed=p.wind;waterWindDir=p.direction;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed;}
 setWater(0);
 /* clouds */
 const cc=document.createElement('canvas');cc.width=cc.height=64;const cx=cc.getContext('2d'),gr=cx.createRadialGradient(32,32,0,32,32,32);
@@ -912,19 +1064,100 @@ for(let k=0;k<7;k++){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:ctex
 /* terrain */
 const H=new Float32Array(W*W),MI=new Uint8Array(W*W).fill(255);
 const hmTex=new THREE.DataTexture(H,W,W,THREE.RedFormat,THREE.FloatType);hmTex.minFilter=hmTex.magFilter=THREE.NearestFilter;U.hm.value=hmTex;
-const tg=new THREE.PlaneGeometry(S,S,N,N).rotateX(-Math.PI/2),PA=tg.attributes.position,SWA=new Float32Array(W*W*4),SWB=new Float32Array(W*W*4),SWC=new Float32Array(W*W*4);
+/* Grid geometry, built as typed arrays instead of three's PlaneGeometry.
+   Building a 513x513 plane through PlaneGeometry costs 130 ms of the studio's
+   boot on a desktop and several hundred on a phone: it pushes positions and
+   uvs into plain JS arrays, allocates a 1.57 million element JS array for the
+   index, then converts all of it. The layout below is byte-for-byte the same
+   plane three produces -- same winding, same uv origin, same XZ orientation
+   after the -90 degree X rotation -- written straight into the buffers the GPU
+   wants, which takes a tenth of that. Heights and normals still come from the
+   kernel; this only assembles the buffer, which is the GPU bridge's job. */
+function feGridGeometry(n,span){
+ const W=n+1,cnt=W*W,pos=new Float32Array(cnt*3),nrm=new Float32Array(cnt*3),uv=new Float32Array(cnt*2),idx=new Uint32Array(n*n*6);
+ let p=0,u=0;
+ for(let j=0;j<W;j++){
+  const z=(j/n-.5)*span,v=1-j/n;
+  for(let i=0;i<W;i++){
+   pos[p]=(i/n-.5)*span;pos[p+1]=0;pos[p+2]=z;
+   nrm[p+1]=1;
+   uv[u++]=i/n;uv[u++]=v;
+   p+=3;
+  }
+ }
+ let k=0;
+ for(let j=0;j<n;j++)for(let i=0;i<n;i++){
+  const a=j*W+i,b=(j+1)*W+i,d=a+1,c=b+1;
+  idx[k++]=a;idx[k++]=b;idx[k++]=d;idx[k++]=b;idx[k++]=c;idx[k++]=d;
+ }
+ const geo=new THREE.BufferGeometry();
+ geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+ geo.setAttribute('normal',new THREE.BufferAttribute(nrm,3));
+ geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));
+ geo.setIndex(new THREE.BufferAttribute(idx,1));
+ return geo;
+}
+const tg=feGridGeometry(N,S),PA=tg.attributes.position,SWA=new Float32Array(W*W*4),SWB=new Float32Array(W*W*4),SWC=new Float32Array(W*W*4);
 tg.setAttribute('color',new THREE.BufferAttribute(new Float32Array(W*W*3),3));tg.setAttribute('surfaceWeightsA',new THREE.BufferAttribute(SWA,4));tg.setAttribute('surfaceWeightsB',new THREE.BufferAttribute(SWB,4));tg.setAttribute('surfaceWeightsC',new THREE.BufferAttribute(SWC,4));const C=tg.attributes.color;
 function mkNormal(){const n=128,c=document.createElement('canvas');c.width=c.height=n;const x=c.getContext('2d'),d=x.createImageData(n,n),hash2=(a,b)=>{const s=Math.sin(a*127.1+b*311.7)*43758.5453;return s-Math.floor(s)},noise2=(u,v)=>{const ix=Math.floor(u),iy=Math.floor(v),fx=u-ix,fy=v-iy,tx=fx*fx*(3-2*fx),ty=fy*fy*(3-2*fy),h=(a,b)=>hash2(ix+a,iy+b),a=h(0,0)*(1-tx)+h(1,0)*tx,b=h(0,1)*(1-tx)+h(1,1)*tx;return a*(1-ty)+b*ty},g=new Float32Array(n*n);for(let y=0;y<n;y++)for(let i=0;i<n;i++){const u=i/n*4,v=y/n*4;g[y*n+i]=noise2(u,v)*.62+noise2(u*2.03+13.1,v*2.03-7.2)*.26+noise2(u*4.1-3.5,v*4.1+9.4)*.12}const G=(a,b)=>g[((b+n)%n)*n+((a+n)%n)];
 for(let y=0;y<n;y++)for(let i=0;i<n;i++){const nx=-(G(i+1,y)-G(i-1,y))*2,ny=-(G(i,y+1)-G(i,y-1))*2,l=Math.hypot(nx,ny,1),k=(y*n+i)*4;d.data[k]=(nx/l*.5+.5)*255;d.data[k+1]=(ny/l*.5+.5)*255;d.data[k+2]=255/l;d.data[k+3]=255}
 x.putImageData(d,0,0);const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(40,40);return t}
-function terrainDetailTex(kind){const c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d'),cfg={grass:[220,234,210],soil:[202,188,168],rock:[210,212,214],snow:[244,247,250],rough:[210,210,210]}[kind]||[210,210,210];x.fillStyle=`rgb(${cfg[0]},${cfg[1]},${cfg[2]})`;x.fillRect(0,0,256,256);for(let i=0;i<5200;i++){const n=(R()-.5)*(kind==='rough'?74:46),v=Math.max(0,Math.min(255,Math.round(cfg[0]+n)));x.fillStyle=`rgba(${v},${Math.max(0,Math.min(255,cfg[1]+n))},${Math.max(0,Math.min(255,cfg[2]+n))},${.12+R()*.32})`;const w=kind==='grass'?1+R()*2:1+R()*4,h=kind==='rock'?1+R()*5:1+R()*3;x.fillRect(R()*256,R()*256,w,h)}if(kind==='grass'){for(let i=0;i<260;i++){x.strokeStyle=`rgba(48,78,38,${.1+R()*.16})`;x.lineWidth=.5+R();const px=R()*256,py=R()*256;x.beginPath();x.moveTo(px,py);x.quadraticCurveTo(px+(R()-.5)*4,py-3,px+(R()-.5)*7,py-7-R()*12);x.stroke()}}else if(kind==='rock'){for(let i=0;i<42;i++){const px=R()*256,py=R()*256;x.strokeStyle=`rgba(90,94,98,${.1+R()*.15})`;x.lineWidth=.5+R()*1.3;x.beginPath();x.moveTo(px,py);x.lineTo(px+(R()-.5)*30,py+(R()-.5)*25);x.stroke()}}const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;if('colorSpace'in t&&THREE.NoColorSpace!==undefined)t.colorSpace=THREE.NoColorSpace;else if('encoding'in t)t.encoding=THREE.LinearEncoding;t.needsUpdate=true;return t}
-const TERRAIN_PBR={grass:terrainDetailTex('grass'),soil:terrainDetailTex('soil'),rock:terrainDetailTex('rock'),snow:terrainDetailTex('snow'),rough:terrainDetailTex('rough')};
+/* Deferred fallback textures -----------------------------------------------
+   Boot used to spend its module-load budget drawing roughly eighty thousand
+   canvas operations of JS stand-in textures -- five 256 px terrain details,
+   twelve 256 px biome tiles and their 1024x768 atlas -- and then the C++
+   surface kernels replaced every one of them a moment later. The canvases and
+   the GPU textures are still made here, because materials and shaders need a
+   texture object to bind before the first frame, but the pixels are painted in
+   five-millisecond idle slices once that first frame is on screen. If the C++
+   path takes over, discard() drops the queue instead of paying for work
+   nobody sees. */
+const BOOT_PAINT=(()=>{
+  const jobs=[];let queued=false,closed=false;
+  const now=()=>(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+  function idle(fn){
+    if(typeof requestIdleCallback==='function')requestIdleCallback(fn,{timeout:600});
+    else if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>requestAnimationFrame(fn));
+    else setTimeout(fn,32);
+  }
+  function drain(){
+    queued=false;
+    const deadline=now()+5;
+    while(jobs.length){
+      const job=jobs.shift();
+      try{job()}catch(error){if(typeof console!=='undefined')console.warn('deferred surface texture skipped',error)}
+      if(now()>=deadline)break;
+    }
+    if(jobs.length&&!closed)queue();
+  }
+  function queue(){
+    if(queued||closed)return;
+    queued=true;idle(drain);
+  }
+  return {
+    add(fn){if(closed)return;jobs.push(fn);queue()},
+    discard(){closed=true;jobs.length=0},
+    pending(){return jobs.length},
+  };
+})();
+if(typeof window!=='undefined')window.FE_BOOT_PAINT=BOOT_PAINT;
+function terrainDetailTex(kind){const c=document.createElement('canvas');c.width=c.height=256;const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;if('colorSpace'in t&&THREE.NoColorSpace!==undefined)t.colorSpace=THREE.NoColorSpace;else if('encoding'in t)t.encoding=THREE.LinearEncoding;t.needsUpdate=true;
+/* The base colour is one fillRect and it has to be there before anything
+   else touches this canvas: the C++ surface pass multiplies its detail into
+   the pixels that are already here, so a deferred base comes out black.
+   Only the thousands of noise strokes are deferred. */
+{const x=c.getContext('2d'),cfg={grass:[220,234,210],soil:[202,188,168],rock:[210,212,214],snow:[244,247,250],rough:[210,210,210]}[kind]||[210,210,210];x.fillStyle=`rgb(${cfg[0]},${cfg[1]},${cfg[2]})`;x.fillRect(0,0,256,256);}
+BOOT_PAINT.add(()=>{const x=c.getContext('2d'),cfg={grass:[220,234,210],soil:[202,188,168],rock:[210,212,214],snow:[244,247,250],rough:[210,210,210]}[kind]||[210,210,210];for(let i=0;i<5200;i++){const n=(R()-.5)*(kind==='rough'?74:46),v=Math.max(0,Math.min(255,Math.round(cfg[0]+n)));x.fillStyle=`rgba(${v},${Math.max(0,Math.min(255,cfg[1]+n))},${Math.max(0,Math.min(255,cfg[2]+n))},${.12+R()*.32})`;const w=kind==='grass'?1+R()*2:1+R()*4,h=kind==='rock'?1+R()*5:1+R()*3;x.fillRect(R()*256,R()*256,w,h)}if(kind==='grass'){for(let i=0;i<260;i++){x.strokeStyle=`rgba(48,78,38,${.1+R()*.16})`;x.lineWidth=.5+R();const px=R()*256,py=R()*256;x.beginPath();x.moveTo(px,py);x.quadraticCurveTo(px+(R()-.5)*4,py-3,px+(R()-.5)*7,py-7-R()*12);x.stroke()}}else if(kind==='rock'){for(let i=0;i<42;i++){const px=R()*256,py=R()*256;x.strokeStyle=`rgba(90,94,98,${.1+R()*.15})`;x.lineWidth=.5+R()*1.3;x.beginPath();x.moveTo(px,py);x.lineTo(px+(R()-.5)*30,py+(R()-.5)*25);x.stroke()}}t.needsUpdate=true});return t}const TERRAIN_PBR={grass:terrainDetailTex('grass'),soil:terrainDetailTex('soil'),rock:terrainDetailTex('rock'),snow:terrainDetailTex('snow'),rough:terrainDetailTex('rough')};
 const OW_SURFACE_DEFS=[{key:'hills',label:'Hills',rgb:[103,129,76],rough:.9},{key:'alpine',label:'Alpine',rgb:[139,148,139],rough:.84},{key:'desert',label:'Desert',rgb:[185,145,87],rough:.92},{key:'volcano',label:'Volcano',rgb:[57,54,52],rough:.96},{key:'shore',label:'Sand Shores',rgb:[218,198,145],rough:.98},{key:'rocky',label:'Rocky Mountains',rgb:[112,108,100],rough:.9},{key:'grassy',label:'Grassy',rgb:[83,133,59],rough:.96},{key:'sand',label:'Sand',rgb:[185,150,96],rough:.94},{key:'lava',label:'Lava',rgb:[183,54,16],rough:.74},{key:'magma',label:'Magma',rgb:[107,24,44],rough:.66},{key:'pebbles',label:'Pebbles',rgb:[122,118,109],rough:.88},{key:'beach',label:'Beach Sand',rgb:[226,207,154],rough:.98}];
-function owSurfaceTexture(def,i){const c=document.createElement('canvas');c.width=c.height=256;const x=c.getContext('2d'),[r,g,b]=def.rgb,key=def.key;let state=(0x9e3779b9^Math.imul(i+1,0x45d9f3b))>>>0;const rnd=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};x.fillStyle='rgb('+r+','+g+','+b+')';x.fillRect(0,0,256,256);for(let n=0;n<4200;n++){const q=(rnd()-.5)*(key==='grassy'?36:58),a=cl(Math.round(r+q),0,255),bb=cl(Math.round(g+q*.82),0,255),cc=cl(Math.round(b+q*.66),0,255);x.fillStyle='rgba('+a+','+bb+','+cc+','+(.12+rnd()*.3)+')';const px=rnd()*256,py=rnd()*256;if(key==='grassy'){x.strokeStyle=x.fillStyle;x.lineWidth=.35+rnd()*.7;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*5,py-3-rnd()*12);x.stroke()}else{x.fillRect(px,py,1+rnd()*3,1+rnd()*4)}}if(key==='pebbles'){for(let n=0;n<650;n++){const px=rnd()*256,py=rnd()*256,rx=1+rnd()*4,ry=1+rnd()*3,v=Math.round(80+rnd()*105);x.fillStyle='rgba('+v+','+v+','+(v-5)+','+(.22+rnd()*.42)+')';x.beginPath();x.ellipse(px,py,rx,ry,rnd()*.4,0,6.283);x.fill();x.strokeStyle='rgba(255,255,255,.13)';x.lineWidth=.5;x.stroke()}}if(key==='sand'||key==='shore'||key==='beach'){for(let n=0;n<170;n++){const py=rnd()*256;x.strokeStyle='rgba('+Math.min(255,r+22)+','+Math.min(255,g+18)+','+Math.min(255,b+8)+','+(.08+rnd()*.18)+')';x.lineWidth=.4+rnd()*1.1;x.beginPath();x.moveTo(0,py);x.quadraticCurveTo(128,py+(rnd()-.5)*9,256,py+(rnd()-.5)*12);x.stroke()}}if(key==='lava'||key==='magma'||key==='volcano'||key==='rocky'){const glow=key==='magma'?'rgba(255,72,38,.55)':'rgba(255,145,35,.55)';for(let n=0;n<(key==='lava'||key==='magma'?55:34);n++){const px=rnd()*256,py=rnd()*256;x.strokeStyle=glow;x.lineWidth=.5+rnd()*1.8;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*42,py+(rnd()-.5)*32);x.lineTo(px+(rnd()-.5)*64,py+(rnd()-.5)*56);x.stroke()}}const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.anisotropy=Math.min(4,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in t)t.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;t.needsUpdate=true;return t}
-const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb));
+function owSurfaceTexture(def,i){const c=document.createElement('canvas');c.width=c.height=256;const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;t.anisotropy=Math.min(4,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in t)t.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;t.needsUpdate=true;
+/* The base colour is one fillRect and it has to be there before anything
+   else touches this canvas: the C++ surface pass multiplies its detail into
+   the pixels that are already here, so a deferred base comes out black.
+   Only the thousands of noise strokes are deferred. */
+{const x=c.getContext('2d'),[r,g,b]=def.rgb;x.fillStyle='rgb('+r+','+g+','+b+')';x.fillRect(0,0,256,256);}
+BOOT_PAINT.add(()=>{const x=c.getContext('2d'),[r,g,b]=def.rgb,key=def.key;let state=(0x9e3779b9^Math.imul(i+1,0x45d9f3b))>>>0;const rnd=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};for(let n=0;n<4200;n++){const q=(rnd()-.5)*(key==='grassy'?36:58),a=cl(Math.round(r+q),0,255),bb=cl(Math.round(g+q*.82),0,255),cc=cl(Math.round(b+q*.66),0,255);x.fillStyle='rgba('+a+','+bb+','+cc+','+(.12+rnd()*.3)+')';const px=rnd()*256,py=rnd()*256;if(key==='grassy'){x.strokeStyle=x.fillStyle;x.lineWidth=.35+rnd()*.7;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*5,py-3-rnd()*12);x.stroke()}else{x.fillRect(px,py,1+rnd()*3,1+rnd()*4)}}if(key==='pebbles'){for(let n=0;n<650;n++){const px=rnd()*256,py=rnd()*256,rx=1+rnd()*4,ry=1+rnd()*3,v=Math.round(80+rnd()*105);x.fillStyle='rgba('+v+','+v+','+(v-5)+','+(.22+rnd()*.42)+')';x.beginPath();x.ellipse(px,py,rx,ry,rnd()*.4,0,6.283);x.fill();x.strokeStyle='rgba(255,255,255,.13)';x.lineWidth=.5;x.stroke()}}if(key==='sand'||key==='shore'||key==='beach'){for(let n=0;n<170;n++){const py=rnd()*256;x.strokeStyle='rgba('+Math.min(255,r+22)+','+Math.min(255,g+18)+','+Math.min(255,b+8)+','+(.08+rnd()*.18)+')';x.lineWidth=.4+rnd()*1.1;x.beginPath();x.moveTo(0,py);x.quadraticCurveTo(128,py+(rnd()-.5)*9,256,py+(rnd()-.5)*12);x.stroke()}}if(key==='lava'||key==='magma'||key==='volcano'||key==='rocky'){const glow=key==='magma'?'rgba(255,72,38,.55)':'rgba(255,145,35,.55)';for(let n=0;n<(key==='lava'||key==='magma'?55:34);n++){const px=rnd()*256,py=rnd()*256;x.strokeStyle=glow;x.lineWidth=.5+rnd()*1.8;x.beginPath();x.moveTo(px,py);x.lineTo(px+(rnd()-.5)*42,py+(rnd()-.5)*32);x.lineTo(px+(rnd()-.5)*64,py+(rnd()-.5)*56);x.stroke()}}t.needsUpdate=true});return t}const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb));
 const OW_SURFACE_MAPS=OW_SURFACE_DEFS.map(owSurfaceTexture),OW_SURFACE_ROUGHNESS=OW_SURFACE_DEFS.map(x=>x.rough);
-const OW_SURFACE_ATLAS=(()=>{const tile=256,gutter=4,cell=tile+gutter*2,c=document.createElement('canvas');c.width=cell*4;c.height=cell*3;const x=c.getContext('2d');OW_SURFACE_MAPS.forEach((t,i)=>{const px=(i%4)*cell,py=Math.floor(i/4)*cell,img=t.image;x.drawImage(img,px+gutter,py+gutter,tile,tile);x.drawImage(img,0,0,1,tile,px,py+gutter,gutter,tile);x.drawImage(img,tile-1,0,1,tile,px+gutter+tile,py+gutter,gutter,tile);x.drawImage(img,0,0,tile,1,px+gutter,py,tile,gutter);x.drawImage(img,0,tile-1,tile,1,px+gutter,py+gutter+tile,tile,gutter)});const a=new THREE.CanvasTexture(c);a.wrapS=a.wrapT=THREE.ClampToEdgeWrapping;a.minFilter=THREE.LinearMipmapLinearFilter;a.magFilter=THREE.LinearFilter;a.anisotropy=Math.min(8,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in a)a.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;a.needsUpdate=true;return a})();
-const tm=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:mkNormal(),normalScale:new THREE.Vector2(.34,.34)});tm.userData.surfacePaintEnabled=true;tm.onBeforeCompile=shader=>{shader.uniforms.uTriGrass={value:TERRAIN_PBR.grass};shader.uniforms.uTriSoil={value:TERRAIN_PBR.soil};shader.uniforms.uTriRock={value:TERRAIN_PBR.rock};shader.uniforms.uTriSnow={value:TERRAIN_PBR.snow};shader.uniforms.uTriRough={value:TERRAIN_PBR.rough};shader.uniforms.uTriScale={value:.72};shader.uniforms.uSurfRough={value:new THREE.Vector4(.93,.97,.62,.46)};tm.userData.feShader=shader;const pars='\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;uniform sampler2D uTriGrass,uTriSoil,uTriRock,uTriSnow,uTriRough;uniform float uTriScale;uniform vec4 uSurfRough;float triGray(sampler2D tex,vec3 p,vec3 w,float sc){return texture2D(tex,p.zy*sc).r*w.x+texture2D(tex,p.xz*sc).r*w.y+texture2D(tex,p.xy*sc).r*w.z;}\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;').replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainWorld=(modelMatrix*vec4(transformed,1.)).xyz;vTerrainNormal=normalize(mat3(modelMatrix)*objectNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+pars).replace('#include <color_fragment>','#include <color_fragment>\nvec3 tN=normalize(vTerrainNormal),tW=pow(abs(tN),vec3(4.));tW/=max(dot(tW,vec3(1.)),.001);vec3 tBase=diffuseColor.rgb;float tSlope=1.-abs(tN.y);float tRock=clamp(smoothstep(.24,.72,tSlope)*.9,0.,.9);float tSnow=smoothstep(.75,.94,min(tBase.r,min(tBase.g,tBase.b)));float tSand=clamp((tBase.r-tBase.b)*1.7,0.,.62)*(1.-tRock)*(1.-tSnow);float tGrass=max(0.,1.-tRock-tSnow-tSand);float dG=triGray(uTriGrass,vTerrainWorld,tW,uTriScale*1.7),dS=triGray(uTriSoil,vTerrainWorld,tW,uTriScale),dR=triGray(uTriRock,vTerrainWorld,tW,uTriScale*.55),dN=triGray(uTriSnow,vTerrainWorld,tW,uTriScale*1.15);float detail=(dG*tGrass+dS*tSand+dR*tRock+dN*tSnow);diffuseColor.rgb*=mix(1.,clamp(.68+detail*.42,.72,1.18),.78);').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nfloat tR=triGray(uTriRough,vTerrainWorld,tW,uTriScale*1.2);roughnessFactor=clamp(roughnessFactor+(tR-.82)*.24,.55,1.);\n/* Measured roughness per surface instead of one value for the whole map:\n   fresh snow is glossy, loam is matte, granite sits between. The weights are\n   the same tGrass / tSand / tRock / tSnow masks the colour blend uses. */\nvec4 feSurfW=vec4(tGrass,tSand,tRock,tSnow);\nfeSurfW/=max(dot(feSurfW,vec4(1.)),1e-3);\nroughnessFactor=mix(roughnessFactor,clamp(dot(feSurfW,uSurfRough),.04,1.),.85);').replace('#include <aomap_fragment>','#include <aomap_fragment>\nfloat tAO=triGray(uTriRough,vTerrainWorld,tW,uTriScale*.8);ambientOcclusion*=mix(.78,1.,clamp(tAO,.3,1.));')};tm.customProgramCacheKey=()=>'terrain-triplanar-pbr-v2';tm.color.setScalar(.9);
+const OW_SURFACE_ATLAS=(()=>{const tile=256,gutter=4,cell=tile+gutter*2,c=document.createElement('canvas');c.width=cell*4;c.height=cell*3;const a=new THREE.CanvasTexture(c);a.wrapS=a.wrapT=THREE.ClampToEdgeWrapping;a.minFilter=THREE.LinearMipmapLinearFilter;a.magFilter=THREE.LinearFilter;a.anisotropy=Math.min(8,ren.capabilities.getMaxAnisotropy()||1);if('encoding'in a)a.encoding=THREE.SRGBEncoding||THREE.sRGBEncoding;;BOOT_PAINT.add(()=>{const x=c.getContext('2d');OW_SURFACE_MAPS.forEach((t,i)=>{const px=(i%4)*cell,py=Math.floor(i/4)*cell,img=t.image;x.drawImage(img,px+gutter,py+gutter,tile,tile);x.drawImage(img,0,0,1,tile,px,py+gutter,gutter,tile);x.drawImage(img,tile-1,0,1,tile,px+gutter+tile,py+gutter,gutter,tile);x.drawImage(img,0,0,tile,1,px+gutter,py,tile,gutter);x.drawImage(img,0,tile-1,tile,1,px+gutter,py+gutter+tile,tile,gutter)});a.needsUpdate=true});return a})();const tm=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:mkNormal(),normalScale:new THREE.Vector2(.34,.34)});tm.userData.surfacePaintEnabled=true;tm.onBeforeCompile=shader=>{shader.uniforms.uTriGrass={value:TERRAIN_PBR.grass};shader.uniforms.uTriSoil={value:TERRAIN_PBR.soil};shader.uniforms.uTriRock={value:TERRAIN_PBR.rock};shader.uniforms.uTriSnow={value:TERRAIN_PBR.snow};shader.uniforms.uTriRough={value:TERRAIN_PBR.rough};shader.uniforms.uTriScale={value:.72};shader.uniforms.uSurfRough={value:new THREE.Vector4(.93,.97,.62,.46)};tm.userData.feShader=shader;const pars='\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;uniform sampler2D uTriGrass,uTriSoil,uTriRock,uTriSnow,uTriRough;uniform float uTriScale;uniform vec4 uSurfRough;float triGray(sampler2D tex,vec3 p,vec3 w,float sc){return texture2D(tex,p.zy*sc).r*w.x+texture2D(tex,p.xz*sc).r*w.y+texture2D(tex,p.xy*sc).r*w.z;}\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vTerrainWorld;varying vec3 vTerrainNormal;').replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainWorld=(modelMatrix*vec4(transformed,1.)).xyz;vTerrainNormal=normalize(mat3(modelMatrix)*objectNormal);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+pars).replace('#include <color_fragment>','#include <color_fragment>\nvec3 tN=normalize(vTerrainNormal),tW=pow(abs(tN),vec3(4.));tW/=max(dot(tW,vec3(1.)),.001);vec3 tBase=diffuseColor.rgb;float tSlope=1.-abs(tN.y);float tRock=clamp(smoothstep(.24,.72,tSlope)*.9,0.,.9);float tSnow=smoothstep(.75,.94,min(tBase.r,min(tBase.g,tBase.b)));float tSand=clamp((tBase.r-tBase.b)*1.7,0.,.62)*(1.-tRock)*(1.-tSnow);float tGrass=max(0.,1.-tRock-tSnow-tSand);float dG=triGray(uTriGrass,vTerrainWorld,tW,uTriScale*1.7),dS=triGray(uTriSoil,vTerrainWorld,tW,uTriScale),dR=triGray(uTriRock,vTerrainWorld,tW,uTriScale*.55),dN=triGray(uTriSnow,vTerrainWorld,tW,uTriScale*1.15);float detail=(dG*tGrass+dS*tSand+dR*tRock+dN*tSnow);diffuseColor.rgb*=mix(1.,clamp(.68+detail*.42,.72,1.18),.78);').replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nfloat tR=triGray(uTriRough,vTerrainWorld,tW,uTriScale*1.2);roughnessFactor=clamp(roughnessFactor+(tR-.82)*.24,.55,1.);\n/* Measured roughness per surface instead of one value for the whole map:\n   fresh snow is glossy, loam is matte, granite sits between. The weights are\n   the same tGrass / tSand / tRock / tSnow masks the colour blend uses. */\nvec4 feSurfW=vec4(tGrass,tSand,tRock,tSnow);\nfeSurfW/=max(dot(feSurfW,vec4(1.)),1e-3);\nroughnessFactor=mix(roughnessFactor,clamp(dot(feSurfW,uSurfRough),.04,1.),.85);').replace('#include <aomap_fragment>','#include <aomap_fragment>\nfloat tAO=triGray(uTriRough,vTerrainWorld,tW,uTriScale*.8);ambientOcclusion*=mix(.78,1.,clamp(tAO,.3,1.));')};tm.customProgramCacheKey=()=>'terrain-triplanar-pbr-v2';tm.color.setScalar(.9);
 const ter=new THREE.Mesh(tg,tm);ter.receiveShadow=true;ter.castShadow=false;ter.frustumCulled=false;scene.add(ter);
 OW={active:false,generated:false,generating:false,config:{sizeKm:12,seed:42817,blend:.58,biomeMix:{hills:1,alpine:1,desert:1,volc:1},mountainHeight:48,waterCoverage:35,waterLevel:-28,vegetationDensity:.9},chunkSize:256,radius:1,chunks:new Map(),editStore:new Map(),queue:[],activeJob:null,token:0,lastCenterX:NaN,lastCenterZ:NaN,group:new THREE.Group(),savedScene:null,selected:null,history:[],redo:[],maxHistory:8,fallbackModels:new Map()};OW.group.name='Open World streamed chunks';OW.group.visible=false;scene.add(OW.group);window.__defaultOpenWorldGroup=OW.group;
 const PAL=[];
@@ -1078,7 +1311,7 @@ const DQ={leaf:1.6,seg:1.3,rock:1.3},DQP=[{leaf:.55,seg:.7,rock:.7},{leaf:1,seg:
 function storedLodFullDistance(){try{const v=Number(localStorage.getItem(LOD_FULL_KEY));return Number.isFinite(v)&&v>=250&&v<=2500?v:750}catch{return 750}}
 function setLodFullDistance(v){lodFullDistance=cl(Math.round(Number(v)||750),250,2500);try{localStorage.setItem(LOD_FULL_KEY,String(lodFullDistance))}catch{}lodPending=true;lodSettled=false;lodMotionAt=-1e9}
 function buildLowDetail(fn){const saved={...DQ};Object.assign(DQ,{leaf:Math.max(.42,saved.leaf*.42),seg:Math.max(.55,saved.seg*.62),rock:Math.max(.5,saved.rock*.6)});try{return fn()}finally{Object.assign(DQ,saved)}}
-let detail=2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
+let detail=HANDSET?1:2,lodFullDistance=storedLodFullDistance(),lodPending=false,lodIndex=0,treeMapDirty=false,treeMapT=0;
 function applyDetail(i){if(typeof buildEager!='function')return;if(i==detail){applyPreviewPixelRatio();return}detail=i;U.uQ.value=[0,1,2,2][i];Object.assign(DQ,DQP[i]);if(typeof resetImpostors==='function')resetImpostors();const saved={};
 for(const k in KIND){const K=KIND[k];saved[k]={list:K.list,size:K.size,vr:K.vr,tint:K.tint,max:K.max};kindMeshes(K).forEach(m=>{for(let j=BMAT.length-1;j>=0;j--)if(BMAT[j]===m.material)BMAT.splice(j,1);m.parent?.remove(m);m.geometry?.dispose?.();m.material?.dispose?.()});delete KIND[k]}
 for(const k in LZREG)LAZY[k]=()=>lazyBuild(k);

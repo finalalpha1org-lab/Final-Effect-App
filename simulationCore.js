@@ -26,6 +26,99 @@
     return { fire: params['Fire Preset'] || 'Campfire', smoke: params['Smoke Preset'] || 'Normal Smoke' };
   };
 
+  /* ---- Flame colour is a temperature, not a gradient ---------------------
+     A flame is a hot body: its colour is Planck's law seen through the eye.
+     The old four-stop ramp could not show the difference between a 900 K ember
+     and a 2200 K gas flame because it had no temperature in it at all. This
+     integrates the Planck spectrum against analytic fits of the CIE 1931
+     colour matching functions (Wyman/Sloan/Shirley 2013, multi-lobe Gaussian),
+     converts XYZ to linear Rec.709 and normalises, so any temperature gives the
+     colour physics says it should - including the deep red below 1000 K that
+     the CIE locus polynomials cannot even represent.
+       candle ~1000 K   wood fire 900-1900 K   torch ~1900 K   gas ~2200 K */
+  function cieGaussian(wave, mu, sigmaLow, sigmaHigh) {
+    const t = (wave - mu) / (wave < mu ? sigmaLow : sigmaHigh);
+    return Math.exp(-0.5 * t * t);
+  }
+  /* CIE 1931 2-degree observer, multi-lobe Gaussian fit, 360-830 nm. */
+  function cieXYZBar(wave) {
+    const x = 1.056 * cieGaussian(wave, 599.8, 37.9, 31.0) + 0.362 * cieGaussian(wave, 442.0, 16.0, 26.7) - 0.065 * cieGaussian(wave, 501.1, 20.4, 26.2);
+    const y = 0.821 * cieGaussian(wave, 568.8, 46.9, 40.5) + 0.286 * cieGaussian(wave, 530.9, 16.3, 31.1);
+    const z = 1.217 * cieGaussian(wave, 437.0, 11.8, 36.0) + 0.681 * cieGaussian(wave, 459.0, 26.0, 13.8);
+    return [Math.max(0, x), Math.max(0, y), Math.max(0, z)];
+  }
+  /* Planck spectral radiance up to a constant: the 1/lambda^5 factor is what
+     makes a cool flame red instead of merely dim. */
+  const PLANCK_C2 = 1.438776877e-2; /* hc/k in m*K */
+  function planckRadiance(waveNm, kelvin) {
+    const metres = waveNm * 1e-9;
+    const exponent = PLANCK_C2 / (metres * Math.max(kelvin, 1));
+    if (exponent > 700) return 0;
+    return 1 / (Math.pow(metres, 5) * Math.expm1(exponent));
+  }
+  function blackbodyXYZ(kelvin) {
+    const T = clamp(Number(kelvin) || 1800, 500, 40000);
+    let X = 0, Y = 0, Z = 0;
+    for (let wave = 360; wave <= 830; wave += 5) {
+      const bar = cieXYZBar(wave);
+      const radiance = planckRadiance(wave, T);
+      X += bar[0] * radiance;
+      Y += bar[1] * radiance;
+      Z += bar[2] * radiance;
+    }
+    return [X, Math.max(Y, 1e-12), Z];
+  }
+  function planckianXY(kelvin) {
+    const xyz = blackbodyXYZ(kelvin);
+    const sum = xyz[0] + xyz[1] + xyz[2] || 1;
+    return [xyz[0] / sum, xyz[1] / sum];
+  }
+  function blackbodyRGB(kelvin) {
+    const xyz = blackbodyXYZ(kelvin);
+    let r = 3.2404542 * xyz[0] - 1.5371385 * xyz[1] - 0.4985314 * xyz[2];
+    let g = -0.9692660 * xyz[0] + 1.8760108 * xyz[1] + 0.0415560 * xyz[2];
+    let b = 0.0556434 * xyz[0] - 0.2040259 * xyz[1] + 1.0572252 * xyz[2];
+    r = Math.max(0, r); g = Math.max(0, g); b = Math.max(0, b);
+    const peak = Math.max(r, g, b) || 1;
+    /* Normalised so the hottest channel is 1: the shader owns brightness
+       through uEmission and the heat term, this owns hue. The raymarch writes
+       gl_FragColor directly, so encode to display space here. */
+    const enc = (v) => Math.pow(v / peak, 1 / 2.2);
+    return [enc(r), enc(g), enc(b)];
+  }
+  /* Real flames, real Kelvin: the two temperatures the preset spans. The
+     shader's normalised heat is remapped onto this range per preset. */
+  const FIRE_TEMPERATURES = {
+    'Campfire': [900, 1900],
+    'Wildfire': [1000, 1800],
+    'Torch': [1200, 2300],
+    'Gas Flame': [1500, 2600],
+    'Candle': [800, 1700]
+  };
+  const fireTemperatureRange = (preset) => FIRE_TEMPERATURES[preset] || FIRE_TEMPERATURES.Campfire;
+  const BLACKBODY_MIN_K = 700, BLACKBODY_MAX_K = 3000, BLACKBODY_LUT = 128;
+  let blackbodyTexture = null;
+  function volumeBlackbodyTexture() {
+    if (blackbodyTexture) return blackbodyTexture;
+    const data = new Uint8Array(BLACKBODY_LUT * 4);
+    for (let i = 0; i < BLACKBODY_LUT; i++) {
+      const k = BLACKBODY_MIN_K + (BLACKBODY_MAX_K - BLACKBODY_MIN_K) * (i / (BLACKBODY_LUT - 1));
+      const rgb = blackbodyRGB(k);
+      data[i * 4] = Math.round(clamp(rgb[0], 0, 1) * 255);
+      data[i * 4 + 1] = Math.round(clamp(rgb[1], 0, 1) * 255);
+      data[i * 4 + 2] = Math.round(clamp(rgb[2], 0, 1) * 255);
+      data[i * 4 + 3] = 255;
+    }
+    const texture = new THREE.DataTexture(data, BLACKBODY_LUT, 1, THREE.RGBAFormat);
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearFilter;
+    texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+    blackbodyTexture = texture;
+    return texture;
+  }
+
   const tracerLifetime = (record) => clamp(
     (record.count / Math.max(number(record.params, 'Flow Rate', 40), 1)) * (1.2 + number(record.params, 'Flame Height', 1.5) / 1.5),
     1,
@@ -1382,6 +1475,9 @@ uniform float uGrid, uDensityScale, uTempScale, uSigma, uFireGain, uSmokeGain, u
 uniform float uDetail, uDetailScale, uDetailSpeed, uTime, uSelfShadow, uAmbient, uEmission, uExtinction, uFrame;
 uniform float uDetailContrast;
 uniform vec3 uFireTint;
+/* Planckian LUT: 700 K..3000 K across 128 texels, built from the CIE locus. */
+uniform sampler2D uBlackbody;
+uniform float uHeatK0, uHeatK1;
 uniform int uScatter;
 /* Baked "cinema" set: frames x slices tiled in one atlas, two frames blended. */
 uniform sampler2D uLibAtlas;
@@ -1410,11 +1506,12 @@ vec2 sampleField(vec3 uvw){
   vec2 v = 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t);
   return max(v, vec2(0.0)) * vec2(uDensityScale, uTempScale);
 }
-/* Planckian ramp: dull ember -> orange flame -> white-hot core. */
+/* Heat is a normalised solver value; uHeatK0..uHeatK1 is the real Kelvin range
+   this fire burns at, and the LUT is the Planckian locus over 700..3000 K. */
 vec3 blackbody(float heat){
-  vec3 c = mix(vec3(0.55, 0.05, 0.01), vec3(1.0, 0.26, 0.03), smoothstep(0.0, 0.32, heat));
-  c = mix(c, vec3(1.0, 0.62, 0.15), smoothstep(0.32, 0.64, heat));
-  return mix(c, vec3(1.0, 0.95, 0.78), smoothstep(0.64, 1.0, heat));
+  float kelvin = uHeatK0 + (uHeatK1 - uHeatK0) * clamp(heat, 0.0, 1.0);
+  float t = clamp((kelvin - 700.0) / (3000.0 - 700.0), 0.0, 1.0);
+  return texture2D(uBlackbody, vec2(t, 0.5)).rgb;
 }
 float densityAt(vec3 uvw){
   if (uvw.x < 0.0 || uvw.y < 0.0 || uvw.z < 0.0 || uvw.x > 1.0 || uvw.y > 1.0 || uvw.z > 1.0) return 0.0;
@@ -1552,6 +1649,9 @@ void main(){
           uLibMix: { value: v.library ? 1 : 0 },
           uDetailContrast: { value: v.detailContrast },
           uFireTint: { value: volumeTint(v.fireTint) },
+          uBlackbody: { value: volumeBlackbodyTexture() },
+          uHeatK0: { value: fireTemperatureRange(tracerPresets(record.domainType, record.params).fire)[0] },
+          uHeatK1: { value: fireTemperatureRange(tracerPresets(record.domainType, record.params).fire)[1] },
           uFrame: { value: 0 }
         },
         vertexShader: shaders.vertexShader,
@@ -2197,9 +2297,14 @@ void main(){
           fire.setMatrixAt(i, object.matrix);
           if (isHot) {
             if (firePreset === 'Gas Flame') color.setRGB(.14, .54, 1);
-            else if (firePreset === 'Wildfire') color.setRGB(1, .16, .02);
-            else if (firePreset === 'Torch') color.setRGB(1, .50, .08);
-            else color.setRGB(1, .30 + .28 * (1 - heat / 1.5), .04);
+            else {
+              /* Same Planckian colour the volume shader samples, so a torch
+                 reads hotter than a campfire in both render paths. */
+              const range = fireTemperatureRange(firePreset);
+              const kelvin = range[0] + (range[1] - range[0]) * clamp(heat / 1.5 + 0.18, 0, 1);
+              const rgb = blackbodyRGB(kelvin);
+              color.setRGB(rgb[0], rgb[1], rgb[2]);
+            }
           } else color.setRGB(0, 0, 0);
           fire.setColorAt(i, color);
         }
@@ -2429,6 +2534,9 @@ void main(){
     return texture;
   }
 
+  UltraSimEngine.blackbodyRGB = blackbodyRGB;
+  UltraSimEngine.planckianXY = planckianXY;
+  UltraSimEngine.fireTemperatureRange = fireTemperatureRange;
   global.SimulationEngine = UltraSimEngine;
   global.SimEngine = new UltraSimEngine();
 })(window);

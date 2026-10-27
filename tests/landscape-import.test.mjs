@@ -28,14 +28,58 @@ test('global settings expose bounded history and local auto-save intervals, and 
 });
 
 test('Import button sends a versioned full-detail scene and can reach the workspace from a separate tab',()=>{
-  assert.match(landscape,/version:2/);
+  assert.match(landscape,/version:3/);
   assert.match(landscape,/colors:b64\(C\.array\)/);
   assert.match(landscape,/parts:K\.meshes\.map\(packLandscapePart\)/);
   assert.match(landscape,/sync\(k,true\)/);
   assert.match(landscape,/landscapeImportChannel\.postMessage\(message\)/);
   assert.match(landscape,/final-effect:import:ack/);
-  assert.match(landscape,/getJson=\(\)=>js\|\|\(js=JSON\.stringify\(d\)\)/);
+  assert.match(landscape,/getJson=\(\)=>js\|\|\(js=d\?JSON\.stringify\(d,\(key,value\)=>ArrayBuffer\.isView\(value\)/);
   assert.match(landscape,/final-effect:edit-imported-landscape/);
+});
+
+test('Import exports whichever world the studio is showing, not the default grid',()=>{
+  /* The mode is decided from the visible scene: a globe on screen is a planet,
+     a generated open world is a world, anything else is the root grid. */
+  assert.match(landscape,/function landscapeExportMode\(\)\{if\(PLANON&&PLAN\.done\)return 'planet';if\(OW&&OW\.active&&OW\.chunks\.size\)return 'world';return 'terrain'\}/);
+  assert.match(landscape,/function landscapeExportScene\(\)/);
+  assert.match(landscape,/source:scene\.source/);
+  assert.match(landscape,/planet:scene\.planet\|\|null/);
+  /* An open world is merged into one heightfield at the finest source step,
+     with the surface colours computed where the chunks were generated. */
+  assert.match(landscape,/pack\.measureChunks\(records\)/);
+  assert.match(landscape,/pack\.mergedGridPlan\(bounds,\{maxSegments:192,minStep:step\}\)/);
+  assert.match(landscape,/pack\.sampleWorldField\(records,plan,'heights',1\)/);
+  assert.match(landscape,/pack\.sampleWorldField\(records,plan,'surfaceWeights',12\)/);
+  assert.match(landscape,/const rgb=owColor\(weights,k\)/);
+  /* Plants travel as the geometry and world-space matrices they were grown
+     with, so the Workspace shows the same trees instead of placeholder cones. */
+  assert.match(landscape,/function landscapeExportWorldFoliage\(pack,centerX,centerZ\)/);
+  assert.match(landscape,/originX:c\.originX-centerX,originZ:c\.originZ-centerZ/);
+  assert.match(landscape,/landscapeExportWorldFoliage\(pack,plan\.centerX,plan\.centerZ\)/);
+  assert.match(landscape,/pack\.matricesToTransforms\(entries\)/);
+  assert.match(landscape,/transforms:part\.transforms,colors:part\.colors,geometry:packLandscapeGeometry\(info\.geometry\)/);
+  assert.match(landscape,/for\(const mesh of c\.foliageMeshes\|\|\[\]\)/);
+  /* A planet cannot be a heightfield: it travels as per-vertex radii on a
+     sphere the Workspace rebuilds with SphereGeometry. */
+  assert.match(landscape,/pack\.packPlanetGlobe\(\{segments:192,rings:96,radius:PLAN\.R/);
+  assert.match(landscape,/const radii=new Float32Array\(globe\.radii\),normals=new Int8Array\(globe\.vertexCount\*3\),colors=new Uint8Array\(globe\.vertexCount\*3\)/);
+  assert.match(landscape,/radii:b64\(radii\),normals:b64\(normals\),colors:b64\(colors\)/);
+  assert.match(landscape,/source:'planet',terrain:null/);
+  assert.match(landscape,/source:'world'/);
+});
+
+test('the Workspace rebuilds the imported open world or planet instead of rejecting it',()=>{
+  assert.match(workspace,/const planetImport = payload\.planet && payload\.planet\.radii \? payload\.planet : null;/);
+  assert.match(workspace,/if \(!payload\.terrain\?\.heights && !planetImport\) throw new Error\('Landscaping payload is missing terrain height data\.'\)/);
+  assert.match(workspace,/const globeGeom=new T\.SphereGeometry\(radius,segments,rings\)/);
+  assert.match(workspace,/globePos\.setXYZ\(k,x\/length\*r,y\/length\*r,z\/length\*r\)/);
+  assert.match(workspace,/globeMesh\.name='Terrain Mesh'/);
+  assert.match(workspace,/planetImport\.normals/);
+  assert.match(workspace,/planetImport\.colors/);
+  assert.match(workspace,/if\(part\.transforms\)\{/);
+  assert.match(workspace,/placed\.quaternion\.set\(transforms\[o\+3\],transforms\[o\+4\],transforms\[o\+5\],transforms\[o\+6\]\)/);
+  assert.match(workspace,/payload\.source==='planet'\?'Planet':payload\.source==='world'\?'Open world'/);
 });
 
 test('Workspace reconstructs transferred terrain, PBR water, instanced geometry and placed model meshes',()=>{

@@ -43,7 +43,7 @@ btn(OW.active?'🌱 Add natural scatter to loaded chunks':'🌱 Auto-scatter (na
 btn('Clear all foliage',()=>{push();selectedFoliage=null;foliageSelectMode=false;ring.visible=false;updateFoliageGlow();if(OW.active)OW.clearAllFoliage();else for(const k in KIND){KIND[k].list=[];sync(k)}setNav();build()})],
 sky:()=>[el('<div class="hint">Day/night cycle · orbiting suns, moons and planets share this clock</div>'),chips([['cycle',SKY.cycle.on?'Auto day/night: on':'Auto day/night: off']],0,()=>{SKY.cycle.on=!SKY.cycle.on;SKY.cycle.lastUpdate=0;updSky()}),G(sl('Day length (hours)',1,168,1,SKY.cycle.length/3600,v=>{SKY.cycle.length=v*3600}),sl('Cycle speed ×',.1,5,.1,SKY.cycle.speed,v=>{SKY.cycle.speed=v}),sl('Time of day',0,24,.1,tod,v=>{tod=v;updSky()}),sl('Sun angle',0,360,5,az,v=>{az=v;updSky()}),sl('Fog',0,20,.5,fogD*1000,v=>{fogD=v/1e3;updSky()})),...lightingCtl()],
 quality:()=>qualityCtl(),
-water:()=>[el('<div class="hint">WebGL/PBR MeshPhysical water: a three-cascade Tessendorf ocean uses the Phillips wind spectrum, gravity dispersion and CPU inverse 2D FFTs feed GPU vertex displacement. Ocean, Lagoon and Murky have distinct absorption colors, turbidity, roughness, reflection, refraction and wave profiles. World-space triplanar micro-normal/roughness detail, Fresnel, shoreline foam and dynamic CubeCamera environment reflections of the terrain, foliage and objects add surface detail. It is spectral ocean synthesis, not a full Navier–Stokes/CFD solver or a guarantee of photographic realism on every device.</div>'),chips([[0,'Ocean'],[1,'Lagoon'],[2,'Murky'],['v',water.visible?'👁 Shown':'Hidden']],wp,v=>v=='v'?water.visible=!water.visible:setWater(v)),
+water:()=>[el('<div class="hint">WebGL/PBR MeshPhysical water: a three-cascade Tessendorf ocean uses the Phillips wind spectrum, gravity dispersion and CPU inverse 2D FFTs feed GPU vertex displacement. Each preset names a real water body (ocean, lagoon, reef, alpine lake, river, estuary, peat bog) whose shallow and deep colours are derived from its Jerlov optical type, CDOM load and suspended sediment by Beer-Lambert, so switching preset changes the physics, not just a swatch; they have distinct absorption colors, turbidity, roughness, reflection, refraction and wave profiles. World-space triplanar micro-normal/roughness detail, Fresnel, shoreline foam and dynamic CubeCamera environment reflections of the terrain, foliage and objects add surface detail. It is spectral ocean synthesis, not a full Navier–Stokes/CFD solver or a guarantee of photographic realism on every device.</div>'),chips([...WATER_PROFILES.map((p,i)=>[i,p.name]),['v',water.visible?'Shown':'Hidden']],wp,v=>v=='v'?water.visible=!water.visible:setWater(v)),
 G(sl('Level',OW.active?-80:-6,8,.1,wl,v=>{wl=v;wlUserSet=true;if(OW.active){OW.config.waterLevel=v;if(OW.currentConfig)OW.currentConfig.waterLevel=v}water.position.y=v;U.wy.value=v;upd()}),sl('Wave height',0,2.5,.05,ampUser,v=>{ampUser=v;U.amp.value=v;waveAuto=false;updateSeaState()}),sl('Wave speed',0,5,.1,wspd,v=>wspd=v),sl('Wave chop',0,.6,.02,waveChop,v=>{waveChop=v;U.uChop.value=v;updateSeaState()}),sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Water clarity',.3,5,.1,U.clar.value,v=>U.clar.value=v)),
 G(sl('Wave period (s)',2,18,.1,waterWavePeriod,v=>{waterWavePeriod=v;U.uWavePeriod.value=v;waveAuto=false;updateSeaState()}),sl('Wave scale ×',.4,2,.05,waterWaveScale,v=>{waterWaveScale=v;U.uWaveScale.value=v}),sl('Wind speed (m/s)',0,30,.5,waterWindSpeed,v=>{waterWindSpeed=v;U.uWindSpeed.value=v*windUser;waveAuto=false;updateSeaState()}),sl('Wind direction °',0,360,1,waterWindDir,v=>{waterWindDir=v;U.uWindDir.value.set(Math.cos(v*Math.PI/180),Math.sin(v*Math.PI/180))})),
 el(`<div class="hint" id="fe-sea-state">${seaStateText()}</div>`),chips([['auto','Waves follow the weather']],waveAuto?'auto':'',v=>{waveAuto=!waveAuto;waveAutoApplied=-1;if(waveAuto){stepWaveClimate();msg('Waves now follow the climate wind')}else msg('Waves keep their own wind speed')}),el('<div class="hint">A fully developed sea: the height, the period and the wavelength are all derived from the same wind speed, so the sliders and the spectrum cannot disagree.</div>'),
@@ -129,7 +129,19 @@ function seaStateText(){
  return`Wind ${p.wind.toFixed(1)} m/s · significant wave height ${ampUser.toFixed(2)} m · peak period ${waterWavePeriod.toFixed(1)} s · wavelength ${p.length.toFixed(0)} m`;
 }
 function updateSeaState(){const el=document.getElementById('fe-sea-state');if(el)el.textContent=seaStateText()}
-function build(){nfs=[];$('#dr').replaceChildren(...PN[tab]())}
+/* One throw inside a sheet builder used to leave the drawer empty and the sheet
+   useless, with the error only in the console. The sheet now reports which tab
+   failed and still opens, so the rest of the studio stays reachable. */
+function build(){
+ nfs=[];
+ const make=PN[tab];
+ if(typeof make!=='function'){showErr('Panel: no builder for '+tab);return}
+ let nodes;
+ try{nodes=make()}
+ catch(error){showErr('Panel ('+tab+'): '+String((error&&(error.stack||error.message))||error).slice(0,700));return}
+ try{$('#dr').replaceChildren(...nodes)}
+ catch(error){showErr('Panel ('+tab+'): '+String((error&&(error.stack||error.message))||error).slice(0,700))}
+}
 /* ---- studio settings: one JSON document -------------------------------
    Every landscape sheet writes straight into a live variable, so until now a
    reload threw the whole studio back to its defaults. The full set is now
@@ -342,7 +354,118 @@ function finishLandscapeImportAck(data){const pending=pendingLandscapeImports.ge
 window.addEventListener('message',e=>{if(e.data?.type==='final-effect:import:ack')finishLandscapeImportAck(e.data);else if(e.data?.type==='final-effect:edit-imported-landscape'){$('#fps').textContent='Edit this landscape, then press Import to update Workspace';$('#imp').title='Re-import edited landscape into the 3D Workspace';}});
 if(landscapeImportChannel)landscapeImportChannel.onmessage=e=>{if(e.data?.type==='final-effect:import:ack')finishLandscapeImportAck(e.data)};
 window.addEventListener('message',e=>{const d=e.data||{};if(d.type==='FE_GLOBAL_SETTINGS'){setHistoryLimit(d.settings?.undoLimit);if(d.settings&&typeof d.settings.grid==='boolean'){setTerrainGrid(d.settings.grid,false);if(typeof tab!=='undefined'&&tab==='terrain'&&typeof build==='function')build()}}else if(d.type==='FE_HISTORY_ACTION'){if(d.action==='undo')undo();else if(d.action==='redo')redo()}else if(d.type==='FE_AUTOSAVE_REQUEST'){try{const target=window.parent!==window?window.parent:window;target.postMessage({type:'FE_AUTOSAVE_DATA',studio:'landscape',requestId:d.requestId,payload:makeLandscapeAutosave()},'*')}catch(error){console.warn('Landscape autosave failed:',error);const target=window.parent!==window?window.parent:window;target.postMessage({type:'FE_AUTOSAVE_DATA',studio:'landscape',requestId:d.requestId,error:error?.message||String(error)},'*')}}else if(d.type==='FE_AUTOSAVE_RESTORE'){try{const ok=restoreLandscapeAutosave(d.payload);const target=window.parent!==window?window.parent:window;target.postMessage({type:'FE_AUTOSAVE_RESTORED',studio:'landscape',success:!!ok,savedAt:d.savedAt},'*');if(ok)$('#fps').textContent='Recovered auto-saved landscape'}catch(error){console.error('Landscape restore failed:',error)}}});
-function importToGrid(){let d,js;const getJson=()=>js||(js=JSON.stringify(d));try{landscapeTextureCache.clear();const f={};for(const k in KIND){const K=KIND[k];sync(k,true);f[k]={count:K.list.length,size:K.size,tint:K.tint,data:b64(enc(K.list)),parts:K.meshes.map(packLandscapePart)}}for(const k in KIND)sync(k);const normalImage=tm.normalMap?.image;let normalPixels=null;if(normalImage){const w=normalImage.width||128,h=normalImage.height||128,c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(normalImage,0,0,w,h);normalPixels=b64(x.getImageData(0,0,w,h).data)}d={app:'final-effect',version:2,units:'m',axes:{up:'Y',note:'data is three.js Y-up; the UI shows Blender-style Z-up'},terrain:{size:S,segments:N,vertexCount:W*W,heights:b64(H),materials:b64(MI),surfaceWeightsA:b64(SWA),surfaceWeightsB:b64(SWB),surfaceWeightsC:b64(SWC),pbrSurfaceNames:OW_SURFACE_DEFS.map(x=>x.label),colors:b64(C.array),normalMap:normalPixels,normalMapSize:normalImage?[normalImage.width||128,normalImage.height||128]:[128,128],materialNames:['grass','dirt','rock','sand','snow'],palette:PAL,biome,heightScale:hs,rockSlope:rockT,snowLine:snowL,roughness:tm.roughness,metalness:tm.metalness,normalStrength:tm.normalScale.x,shininess:tm.shininess??0,specular:tm.specular?.getHexString?.()||'000000'},water:{level:wl,visible:water.visible,waveHeight:ampUser,waveSpeed:wspd,waveChop,wavePeriod:waterWavePeriod,waveScale:waterWaveScale,windSpeed:waterWindSpeed,windDirection:waterWindDir,roughness:U.uRoughness.value,reflectivity:U.uReflect.value,refraction:U.uRefraction.value,transparency:U.uTransparency.value,clarity:U.clar.value,turbidity:U.uTurbidity.value,foam:U.uFoamAmt.value,foamThreshold:U.uFoamThreshold.value,shoreFoam:U.uShoreFoam.value,shallow:U.shal.value.toArray(),deep:U.deep.value.toArray(),profile:WATER_PROFILES[wp]?.name||'Ocean',quality:waterQuality,innerRadius:190,farRadius:1400},sky:{timeOfDay:tod,sunAngle:az,clouds:cov,fog:fogD,studio:SKY},weather:{rain:WX.rainT,overcast:WX.overT,storm:WX.stormT,snowfall:WX.snowfallT,snowCover:WX.coverT,wind:windUser,seasonProgress:WX.seasonT},foliage:{layout:'exact instanced geometry + matrices; source layout x7 per instance: x,y,z,scale,rotY,aspect,brightness',kinds:f},map:mapRoot?{name:mapName,scale:mapBase*mapK,rotationDeg:mapR,y:mapRoot.position.y,node:packLandscapeNode(mapRoot)}:null,objects:objs.map(packLandscapeNode)};const requestId='land-'+Date.now()+'-'+Math.random().toString(36).slice(2),message={type:'final-effect:import',requestId,payload:d};let host=null;try{if(window.parent!==window&&window.parent.FE?.engines)host=window.parent;else if(window.opener?.FE?.engines)host=window.opener}catch(e){}let sent=false;if(host){try{host.postMessage(message,'*');sent=true}catch(e){sent=false}}if(!sent&&landscapeImportChannel){try{landscapeImportChannel.postMessage(message);sent=true}catch(e){sent=false}}if(!sent){showLandscapeExportFallback(getJson(),'Could not reach the 3D Workspace. Open the main app and retry Import.');return}const timer=setTimeout(()=>{const pending=pendingLandscapeImports.get(requestId);if(pending){pendingLandscapeImports.delete(requestId);showLandscapeExportFallback(pending.json(),'No 3D Workspace acknowledgement was received. Keep the main app open and retry.')}},20000);pendingLandscapeImports.set(requestId,{json:getJson,timer});$('#ov').hidden=true;$('#imp').title='Sending scene to the 3D Workspace…'}catch(e){console.error('Landscaping export failed:',e);showLandscapeExportFallback(d?getJson():'','Could not prepare the landscaping scene: '+(e?.message||e))}}
+/* ---- What Import sends: the scene the studio is actually showing --------
+   Import used to pack the root 100 m grid whatever the studio was showing, so
+   a generated open world or a procedural planet arrived in the 3D Workspace as
+   the default terrain. The payload now names its `source` and every mode packs
+   the same `terrain` / `foliage` / `water` / `sky` / `weather` sections, so the
+   Workspace rebuilds each of them through the path it already had:
+     terrain  the root grid (and any landed planetary region inside it)
+     world    every resident open-world chunk, merged into one heightfield
+     planet   the procedural globe, displaced and coloured where it was made */
+function landscapeExportMode(){if(PLANON&&PLAN.done)return 'planet';if(OW&&OW.active&&OW.chunks.size)return 'world';return 'terrain'}
+function landscapeExportSky(){return{timeOfDay:tod,sunAngle:az,clouds:cov,fog:fogD,studio:SKY}}
+function landscapeExportWeather(){return{rain:WX.rainT,overcast:WX.overT,storm:WX.stormT,snowfall:WX.snowfallT,snowCover:WX.coverT,wind:windUser,seasonProgress:WX.seasonT}}
+function landscapeExportWater(level,span){return{level,visible:water.visible,waveHeight:ampUser,waveSpeed:wspd,waveChop,wavePeriod:waterWavePeriod,waveScale:waterWaveScale,windSpeed:waterWindSpeed,windDirection:waterWindDir,roughness:U.uRoughness.value,reflectivity:U.uReflect.value,refraction:U.uRefraction.value,transparency:U.uTransparency.value,clarity:U.clar.value,turbidity:U.uTurbidity.value,foam:U.uFoamAmt.value,foamThreshold:U.uFoamThreshold.value,shoreFoam:U.uShoreFoam.value,shallow:U.shal.value.toArray(),deep:U.deep.value.toArray(),profile:WATER_PROFILES[wp]?.name||'Ocean',quality:waterQuality,innerRadius:Math.max(190,span*.35),farRadius:Math.max(1400,span*2.2)}}
+function landscapeExportSurface(normalPixels,normalImage){return{normalMap:normalPixels,normalMapSize:normalImage?[normalImage.width||128,normalImage.height||128]:[128,128],materialNames:['grass','dirt','rock','sand','snow'],pbrSurfaceNames:OW_SURFACE_DEFS.map(x=>x.label),palette:PAL,biome,heightScale:hs,rockSlope:rockT,snowLine:snowL,roughness:tm.roughness,metalness:tm.metalness,normalStrength:tm.normalScale.x,shininess:tm.shininess??0,specular:tm.specular?.getHexString?.()||'000000'}}
+function landscapeExportNormalPixels(){const image=tm.normalMap?.image;if(!image)return{normalPixels:null,normalImage:null};const w=image.width||128,h=image.height||128,c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.drawImage(image,0,0,w,h);return{normalPixels:b64(x.getImageData(0,0,w,h).data),normalImage:image}}
+function landscapeExportTerrain(surface){
+ const f={};for(const k in KIND){const K=KIND[k];sync(k,true);f[k]={count:K.list.length,size:K.size,tint:K.tint,data:b64(enc(K.list)),parts:K.meshes.map(packLandscapePart)}}for(const k in KIND)sync(k);
+ return{source:'terrain',terrain:{size:S,segments:N,vertexCount:W*W,heights:b64(H),materials:b64(MI),surfaceWeightsA:b64(SWA),surfaceWeightsB:b64(SWB),surfaceWeightsC:b64(SWC),colors:b64(C.array),...surface},foliage:{layout:'exact instanced geometry + matrices; source layout x7 per instance: x,y,z,scale,rotY,aspect,brightness',kinds:f},water:landscapeExportWater(wl,S),map:mapRoot?{name:mapName,scale:mapBase*mapK,rotationDeg:mapR,y:mapRoot.position.y,node:packLandscapeNode(mapRoot)}:null,objects:objs.map(packLandscapeNode)}
+}
+/* The open world renders one InstancedMesh per species part inside each chunk
+   group, with matrices relative to that chunk. Merging them into world space
+   hands the Workspace the same geometry+matrix list the root grid sends, so the
+   plants arrive as the trees that were grown, not as placeholder cones. */
+/* Everything the Workspace imports is placed around its own origin: the merged
+   heightfield is sampled in grid space, so the plants have to lose the same
+   world centre or they would sit beside the terrain instead of on it. */
+function landscapeExportWorldFoliage(pack,centerX,centerZ){
+ const entries=[],meta=new Map(),totals=new Map(),lists=new Map();
+ for(const c of OW.chunks.values()){
+  for(const mesh of c.foliageMeshes||[]){
+   if(!mesh||!mesh.isInstancedMesh||!mesh.count||!mesh.geometry)continue;
+   const kind=mesh.userData?.kind;if(!kind)continue;
+   const src=(KIND[kind]?.meshes||[]).find(m=>m.geometry===mesh.geometry&&m.material===mesh.material);
+   const part=src?.userData?.part||mesh.userData?.part||'body';
+   const key=kind+'|'+part+'|'+(src?.userData?.vi??'');
+   if(!meta.has(key))meta.set(key,{kind,part,geometry:mesh.geometry,material:mesh.material});
+   entries.push({key,count:mesh.count,matrices:mesh.instanceMatrix.array,colors:mesh.instanceColor?.array||null,originX:c.originX-centerX,originZ:c.originZ-centerZ});
+   totals.set(kind,(totals.get(kind)||0)+mesh.count);
+  }
+  for(const kind in c.plants||{}){const list=c.plants[kind];if(Array.isArray(list)&&list.length)lists.set(kind,(lists.get(kind)||[]).concat(list))}
+ }
+ const merged=pack.matricesToTransforms(entries),kinds={};
+ for(const part of merged){
+  const info=meta.get(part.key);if(!info)continue;
+  const K=KIND[info.kind]||{};
+  if(!kinds[info.kind])kinds[info.kind]={count:totals.get(info.kind)||part.count,size:K.size||1,tint:K.tint||[1,1,1],layout:'world space instance matrices',parts:[]};
+  kinds[info.kind].parts.push({name:info.kind,part:info.part,count:part.count,transforms:part.transforms,colors:part.colors,geometry:packLandscapeGeometry(info.geometry),material:packLandscapeMaterial(info.material)});
+ }
+ for(const kind of lists.keys())if(!kinds[kind]||!kinds[kind].parts?.length){const K=KIND[kind]||{};kinds[kind]={count:lists.get(kind).length,size:K.size||1,tint:K.tint||[1,1,1],data:b64(enc(lists.get(kind)))}}
+ return Object.keys(kinds).length?{layout:'exact instanced geometry + matrices in world space; x7 per instance: x,y,z,scale,rotY,aspect,brightness',kinds}:null;
+}
+function landscapeExportWorld(surface){
+ const pack=window.LandscapeExportPack;
+ if(!pack)throw new Error('The world export helper did not load.');
+ const records=[];
+ for(const c of OW.chunks.values())if(c&&c.heights&&c.surfaceWeights)records.push(c);
+ records.sort((a,b)=>a.cx-b.cx||a.cz-b.cz);
+ const bounds=pack.measureChunks(records);
+ if(!bounds.count)throw new Error('The open world has no generated terrain yet. Wait for the chunks to finish loading, then press Import.');
+ let step=Infinity;for(const r of records)step=Math.min(step,Math.max(.5,r.size/Math.max(1,r.segments)));
+ const plan=pack.mergedGridPlan(bounds,{maxSegments:192,minStep:step});
+ const heights=pack.sampleWorldField(records,plan,'heights',1);
+ const weights=pack.sampleWorldField(records,plan,'surfaceWeights',12);
+ const colors=new Float32Array(plan.vertices*3);
+ for(let k=0;k<plan.vertices;k++){const rgb=owColor(weights,k);colors[k*3]=rgb[0];colors[k*3+1]=rgb[1];colors[k*3+2]=rgb[2]}
+ return{source:'world',terrain:{size:plan.size,segments:plan.segments,vertexCount:plan.vertices,heights:b64(heights),colors:b64(colors),...surface},foliage:landscapeExportWorldFoliage(pack,plan.centerX,plan.centerZ),water:landscapeExportWater(OW.config.waterLevel,plan.size),map:null,objects:[],
+  info:{chunks:records.length,sizeKm:OW.config.sizeKm,seed:OW.config.seed,worldSize:plan.size,worldSegments:plan.segments,worldCenter:[Math.round(plan.centerX*100)/100,Math.round(plan.centerZ*100)/100],vegetationDensity:OW.config.vegetationDensity}}
+}
+/* A planet cannot become a heightfield: the studio shows a globe, so the
+   Workspace receives a globe — the same radius, the same `planetRelief`
+   displacement and the same surface classification the shader colours. */
+const PLANET_IMPORT_RGB={ocean:[.016,.05,.11],temperate:[.11,.24,.08],jungle:[.05,.2,.07],desert:[.62,.5,.3],alpine:[.38,.37,.35],ice:[.8,.86,.9],volcanic:[.18,.09,.06]};
+const planetLinear=v=>v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);
+function landscapePlanetShade(dir){
+ const lon=Math.atan2(dir.z,dir.x),lat=Math.asin(cl(dir.y,-1,1)),i=cl(Math.floor((lon/6.2831853+.5)*PW),0,PW-1),j=cl(Math.floor((.5-lat/Math.PI)*PH),0,PH-1),o=(j*PW+i)*4;
+ const c=pClass(PD[o]/255,PD[o+1]/255,PD[o+2]/255,PD[o+3]);
+ let rgb=(PLANET_IMPORT_RGB[c.kind]||PLANET_IMPORT_RGB.temperate).slice();
+ if(c.kind==='ocean'){const depth=cl(-c.h*2.2,0,.7);rgb=rgb.map(v=>v*(1-depth*.55))}
+ const ice=Math.max(c.kind==='ice'?1:0,PLAN.ice>.3?smJ(.72,.93,Math.abs(dir.y))*Math.min(1,PLAN.ice):0);
+ if(ice>0)rgb=rgb.map((v,q)=>v+(PLANET_IMPORT_RGB.ice[q]-v)*ice);
+ const lift=cl(c.h*1.1,0,.35);
+ return rgb.map(v=>planetLinear(cl(v*(1+lift*.35),0,1)));
+}
+function landscapeExportPlanet(){
+ const pack=window.LandscapeExportPack;
+ if(!pack)throw new Error('The world export helper did not load.');
+ const globe=pack.packPlanetGlobe({segments:192,rings:96,radius:PLAN.R,relief:(x,y,z)=>planetRelief({x,y,z}),colour:(x,y,z)=>landscapePlanetShade({x,y,z})});
+ const radii=new Float32Array(globe.radii),normals=new Int8Array(globe.vertexCount*3),colors=new Uint8Array(globe.vertexCount*3);
+ for(let i=0;i<globe.vertexCount;i++){
+  for(let q=0;q<3;q++){normals[i*3+q]=Math.round(cl(globe.normals[i*3+q],-1,1)*127);colors[i*3+q]=Math.round(cl(globe.colors[i*3+q],0,1)*255)}
+ }
+ const water=landscapeExportWater(0,PLAN.R*8);water.visible=false;
+ return{source:'planet',terrain:null,planet:{kind:'globe',radius:PLAN.R,segments:globe.segments,rings:globe.rings,vertexCount:globe.vertexCount,triangleCount:globe.triangleCount,sea:PLAN.sea,seed:PLAN.seed,relief:[globe.minRadius-globe.radius,globe.maxRadius-globe.radius],radii:b64(radii),normals:b64(normals),colors:b64(colors)},foliage:null,water,map:null,objects:[],
+  info:{radius:PLAN.R,seed:PLAN.seed,sea:PLAN.sea,landed:!!PLAN.landed}}
+}
+function landscapeExportScene(){
+ const mode=landscapeExportMode(),{normalPixels,normalImage}=landscapeExportNormalPixels(),surface=landscapeExportSurface(normalPixels,normalImage);
+ return Object.assign({mode,sky:landscapeExportSky(),weather:landscapeExportWeather()},mode==='planet'?landscapeExportPlanet():mode==='world'?landscapeExportWorld(surface):landscapeExportTerrain(surface));
+}
+function importToGrid(){
+ /* The x7 plant layout is sent as typed arrays, which stream through
+    postMessage without base64; the manual-copy fallback still has to produce
+    valid JSON, so binary sections become placeholders instead of 20 MB of
+    comma-separated numbers. */
+ let d,js;const getJson=()=>js||(js=d?JSON.stringify(d,(key,value)=>ArrayBuffer.isView(value)?'<'+value.constructor.name+' '+value.length+'>':value):'');
+ try{
+  landscapeTextureCache.clear();
+  const scene=landscapeExportScene();
+  d={app:'final-effect',version:3,units:'m',axes:{up:'Y',note:'data is three.js Y-up; the UI shows Blender-style Z-up'},source:scene.source,info:scene.info||null,terrain:scene.terrain,planet:scene.planet||null,water:scene.water,sky:scene.sky,weather:scene.weather,foliage:scene.foliage,map:scene.map,objects:scene.objects};
+  const requestId='land-'+Date.now()+'-'+Math.random().toString(36).slice(2),message={type:'final-effect:import',requestId,payload:d};let host=null;try{if(window.parent!==window&&window.parent.FE?.engines)host=window.parent;else if(window.opener?.FE?.engines)host=window.opener}catch(e){}let sent=false;if(host){try{host.postMessage(message,'*');sent=true}catch(e){sent=false}}if(!sent&&landscapeImportChannel){try{landscapeImportChannel.postMessage(message);sent=true}catch(e){sent=false}}if(!sent){showLandscapeExportFallback(getJson(),'Could not reach the 3D Workspace. Open the main app and retry Import.');return}const timer=setTimeout(()=>{const pending=pendingLandscapeImports.get(requestId);if(pending){pendingLandscapeImports.delete(requestId);showLandscapeExportFallback(pending.json(),'No 3D Workspace acknowledgement was received. Keep the main app open and retry.')}},20000);pendingLandscapeImports.set(requestId,{json:getJson,timer});$('#ov').hidden=true;$('#imp').title='Sending the '+(scene.source==='world'?'open world':scene.source==='planet'?'planet':'landscape')+' to the 3D Workspace…'
+ }catch(e){console.error('Landscaping export failed:',e);showLandscapeExportFallback(d?getJson():'','Could not prepare the landscaping scene: '+(e?.message||e))}
+}
 $('#imp').onclick=importToGrid;
 $('#cp').onclick=()=>{const t=$('#exp');t.focus();t.select();t.setSelectionRange(0,1e9);try{navigator.clipboard.writeText(t.value)}catch(e){}try{document.execCommand('copy')}catch(e){}};
 $('#cl').onclick=()=>$('#ov').hidden=true;

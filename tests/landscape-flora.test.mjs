@@ -694,3 +694,98 @@ test('the documented sway law is the one the kernel compiles', () => {
   assert.ok(doc.includes('sway = clamp(path · (0.55 + 0.45·thin), 0, 1)'), 'and the combined law');
   assert.ok(doc.includes('float skB = (sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + aPhase * 1.6 + 1.1))'), 'the doc shader is the shipped shader');
 });
+
+test('branches are round limbs, not triangular planks', () => {
+  /* The facet count used to be `3 + r0*7`, which gave every branch thinner than
+     about 4 cm exactly three sides. A crown is almost entirely those, so the
+     tree read as a pile of flat planks instead of round wood. */
+  const flora = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(flora, /const float floorSides = s\.tubes <= 4 \? 3\.0f : 4\.0f;/, 'woody species never drop to a triangle');
+  assert.match(flora, /const int32_t sides = int32_t\(clampf\(4\.0f \+ r0 \* 120\.0f, floorSides, float\(s\.tubes\)\)\);/, 'facets follow the radius');
+  assert.equal(flora.includes('clampf(3.0f + r0 * 7.0f'), false, 'the plank formula is gone');
+});
+
+test('the crown of a real tree is thick enough to read as round', async () => {
+  const { core } = await bootBridge();
+  /* An oak used to come out at roughly 3 000 vertices, most of them in
+     3-sided prisms. Round wood costs more and reads as wood. */
+  const oak = core.floraTree(0, 4242, 2);
+  assert.ok(oak.verts > 6000, `an oak should be a body of round limbs (got ${oak.verts})`);
+  assert.ok(oak.verts <= 24000, 'and stay inside the kernel buffer');
+  for (let kind = 0; kind < SPECIES.length; kind++) {
+    const tree = core.floraTree(kind, 99 + kind, 2);
+    assert.ok(tree.verts <= 24000, `${SPECIES[kind]} stays inside the vertex buffer (got ${tree.verts})`);
+  }
+});
+
+test('bark is scaled by circumference, so the crown is not smeared', () => {
+  /* `j / sides` wrapped one whole bark tile around every limb from a 2 cm twig
+     to a 1.2 m trunk. Along the branch the scale was metric (uvScale per metre),
+     across it was not, so the grain stretched sideways on exactly the thin wood
+     that fills a crown. */
+  const flora = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(flora, /const float uSpan = maxf\(0\.12f, kTwoPi \* \(\(r0 \+ r1\) \* 0\.5f\) \* uvScale\);/, 'the ring spans a metric arc length');
+  assert.match(flora, /\(float\(j\) \/ float\(sides\)\) \* uSpan/, 'and the facet uses it');
+  const ring = flora.slice(flora.indexOf('for (int32_t j = 0; j <= sides; ++j)'), flora.indexOf('const int32_t stride = sides + 1;'));
+  assert.equal(ring.includes('float(j) / float(sides),'), false, 'the stretched uv is gone');
+});
+
+test('every triangle is wound outward, so bark and rock are not drawn inside-out', async () => {
+  const { core } = await bootBridge();
+  const meshes = [['oak', core.floraTree(0, 4242, 2)], ['birch', core.floraTree(1, 4242, 2)], ['pine', core.floraTree(18, 4242, 2)], ['rock', core.floraRock(0, 5150, 2)]];
+  for (const [name, mesh] of meshes) {
+    const pos = mesh.pos, nrm = mesh.nrm, idx = mesh.idx;
+    let agree = 0, triangles = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+      const e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+      const e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      if (Math.hypot(nx, ny, nz) < 1e-12) continue;
+      const vx = nrm[a] + nrm[b] + nrm[c], vy = nrm[a + 1] + nrm[b + 1] + nrm[c + 1], vz = nrm[a + 2] + nrm[b + 2] + nrm[c + 2];
+      triangles++;
+      if (nx * vx + ny * vy + nz * vz > 0) agree++;
+    }
+    /* The default material is FrontSide: a reversed winding culls the bark we
+       should see and draws the hollow inside of the trunk instead. */
+    assert.ok(triangles > 500, `${name} has triangles`);
+    assert.ok(agree === triangles, `${name}: ${triangles - agree} of ${triangles} triangles face inward`);
+  }
+});
+
+test('a tree grows out of the ground with a buttressed collar, not stood on it', async () => {
+  const { core } = await bootBridge();
+  const tree = core.floraTree(0, 4242, 2);
+  const pos = tree.pos;
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < tree.verts; i++) {
+    const y = pos[i * 3 + 1];
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  assert.ok(minY < -0.01, 'the foot is buried below the ground plane so it cannot float on a slope');
+  const radiusAt = (low, high) => {
+    let r = 0;
+    for (let i = 0; i < tree.verts; i++) {
+      const y = pos[i * 3 + 1];
+      if (y < low || y > high) continue;
+      r = Math.max(r, Math.hypot(pos[i * 3], pos[i * 3 + 2]));
+    }
+    return r;
+  };
+  const collar = radiusAt(minY - 1e-4, minY + 0.08);
+  const stem = radiusAt(maxY * 0.3, maxY * 0.34);
+  assert.ok(collar > stem * 1.15, `the collar (${collar.toFixed(3)}) must be visibly wider than the stem (${stem.toFixed(3)})`);
+});
+
+test('a lateral branch is rooted inside its parent instead of butted against it', async () => {
+  /* The join is in the kernel, so pin the rule rather than the pixels: a limb
+     that leaves at an angle is sunk back along its own axis and flares, a
+     leader continues the parent's line at the parent's radius. */
+  const cpp = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(cpp, /const bool leader = dot\(dir, pdir\) > 0\.75f;/);
+  assert.match(cpp, /const float sink = leader \? 0\.0f : r0 \* 0\.85f;/);
+  assert.match(cpp, /const float rootR = leader \? r0 \* 0\.98f : maxf\(r0 \* 0\.50f, r1 \* 1\.20f\);/);
+  /* Winding is fixed in one place for every emitter in the file. */
+  assert.match(cpp, /gIdx\[gIdxN\+\+\] = uint32_t\(a\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(c\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(b\);/);
+});

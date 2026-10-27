@@ -147,16 +147,20 @@ body.explore-heli:not(.explore-compact) #exJoystick{bottom:calc(env(safe-area-in
 <div id="exActiveBar" hidden><span id="exActiveName">Explore active</span><button class="ex-quick-btn" id="exJumpButton" aria-label="Jump">⬆ Jump</button><button class="ex-quick-btn" id="exHeliAltitudeDown" aria-label="Lower altitude by 5 metres">−</button><button class="ex-quick-btn" id="exHeliAltitudeUp" aria-label="Raise altitude by 5 metres">+</button><button id="exMinimize" aria-label="Expand Explore controls" aria-expanded="false">＋</button><button id="exActiveSettings" aria-label="Explore settings">⚙</button><button id="exStop">End</button><div id="exHeliLive"><label class="ex-slider"><span>Altitude</span><input id="exHeliAltitudeLive" type="range" min="20" max="220" step="5" value="90"><output id="exHeliAltitudeLiveOut">90 m</output></label><label class="ex-slider"><span>Speed</span><input id="exHeliSpeedLive" type="range" min="0" max="35" step="1" value="12"><output id="exHeliSpeedLiveOut">12 m/s</output></label></div></div></div>
 <div id="exJoystick" aria-label="Virtual movement joystick"><div id="exJoyBase"></div><div id="exJoyKnob"></div></div>
 <div id="ov" hidden><div id="ovt"></div><textarea id="exp" readonly></textarea><div style="display:flex;gap:8px"><button class="ib" id="cp">Copy JSON</button><button class="ib" id="cl">Close</button></div></div>
+<!-- Everything this studio needs is served from this origin. The five CDN
+     requests it used to make were the biggest fixed cost of opening it on a
+     phone, and they meant the studio could not start offline at all. -->
+<script src="./vendor/three/three.min.js"></script>
+<script src="./vendor/three/OrbitControls.js"></script>
+<script src="./vendor/three/TransformControls.js"></script>
+<script src="./vendor/three/GLTFLoader.js"></script>
+<script src="./vendor/three/OBJLoader.js"></script>
 <script src="./fe-icons.js"></script>
 <script src="./celestial-math.js"></script>
 <script src="./scatter-spacing.js"></script>
-<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
-<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-<script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 <script src="./tessendorf-ocean.js"></script>
 <script src="./open-world-generator.js"></script>
+<script src="./landscape-export-pack.js"></script>
 <script src="./terrain-main-01.js"></script>
 <script src="./kernel-worker.js"></script>
 <script src="./landscape-flora.js"></script>

@@ -1,5 +1,4 @@
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const globalThree = {
@@ -30,6 +29,4 @@ await build({
   target: 'es2018',
 });
 
-mkdirSync('public', { recursive: true });
-copyFileSync('wasm/simulation_solver.wasm', 'public/simulation_solver.wasm');
-console.log('Generated the modifier/ocean runtime bundles and copied the WASM runtime asset for Vite.');
+console.log('Generated the modifier/ocean runtime bundles.');
