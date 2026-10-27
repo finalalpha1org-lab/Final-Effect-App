@@ -287,6 +287,21 @@
   if(count)state.output.set(new Float32Array(ex.memory.buffer,ex.fe_terrain_scatter_out_ptr(),count*4));
   return count;
  };
+ /* Smooth normals for a streamed chunk grid (row x row heights, uniform step).
+    The open-world tiles recompute theirs on every brush stroke, and three's
+    computeVertexNormals allocates a fresh array and averages face normals;
+    the kernel uses the same central difference as the root terrain, so a tile
+    shades exactly like the world around it. */
+ core.gridNormals=function(state){
+  if(!core.ready||!core.has('fe_grid_normals')||!state||!state.heights||!state.output)return false;
+  const row=state.row|0,count=row*row;
+  if(row<2||row>129||state.heights.length<count||state.output.length<count*3)return false;
+  const step=state.step>0?state.step:1;
+  new Float32Array(ex.memory.buffer,ex.fe_grid_height_ptr(),count).set(state.heights.subarray(0,count));
+  if(ex.fe_grid_normals(row,step)!==0)return false;
+  state.output.set(new Float32Array(ex.memory.buffer,ex.fe_grid_normal_ptr(),count*3));
+  return true;
+ };
  core.normals=function(state){
   if(!ensure(state.n,state.size))return false;
   new Float32Array(ex.memory.buffer,ex.fe_terrain_get_height_ptr(),state.heights.length).set(state.heights);

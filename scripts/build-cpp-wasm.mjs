@@ -68,6 +68,9 @@ const REQUIRED_EXPORTS = [
   'fe_forest_classify',
   'fe_terrain_erode_brush',
   'fe_terrain_compute_normals',
+  'fe_grid_height_ptr',
+  'fe_grid_normal_ptr',
+  'fe_grid_normals',
   'fe_terrain_set_palette',
   'fe_terrain_set_paint_colors',
   'fe_terrain_generate_layered',
@@ -243,6 +246,8 @@ if (zig) {
     '-Wl,--export=fe_render_active_pixels',
     '-Wl,--export=fe_render_denoise_config',
     '-Wl,--export=fe_terrain_compute_normals_region',
+    /* Chunk normals: the streamed tiles recompute theirs on every stroke. */
+    '-Wl,--export=fe_grid_normals','-Wl,--export=fe_grid_height_ptr','-Wl,--export=fe_grid_normal_ptr',
     '-Wl,--export=fe_scatter_begin',
     '-Wl,--export=fe_scatter_matrices',
     '-Wl,--export=fe_scatter_order_ptr',

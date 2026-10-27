@@ -4,6 +4,8 @@
 namespace {
 using namespace fe;
 constexpr uint32_t CAP=513u*513u;
+/* Streamed chunks cap at 128 segments, so their grids are 129x129. */
+#define FE_GRID_MAX_ROW 129u
 static float H[CAP], normals[CAP*3], colors[CAP*3], weights[3][CAP*4], scratch[CAP];
 static uint8_t masks[CAP*4], materials[CAP];
 static float forestInput[32768*3];
@@ -303,6 +305,28 @@ float fe_terrain_sample_height(float x,float z){return finite(x)&&finite(z)?samp
 void fe_terrain_sample_normal(float x,float z,float alignment,float* out){if(!out)return;float d=size/N;Vec3 n=normalize(Vec3((sample(H,x-d,z)-sample(H,x+d,z))*alignment,2*d,(sample(H,x,z-d)-sample(H,x,z+d))*alignment));out[0]=n.x;out[1]=n.y;out[2]=n.z;}
 int32_t fe_terrain_generate_gaea(float seed,uint32_t mode,float height,float sharp,float warp,float strata,float freq,uint32_t continental,float base,float mountain){if(!finite(seed)||!finite(height)||!finite(sharp)||!finite(warp)||!finite(strata)||!finite(freq)||!finite(base)||!finite(mountain)||mode>5)return -1;uint32_t s=uint32_t(absf(seed));for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){float x=(float(i)/N-.5f)*size,z=(float(j)/N-.5f)*size;float wx=(noise(x*.012f,z*.012f,s)-.5f)*warp,wz=(noise(x*.012f+43,z*.012f-17,s)-.5f)*warp;float a=.5f,f=.026f,h=0,r=0;for(int o=0;o<6;o++){float n=noise((x+wx)*f,(z+wz)*f,s+o*17);h+=(n-.5f)*a;r+=powf(1-absf(n*2-1),clampf(sharp,.2f,8))*a;a*=.5f;f*=2.03f;}h=(h*1.6f+r*(mode==1?1.2f:.6f)-.25f)*height;if(mode==4){float q=sqrtf(x*x+z*z)/size;h+=height*(expf(-q*q*35)-.7f*expf(-q*q*240));}if(mode==2||mode==5)h=lerpf(h,floorf(h/maxf(freq,.1f))*maxf(freq,.1f),clampf(strata,0,1));if(!continental){float edge=smoothstepf(.62f,.98f,maxf(absf(x),absf(z))/(size*.5f));h=lerpf(h,-14,edge);}H[j*W+i]=h+base+mountain*r;materials[j*W+i]=255;}return 0;}
 int32_t fe_terrain_rebuild_region(uint32_t x0,uint32_t x1,uint32_t z0,uint32_t z1,float seed,float water,float rock,float snow,uint32_t biome,const float* pal){(void)seed;(void)biome;if(!pal||x0>x1||z0>z1||x1>N||z1>N)return -1;float d=size/N;for(uint32_t j=z0;j<=z1;j++)for(uint32_t i=x0;i<=x1;i++){uint32_t k=j*W+i;float gx=(H[j*W+(i<N?i+1:i)]-H[j*W+(i?i-1:i)])/(d*(i&&i<N?2:1)),gz=(H[(j<N?j+1:j)*W+i]-H[(j?j-1:j)*W+i])/(d*(j&&j<N?2:1));Vec3 n=normalize(Vec3(-gx,1,-gz));normals[k*3]=n.x;normals[k*3+1]=n.y;normals[k*3+2]=n.z;uint32_t m=materials[k]!=255?materials[k]:H[k]<water+1?3:H[k]>snow?4:sqrtf(gx*gx+gz*gz)>rock?2:0;if(m>5)m=0;float total=0;for(int c=0;c<3;c++)for(int q=0;q<4;q++)total+=weights[c][k*4+q];for(int c=0;c<3;c++)colors[k*3+c]=pal[m*3+c];float avg=(H[j*W+(i?i-1:i)]+H[j*W+(i<N?i+1:i)]+H[(j?j-1:j)*W+i]+H[(j<N?j+1:j)*W+i])*.25f;masks[k*4+3]=uint8_t(clampf((avg-H[k])/d*.5f+.5f,0,1)*255);(void)total;}return 0;}
+/* Smooth normals for any square height grid the studio streams in. Open-world
+   chunks are rebuilt on every brush stroke, and three's computeVertexNormals
+   allocates a fresh array and averages face normals; this is the same
+   central-difference normal the root terrain uses, so a chunk shades exactly
+   like the world it belongs to. Heights come from the caller's copy in
+   gridHeights, normals go out in gridNormals. */
+static float gridHeights[FE_GRID_MAX_ROW*FE_GRID_MAX_ROW];
+static float gridNormals[FE_GRID_MAX_ROW*FE_GRID_MAX_ROW*3];
+float* fe_grid_height_ptr(){return gridHeights;}
+float* fe_grid_normal_ptr(){return gridNormals;}
+int32_t fe_grid_normals(uint32_t row,float step){
+ if(row<2||row>FE_GRID_MAX_ROW||!finite(step)||step<=0)return -1;
+ const uint32_t last=row-1;
+ for(uint32_t j=0;j<row;j++)for(uint32_t i=0;i<row;i++){
+  const float gx=(gridHeights[j*row+(i<last?i+1:i)]-gridHeights[j*row+(i?i-1:i)])/(step*(i&&i<last?2:1));
+  const float gz=(gridHeights[(j<last?j+1:j)*row+i]-gridHeights[(j?j-1:j)*row+i])/(step*(j&&j<last?2:1));
+  const Vec3 n=normalize(Vec3(-gx,1,-gz));
+  const uint32_t k=(j*row+i)*3;
+  gridNormals[k]=n.x;gridNormals[k+1]=n.y;gridNormals[k+2]=n.z;
+ }
+ return 0;
+}
 void fe_terrain_compute_normals(){
  const float d=size/N;
  for(uint32_t j=0;j<W;j++)for(uint32_t i=0;i<W;i++){
