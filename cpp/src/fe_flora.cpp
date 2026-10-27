@@ -582,7 +582,14 @@ void meshBranches(const SpeciesSpec& s, Rng& rng, int32_t firstBranch, V3 hint) 
     const V3 b = gNodes[i].p;
     const float r0 = gNodes[parent].radius * 1.05f;
     const float r1 = gNodes[i].radius;
-    const int32_t sides = int32_t(clampf(3.0f + r0 * 7.0f, 3.0f, float(s.tubes)));
+    /* Facet count follows the branch radius in metres. It used to be
+       `3 + r0*7`, which gave every branch thinner than about 4 cm exactly three
+       sides -- a triangular prism. A crown is almost entirely made of those, so
+       the tree read as a pile of flat planks instead of round limbs. Four is the
+       floor for anything woody, and 120 facets per metre puts an 8 cm limb at
+       the species' maximum while a 2 cm twig still gets six. */
+    const float floorSides = s.tubes <= 4 ? 3.0f : 4.0f;
+    const int32_t sides = int32_t(clampf(4.0f + r0 * 120.0f, floorSides, float(s.tubes)));
     const float gnarl = fbm(mul(b, 0.55f), 0x51ed270bu, 2) * 0.05f * r0;
     const V3 offset = norm(cross(sub(b, a), v3(0.0f, 1.0f, 0.0f)));
     const V3 start = add(a, mul(offset, gnarl));

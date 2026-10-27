@@ -58,7 +58,24 @@ let landscapeActive=true,landscapeRaf=0;
 function scheduleLandscapeFrame(){if(landscapeActive&&!document.hidden&&!landscapeRaf)landscapeRaf=requestAnimationFrame(loop)}
 window.addEventListener('message',e=>{if(e.source!==window.parent||e.data?.type!=='FE_STUDIO_ACTIVE')return;landscapeActive=!!e.data.active;if(!landscapeActive){cancelAnimationFrame(landscapeRaf);landscapeRaf=0}else{pt=performance.now();scheduleLandscapeFrame()}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){cancelAnimationFrame(landscapeRaf);landscapeRaf=0}else{pt=performance.now();scheduleLandscapeFrame()}});
-function loop(){landscapeRaf=0;if(!landscapeActive||document.hidden)return;scheduleLandscapeFrame();const n=performance.now(),realDt=Math.max(0,(n-pt)/1000),dt=Math.min(.1,realDt);pt=n;U.t.value+=dt*wspd;WU.value+=dt;try{wxStep(dt,realDt)}catch(er){if((wxFail=(window.wxFail||0)+1)<3)showErr('Weather: '+er.message);window.wxFail=wxFail}U.wy.value=water.position.y;stepWaveClimate();syncWaterPhysical();updateTessendorfOcean(n);fr++;updateWaterReflection();updateShoreSpray(dt);if(fr%90==20&&fr<1500)checkShaders();
+/* A frame body that throws must not take the renderer with it. The exception
+   used to escape loop(), the already-scheduled next frame ran again, threw
+   again, and the studio kept showing its last picture: no brushes, no settings,
+   no colour updates, and a red box on top. Every stage below now fails on its
+   own and the scene still draws, and a fault inside the live erosion tells that
+   subsystem to stop instead of killing the frame forever. */
+let frameStage='',frameFaults=0;
+function frameFault(error){
+ frameFaults++;
+ const where=frameStage||'frame';
+ if(where==='erosion'&&typeof stopLiveErosion==='function'){
+  try{stopLiveErosion('Erosion stopped · '+((error&&error.message)||'engine error'))}catch(inner){}
+ }
+ if(frameFaults<=20)showErr('Runtime ('+where+'): '+String((error&&(error.stack||error.message))||error).slice(0,700));
+}
+function loop(){landscapeRaf=0;if(!landscapeActive||document.hidden)return;scheduleLandscapeFrame();const n=performance.now(),realDt=Math.max(0,(n-pt)/1000),dt=Math.min(.1,realDt);pt=n;
+try{U.t.value+=dt*wspd;WU.value+=dt;try{wxStep(dt,realDt)}catch(er){if((wxFail=(window.wxFail||0)+1)<3)showErr('Weather: '+er.message);window.wxFail=wxFail}U.wy.value=water.position.y;stepWaveClimate();syncWaterPhysical();updateTessendorfOcean(n);fr++;updateWaterReflection();updateShoreSpray(dt);if(fr%90==20&&fr<1500)checkShaders();
 for(let ci=0;ci<clouds.length;ci++){const g=clouds[ci];g.position.x+=dt*2;if(g.position.x>260)g.position.x=-260}
-updateExplore(dt);if(!exploreMode)oc.update();if(OW?.active)owRefresh();updateDirectionalShadowFocus(n);updateFoliageLOD(n);liveErosionTick(n);if(sel)sbx.setFromObject(sel);for(let ni=0;ni<nfs.length;ni++)nfs[ni]();navg();shadowCadence(n);ren.render(scene,cam);fc++;ft+=dt;if(ft>.5){const measuredFps=fc/ft;$('#fps').textContent=Math.round(measuredFps)+' fps';updateSmoothPreview(measuredFps,n);fc=ft=0}}
+updateExplore(dt);if(!exploreMode)oc.update();if(OW?.active)owRefresh();updateDirectionalShadowFocus(n);updateFoliageLOD(n);frameStage='erosion';liveErosionTick(n);frameStage='';if(sel)sbx.setFromObject(sel);for(let ni=0;ni<nfs.length;ni++)nfs[ni]();navg();shadowCadence(n)}catch(er){frameFault(er)}
+frameStage='render';try{ren.render(scene,cam)}catch(er){frameFault(er)}frameStage='';fc++;ft+=dt;if(ft>.5){const measuredFps=fc/ft;$('#fps').textContent=Math.round(measuredFps)+' fps';updateSmoothPreview(measuredFps,n);fc=ft=0}}
 [()=>{try{if(window.__feRestoreStudioConfig)window.__feRestoreStudioConfig()}catch(e){showErr('Saved settings: '+e.message)}},()=>gen(window.__feStartupSeed),()=>scatter(),()=>updSky(),()=>setTab('terrain'),()=>showPanel(false),()=>{nav=true;setNav()}].forEach(f=>{try{f()}catch(e){showErr('Init: '+e.message)}});loop();

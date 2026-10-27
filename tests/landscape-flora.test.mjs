@@ -694,3 +694,26 @@ test('the documented sway law is the one the kernel compiles', () => {
   assert.ok(doc.includes('sway = clamp(path · (0.55 + 0.45·thin), 0, 1)'), 'and the combined law');
   assert.ok(doc.includes('float skB = (sin(uT * skW + aPhase) + 0.42 * sin(uT * skW * 2.1 + aPhase * 1.6 + 1.1))'), 'the doc shader is the shipped shader');
 });
+
+test('branches are round limbs, not triangular planks', () => {
+  /* The facet count used to be `3 + r0*7`, which gave every branch thinner than
+     about 4 cm exactly three sides. A crown is almost entirely those, so the
+     tree read as a pile of flat planks instead of round wood. */
+  const flora = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  assert.match(flora, /const float floorSides = s\.tubes <= 4 \? 3\.0f : 4\.0f;/, 'woody species never drop to a triangle');
+  assert.match(flora, /const int32_t sides = int32_t\(clampf\(4\.0f \+ r0 \* 120\.0f, floorSides, float\(s\.tubes\)\)\);/, 'facets follow the radius');
+  assert.equal(flora.includes('clampf(3.0f + r0 * 7.0f'), false, 'the plank formula is gone');
+});
+
+test('the crown of a real tree is thick enough to read as round', async () => {
+  const { core } = await bootBridge();
+  /* An oak used to come out at roughly 3 000 vertices, most of them in
+     3-sided prisms. Round wood costs more and reads as wood. */
+  const oak = core.floraTree(0, 4242, 2);
+  assert.ok(oak.verts > 6000, `an oak should be a body of round limbs (got ${oak.verts})`);
+  assert.ok(oak.verts <= 24000, 'and stay inside the kernel buffer');
+  for (let kind = 0; kind < SPECIES.length; kind++) {
+    const tree = core.floraTree(kind, 99 + kind, 2);
+    assert.ok(tree.verts <= 24000, `${SPECIES[kind]} stays inside the vertex buffer (got ${tree.verts})`);
+  }
+});

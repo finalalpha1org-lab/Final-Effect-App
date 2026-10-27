@@ -93,3 +93,20 @@ test('the instance list written to the GPU is the compacted list the core return
   assert.match(TERRAIN, /indices:new Uint32Array\(ex\.memory\.buffer,ex\.fe_lod_visible_index_ptr\(\),got\)/, 'indices are a view over the core buffer');
   assert.equal((TERRAIN.match(/ex\.fe_lod_visible\(/g) || []).length, 1, 'one call per refresh');
 });
+
+test('one broken subsystem cannot freeze the studio', () => {
+  /* A throw inside the frame body used to escape loop(). The next frame was
+     already scheduled, threw in the same place, and the studio kept showing its
+     last picture: brushes did nothing, settings did nothing, and the only clue
+     was a red box. The scene stages and the draw call now fail separately. */
+  const body = loopBody();
+  assert.match(body, /try\{U\.t\.value\+=dt\*wspd/, 'the scene stages are guarded');
+  assert.match(body, /catch\(er\)\{frameFault\(er\)\}/, 'and report through one place');
+  assert.match(body, /frameStage='render';try\{ren\.render\(scene,cam\)\}catch\(er\)\{frameFault\(er\)\}/,
+    'the draw call is guarded on its own, so a broken tick still draws');
+  assert.match(body, /frameStage='erosion';liveErosionTick\(n\);frameStage='';/, 'the erosion tick is named when it faults');
+  assert.match(LOOP, /function frameFault\(error\)\{/, 'the fault handler exists');
+  assert.match(LOOP, /if\(where==='erosion'&&typeof stopLiveErosion==='function'\)/, 'an erosion fault stops the run instead of killing every frame');
+  assert.match(LOOP, /if\(frameFaults<=20\)showErr\(/, 'and it cannot flood the screen');
+  assert.equal(/new THREE|\[\.\.\.|Array\.from|\.slice\(/.test(body), false, 'the guard allocates nothing');
+});

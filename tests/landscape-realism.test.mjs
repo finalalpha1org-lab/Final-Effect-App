@@ -432,3 +432,29 @@ test('rain wets the PBR surfaces through one uniform, with no rain particles', (
   assert.ok(weather.includes('rainMesh.visible=WX.rain>.02'), 'and it disappears when the rain stops');
   assert.equal(/for\s*\(.*NR.*\]\s*\{\s*new /.test(weather), false, 'no per-particle allocation');
 });
+
+test('the base pixels exist before any deferred painting runs', () => {
+  /* shadeColour() multiplies into the pixels that are already on the canvas and
+     caches them as __feOriginal. If the base colour arrives late -- or never,
+     because the C++ pass discarded the queue -- every tile comes out black, and
+     the land loses its material. The base fill is one fillRect: it belongs in
+     the factory, not in the deferred job. */
+  const terrainSource = readFileSync('terrain-main-01.js', 'utf8');
+  const realismSource = readFileSync('landscape-realism.js', 'utf8');
+  const factory = (name, end) => {
+    const start = terrainSource.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} exists`);
+    return terrainSource.slice(start, terrainSource.indexOf(end, start));
+  };
+  for (const [name, end] of [['terrainDetailTex', 'const TERRAIN_PBR='], ['owSurfaceTexture', 'const OW_PAINT_RGB=']]) {
+    const body = factory(name, end);
+    const fill = body.indexOf('x.fillRect(0,0,256,256)');
+    const deferred = body.indexOf('BOOT_PAINT.add(()=>{');
+    assert.ok(fill > 0, `${name} paints a base colour`);
+    assert.ok(deferred > 0, `${name} defers its detail`);
+    assert.ok(fill < deferred, `${name} paints the base before deferring the detail`);
+    assert.equal(body.slice(deferred).includes('x.fillRect(0,0,256,256)'), false,
+      `${name} does not fill the base twice`);
+  }
+  assert.ok(realismSource.includes('root.FE_BOOT_PAINT.discard()'), 'the queue is only dropped once the C++ kernels are about to paint');
+});
