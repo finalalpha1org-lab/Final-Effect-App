@@ -158,6 +158,34 @@ test('terrain water has no WASM/SPH simulation path or particle-grid control',()
   assert.ok(html.includes('not a full Navier–Stokes/CFD solver or a guarantee of photographic realism'),'solver and rendering limits should remain explicit in the UI');
 });
 
+test('water is given the refractive index of water, not of glass', () => {
+  /* three maps `reflectivity` onto F0 = 0.16 r^2, and water's F0 at normal
+     incidence is 0.02 for n = 1.333. The material used to be handed 0.5..0.72 —
+     F0 0.04 to 0.08, the Fresnel of crown glass up to sapphire — so the specular
+     on a calm lagoon was two to four times too strong and read as plastic. */
+  const match = html.match(/waterMat\.reflectivity=exClamp\(([^;]+)\);/);
+  assert.ok(match, 'the water material sets its reflectivity');
+  const expr = match[1];
+  assert.ok(expr.includes('Math.sqrt(.02/.16)'), 'the base has to be the F0 of water (0.02)');
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const value = new Function('Math', 'exClamp', 'U',
+    `return exClamp(${expr});`)(Math, clamp, { uReflect: { value: 1 } });
+  const f0 = 0.16 * value * value;
+  const ior = (1 + 0.4 * value) / (1 - 0.4 * value);
+  assert.ok(Math.abs(f0 - 0.02) < 0.002, `F0 at rest must be 0.02 (got ${f0.toFixed(4)})`);
+  assert.ok(Math.abs(ior - 1.333) < 0.02, `that is n = ${ior.toFixed(3)}, water is 1.333`);
+  /* The slider may lean the glancing highlight, never invent another liquid. */
+  for (const slider of [0, 0.5, 1.5]) {
+    const r = new Function('Math', 'exClamp', 'U', `return exClamp(${expr});`)(
+      Math, clamp, { uReflect: { value: slider } });
+    const n = (1 + 0.4 * r) / (1 - 0.4 * r);
+    assert.ok(n > 1.25 && n < 1.38, `the reflection slider must stay in water's index range (n ${n.toFixed(3)})`);
+  }
+  /* The shader's own Fresnel has to agree with the material. */
+  const fresnel = html.match(/\.02\+\.98\*pow\(1\.-clamp\([^,]+,0\.,1\.\),5\.\)/g) || [];
+  assert.ok(fresnel.length >= 1, 'the water shader keeps its own Schlick term with F0 = 0.02');
+});
+
 test('the colour a water preset actually puts on screen is physical, not a swatch', async () => {
   /* The authored `deep` and `shallow` values are only the brightness reference:
      `waterProfileFor` derives the colour the shader receives from the Jerlov
