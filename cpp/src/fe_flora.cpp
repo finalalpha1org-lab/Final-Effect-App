@@ -240,6 +240,54 @@ void pushTri(int32_t a, int32_t b, int32_t c) {
 
 /* Cylinder between two points. `hint` carries the previous ring's frame so a
  * chain of segments does not visibly twist; returns the frame to pass on. */
+/* ---------------------------------------------------------------- */
+/* Bark relief                                                       */
+/* ---------------------------------------------------------------- */
+
+/* How deep a real trunk's furrows are, in metres: oak and cedar crack into deep
+   plates, birch is papery, a palm's leaf scars stand proud by about a
+   centimetre, a saguaro's ribs are deeper still. Capped against the limb radius
+   so a 2 cm twig is not carved like a 60 cm trunk. Set per species before the
+   skeleton is meshed. */
+float gBarkAmp = 0.0f;
+
+/* A hash that lands on one joint's position, so two segments meeting at a
+   joint compute the same furrow there and the bark cannot open a step. */
+float barkHash(V3 p) {
+  const float h = sinf(p.x * 12.9898f + p.y * 78.233f + p.z * 37.719f) * 43758.5453f;
+  return h - floorf(h);
+}
+
+/* Ridge pitch is a real distance — one furrow every ~3.8 cm of circumference,
+   which is what oak and pine actually show — so a trunk carries many ridges
+   around it and a twig only three. The count is limited to a quarter of the
+   ring's sample count, or the relief aliases into noise on a coarse ring. */
+int32_t barkLobes(float r, int32_t sides) {
+  int32_t lobes = int32_t(6.2831853f * r / 0.038f);
+  if (lobes < 3) lobes = 3;
+  const int32_t limit = sides / 4;
+  if (lobes > limit) lobes = limit;
+  return lobes < 3 ? 3 : lobes;
+}
+
+/* Furrow depth as a fraction of the ring radius, and the slope of its wall at
+   this angle. Depth 0 means "this limb is too fine to carve". */
+float barkDepth(float r, int32_t sides) {
+  if (gBarkAmp <= 0.0f || sides < 8) return 0.0f;
+  return minf(gBarkAmp, r * 0.085f) / r;
+}
+
+/* d(theta) in -1..1 and its derivative: the ridge profile and the way its wall
+   leans, which is what tilts the shading normal. */
+void barkProfile(float th, int32_t lobes, float bh1, float bh2, float bh3,
+                 float& outD, float& outSlope) {
+  const float a1 = th * float(lobes) + bh1;
+  const float a2 = a1 * 2.0f + (bh2 - bh1 * 2.0f);
+  const float a3 = a1 * 3.0f + (bh3 - bh1 * 3.0f);
+  outD = 0.62f * sinf(a1) + 0.26f * sinf(a2) + 0.12f * sinf(a3);
+  outSlope = float(lobes) * (0.62f * cosf(a1) + 0.52f * cosf(a2) + 0.36f * cosf(a3));
+}
+
 V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
                float uvScale, float shade, float rnd, V3 hint, bool capEnd,
                float sway0 = 0.0f, float sway1 = 0.0f, float ph = 0.0f) {
@@ -266,11 +314,28 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
     const float r = ring ? r1 : r0;
     gPenSway = ring ? sway1 : sway0;
     gPenPh = ph;
+    /* Bark relief, keyed on the joint this ring stands on: two segments that
+       meet here hash the same position and therefore cut the same furrow, so
+       the limb stays sealed end to end. */
+    const float relief = barkDepth(r, sides);
+    const int32_t lobes = barkLobes(r, sides);
+    const float rh = barkHash(c);
+    const float bh1 = rh * kTwoPi, bh2 = (rh * 3.7f - floorf(rh * 3.7f)) * kTwoPi,
+                bh3 = (rh * 11.3f - floorf(rh * 11.3f)) * kTwoPi;
     for (int32_t j = 0; j <= sides; ++j) {
       const float th = (float(j) / float(sides)) * kTwoPi;
       const float cs = cosf(th), sn = sinf(th);
       const V3 n = v3(u.x * cs + w.x * sn, u.y * cs + w.y * sn, u.z * cs + w.z * sn);
-      pushVert(add(c, mul(n, r)), n, (float(j) / float(sides)) * uSpan, v0 + (ring ? length : 0.0f) * uvScale,
+      float rr = r;
+      V3 nrm = n;
+      if (relief > 0.0f) {
+        float d = 0.0f, slope = 0.0f;
+        barkProfile(th, lobes, bh1, bh2, bh3, d, slope);
+        rr *= 1.0f + relief * d;
+        const V3 tang = add(mul(u, -sn), mul(w, cs));
+        nrm = norm(sub(n, mul(tang, relief * slope)));
+      }
+      pushVert(add(c, mul(n, rr)), nrm, (float(j) / float(sides)) * uSpan, v0 + (ring ? length : 0.0f) * uvScale,
                shade, rnd, cen);
     }
   }
@@ -911,6 +976,22 @@ void computeNodeWind(const SpeciesSpec& s) {
   }
 }
 
+float barkDepthFor(int32_t kind) {
+  switch (kind) {
+    case SP_OAK: return 0.018f;
+    case SP_BIRCH: return 0.0045f;
+    case SP_ACACIA: return 0.011f;
+    case SP_DEADTREE: return 0.008f;
+    case SP_PINE: case SP_SPRUCE: case SP_JUNIPER: return 0.013f;
+    case SP_KRUMM: return 0.010f;
+    case SP_PALM: return 0.009f;
+    case SP_TREEFERN: return 0.006f;
+    case SP_SAGUARO: case SP_BARREL: return 0.020f;
+    case SP_SAGE: case SP_JOSHUA: return 0.005f;
+    default: return 0.0035f;
+  }
+}
+
 /* One ring of vertices at a joint. Buttress lobes on the lowest rings of the
    trunk are what make the flare read as roots rather than as a cone. */
 void emitRing(int32_t i, int32_t sides) {
@@ -928,6 +1009,21 @@ void emitRing(int32_t i, int32_t sides) {
      from the joint index modulo anything lays a visible stripe up every limb,
      which is the "obviously procedural" tell this whole pass exists to remove. */
   const float hash = (sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f - floorf(sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f));
+  /* Bark furrows. The pitch is a real distance — one ridge every ~3.8 cm of
+     circumference, which is what oak and pine actually show — so a trunk gets
+     many ridges around it and a twig gets three, instead of every limb carrying
+     the same number of grooves and the bark reading as a pattern. The highest
+     harmonic is kept under a quarter of the ring's sample count, or the relief
+     would alias into noise on the coarse rings of a thin limb. */
+  const float reliefDepth = gNodes[i].isRoot ? 0.0f : barkDepth(r, sides);
+  const int32_t lobes = barkLobes(r, sides);
+  const float h2 = hash * 3.7f - floorf(hash * 3.7f);
+  const float h3 = hash * 11.3f - floorf(hash * 11.3f);
+  /* The phase drifts with the joint's own distance along the limb, so the
+     ridges wander up a trunk instead of standing in straight ruled grooves. */
+  const float bh1 = hash * kTwoPi + gNodes[i].len * 0.9f;
+  const float bh2 = h2 * kTwoPi + gNodes[i].len * 1.7f;
+  const float bh3 = h3 * kTwoPi;
   const V3 cen = gNodes[i].p;
   const float lobePhase = gNodePh[i] * 0.7f;
   const float lobeAmt = gNodes[i].level == 0 && !gNodes[i].isRoot
@@ -942,7 +1038,17 @@ void emitRing(int32_t i, int32_t sides) {
       const float lobe = cosf(th * 5.0f + lobePhase);
       if (lobe > 0.0f) rr *= 1.0f + lobeAmt * lobe * lobe * lobe;
     }
-    pushVert(add(c, mul(n, rr)), n, float(j) / float(sides) * tile,
+    V3 nrm = n;
+    if (reliefDepth > 0.0f) {
+      float d = 0.0f, slope = 0.0f;
+      barkProfile(th, lobes, bh1, bh2, bh3, d, slope);
+      rr *= 1.0f + reliefDepth * d;
+      /* The normal follows the furrow wall: the ridge is lit on its flank and
+         falls into shadow in the valley. */
+      const V3 tang = add(mul(gUf[i], -sn), mul(gVf[i], cs));
+      nrm = norm(sub(n, mul(tang, reliefDepth * slope)));
+    }
+    pushVert(add(c, mul(n, rr)), nrm, float(j) / float(sides) * tile,
              gNodes[i].len * 0.55f, bark, 0.35f + 0.62f * hash, cen);
   }
 }
@@ -2585,6 +2691,7 @@ void setLeafAlbedo(int32_t kind) {
 int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   if (kind < 0 || kind >= SP_COUNT) return 0;
   setLeafAlbedo(kind);
+  gBarkAmp = barkDepthFor(kind);
   gNodeN = 0;
   gAttN = 0;
   /* Habit-locked species first: a pine, a prickly pear and a sagebrush are

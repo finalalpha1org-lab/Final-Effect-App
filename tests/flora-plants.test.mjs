@@ -90,6 +90,54 @@ test('every walk-up plant grows from its own published dimensions', async () => 
   }
 });
 
+test('bark is displaced geometry, and its furrows tilt the shading normal', async () => {
+  /* PBR lists displacement next to albedo and roughness, and on a tree that has
+     to mean vertices: a bump map cannot roughen a silhouette. Every ring vertex
+     carries the joint it was emitted around (the `cen` channel), so each ring's
+     radial profile can be read straight off the artifact: `r` is how far the
+     vertex stands from the joint, and the angle between the vertex's radial
+     direction and its normal is the slope of the furrow wall it sits on. A
+     smooth tube has every normal exactly radial; a displaced one does not. */
+  const { core } = await boot();
+  const SPECIES = { oak: 0, birch: 1, acacia: 2 };
+  const tilt = {};
+  for (const [name, kind] of Object.entries(SPECIES)) {
+    const mesh = core.floraTree(kind, 4242, 2);
+    const rings = new Map();
+    for (let i = 0; i < mesh.verts; i++) {
+      const dx = mesh.pos[i * 3] - mesh.cen[i * 3];
+      const dy = mesh.pos[i * 3 + 1] - mesh.cen[i * 3 + 1];
+      const dz = mesh.pos[i * 3 + 2] - mesh.cen[i * 3 + 2];
+      const r = Math.hypot(dx, dy, dz);
+      if (r < 1e-4) continue;
+      const key = `${mesh.cen[i * 3]},${mesh.cen[i * 3 + 1]},${mesh.cen[i * 3 + 2]}`;
+      const dot = (mesh.nrm[i * 3] * dx + mesh.nrm[i * 3 + 1] * dy + mesh.nrm[i * 3 + 2] * dz) / r;
+      const group = rings.get(key) || [];
+      group.push({ r, tilt: (Math.acos(Math.min(1, Math.max(-1, dot))) * 180) / Math.PI });
+      rings.set(key, group);
+    }
+    /* Mid-limb rings only: the root flare is a separate effect. */
+    const mid = [...rings.values()].filter((g) => g.length >= 6 && g[0].r > 0.1 && g[0].r < 0.45);
+    assert.ok(mid.length > 4, `${name} must have mid-limb rings to measure`);
+    tilt[name] = Math.max(...mid.flat().map((v) => v.tilt));
+    assert.ok(tilt[name] > 2.5, `${name} bark furrows must tilt the surface normals (${tilt[name].toFixed(1)} deg)`);
+    /* ...but a ridge is a furrow, not a saw blade: the wall never leans so far
+       that the limb reads as a cog. */
+    assert.ok(tilt[name] < 35, `${name} furrow wall leans ${tilt[name].toFixed(1)} deg — too deep`);
+    /* The relief is real depth, so it also has to survive the invariants that a
+       displaced mesh can break. */
+    const s = stats(mesh);
+    assert.equal(s.degenerate, 0, `${name} displacement must not collapse a triangle`);
+    assert.equal(s.badNormal, 0, `${name} displaced normals must stay unit length`);
+    assert.equal(s.nonFinite, 0, `${name} displacement must stay finite`);
+  }
+  /* Same radius, different species: oak is deeply fissured, birch is papery.
+     That ratio is what makes the two read as different trees at arm's length. */
+  assert.ok(tilt.oak > tilt.birch * 1.5,
+    `oak furrows (${tilt.oak.toFixed(1)} deg) must cut deeper than birch (${tilt.birch.toFixed(1)} deg)`);
+  assert.ok(tilt.acacia > tilt.birch, 'acacia is fissured too');
+});
+
 test('a plant is deterministic for a seed and a different plant for another', async () => {
   const { core } = await boot();
   for (const name of PLANTS) {
