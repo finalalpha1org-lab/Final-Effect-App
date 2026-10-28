@@ -59,7 +59,11 @@ test('Object tools wait for an explicit choice instead of opening Move automatic
   /* Edit Mode is a real mode with its own toolbar; it must not be reached by
      swapping the object toolbar for a list of transform buttons. */
   assert.ok(!app.includes('function renderSubToolbar()'));
-  assert.ok(app.includes("window.FEEditMode?.enter()"));
+  /* The mode is entered through the bridge, and the shell now handles the two
+     ways that can fail instead of swallowing them. */
+  assert.ok(app.includes("const bridge = window.FEEditMode"), 'Edit Mode must be reached through its own bridge');
+  assert.ok(app.includes("if (!bridge || typeof bridge.enter !== 'function')"), 'a missing bridge is reported, not ignored');
+  assert.ok(app.includes('if (bridge.enter() === false)'), 'a refused entry puts the dropdown back');
 });
 
 test('Annotate creates world-space 3D lines and is bounded to the actual viewport', () => {

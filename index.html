@@ -9,6 +9,59 @@
 <title>Final Effect 3D</title>
 <meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
 <meta name="theme-color" content="#0d0e12">
+<meta name="fe-build" content="dev">
+<script>
+/* Boot watch: this page is one long inline script plus a bundle, and the first
+   uncaught error stops everything after it - the home grid, the studios, the
+   mode select. When that happens the app does not look broken, it looks empty,
+   and there is nothing on screen to say why. This catches the first few errors
+   and puts them on screen with a copy button, so a device-specific failure can
+   be reported instead of guessed at. It is inert when nothing throws. */
+(function () {
+  if (typeof window === 'undefined' || window.__feBootWatch) return;
+  window.__feBootWatch = true;
+  var shown = 0;
+  function banner(message, detail) {
+    if (shown >= 3) return;
+    shown++;
+    try {
+      var host = document.getElementById('fe-boot-error');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'fe-boot-error';
+        host.setAttribute('role', 'alert');
+        host.style.cssText = 'position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 74px);z-index:99999;background:#3a1216;border:1px solid #b91c1c;border-radius:12px;padding:10px 12px;color:#fecaca;font:12px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.55)';
+        host.innerHTML = '<b style="color:#fca5a5">Something failed to load</b>'
+          + '<div id="fe-boot-error-msg" style="margin:4px 0 8px;word-break:break-word"></div>'
+          + '<div style="display:flex;gap:8px"><button type="button" id="fe-boot-error-copy" style="flex:1;background:#7f1d1d;color:#fff;border:1px solid #b91c1c;border-radius:8px;padding:7px">Copy</button>'
+          + '<button type="button" id="fe-boot-error-hide" style="flex:1;background:#1f222e;color:#e5e7eb;border:1px solid #334155;border-radius:8px;padding:7px">Hide</button></div>';
+        (document.body || document.documentElement).appendChild(host);
+        host.querySelector('#fe-boot-error-hide').onclick = function () { host.remove(); };
+        host.querySelector('#fe-boot-error-copy').onclick = function () {
+          var text = document.getElementById('fe-boot-error-msg').textContent;
+          try {
+            if (navigator.clipboard) navigator.clipboard.writeText(text);
+            else { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+            document.getElementById('fe-boot-error-copy').textContent = 'Copied';
+          } catch (e) { /* the text is on screen either way */ }
+        };
+      }
+      var line = document.getElementById('fe-boot-error-msg');
+      if (line) line.textContent = (line.textContent ? line.textContent + '\n' : '') + message;
+    } catch (e) { /* never let the reporter throw */ }
+  }
+  window.__feBootBanner = banner;
+  window.addEventListener('error', function (event) {
+    var file = event && event.filename ? String(event.filename).split('/').pop() : '';
+    var where = file ? ' (' + file + (event.lineno ? ':' + event.lineno : '') + ')' : '';
+    banner(((event && event.message) || 'Script error') + where, event);
+  });
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event && event.reason;
+    banner('Unhandled: ' + ((reason && (reason.message || reason)) || 'promise rejected'));
+  });
+})();
+</script>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -4256,13 +4309,36 @@ function syncWorkspaceSettingsUI() {
   }
   renderWorkspacePerf(window.FEWorkspacePerf);
 }
+/* Which build is on this device. The build stamps a `fe-build` meta into the
+   page it writes (date + commit), so this is the identity of the code the
+   browser is actually running, not the identity of the file on disk - those
+   two are exactly what disagreed while a cached shell kept an old app alive.
+   `document.lastModified` stays as the fallback for a page served without the
+   meta. */
 function renderAppBuildStamp() {
   const el = document.getElementById('ws-build-stamp');
   if (!el) return;
   let stamp = '';
-  try { const d = new Date(document.lastModified); if (!Number.isNaN(d.getTime())) stamp = 'Loaded ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) {}
-  el.textContent = stamp || 'Loaded build unknown — tap Update if the interface looks old';
+  try {
+    const meta = document.querySelector('meta[name="fe-build"]');
+    const built = meta && meta.getAttribute('content');
+    if (built && built !== 'dev') stamp = 'Build ' + built;
+  } catch (_) {}
+  if (!stamp) {
+    try {
+      const d = new Date(document.lastModified);
+      if (!Number.isNaN(d.getTime())) stamp = 'Loaded ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (_) {}
+  }
+  /* The edit tools are a separate file from the shell, so say whether they
+     arrived. A shell that shipped without them looks like an app with no Edit
+     Mode at all, and this is the one place that can tell the difference. */
+  const bridge = typeof window !== 'undefined' && window.FEEditMode;
+  const ready = !!(bridge && typeof bridge.enter === 'function');
+  const tools = ready ? ' · mesh editor ready' : ' · mesh editor missing, tap Update';
+  el.textContent = (stamp || 'Loaded build unknown, tap Update if the interface looks old') + tools;
 }
+window.renderAppBuildStamp = renderAppBuildStamp;
 async function refreshAppCache() {
   const btn = document.querySelector('#workspace-settings-sheet .settings-action-btn[onclick="refreshAppCache()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⟳ Updating…'; }
@@ -6216,11 +6292,30 @@ window.closeObjectTools = closeObjectTools;
 document.addEventListener('fe:mode', e => {
   const {studio, mode} = e.detail;
   if (studio !== 'core') return;
+  /* The mode select is part of this shell, but the bridge that gives Edit Mode
+     its meaning is a separate file. A cached or partial build can ship the one
+     without the other, and then picking "Edit Mode" did nothing whatsoever -
+     no panel, no message, no reason. That is indistinguishable from "Edit Mode
+     is not in the app", so every outcome now says something and the dropdown
+     is put back where it was if the mode could not be entered. */
+  const select = document.getElementById(studio + '-mode');
+  const bridge = window.FEEditMode;
   if (mode === 'edit') {
     closeAllFloatingPanels();
-    window.FEEditMode?.enter();
-  } else if (window.FEEditMode?.isActive()) {
-    window.FEEditMode.exit();
+    if (!bridge || typeof bridge.enter !== 'function') {
+      FE.toast('The mesh editor did not load. Open Settings, tap Update, then try again.');
+      if (select) select.value = 'object';
+      return;
+    }
+    if (bridge.enter() === false) {
+      /* enter() has already said why (no mesh, engine still starting). The
+         dropdown must not keep claiming a mode the app is not in. */
+      if (select) select.value = bridge.isActive() ? 'edit' : 'object';
+      return;
+    }
+    FE.toast('Edit tools are the last button on the left of the toolbar.');
+  } else if (bridge?.isActive?.()) {
+    bridge.exit();
   }
 });
 
