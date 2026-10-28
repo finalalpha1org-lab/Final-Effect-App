@@ -924,6 +924,10 @@ void emitRing(int32_t i, int32_t sides) {
   gRing[i].sides = sides;
   gRing[i].radius = r;
   const float tile = maxf(0.22f, 6.2831853f * r * 0.55f);
+  /* A per-vertex random for the bark shader. It must not be periodic: taking it
+     from the joint index modulo anything lays a visible stripe up every limb,
+     which is the "obviously procedural" tell this whole pass exists to remove. */
+  const float hash = (sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f - floorf(sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f));
   const V3 cen = gNodes[i].p;
   const float lobePhase = gNodePh[i] * 0.7f;
   const float lobeAmt = gNodes[i].level == 0 && !gNodes[i].isRoot
@@ -939,7 +943,7 @@ void emitRing(int32_t i, int32_t sides) {
       if (lobe > 0.0f) rr *= 1.0f + lobeAmt * lobe * lobe * lobe;
     }
     pushVert(add(c, mul(n, rr)), n, float(j) / float(sides) * tile,
-             gNodes[i].len * 0.55f, bark, 0.35f + 0.4f * float(i % 7) / 7.0f, cen);
+             gNodes[i].len * 0.55f, bark, 0.35f + 0.62f * hash, cen);
   }
 }
 
