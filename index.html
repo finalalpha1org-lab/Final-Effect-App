@@ -1938,106 +1938,106 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 
 /* ============================================================
    FE-EDIT-MODE
-   The mesh editor. It is not a copy of another application's panel:
-   the normal bottom toolbar becomes a left-to-right row of four
-   categories, and each one opens its own sub-toolbar in the sheet
-   directly above it, in the same scrollable-sheet language every
-   other panel in this app already uses.
+   One button. `Edit tools` is the only thing this feature adds to the
+   main toolbar, and everything else hangs off it: the panel it opens
+   carries the category row, the tools of the open category, and the
+   controls that tool needs. Undo and redo are the top bar's, so they are
+   not repeated. The panel floats above the toolbar with a little air on
+   both sides rather than covering the viewport wall to wall, and the
+   button folds it away again.
    ============================================================ */
-#edit-category-bar { flex: none; }
-#edit-category-bar[hidden] { display: none; }
-#edit-category-bar .tool { gap: 6px; }
-#edit-category-bar .tool[aria-pressed="true"] {
+#edit-tools-btn {
+  border-color: #4c3a86;
+  color: #ddd6fe;
+  background: #221c3a;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 18%, transparent);
+}
+#edit-tools-btn .ico { width: 16px; height: 16px; }
+#edit-tools-btn[aria-pressed="true"] {
   background: #282c3c;
   border-color: var(--ac);
   color: #fff;
   box-shadow: 0 0 10px color-mix(in srgb, var(--ac) 35%, transparent);
 }
-#edit-category-bar .tool[disabled] { opacity: .38; }
-.edit-bar-sep { flex: none; width: 1px; height: 22px; background: #2a2d37; margin: 0 2px; }
-#edit-category-bar .edit-done { margin-left: auto; border-color: #2f5d46; color: #a7f3d0; }
-
 #edit-sheet {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: calc(var(--tb) + var(--sb));
+  left: 8px;
+  right: 8px;
+  bottom: calc(var(--tb) + var(--sb) + 8px);
   z-index: 1000;
   display: none;
   flex-direction: column;
-  max-height: 46vh;
+  gap: 6px;
+  padding: 8px 10px 9px;
+  max-height: 42vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(17, 20, 28, 0.98);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
   border: 1px solid #34394d;
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.6);
   color: #e2e8f0;
 }
 #edit-sheet.open { display: flex; }
 #edit-sheet[hidden] { display: none; }
+
 .edit-sheet-head {
-  flex: none;
-  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: #1e2230;
-  border-bottom: 1px solid #2a2f42;
-  font-weight: 600;
-  font-size: 12px;
-}
-.edit-sheet-head .edit-sheet-stats {
-  flex: 1;
-  min-width: 0;
-  font-weight: 500;
-  font-size: 10.5px;
-  color: #94a3b8;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.edit-sheet-body {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-/* The sub-toolbar of the open category: one left-to-right row that scrolls
-   sideways, exactly like the main bar below it. Nothing wraps, so the row
-   still reads as a toolbar instead of a grid of tiles. */
-#edit-sheet-tools {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.edit-sheet-head::-webkit-scrollbar { display: none; }
+.edit-sheet-head .tool { gap: 6px; padding: 7px 10px; font-size: 11.5px; }
+.edit-sheet-head .tool.active,
+.edit-sheet-head .tool[aria-pressed="true"] {
+  background: #282c3c;
+  border-color: var(--ac);
+  color: #fff;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ac) 35%, transparent);
+}
+.edit-bar-sep { flex: none; width: 1px; height: 20px; background: #2a2d37; margin: 0 2px; }
+.edit-sheet-head .edit-done { border-color: #2f5d46; color: #a7f3d0; }
+.edit-sheet-stats {
+  flex: none;
+  font-size: 10.5px;
+  color: #8b96a8;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+#edit-sheet-tools {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 2px;
 }
 #edit-sheet-tools::-webkit-scrollbar { display: none; }
 .edit-tool {
   flex: none;
   display: inline-flex;
-  flex-direction: row;
   align-items: center;
-  justify-content: center;
   gap: 6px;
-  white-space: nowrap;
-  padding: 9px 13px;
-  background: var(--panel2);
-  border: 1px solid #2a2d37;
+  min-height: 38px;
+  padding: 7px 11px;
   border-radius: 8px;
+  background: #1e2230;
+  border: 1px solid #2a2f42;
   color: #cbd5e1;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   line-height: 1.15;
+  white-space: nowrap;
 }
 .edit-tool .ico { width: 18px; height: 18px; }
 .edit-tool:active { transform: scale(.97); }
@@ -2131,20 +2131,26 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #toast { bottom: calc(var(--tb) + var(--sb) + 8px); max-width: 72vw; }
 
   /* --- studio sheets become right-hand side panels --- */
+  /* The edit panel is not one of those columns: it is a popover over the
+     viewport, so the mesh keeps the whole width and the short axis is spent on
+     the model, not on chrome. It keeps to two compact lines. */
   #edit-sheet {
-    top: 0;
-    bottom: 0;
-    left: auto;
-    right: 0;
-    width: min(380px, 46vw);
-    max-width: min(380px, 46vw);
-    max-height: none;
-    border: 0;
-    border-left: 1px solid #34394d;
-    border-radius: 14px 0 0 14px;
-    box-shadow: -16px 0 36px rgba(0, 0, 0, .62);
+    left: 6px;
+    right: 6px;
+    bottom: calc(var(--tb) + var(--sb) + 6px);
+    max-height: 46vh;
+    padding: 6px 8px 6px;
+    gap: 4px;
   }
-  #edit-sheet-tools { gap: 6px; }
+  #edit-sheet-tools { gap: 5px; }
+  .edit-sheet-head { gap: 5px; }
+  .edit-sheet-head .tool { min-height: 30px; padding: 4px 8px; font-size: 10.5px; }
+  .edit-sheet-head .edit-sheet-stats { font-size: 9.5px; padding: 0 3px; }
+  .edit-tool { min-height: 32px; padding: 5px 9px; font-size: 10.5px; }
+  .edit-tool .ico { width: 15px; height: 15px; }
+  .edit-hint { display: none; }
+  .edit-sheet-row { font-size: 10.5px; gap: 7px; }
+  .edit-sheet-row label { min-width: 48px; }
   #camera-sheet,
   #light-sheet,
   #modifiers-sheet,
@@ -3708,72 +3714,70 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
       </div>
     </div>
 
-    <nav class="toolbar" id="bottom-toolbar"></nav>
-
-    <!-- Edit Mode. The bar is left-to-right; every entry opens its own
-         sub-toolbar in the sheet above it. -->
-    <nav class="toolbar edit-toolbar" id="edit-category-bar" aria-label="Edit Mode tools" hidden>
-      <button class="tool" type="button" data-edit-category="select"><i class="ico" data-ico="select-box"></i><span>Select</span></button>
-      <button class="tool" type="button" data-edit-category="transform"><i class="ico" data-ico="move"></i><span>Transform</span></button>
-      <button class="tool" type="button" data-edit-category="mesh"><i class="ico" data-ico="extrude"></i><span>Mesh</span></button>
-      <button class="tool" type="button" data-edit-category="normals"><i class="ico" data-ico="normal"></i><span>Shading</span></button>
-      <span class="edit-bar-sep" aria-hidden="true"></span>
-      <button class="tool" type="button" data-edit-mode="vertex"><i class="ico" data-ico="vertex"></i><span>Vertices</span></button>
-      <button class="tool" type="button" data-edit-mode="edge"><i class="ico" data-ico="edge"></i><span>Edges</span></button>
-      <button class="tool" type="button" data-edit-mode="face"><i class="ico" data-ico="face"></i><span>Faces</span></button>
-      <span class="edit-bar-sep" aria-hidden="true"></span>
-      <button class="tool" type="button" id="edit-undo" aria-label="Undo"><i class="ico" data-ico="undo"></i></button>
-      <button class="tool" type="button" id="edit-redo" aria-label="Redo"><i class="ico" data-ico="redo"></i></button>
-      <button class="tool" type="button" id="edit-xray"><i class="ico" data-ico="eye"></i><span>See through</span></button>
-      <button class="tool" type="button" id="edit-snap"><i class="ico" data-ico="pin"></i><span>Snap</span></button>
-      <button class="tool edit-done" type="button" id="edit-done"><i class="ico" data-ico="check"></i><span>Done</span></button>
-    </nav>
-
-    <div id="edit-sheet" class="floating-panel edit-sheet" aria-hidden="true" hidden>
-      <div class="edit-sheet-head">
-        <span id="edit-sheet-title">Select</span>
+    <!-- Edit Mode. One button in the main toolbar, `Edit tools`, opens this
+         panel: the category row on top, the tools of the open category under
+         it, then only the controls the current tool actually needs. Nothing
+         already in the main toolbar changes, nothing here imitates Blender's
+         own panel, and undo / redo stay in the top bar where they already
+         are. The panel is anchored to the bottom-left of the viewport and can
+         be folded away with the same button, so the model is never walled in
+         by chrome. -->
+    <div id="edit-sheet" class="edit-sheet" aria-hidden="true" hidden>
+      <nav class="edit-sheet-head" id="edit-category-bar" aria-label="Edit Mode categories">
+        <button class="tool" type="button" data-edit-category="select"><i class="ico" data-ico="select-box"></i><span>Select</span></button>
+        <button class="tool" type="button" data-edit-category="transform"><i class="ico" data-ico="move"></i><span>Transform</span></button>
+        <button class="tool" type="button" data-edit-category="mesh"><i class="ico" data-ico="extrude"></i><span>Mesh</span></button>
+        <button class="tool" type="button" data-edit-category="normals"><i class="ico" data-ico="normal"></i><span>Shading</span></button>
+        <span class="edit-bar-sep" aria-hidden="true"></span>
+        <button class="tool" type="button" data-edit-mode="vertex"><i class="ico" data-ico="vertex"></i><span>Points</span></button>
+        <button class="tool" type="button" data-edit-mode="edge"><i class="ico" data-ico="edge"></i><span>Edges</span></button>
+        <button class="tool" type="button" data-edit-mode="face"><i class="ico" data-ico="face"></i><span>Faces</span></button>
+        <span class="edit-bar-sep" aria-hidden="true"></span>
+        <button class="tool" type="button" id="edit-xray"><i class="ico" data-ico="eye"></i><span>See through</span></button>
+        <button class="tool" type="button" id="edit-snap"><i class="ico" data-ico="pin"></i><span>Snap</span></button>
         <span class="edit-sheet-stats" id="edit-status-line"></span>
-        <button class="panel-close" type="button" id="edit-sheet-close" aria-label="Hide tools"><i class="ico" data-ico="close"></i></button>
+        <button class="tool edit-done" type="button" id="edit-done"><i class="ico" data-ico="check"></i><span>Done</span></button>
+        <button class="panel-close" type="button" id="edit-sheet-close" aria-label="Hide edit tools"><i class="ico" data-ico="close"></i></button>
+      </nav>
+      <div id="edit-sheet-tools" role="toolbar" aria-label="Edit Mode tools"></div>
+      <div class="edit-sheet-row" id="edit-amount-row" hidden>
+        <label id="edit-amount-label" for="edit-amount">Distance</label>
+        <input type="range" id="edit-amount" min="0" max="1" step="0.01" value="0.2" />
+        <output id="edit-amount-out">0.20</output>
       </div>
-      <div class="edit-sheet-body">
-        <div id="edit-sheet-tools" role="toolbar" aria-label="Sub-toolbar"></div>
-        <div class="edit-sheet-row" id="edit-amount-row" hidden>
-          <label id="edit-amount-label" for="edit-amount">Distance</label>
-          <input type="range" id="edit-amount" min="0" max="1" step="0.01" value="0.2" />
-          <output id="edit-amount-out">0.20</output>
-        </div>
-        <div class="edit-sheet-row">
-          <label for="edit-axis">Axis</label>
-          <select id="edit-axis">
-            <option value="0">All</option>
-            <option value="1">X only</option>
-            <option value="2">Y only</option>
-            <option value="3">Z only</option>
-          </select>
-          <button class="tool" type="button" id="edit-prop"><i class="ico" data-ico="gauge"></i><span>Proportional</span></button>
-        </div>
-        <div class="edit-sheet-row" id="edit-prop-row" hidden>
-          <select id="edit-prop-falloff" aria-label="Falloff">
-            <option value="0">Constant</option>
-            <option value="1">Linear</option>
-            <option value="2" selected>Smooth</option>
-            <option value="3">Sphere</option>
-            <option value="4">Root</option>
-            <option value="5">Sharp</option>
-          </select>
-          <input type="range" id="edit-prop-radius" min="0.05" max="10" step="0.05" value="1" aria-label="Proportional radius" />
-          <output id="edit-prop-radius-out">1.00</output>
-        </div>
-        <div class="edit-sheet-row" id="edit-exact-row" hidden>
-          <label>Exact</label>
-          <input type="number" id="edit-exact-x" step="0.1" value="0" inputmode="decimal" aria-label="X offset" />
-          <input type="number" id="edit-exact-y" step="0.1" value="0" inputmode="decimal" aria-label="Y offset" />
-          <input type="number" id="edit-exact-z" step="0.1" value="0" inputmode="decimal" aria-label="Z offset" />
-          <button class="tool" type="button" id="edit-exact-apply"><i class="ico" data-ico="check"></i><span>Apply</span></button>
-        </div>
-        <p class="edit-hint" id="edit-hint"></p>
+      <div class="edit-sheet-row" id="edit-axis-row">
+        <label for="edit-axis">Axis</label>
+        <select id="edit-axis">
+          <option value="0">All</option>
+          <option value="1">X only</option>
+          <option value="2">Y only</option>
+          <option value="3">Z only</option>
+        </select>
+        <button class="tool" type="button" id="edit-prop"><i class="ico" data-ico="gauge"></i><span>Proportional</span></button>
       </div>
+      <div class="edit-sheet-row" id="edit-prop-row" hidden>
+        <select id="edit-prop-falloff" aria-label="Falloff">
+          <option value="0">Constant</option>
+          <option value="1">Linear</option>
+          <option value="2" selected>Smooth</option>
+          <option value="3">Sphere</option>
+          <option value="4">Root</option>
+          <option value="5">Sharp</option>
+        </select>
+        <input type="range" id="edit-prop-radius" min="0.05" max="10" step="0.05" value="1" aria-label="Proportional radius" />
+        <output id="edit-prop-radius-out">1.00</output>
+      </div>
+      <div class="edit-sheet-row" id="edit-exact-row" hidden>
+        <label>Exact</label>
+        <input type="number" id="edit-exact-x" step="0.1" value="0" inputmode="decimal" aria-label="X offset" />
+        <input type="number" id="edit-exact-y" step="0.1" value="0" inputmode="decimal" aria-label="Y offset" />
+        <input type="number" id="edit-exact-z" step="0.1" value="0" inputmode="decimal" aria-label="Z offset" />
+        <button class="tool" type="button" id="edit-exact-apply"><i class="ico" data-ico="check"></i><span>Apply</span></button>
+      </div>
+      <p class="edit-hint" id="edit-hint"></p>
     </div>
+
+    <nav class="toolbar" id="bottom-toolbar"></nav>
 
     <div id="edit-marquee" hidden></div>
   </section>
@@ -4823,6 +4827,34 @@ function exportOBJ() {
 }
 window.exportOBJ = exportOBJ;
 
+/* FBX. The sheet has offered this button since the export pass went in, but the
+   function behind it was never written: the reference below threw at load time
+   and everything after it in this script — the settings wiring included —
+   never ran. It now writes a real ASCII FBX 7.4 document from the same baked
+   node list the other two writers use. */
+function exportFBX() {
+  try {
+    const eng = FE.engines?.core;
+    if (!eng || !eng.sc) throw new Error('The 3D Workspace scene is not ready yet.');
+    const W = window.FEWorkspaceExport;
+    if (!W) throw new Error('The export module (workspace-export.js) did not load.');
+
+    setExportStatus('Collecting scene geometry…');
+    const { nodes, collected } = workspaceExportNodes(eng);
+    if (!nodes.length) throw new Error('Nothing to export yet — the workspace has no renderable mesh.');
+
+    const summary = exportSummary(nodes, collected);
+    const text = W.buildFBX(nodes, { sceneName: '3D Workspace' });
+    downloadBlob(new Blob([text], { type: 'application/octet-stream' }), 'FinalEffect-Workspace.fbx');
+    setExportStatus(`Exported FinalEffect-Workspace.fbx — ${summary}`);
+    FE.toast(`Exported FinalEffect-Workspace.fbx — ${summary}`);
+    setTimeout(closeExportModal, 1400);
+  } catch (err) {
+    console.error('FBX export failed:', err);
+    setExportStatus('FBX error: ' + err.message);
+    FE.toast('FBX error: ' + err.message);
+  }
+}
 window.exportFBX = exportFBX;
 
 $('#btn-global-settings').onclick=openGlobalSettings;
@@ -5116,7 +5148,7 @@ function addLandscapeWeather(payload,group,T,center,size){
   create('rain',rain);create('snow',snow);
 }
 function applyLandscapeWorld(payload,targetScene,T,group,center,size){
-  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.42+.62*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.12+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.8);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
+  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.16+.30*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.10+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.25);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
 }
 
 function buildLandscapeWater(settings,terrain,T,weather={}){
@@ -12257,5 +12289,56 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 window.addEventListener('pagehide',()=>runGlobalAutosave({silent:true}));
 emit('ready',{studios:Object.keys(STUDIOS)});
 </script>
+<!-- Render result viewer ---------------------------------------------------
+     The render engine used to hand every finished frame to a popup window. On a
+     phone that is a new tab: the result leaves the studio and there is no way
+     to fold it away. This is the same picture inside the page, with one-tap
+     fullscreen and a bottom-sheet mode that leaves the viewport usable. -->
+<div id="fe-render-viewer" class="frv" hidden>
+  <div class="frv-head">
+    <button type="button" class="frv-sheet" data-frv="sheet" aria-label="Expand the render sheet"></button>
+    <div class="frv-ttl"><strong class="frv-title">Render Result</strong><span class="frv-meta">waiting for a frame</span></div>
+    <div class="frv-tools">
+      <button type="button" class="frv-btn" data-frv="full" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button type="button" class="frv-btn" data-frv="min" aria-label="Minimise to a bottom sheet" title="Minimise"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v6"/></svg></button>
+      <button type="button" class="frv-btn danger" data-frv="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </div>
+  <div class="frv-bar"><div class="frv-fill"></div></div>
+  <div class="frv-stage">
+    <div class="frv-empty">No frame yet. Render from the 3D Workspace to fill this panel.</div>
+    <img class="frv-shot" alt="Rendered frame" hidden>
+  </div>
+  <div class="frv-foot"><span class="frv-status">Ready</span></div>
+</div>
+<style>
+#fe-render-viewer{position:fixed;left:0;right:0;bottom:0;top:96px;z-index:60;display:flex;flex-direction:column;
+  background:#0b0d14;color:#e2e8f0;border-top:1px solid #272d42;border-radius:16px 16px 0 0;overflow:hidden;
+  box-shadow:0 -18px 40px rgba(0,0,0,.45)}
+#fe-render-viewer[hidden]{display:none}
+#fe-render-viewer.full{top:0;border-radius:0}
+.frv-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#11141e;border-bottom:1px solid #272d42;flex:none;position:relative}
+.frv-sheet{position:absolute;left:50%;top:5px;transform:translateX(-50%);width:46px;height:5px;border:0;border-radius:3px;
+  background:#3b4257;padding:0;cursor:pointer}
+#fe-render-viewer.mini .frv-sheet{display:none}
+.frv-ttl{display:flex;flex-direction:column;min-width:0;margin-left:2px}
+.frv-title{font-size:13px;color:#f8fafc}
+.frv-meta{font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.frv-tools{margin-left:auto;display:flex;gap:6px}
+.frv-btn{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;border:1px solid #2b3247;background:#161a26;color:#dbe3f0;cursor:pointer}
+.frv-btn:active{transform:scale(.96)}
+.frv-btn.danger{color:#fca5a5;border-color:#4a2a33}
+.frv-bar{height:2px;background:#1b2030;flex:none}
+.frv-fill{height:100%;width:0;background:linear-gradient(90deg,#6366f1,#22d3ee);transition:width .18s linear}
+.frv-stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;background:#05070d;overflow:auto}
+.frv-empty{font-size:12px;color:#64748b;padding:24px;text-align:center}
+.frv-shot{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.frv-foot{flex:none;padding:6px 12px;font-size:11px;color:#94a3b8;background:#11141e;border-top:1px solid #272d42}
+#fe-render-viewer.mini{top:auto;height:86px;border-radius:14px 14px 0 0}
+#fe-render-viewer.mini .frv-stage{display:none}
+#fe-render-viewer.mini .frv-foot{display:none}
+#fe-render-viewer.mini .frv-head{border-bottom:0}
+@media (max-width:520px){.frv-title{font-size:12px}.frv-btn{width:32px;height:32px}}
+</style>
 </body>
 </html>

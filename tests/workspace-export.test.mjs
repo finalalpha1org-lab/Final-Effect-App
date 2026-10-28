@@ -345,6 +345,68 @@ test('names are made safe for both formats', () => {
   assert.match(text, /o a_b_c/);
 });
 
+/* ---- FBX ---------------------------------------------------------------- */
+
+test('the FBX writer emits a document an importer can read', () => {
+  const base = sampleNodes()[0];
+  const nodes = [
+    { ...base, name: 'Land 01', material: X.describeMaterial({ name: 'Soil', color: { r: 0.4, g: 0.3, b: 0.2 }, roughness: 0.9, metalness: 0, transparent: false, opacity: 1 }, 0) },
+    { ...base, name: 'Rock 01', material: null }
+  ];
+  const text = X.buildFBX(nodes);
+
+  assert.match(text, /^; FBX 7\.4\.0 project file/);
+  assert.match(text, /FBXVersion: 7400/);
+  assert.match(text, /ObjectType: "Geometry" \{\n\t\tCount: 2/);
+  assert.match(text, /ObjectType: "Material" \{\n\t\tCount: 1/);
+
+  /* Two nodes, each a Model plus a Geometry, both connected to the root. */
+  const models = text.match(/^\tModel: (\d+),/gm) || [];
+  const geometries = text.match(/^\tGeometry: (\d+),/gm) || [];
+  assert.equal(models.length, 2);
+  assert.equal(geometries.length, 2);
+  assert.match(text, /\tC: "OO",\d+,0/);
+  assert.equal((text.match(/\tC: "OO",\d+,0/g) || []).length, 2, 'both models sit under the root');
+
+  /* Indices of a polygon are stored with the last one bitwise-negated, which
+     is the single detail that makes an FBX mesh load as nothing at all. */
+  const polygon = text.match(/PolygonVertexIndex: \*(\d+) \{\n\t\t\t\t([^\n]*)\n/);
+  assert.ok(polygon, 'polygon indices are written');
+  const values = polygon[2].split(',').map(Number);
+  assert.equal(values.length, 3);
+  assert.ok(values[2] < 0, 'the closing index of the triangle is negated');
+  assert.equal(~values[2], values[0] + 2, 'and it decodes back to the third corner');
+
+  /* Every quoted name survives sanitising. */
+  assert.match(text, /Geometry::Land 01/);
+  assert.equal(text.includes('"'), true);
+});
+
+test('the FBX button calls a function that exists', () => {
+  /* This is the regression that mattered: index.html assigned
+     `window.exportFBX = exportFBX;` while no such function was ever defined,
+     so the whole script block threw on load and every handler after it — the
+     settings sheet included — was never bound. */
+  const assign = html.indexOf('window.exportFBX = exportFBX;');
+  assert.ok(assign > 0, 'the export button is still wired');
+  const declared = html.indexOf('function exportFBX(');
+  assert.ok(declared > 0 && declared < assign, 'exportFBX is declared before it is exported');
+  assert.match(html, /W\.buildFBX\(nodes/);
+  assert.ok(sw.includes("'./workspace-export.js'") || build.includes('workspace-export.js'));
+
+  /* The same trap anywhere else would be just as fatal, so the whole file is
+     swept: every `window.name = name;` must have a declaration behind it. */
+  const dead = [];
+  const pattern = /window\.([A-Za-z_$][\w$]*)\s*=\s*\1\s*;/g;
+  let match;
+  while ((match = pattern.exec(html))) {
+    const name = match[1];
+    const declared = new RegExp(`(?:function\\s+${name}\\s*\\(|(?:const|let|var)\\s+${name}\\s*=)`);
+    if (!declared.test(html)) dead.push(name);
+  }
+  assert.deepEqual(dead, [], 'no assignment exports an identifier that was never declared');
+});
+
 /* ---- wiring ------------------------------------------------------------- */
 
 test('the workspace export path is wired through our own writers', () => {

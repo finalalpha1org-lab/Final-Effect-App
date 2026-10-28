@@ -159,7 +159,10 @@ test('shipped wasm exposes the whole Edit Mode surface', () => {
     'fe_edit_extrude', 'fe_edit_inset', 'fe_edit_subdivide', 'fe_edit_merge_center',
     'fe_edit_merge_distance', 'fe_edit_delete', 'fe_edit_duplicate', 'fe_edit_poke', 'fe_edit_fill',
     'fe_edit_bridge', 'fe_edit_bisect', 'fe_edit_bevel', 'fe_edit_symmetrize', 'fe_edit_split',
-    'fe_edit_collapse'
+    'fe_edit_collapse',
+    'fe_edit_weld_count', 'fe_edit_edge_display_ptr', 'fe_edit_set_display_angle',
+    'fe_edit_detect_smooth', 'fe_edit_gizmo_pivot', 'fe_edit_gizmo_size', 'fe_edit_gizmo_pick',
+    'fe_edit_gizmo_begin', 'fe_edit_gizmo_drag', 'fe_edit_gizmo_end', 'fe_edit_gizmo_active'
   ];
   for (const name of required) {
     assert.equal(typeof exp[name], 'function', `wasm is missing ${name}`);
@@ -458,4 +461,167 @@ test('every Edit Mode tool is a real kernel call, and every icon exists', async 
   for (const mode of ['vertex', 'edge', 'face']) {
     assert.ok(html.includes(`data-edit-mode="${mode}"`), `the ${mode} selection button is missing`);
   }
+});
+
+/* ---- what the viewport actually hands over ------------------------------- */
+
+/* three.js gives a cube 24 vertices: four per face, so each face can carry its
+   own normal. A modeller thinks of that as eight points and twelve edges, and
+   so must the editor, or every quad grows a diagonal and every corner looks
+   torn. This is the exact input `upload()` builds from the viewport. */
+const SPLIT_CUBE_FACES = [
+  { n: [0, 0, 1], quad: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]] },
+  { n: [0, 0, -1], quad: [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]] },
+  { n: [1, 0, 0], quad: [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]] },
+  { n: [-1, 0, 0], quad: [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]] },
+  { n: [0, 1, 0], quad: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]] },
+  { n: [0, -1, 0], quad: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] }
+];
+
+function makeSplitCube() {
+  const positions = [];
+  const normals = [];
+  const indices = [];
+  for (const face of SPLIT_CUBE_FACES) {
+    const base = positions.length / 3;
+    for (const v of face.quad) {
+      positions.push(v[0], v[1], v[2]);
+      normals.push(face.n[0], face.n[1], face.n[2]);
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(normals),
+    indices: new Uint32Array(indices)
+  };
+}
+
+test('a viewport cube uploads as eight welded points, not twenty-four', () => {
+  const exp = loadEngine();
+  const mesh = makeSplitCube();
+  assert.equal(mesh.positions.length / 3, 24, 'the fixture must be a split cube');
+
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  const nrmPtr = exp.fe_malloc(mesh.normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  new Float32Array(exp.memory.buffer, nrmPtr, mesh.normals.length).set(mesh.normals);
+
+  /* Faceted: the six faces carry six different normals, so the editor must go
+     on shading the cube flat instead of rounding it. */
+  assert.equal(exp.fe_edit_detect_smooth(posPtr, nrmPtr, 24), 0);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0), 1);
+  exp.fe_arena_reset();
+
+  assert.equal(exp.fe_edit_vert_count(), 8, 'the split corners were not welded');
+  assert.equal(exp.fe_edit_tri_count(), 12);
+  assert.equal(exp.fe_edit_edge_count(), 18);
+  assert.equal(exp.fe_edit_weld_count(), 16, 'sixteen of the twenty-four corners are duplicates');
+
+  /* Only the twelve edges of the cube are drawn: the six quad diagonals are
+     not edges of the surface. */
+  const ne = exp.fe_edit_edge_count();
+  const shown = new Uint8Array(exp.memory.buffer, exp.fe_edit_edge_display_ptr(), ne);
+  let drawn = 0;
+  for (let e = 0; e < ne; e++) drawn += shown[e] ? 1 : 0;
+  assert.equal(drawn, 12, 'a cube draws twelve edges, not eighteen');
+
+  assert.equal(exp.fe_edit_get_shade(), 1, 'upload leaves the shading at smooth until the bridge decides');
+  exp.fe_edit_set_shade(0);
+  assert.equal(exp.fe_edit_get_shade(), 0);
+
+  /* The same mesh, authored smooth: one shared normal per corner. Detect must
+     answer before the weld, because afterwards there is nothing to compare. */
+  const smooth = new Float32Array(mesh.normals.length);
+  for (let v = 0; v < 24; v++) {
+    const l = Math.hypot(mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]) || 1;
+    smooth[v * 3] = mesh.positions[v * 3] / l;
+    smooth[v * 3 + 1] = mesh.positions[v * 3 + 1] / l;
+    smooth[v * 3 + 2] = mesh.positions[v * 3 + 2] / l;
+  }
+  exp.fe_arena_reset();
+  const p2 = exp.fe_malloc(smooth.byteLength);
+  const n2 = exp.fe_malloc(smooth.byteLength);
+  new Float32Array(exp.memory.buffer, p2, smooth.length).set(positionsOf(mesh));
+  new Float32Array(exp.memory.buffer, n2, smooth.length).set(smooth);
+  assert.equal(exp.fe_edit_detect_smooth(p2, n2, 24), 1);
+  exp.fe_arena_reset();
+});
+
+function positionsOf(mesh) { return mesh.positions; }
+
+test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
+  const exp = loadEngine();
+  const mesh = makeSplitCube();
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  exp.fe_edit_upload(24, posPtr, 12, triPtr, 0);
+  exp.fe_arena_reset();
+  exp.fe_edit_select_all();
+
+  /* A projection with a distinct screen direction per axis, column-major. */
+  const clip = new Float32Array([
+    0.4, 0, 0, 0,
+    0, 0.4, 0, 0,
+    0.2, 0.2, 0, 0,
+    0, 0, 0, 1
+  ]);
+  const clipPtr = exp.fe_malloc(clip.byteLength);
+  new Float32Array(exp.memory.buffer, clipPtr, 16).set(clip);
+
+  const pivotPtr = exp.fe_malloc(12);
+  assert.equal(exp.fe_edit_gizmo_pivot(pivotPtr), 8);
+  const pivot = Array.from(new Float32Array(exp.memory.buffer, pivotPtr, 3));
+  pivot.forEach((value) => assert.ok(Math.abs(value) < 1e-6, 'the cube pivot is its centre'));
+
+  const size = exp.fe_edit_gizmo_size(clipPtr);
+  assert.ok(size > 0, 'the gizmo needs an on-screen size');
+
+  /* Where the X arrow's midpoint lands, using the same projection the kernel
+     uses. Fingers cannot hit a mathematical line, so the pick radius is a
+     share of the viewport, not a share of the model. */
+  const project = (x, y, z) => {
+    const e = clip;
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+    return [((e[0] * x + e[4] * y + e[8] * z + e[12]) / w) * 0.5 + 0.5,
+      1 - (((e[1] * x + e[5] * y + e[9] * z + e[13]) / w) * 0.5 + 0.5)];
+  };
+  const [px, py] = project(0, 0, 0);
+  const [tx, ty] = project(size, 0, 0);
+  const mx = (px + tx) / 2;
+  const my = (py + ty) / 2;
+
+  assert.equal(exp.fe_edit_gizmo_pick(clipPtr, mx, my, 1, 0.06, 0), 0);
+  assert.equal(exp.fe_edit_gizmo_pick(clipPtr, 0.02, 0.98, 1, 0.06, 0), -1);
+
+  exp.fe_edit_undo_push();
+  assert.equal(exp.fe_edit_gizmo_begin(clipPtr, mx, my, 1, 0.06, 0), 0);
+  const outPtr = exp.fe_malloc(12);
+  assert.equal(exp.fe_edit_gizmo_drag(clipPtr, px + (tx - px) * 0.75, py + (ty - py) * 0.75, 1, outPtr), 0);
+  const out = Array.from(new Float32Array(exp.memory.buffer, outPtr, 3));
+  assert.ok(Math.abs(out[0] - size * 0.25) < 1e-3, `expected a quarter handle, got ${out[0]}`);
+
+  /* Every corner moved by that amount in X and by nothing in Y or Z. */
+  const nv = exp.fe_edit_vert_count();
+  const positions = new Float32Array(exp.memory.buffer, exp.fe_edit_pos_interleaved_ptr(), nv * 3);
+  for (let v = 0; v < nv; v++) {
+    /* The whole cube slid along X: the corners that were at -1 are now at
+       -1 + step, the ones at +1 are at 1 + step, and nothing else moved. */
+    assert.ok(Math.abs(Math.abs(positions[v * 3] - out[0]) - 1) < 1e-3,
+      `corner ${v} must be one unit either side of the old face, shifted by the drag`);
+    assert.ok(Math.abs(Math.abs(positions[v * 3 + 1]) - 1) < 1e-6, 'Y must not move');
+    assert.ok(Math.abs(Math.abs(positions[v * 3 + 2]) - 1) < 1e-6, 'Z must not move');
+  }
+  exp.fe_edit_gizmo_end();
+  assert.equal(exp.fe_edit_gizmo_active(), -1);
+  /* One snapshot for the whole drag: undo returns the cube to where it was. */
+  exp.fe_edit_undo();
+  assertIntegrity(exp, 'gizmo drag');
+  exp.fe_arena_reset();
 });

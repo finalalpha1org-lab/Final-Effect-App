@@ -230,6 +230,18 @@ test('the module drives the studio weather from the kernel and leaves it alone w
   assert.equal(api.state.ready, true);
 
   const W = context.WX;
+  /* The climate is off by default: it used to overwrite the studio's rain,
+     overcast, storm and snowfall targets on every tick, which is why those
+     sliders appeared dead. Turning it off must leave them exactly as the
+     studio set them. */
+  const authored = { rainT: 0.42, overT: 0.31, stormT: 0.17, snowfallT: 0.08 };
+  Object.assign(W, authored);
+  api.set('enabled', false);
+  api.apply();
+  assert.deepEqual({ rainT: W.rainT, overT: W.overT, stormT: W.stormT, snowfallT: W.snowfallT }, authored,
+    'with the climate off the studio sliders are untouched');
+  api.set('enabled', true);
+  assert.equal(api.settings.enabled, true, 'and it can be switched back on');
   assert.ok(Math.abs(W.rainT - api.state.rain) < 1e-6, 'rain target comes from the kernel');
   assert.ok(Math.abs(W.stormT - api.state.storm) < 1e-6);
   assert.ok(Math.abs(W.overT - api.state.cloud * 0.92) < 1e-6);

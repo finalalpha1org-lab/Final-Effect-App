@@ -208,8 +208,12 @@ test('environment lighting adds a separate fill light and OFF changes no materia
   assert.ok(start>=0&&end>start,'environment fill should have a pure, testable intensity function');
   const ctx={cl:(v,a,b)=>Math.min(b,Math.max(a,v))};vm.runInNewContext(html.slice(start,end)+';this.level=environmentFillLevel;',ctx);
   assert.equal(ctx.level(false,0,0),0,'OFF should only set the added fill-light intensity to zero');
-  assert.equal(ctx.level(true,0,0),1.25,'ON should noticeably increase light at night');
-  assert.ok(ctx.level(true,1,0)>.8&&ctx.level(true,.5,.8)>ctx.level(true,.5,0),'fill should adapt to day and cloud cover');
+  /* The budget was cut from 1.25 to 0.6: three lights stacking to three times
+     the needed irradiance is what blew the island out to pastel white. The
+     fill still rises at night and with cloud; it no longer swamps the sun. */
+  assert.equal(ctx.level(true,0,0),0.6,'ON should noticeably increase light at night');
+  assert.ok(ctx.level(true,1,0)>.4&&ctx.level(true,.5,.8)>ctx.level(true,.5,0),'fill should adapt to day and cloud cover');
+  assert.ok(ctx.level(true,0,0)>ctx.level(true,1,0),'the fill is strongest when the sun is down');
   assert.ok(html.includes("envFill.intensity=environmentFillLevel(!SAFE.env,day,WX.over)"));
   assert.ok(html.includes('scene.environment=null;'),'the unstable global PMREM must not be injected into every material');
   assert.ok(!html.includes('scene.environment=rt.texture'));

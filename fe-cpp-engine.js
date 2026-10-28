@@ -773,16 +773,29 @@
       const hiddenHelpers = RC ? RC.hideEditorHelpers(eng.sc, eng, keepShadowCatcher) : [];
       const cameraState = RC ? RC.prepareRenderCamera(cam, width / height) : null;
 
+      if (this.renderState.superSample === undefined) {
+        const coarse = typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches;
+        this.renderState.superSample = coarse ? 1 : 2;
+      }
       const prevSize = new THREE.Vector2();
       eng.r.getSize(prevSize);
       const prevPR = eng.r.getPixelRatio();
       let ctx = null;
       try {
+        /* Supersampling is what makes a still look like a render rather than a
+           screenshot: a 1x framebuffer gives stair-stepped silhouettes on every
+           leaf edge, and the browser's MSAA does not apply to a second render
+           target. Rendering at 2x and letting the 2D canvas box-filter it down
+           costs one extra pass and removes the aliasing the user called poor
+           quality. The factor comes from the render panel (1x on a handset). */
+        const ss = Math.max(1, Math.min(2, Number(this.renderState.superSample) || 1));
         eng.r.setPixelRatio(1);
-        eng.r.setSize(width, height, false);
+        eng.r.setSize(Math.round(width * ss), Math.round(height * ss), false);
         eng.r.render(eng.sc, cam);
 
         ctx = targetCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(eng.r.domElement, 0, 0, width, height);
       } finally {
         /* Restore interactive viewport state immediately, even if the capture

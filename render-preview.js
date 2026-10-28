@@ -130,6 +130,13 @@
      popup — the caller is expected to keep its inline preview in that case. */
   function ensure(options) {
     const opts = options || {};
+    if (viewerInstall() && wantsViewer()) {
+      viewerSet('show', true);
+      viewerSet('min', false);
+      viewerSet('title', opts.title || 'Render Result');
+      if (opts.reset) reset(opts.title);
+      return { viewer: true, win: null, origin: '' };
+    }
     if (isOpen()) {
       post({ kind: 'meta', title: opts.title, total: opts.total, reset: !!opts.reset });
       if (last) post(last);
@@ -165,11 +172,87 @@
     return handle;
   }
 
+  /* ---------------------------------------------------------------- */
+  /* In-app viewer                                                     */
+  /* ---------------------------------------------------------------- */
+  /* A popup window is right on a desktop and impossible on a phone: the browser
+     opens it as a tab, so the render result leaves the studio and there is no
+     way to put it away again. The viewer below is the same picture inside the
+     page -- full screen with one tap, or folded down into a bottom sheet that
+     leaves the viewport usable. It is used whenever the popup cannot be opened,
+     and on any touch device. */
+  function viewerHost() {
+    try {
+      return global.document ? global.document.getElementById('fe-render-viewer') : null;
+    } catch (_) { return null;
+    }
+  }
+
+  function wantsViewer() {
+    /* A coarse pointer means a phone or a tablet; a popup there is a tab. */
+    try {
+      if (global.matchMedia && global.matchMedia('(pointer:coarse)').matches) return true;
+      if ((global.navigator && global.navigator.maxTouchPoints) > 0 && global.innerWidth < 900) return true;
+    } catch (_) {}
+    return !!global.__feRenderViewerOnly;
+  }
+
+  function viewerSet(what, value) {
+    const host = viewerHost();
+    if (!host) return false;
+    if (what === 'show') host.hidden = !value;
+    else if (what === 'min') host.classList.toggle('mini', !!value);
+    else if (what === 'full') host.classList.toggle('full', !!value);
+    else if (what === 'title') { const t = host.querySelector('.frv-title'); if (t) t.textContent = value || 'Render Result'; }
+    else if (what === 'meta') { const t = host.querySelector('.frv-meta'); if (t) t.textContent = value || ''; }
+    else if (what === 'status') { const t = host.querySelector('.frv-status'); if (t) t.textContent = value || ''; }
+    else if (what === 'progress') { const f = host.querySelector('.frv-fill'); if (f) f.style.width = Math.max(0, Math.min(100, value || 0)) + '%'; }
+    else if (what === 'frame') {
+      const img = host.querySelector('.frv-shot');
+      const empty = host.querySelector('.frv-empty');
+      if (img && value) { img.src = value; img.hidden = false; if (empty) empty.hidden = true; }
+    }
+    return true;
+  }
+
+  function viewerInstall() {
+    const doc = global.document;
+    if (!doc || global.__feRenderViewerBound) return false;
+    const host = viewerHost();
+    if (!host) return false;
+    global.__feRenderViewerBound = true;
+    const on = (sel, fn) => { const el = host.querySelector(sel); if (el) el.addEventListener('click', fn); };
+    on('[data-frv=close]', () => { viewerSet('show', false); if (doc.fullscreenElement) doc.exitFullscreen().catch(() => {}); });
+    on('[data-frv=min]', () => {
+      const mini = !host.classList.contains('mini');
+      viewerSet('min', mini);
+      if (mini && doc.fullscreenElement) doc.exitFullscreen().catch(() => {});
+    });
+    on('[data-frv=full]', () => {
+      const goingFull = !host.classList.contains('full');
+      viewerSet('full', goingFull);
+      viewerSet('min', false);
+      const root = host;
+      try {
+        if (goingFull && root.requestFullscreen) root.requestFullscreen().catch(() => {});
+        else if (!goingFull && doc.fullscreenElement) doc.exitFullscreen().catch(() => {});
+      } catch (_) {}
+    });
+    /* Restore the sheet when the user swipes it up, and drop the class when the
+       browser leaves fullscreen by itself (back gesture, Esc). */
+    on('[data-frv=sheet]', () => { viewerSet('min', false); });
+    doc.addEventListener('fullscreenchange', () => {
+      if (!doc.fullscreenElement) viewerSet('full', false);
+    });
+    return true;
+  }
+
   /* Pushes a finished or in-progress frame. Returns false when there is no
      window, when the canvas cannot be encoded, or when an intermediate frame
      arrived inside the throttle window. */
   function pushCanvas(canvas, meta) {
     const info = meta || {};
+    if (!isOpen() && viewerHost() && wantsViewer()) return pushViewer(canvas, info);
     if (!isOpen() || !canvas || !canvas.width) return false;
     const stamp = now();
     if (!info.final && !info.force && stamp - lastPush < MIN_FRAME_INTERVAL) return false;
@@ -188,28 +271,69 @@
     return post(last);
   }
 
+  /* The same frame, into the in-page viewer instead of the popup. */
+  function pushViewer(canvas, info) {
+    if (!canvas || !canvas.width) return false;
+    const stamp = now();
+    if (!info.final && !info.force && stamp - lastPush < MIN_FRAME_INTERVAL) return false;
+    let src = '';
+    try {
+      src = info.final ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.88);
+    } catch (_) { return false; }
+    if (!src || src.length < 64) return false;
+    lastPush = stamp;
+    last = { src, meta: info };
+    viewerInstall();
+    viewerSet('show', true);
+    viewerSet('frame', src);
+    viewerSet('meta', describeInline(info));
+    if (info.final) viewerSet('progress', 100);
+    return true;
+  }
+
+  function describeInline(meta) {
+    const bits = [];
+    if (meta.width && meta.height) bits.push(meta.width + ' × ' + meta.height);
+    if (meta.index) bits.push('frame ' + meta.index);
+    if (meta.ms) bits.push(Math.round(meta.ms) + ' ms');
+    return bits.join(' · ') || 'Rendered frame';
+  }
+
   /* Starts a new render result: the window drops the previous frame and any
      filmstrip from the last run. Only posts when a window is already open, so a
      dropdown change can never try to raise a popup. */
   function reset(title) {
     last = null;
     lastPush = 0;
+    if (viewerHost()) {
+      viewerSet('title', title || 'Render Result');
+      viewerSet('frame', '');
+      viewerSet('progress', 0);
+      const img = viewerHost().querySelector('.frv-shot'); if (img) img.hidden = true;
+      const empty = viewerHost().querySelector('.frv-empty'); if (empty) empty.hidden = false;
+    }
     return post({ kind: 'meta', title: title || 'Render Result', reset: true });
   }
 
   function progress(percent, text) {
+    viewerSet('progress', percent);
+    if (text) viewerSet('status', text);
     return post({ kind: 'progress', percent, text });
   }
 
   function status(text, busy) {
+    viewerSet('status', text);
     return post({ kind: 'status', text, busy: !!busy });
   }
 
   function done(text, elapsed) {
+    viewerSet('progress', 100);
+    viewerSet('status', text || ('Done in ' + (Number(elapsed) ? (elapsed / 1000).toFixed(1) + ' s' : '—')));
     return post({ kind: 'done', text, elapsed });
   }
 
   function fail(text) {
+    viewerSet('status', text || 'Render failed');
     return post({ kind: 'error', text });
   }
 
@@ -481,6 +605,8 @@
     setEnabled,
     isOpen,
     ensure,
+    viewerSet,
+    viewerInstall,
     reset,
     pushCanvas,
     progress,
