@@ -2054,6 +2054,40 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   box-shadow: 0 0 10px color-mix(in srgb, var(--ac) 35%, transparent);
 }
 .edit-bar-sep { flex: none; width: 1px; height: 20px; background: #2a2d37; margin: 0 2px; }
+/* The point / edge / face switch, one row above the Select tools. Three
+   buttons, the chosen one lit, and the short label of what it takes ("Vertices
+   only") at the end of the row. */
+.edit-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid #23283a;
+}
+.edit-mode-row::-webkit-scrollbar { display: none; }
+.edit-mode-row[hidden] { display: none; }
+.edit-mode-row .tool { flex: none; gap: 6px; padding: 6px 11px; font-size: 11.5px; }
+.edit-mode-row .tool.active,
+.edit-mode-row .tool[aria-pressed="true"] {
+  background: #2b3143;
+  border-color: var(--ac);
+  color: #fff;
+  box-shadow: inset 0 -2px 0 var(--ac);
+}
+.edit-mode-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: #7d8798;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .edit-sheet-head .edit-done { border-color: #2f5d46; color: #a7f3d0; }
 .edit-sheet-stats {
   flex: none;
@@ -2141,6 +2175,66 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   background: rgba(245, 158, 11, 0.12);
 }
 #edit-marquee[hidden] { display: none; }
+
+/* ============================================================
+   FE-SHEET-GRIP
+   Every bottom sheet carries a grab handle on its top edge. The
+   handle is not decoration: dragging it up pulls the panel with the
+   finger and it settles at its normal height or near full screen,
+   and a tap on it toggles between the two, so a thumb that misses
+   the drag still gets the tall panel. Nothing else about a sheet
+   changes - the same closed state, the same close button, the same
+   scroll body.
+   ============================================================ */
+.sheet-grip {
+  flex: none;
+  /* Sticky, because two of these panels scroll as a whole: the handle must not
+     ride off the top of the screen with the content it is holding. */
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  margin: -2px 0 2px;
+  background: inherit;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 4;
+}
+/* The bar is 5px tall; the finger is not. This widens the target without
+   drawing anything on the panel. */
+.sheet-grip::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -12px;
+  transform: translateX(-50%);
+  width: 164px;
+  height: 38px;
+}
+.sheet-grip span {
+  display: block;
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: #39415a;
+  transition: background .16s ease, width .16s ease;
+}
+.sheet-grip:hover span,
+.sheet-grip:active span { background: #93a0b8; width: 54px; }
+.sheet-dragging { cursor: grabbing; }
+.sheet-dragging .sheet-grip span { background: var(--ac, #6366f1); width: 54px; }
+.sheet-snap { transition: height .2s cubic-bezier(.22, .61, .36, 1); }
+.sheet-expanded > .sheet-grip span { background: var(--ac, #6366f1); }
+/* A desktop modal is centred, not docked to the bottom, so the same handle
+   would be a lie there. */
+@media (min-width: 900px) {
+  .render-modal-window > .sheet-grip { display: none; }
+}
 
 /* ============================================================
    FE-LANDSCAPE-LAYOUT
@@ -2801,7 +2895,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 
   <!-- Blender Viewport Shading Notice -->
   <div id="light-mode-warning" style="display:none; margin: 8px 12px 0; padding: 7px 10px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 8px; font-size: 11px; color: #fbbf24; line-height: 1.4; align-items: center; justify-content: space-between; gap: 8px;">
-    <span>⚠️ In <strong>Solid</strong> or <strong>Wireframe</strong> mode, scene lights are disabled (like Blender Workbench).</span>
+    <span><i class="ico" data-ico="warning"></i> In <strong>Solid</strong> or <strong>Wireframe</strong> shading the scene lights are off and the model is lit by the viewport alone.</span>
     <button type="button" id="btn-switch-to-rendered" style="background: #f59e0b; color: #000; font-weight: 600; border: none; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; white-space: nowrap;">Switch to Rendered</button>
   </div>
 
@@ -3016,7 +3110,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <div class="modifiers-sheet-title">
       <span>⚙️</span>
       <strong>Modifiers Tool</strong>
-      <small>Blender Modifiers</small>
     </div>
     <div class="modifiers-header-actions">
       <button class="btn modifiers-close" type="button" aria-label="Close Modifiers" onclick="closeModifiersModal(event)">✕</button>
@@ -3782,16 +3875,22 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <button class="tool" type="button" data-edit-category="mesh"><i class="ico" data-ico="extrude"></i><span>Mesh</span></button>
         <button class="tool" type="button" data-edit-category="normals"><i class="ico" data-ico="normal"></i><span>Shading</span></button>
         <span class="edit-bar-sep" aria-hidden="true"></span>
-        <button class="tool" type="button" data-edit-mode="vertex"><i class="ico" data-ico="vertex"></i><span>Points</span></button>
-        <button class="tool" type="button" data-edit-mode="edge"><i class="ico" data-ico="edge"></i><span>Edges</span></button>
-        <button class="tool" type="button" data-edit-mode="face"><i class="ico" data-ico="face"></i><span>Faces</span></button>
-        <span class="edit-bar-sep" aria-hidden="true"></span>
         <button class="tool" type="button" id="edit-xray"><i class="ico" data-ico="eye"></i><span>See through</span></button>
         <button class="tool" type="button" id="edit-snap"><i class="ico" data-ico="pin"></i><span>Snap</span></button>
         <span class="edit-sheet-stats" id="edit-status-line"></span>
         <button class="tool edit-done" type="button" id="edit-done"><i class="ico" data-ico="check"></i><span>Done</span></button>
         <button class="panel-close" type="button" id="edit-sheet-close" aria-label="Hide edit tools"><i class="ico" data-ico="close"></i></button>
       </nav>
+      <!-- What a tap, a box or a circle is allowed to take. It sits directly
+           above the Select tools because it applies to all of them, and it is
+           the only selector: with Vertices on, a box dragged across the whole
+           model takes its points and leaves every edge and face alone. -->
+      <div class="edit-mode-row" id="edit-mode-row" role="group" aria-label="What a selection takes">
+        <button class="tool" type="button" data-edit-mode="vertex" aria-pressed="true"><i class="ico" data-ico="vertex"></i><span>Vertices</span></button>
+        <button class="tool" type="button" data-edit-mode="edge" aria-pressed="false"><i class="ico" data-ico="edge"></i><span>Edges</span></button>
+        <button class="tool" type="button" data-edit-mode="face" aria-pressed="false"><i class="ico" data-ico="face"></i><span>Faces</span></button>
+        <span class="edit-mode-hint" id="edit-mode-hint">Vertices only</span>
+      </div>
       <div id="edit-sheet-tools" role="toolbar" aria-label="Edit Mode tools"></div>
       <div class="edit-sheet-row" id="edit-amount-row" hidden>
         <label id="edit-amount-label" for="edit-amount">Distance</label>
@@ -7025,6 +7124,125 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   bindAnnoEvents();document.addEventListener('fe:screen',()=>setTimeout(bindAnnoEvents,50));
 });
+
+/* ---- FE-SHEET-GRIP ---- */
+/* Premiere-style grab handle on the top edge of every bottom sheet: the panel
+   follows the finger upward, and when it is let go it settles at its normal
+   height or near the top of the screen. A tap on the handle does the same, so
+   a thumb that misses the drag still gets the tall panel. The handles are
+   inserted here instead of in the markup so a panel added later cannot be the
+   one sheet in the app without one. */
+(function installSheetGrips() {
+  const SHEET_IDS = [
+    'camera-sheet', 'light-sheet', 'add-3d-sheet', 'landscape-sheet',
+    'import-3d-sheet', 'modifiers-sheet', 'animation-sheet', 'edit-sheet'
+  ];
+  const MAX_FRACTION = 0.92;
+  const naturals = new WeakMap();
+  let drag = null;
+
+  function sheetList() {
+    const list = [];
+    for (const id of SHEET_IDS) {
+      const node = document.getElementById(id);
+      if (node) list.push(node);
+    }
+    document.querySelectorAll('.render-modal-window').forEach((node) => list.push(node));
+    return list;
+  }
+
+  function install() {
+    for (const sheet of sheetList()) {
+      if (!sheet || typeof sheet.insertBefore !== 'function') continue;
+      if (sheet.querySelector(':scope > .sheet-grip')) continue;
+      const grip = document.createElement('div');
+      grip.className = 'sheet-grip';
+      grip.setAttribute('role', 'button');
+      grip.setAttribute('aria-label', 'Drag up for a taller panel');
+      grip.innerHTML = '<span></span>';
+      sheet.insertBefore(grip, sheet.firstChild || null);
+    }
+  }
+
+  function tallHeight() {
+    const view = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 640;
+    return Math.round(view * MAX_FRACTION);
+  }
+
+  function paint(sheet, height) {
+    sheet.style.maxHeight = 'none';
+    sheet.style.height = height + 'px';
+  }
+
+  function settle(sheet, height, expanded) {
+    sheet.classList.add('sheet-snap');
+    paint(sheet, Math.round(height));
+    sheet.classList.toggle('sheet-expanded', !!expanded);
+    setTimeout(() => {
+      sheet.classList.remove('sheet-snap');
+      if (!expanded) { sheet.style.height = ''; sheet.style.maxHeight = ''; }
+    }, 230);
+  }
+
+  function measure(sheet) {
+    if (naturals.has(sheet)) return naturals.get(sheet);
+    const height = Math.round(sheet.getBoundingClientRect ? sheet.getBoundingClientRect().height : 0);
+    if (height > 0) naturals.set(sheet, height);
+    return height || 240;
+  }
+
+  document.addEventListener('pointerdown', (event) => {
+    const grip = event.target && event.target.closest ? event.target.closest('.sheet-grip') : null;
+    if (!grip || !grip.parentElement) return;
+    const sheet = grip.parentElement;
+    const natural = measure(sheet);
+    const height = Math.round(sheet.getBoundingClientRect().height) || natural;
+    drag = { sheet, id: event.pointerId, startY: event.clientY, startHeight: height, height, moved: 0, natural };
+    sheet.classList.remove('sheet-snap');
+    sheet.classList.add('sheet-dragging');
+    try { grip.setPointerCapture(event.pointerId); } catch (_) { /* older engines */ }
+    event.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('pointermove', (event) => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dy = event.clientY - drag.startY;
+    drag.moved = Math.max(drag.moved, Math.abs(dy));
+    const ceiling = Math.max(tallHeight(), drag.natural + 80);
+    drag.height = Math.min(ceiling, Math.max(drag.natural, drag.startHeight - dy));
+    paint(drag.sheet, Math.round(drag.height));
+    event.preventDefault();
+  }, { passive: false });
+
+  function release(event) {
+    if (!drag) return;
+    if (event && event.pointerId !== undefined && event.pointerId !== drag.id) return;
+    const { sheet, natural, height, moved } = drag;
+    drag = null;
+    sheet.classList.remove('sheet-dragging');
+    const ceiling = Math.max(tallHeight(), natural + 80);
+    const expanded = moved < 6 ? !sheet.classList.contains('sheet-expanded') : height > (natural + ceiling) / 2;
+    settle(sheet, expanded ? ceiling : natural, expanded);
+  }
+
+  document.addEventListener('pointerup', release);
+  document.addEventListener('pointercancel', release);
+
+  window.addEventListener('resize', () => {
+    for (const sheet of sheetList()) {
+      if (!sheet.classList) continue;
+      if (sheet.classList.contains('sheet-expanded')) paint(sheet, tallHeight());
+      /* A rotation changes what "its own height" means for every other sheet,
+         so the measured height is dropped rather than reused. */
+      else naturals.delete(sheet);
+    }
+  });
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
+  else install();
+  document.addEventListener('fe:screen', () => setTimeout(install, 30));
+})();
+/* ---- /FE-SHEET-GRIP ---- */
 
 // Camera projection helpers: preserve framing when switching real perspective/orthographic cameras.
 function cameraDisplayFov(camera) {

@@ -141,6 +141,19 @@ struct Rng {
 struct V3 {
   float x, y, z;
 };
+
+/* The end ring of the last tube segment, so the next one can continue it
+ * instead of starting a new tube beside it. */
+struct TubeChain {
+  int32_t first = -1;
+  int32_t sides = 0;
+  V3 end = {0.0f, 0.0f, 0.0f};
+  V3 frame = {1.0f, 0.0f, 0.0f};
+  /* Wind compliance at the ring the chain ends on. A continuation inherits it,
+     so the joint cannot move two different amounts. */
+  float sway = 0.0f;
+};
+TubeChain gChain;
 inline V3 v3(float x, float y, float z) { V3 v; v.x = x; v.y = y; v.z = z; return v; }
 inline V3 add(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
 inline V3 sub(V3 a, V3 b) { return v3(a.x - b.x, a.y - b.y, a.z - b.z); }
@@ -187,6 +200,8 @@ void resetMesh() {
   gPenSway = 0.0f;
   gPenPh = 0.0f;
   gPenPart = 0.0f;
+  gChain.first = -1;
+  gChain.sway = 0.0f;
 }
 
 int32_t pushVert(V3 p, V3 n, float u, float v, float r, float g, float b, float rnd, V3 cen);
@@ -288,11 +303,29 @@ void barkProfile(float th, int32_t lobes, float bh1, float bh2, float bh3,
   outSlope = float(lobes) * (0.62f * cosf(a1) + 0.52f * cosf(a2) + 0.36f * cosf(a3));
 }
 
+/* Is the previous tube still open at `a`, with the same facet count? Then this
+ * segment can continue it instead of starting a second shell beside it. */
+bool chainReady(int32_t sides, V3 a) {
+  return gChain.first >= 0 && gChain.sides == sides && len(sub(gChain.end, a)) < 1e-3f;
+}
+
 V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
                float uvScale, float shade, float rnd, V3 hint, bool capEnd,
-               float sway0 = 0.0f, float sway1 = 0.0f, float ph = 0.0f) {
+               float sway0 = 0.0f, float sway1 = 0.0f, float ph = 0.0f,
+               bool chain = false) {
   const V3 d = norm(sub(b, a));
-  V3 u = sub(hint, mul(d, dot(hint, d)));
+  const bool joined = chain && chainReady(sides, a);
+  /* The start of a continued tube is the end of the previous one: same ring,
+     same compliance. */
+  if (joined) sway0 = gChain.sway;
+  V3 u;
+  if (joined) {
+    /* Parallel transport of the previous ring's frame: a continuation twists
+       with the limb instead of re-orienting the ring around it. */
+    u = sub(gChain.frame, mul(d, dot(gChain.frame, d)));
+  } else {
+    u = sub(hint, mul(d, dot(hint, d)));
+  }
   if (len(u) < 1e-4f) {
     const V3 ref = absf(d.y) > 0.95f ? v3(1.0f, 0.0f, 0.0f) : v3(0.0f, 1.0f, 0.0f);
     u = sub(ref, mul(d, dot(ref, d)));
@@ -301,7 +334,9 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
   const V3 w = cross(d, u);
   const V3 cen = mul(add(a, b), 0.5f);
   const float length = len(sub(b, a));
-  const int32_t start = gVert;
+  /* A continued segment does not draw its own first ring: it borrows the ring
+     the previous segment ended on, so the surface really is one shell. */
+  const int32_t start = joined ? gChain.first : gVert;
   /* Bark is scaled by circumference, not by facet index. `j / sides` stretched a
      whole tile around a 2 cm twig and around a 1.2 m trunk alike, so the crown's
      bark was smeared sideways by an order of magnitude -- part of why the limbs
@@ -309,7 +344,7 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
      and along, keeps the grain the same size on every limb. */
   const float uSpan = maxf(0.12f, kTwoPi * ((r0 + r1) * 0.5f) * uvScale);
 
-  for (int32_t ring = 0; ring < 2; ++ring) {
+  for (int32_t ring = joined ? 1 : 0; ring < 2; ++ring) {
     const V3 c = ring ? b : a;
     const float r = ring ? r1 : r0;
     gPenSway = ring ? sway1 : sway0;
@@ -340,9 +375,11 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
     }
   }
   const int32_t stride = sides + 1;
+  const int32_t ringA = start;                 /* the ring at `a` */
+  const int32_t ringB = joined ? gVert - stride : start + stride;  /* the ring at `b` */
   for (int32_t j = 0; j < sides; ++j) {
-    const int32_t a0 = start + j, a1 = start + j + 1;
-    const int32_t b0 = start + stride + j, b1 = start + stride + j + 1;
+    const int32_t a0 = ringA + j, a1 = ringA + j + 1;
+    const int32_t b0 = ringB + j, b1 = ringB + j + 1;
     pushTri(a0, b0, a1);
     pushTri(a1, b0, b1);
   }
@@ -351,10 +388,16 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
     gPenPh = ph;
     const int32_t c = pushVert(b, d, 0.5f, v0 + length * uvScale, shade * 0.92f, rnd, cen);
     for (int32_t j = 0; j < sides; ++j) {
-      const int32_t a0 = start + stride + j, a1 = start + stride + j + 1;
+      const int32_t a0 = ringB + j, a1 = ringB + j + 1;
       pushTri(a0, c, a1);
     }
   }
+  /* Remember this segment's end ring for whoever continues the limb next. */
+  gChain.first = ringB;
+  gChain.sides = sides;
+  gChain.end = b;
+  gChain.frame = u;
+  gChain.sway = sway1;
   gPenSway = 0.0f;
   gPenPh = 0.0f;
   return u;
@@ -2185,17 +2228,21 @@ int32_t generatePalm(uint32_t seed, int32_t detail) {
     /* Ring scars: the shade dips every ring, which is what a palm trunk reads as. */
     frame = tubeSegment(prev, p, r0, r1, sides, H * t * 0.35f, 0.35f,
                         0.72f + 0.16f * (i % 2), rng.f(), frame, i == rings,
-                        0.0f, 0.30f * t, 0.0f);
+                        0.0f, 0.30f * t, 0.0f, i > 1);
     prev = p;
     top = p;
   }
-  const int32_t fronds = detail >= 2 ? 14 : 9;
+  /* The crown starts fresh: the trunk's last ring is not a frond ring. */
+  gChain.first = -1;
+  /* A palm without fronds is a pole. Detail thins the crown, it does not
+     remove it: a phone-built palm still carries a full ring of fronds. */
+  const int32_t fronds = detail >= 2 ? 16 : (detail == 1 ? 13 : 10);
   for (int32_t f = 0; f < fronds; ++f) {
     const float a = float(f) * 2.39996323f;
     const float droop = rng.range(0.55f, 1.25f);
     const float len = rng.range(2.2f, 3.4f) * (0.7f + 0.3f * gShapeH);
     const V3 axis = v3(cosf(a), 0.0f, sinf(a));
-    const int32_t segs = detail >= 2 ? 5 : 4;
+    const int32_t segs = detail >= 2 ? 5 : (detail == 1 ? 5 : 4);
     V3 p = top;
     V3 dir = norm(add(v3(0.0f, 1.0f, 0.0f), mul(axis, 1.35f)));
     for (int32_t s = 0; s < segs; ++s) {
@@ -2204,10 +2251,11 @@ int32_t generatePalm(uint32_t seed, int32_t detail) {
       const V3 q = add(p, mul(dir, len / float(segs)));
       tubeSegment(p, q, lerpf(0.028f, 0.010f, t), lerpf(0.026f, 0.008f, t),
                   detail >= 2 ? 4 : 3, t, 1.0f, 0.80f, rng.f(),
-                  v3(1.0f, 0.0f, 0.0f), false, 0.30f + 0.4f * t, 0.30f + 0.5f * t, a);
+                  v3(1.0f, 0.0f, 0.0f), s == segs - 1,
+                  0.30f + 0.4f * t, 0.30f + 0.5f * t, a, s > 0);
       /* Leaflets alternate left and right of the rachis. */
       const V3 side = norm(cross(dir, v3(0.0f, 1.0f, 0.0f)));
-      const int32_t per = detail >= 2 ? 5 : 3;
+      const int32_t per = detail >= 2 ? 6 : (detail == 1 ? 5 : 3);
       gPenPart = 1.0f;
       for (int32_t k = 0; k < per; ++k) {
         for (int32_t sgn = 0; sgn < 2; ++sgn) {
@@ -2306,8 +2354,8 @@ struct ConiferSpec {
 };
 
 const ConiferSpec kConifer[4] = {
-  /* pine    */ { 15.0f, 0.30f, 0.42f, 7, 4, 3.40f, 0.22f, 0.135f, 2, 0.62f, false, 0.55f, 0.95f },
-  /* spruce  */ { 16.5f, 0.26f, 0.05f, 9, 5, 3.10f, 0.46f, 0.110f, 2, 0.85f, false, 0.50f, 0.90f },
+  /* pine    */ { 15.0f, 0.30f, 0.42f, 9, 4, 3.40f, 0.22f, 0.165f, 3, 0.62f, false, 0.55f, 0.95f },
+  /* spruce  */ { 16.5f, 0.26f, 0.05f, 10, 5, 3.10f, 0.46f, 0.140f, 3, 0.85f, false, 0.50f, 0.90f },
   /* krumm   */ { 1.55f, 0.11f, 0.03f, 4, 4, 1.55f, 0.60f, 0.065f, 1, 1.15f, true, 0.52f, 0.94f },
   /* juniper */ { 2.70f, 0.10f, 0.02f, 5, 3, 1.15f, 0.85f, 0.048f, 1, 1.30f, true, 0.58f, 1.00f }
 };
@@ -2341,7 +2389,7 @@ void coniferBranch(V3 base, V3 dir, float length, float droop, const ConiferSpec
                    int32_t detail, float rnd, float phase) {
   if (gVert > MAX_VERT - 400) return;
   const int32_t segs = detail >= 2 ? 3 : 2;
-  const int32_t sides = detail >= 2 ? 5 : 4;
+  const int32_t sides = 4;
   V3 p = base;
   float r = sp.trunkR * 0.16f;
   V3 frame = v3(0.0f, 0.0f, 1.0f);
@@ -2351,21 +2399,33 @@ void coniferBranch(V3 base, V3 dir, float length, float droop, const ConiferSpec
     const V3 d = norm(add(dir, v3(0.0f, -droop * t, 0.0f)));
     const V3 q = add(p, mul(d, length / float(segs)));
     gPenPart = 0.0f;
+    /* One shell per branch: the segments continue each other instead of
+       starting a new tube at every joint, and a continuation inherits the
+       compliance of the ring it grows from, so a gust bends the branch
+       instead of pulling it off the trunk. */
     frame = tubeSegment(p, q, r, r * 0.70f, sides, t * length, 0.8f,
                         sp.shade0 + (sp.shade1 - sp.shade0) * t, rnd, frame,
-                        false, 0.05f + 0.35f * t, 0.10f + 0.45f * t, phase);
+                        s == segs - 1, 0.05f + 0.35f * t, 0.10f + 0.45f * t, phase,
+                        s > 0);
     /* A branch that carries needles all the way along it. */
     if (sp.sprays > 0) {
-      const int32_t n = detail >= 2 ? sp.sprays + 1 : 1;
+      /* A branch keeps its needle rows at every detail: the LOD ladder is
+         allowed to spend fewer vertices, never to leave a conifer bare. */
+      const int32_t n = detail >= 2 ? sp.sprays + 1 : (detail == 1 ? sp.sprays : 1);
       needleSpray(p, d, length / float(segs) * 1.05f, sp.needle, n,
                   sp.shade0 + (sp.shade1 - sp.shade0) * t + 0.05f, rnd,
                   0.15f + 0.45f * t, phase);
     }
-    /* One fork at the halfway point, angled up out of the needle plane. */
+    /* One fork at the halfway point, angled up out of the needle plane. The
+       fork is its own shell, so the parent's continuation is restored after
+       it: without this the next segment would try to join the fork's tip. */
     if (detail >= 2 && s == segs / 2) {
       const V3 side = norm(cross(d, v3(0.0f, 1.0f, 0.0f)));
       const V3 fq = norm(add(mul(d, 0.75f), mul(side, 0.55f)));
+      const TubeChain saved = gChain;
+      gChain.first = -1;
       coniferBranch(p, fq, length * 0.42f, droop, sp, detail - 1, rnd, phase + 0.7f);
+      gChain = saved;
     }
     p = q;
     r *= 0.72f;
@@ -2376,6 +2436,8 @@ int32_t generateConifer(int32_t kind, uint32_t seed, int32_t detail) {
   const ConiferSpec& sp = kConifer[kind - SP_PINE];
   Rng rng(seed ^ 0x4f1bbcdcu);
   const float H = sp.height * gShapeH;
+  gChain.first = -1;
+  gChain.sway = 0.0f;
   const float trunkR = sp.trunkR * (0.7f + 0.3f * gShapeH);
   const int32_t stems = sp.multi ? 2 : 1;
   for (int32_t stem = 0; stem < stems; ++stem) {
@@ -2402,13 +2464,13 @@ int32_t generateConifer(int32_t kind, uint32_t seed, int32_t detail) {
       frame = tubeSegment(prev, p, (r0 < 0.006f ? 0.006f : r0) * flare, (r1 < 0.005f ? 0.005f : r1),
                           sides, stemH * t * 0.5f, 0.7f,
                           sp.shade0 + (sp.shade1 - sp.shade0) * 0.35f, rng.f(), frame,
-                          i == rings, 0.0f, 0.02f * t, float(stem) * 0.9f);
+                          i == rings, 0.0f, 0.02f * t, float(stem) * 0.9f, i > 1);
       prev = p;
       top = p;
     }
     /* Whorls. Branch reach follows the crown profile: longest at the bottom of
      * the live crown, vanishing at the leader, which is what makes a cone. */
-    const int32_t whorls = detail >= 2 ? sp.whorls : (sp.whorls * 2 + 2) / 3;
+    const int32_t whorls = detail >= 2 ? sp.whorls : (detail == 1 ? sp.whorls - 1 : (sp.whorls + 1) / 2);
     for (int32_t w = 0; w < whorls; ++w) {
       const float t = float(w) / float(whorls - 1);
       const float y = root.y + stemH * (sp.bare + (1.0f - sp.bare) * t * 0.96f);
@@ -2419,14 +2481,20 @@ int32_t generateConifer(int32_t kind, uint32_t seed, int32_t detail) {
       /* The whorl turns by a fraction of the golden angle so the branches of
          successive whorls do not stack into visible columns. */
       const float rot = float(w) * 2.39996323f * 0.618f + float(stem) * 1.1f;
-      const int32_t n = detail >= 2 ? sp.perWhorl : (sp.perWhorl + 1) / 2;
+      const int32_t n = detail >= 2 ? sp.perWhorl : (detail == 1 ? sp.perWhorl : 2);
       for (int32_t b = 0; b < n; ++b) {
         const float a = rot + kTwoPi * float(b) / float(n) + rng.range(-0.18f, 0.18f);
         const V3 dir = v3(cosf(a), 0.0f, sinf(a));
+        /* The branch starts inside the trunk, at a fraction of the radius the
+           trunk actually has at that height — not at a constant offset, which
+           left the upper whorls hanging in the air beside a tapering trunk. */
+        const float tw = clampf(sp.bare + (1.0f - sp.bare) * t * 0.96f, 0.0f, 1.0f);
+        const float localR = trunkR * (1.0f - 0.86f * tw) * (tw < 0.08f ? 1.55f : 1.0f);
+        const float off = localR * 0.55f;
         const V3 base = v3(root.x + cosf(leanA) * leanK * (t * t) * stemH * 0.25f +
-                               dir.x * trunkR * 0.5f,
+                               dir.x * off,
                            y, root.z + sinf(leanA) * leanK * (t * t) * stemH * 0.25f +
-                               dir.z * trunkR * 0.5f);
+                               dir.z * off);
         coniferBranch(base, dir, reach, sp.droop * (0.8f + 0.4f * rng.f()), sp, detail,
                       rng.f(), float(b) * 1.7f);
       }

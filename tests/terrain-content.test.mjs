@@ -306,3 +306,29 @@ test('Explore uses disjoint joystick/look pointer IDs and exposes model-free Fre
   assert.match(html,/Start Free Flight/);
   assert.doesNotMatch(html,/makeExploreHelicopter|updateHelicopterPose|heliVehicle/);
 });
+
+test('nothing is planted in the water, and a manual stroke only wets ground cover',()=>{
+  /* The panel promises: manual paint may stand grass in the shallows it
+     brushed, deep water stays empty, auto-scatter stays on land. The gate was
+     computed and then never applied, which is how palms ended up standing in
+     the lagoon and trees floated above a carved seabed. */
+  assert.ok(html.includes('const y=y0===undefined||bd?(bd?bY(x,z,bd):hgt(x,z)):y0'),'a plant is placed at the ground height');
+  assert.match(html,/if\(y<wl\+minAbove&&!\(grassKind&&force&&waterDepth<=shallowBrushDepth\)\)return 0;/,'the water gate rejects anything below the allowed depth');
+  assert.match(html,/minAbove=bd\?\.7:RK\[k\]\?-\.3:force\?\.05:\.25/,'buildings need dry land, rocks may sit in the surf, scattered plants need 25 cm');
+});
+
+test('a terrain stroke re-snaps every plant inside the edited rectangle',()=>{
+  const start=html.indexOf('function resnapRect('),end=html.indexOf('/* Species slot in the kernel',start);
+  assert.ok(start>=0&&end>start,'terrain resnap-rect helper should be present');
+  const synced=[];
+  const ctx={D:1,S:100,hgt:(x,z)=>x+z,sync:(k)=>synced.push(k),BLD:{},RK:{rock:1},FP:{pine:1},bY:()=>0};
+  const kinds={pine:{list:[{x:-10,z:-10,y:99,s:1},{x:0,z:0,y:0,s:1}]},rock:{list:[{x:0,z:0,y:0,s:1}]},grass:{list:[{x:0,z:0,y:0,s:1}]}};
+  ctx.KIND=kinds;
+  vm.runInNewContext(html.slice(start,end)+';this.resnapRect=resnapRect;',ctx);
+  ctx.resnapRect(49,51,49,51);
+  assert.equal(kinds.pine.list[0].y,99,'a tree outside the edited rectangle keeps its height');
+  assert.equal(kinds.pine.list[1].y,0,'a tree on the edited ground follows it');
+  assert.ok(synced.includes('pine')&&synced.includes('rock'),'every object species touched by the stroke is re-uploaded');
+  assert.ok(!synced.includes('grass'),'ground cover is left until the stroke ends');
+  assert.match(html,/upd\(gx0,gx1,gz0,gz1\);if\(br\.tool==='erode'\)upd\(\);resnapRect\(gx0,gx1,gz0,gz1\);/,'the kernel brush path re-snaps in the same stroke');
+});

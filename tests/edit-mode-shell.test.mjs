@@ -329,6 +329,14 @@ function makeModeSelect(api, FE) {
   return select;
 }
 
+/* The bridge is one module instance for the whole file: importing it again
+   returns the cached module without re-running it, so the tests share it and
+   the first import is the one that publishes window.FEEditMode. */
+async function loadBridge() {
+  if (!globalThis.FEEditMode) await import(pathToFileURL(resolve('edit-mode.js')).href);
+  return globalThis.FEEditMode;
+}
+
 test('the core studio really offers Edit Mode, and the dropdown is built from that list', () => {
   const { api } = makeShell();
   const modes = api.STUDIOS.core.modes.map(([value]) => value);
@@ -364,6 +372,62 @@ test('choosing Edit Mode in the dropdown reaches the kernel and puts the tools o
   assert.equal(EditMode.isActive(), false);
   assert.equal(bar.children.some((child) => child.id === 'edit-tools-btn'), false);
   assert.equal(bar.hidden, false, 'the object toolbar must survive the round trip');
+});
+
+test('the three selection modes sit above the Select tools and decide what a pick takes', async () => {
+  /* The shipped row, not a copy of it: if the markup moves out of index.html
+     the app has no mode switch, whatever the bridge believes. */
+  const rowMarkup = /<div class="edit-mode-row"[\s\S]*?<\/div>/.exec(html)?.[0];
+  assert.ok(rowMarkup, 'index.html no longer carries the selection mode row');
+  const row = elementFor('edit-mode-row');
+  row.children = parseButtons(rowMarkup);
+  assert.equal(row.children.length, 3, 'the mode row must offer exactly three choices');
+  assert.deepEqual(row.children.map((button) => button.dataset.editMode), ['vertex', 'edge', 'face']);
+
+  const EditMode = await loadBridge();
+  const { api, FE } = makeShell();
+  FE.current = 'core';
+  const select = makeModeSelect(api, FE);
+  select.value = 'edit';
+  select.onchange();
+
+  assert.equal(EditMode.isActive(), true, 'the bridge did not enter Edit Mode');
+  assert.equal(exp.fe_edit_get_mode(), 0, 'Edit Mode starts on points');
+  assert.equal(row.children[0].classList.contains('active'), true, 'the points button is not lit');
+
+  for (const [index, mode, kind] of [[1, 'edge', 1], [2, 'face', 2], [0, 'vertex', 0]]) {
+    row.children[index].click();
+    assert.equal(EditMode.state.mode, mode, `tapping ${mode} did not change the mode`);
+    assert.equal(exp.fe_edit_get_mode(), kind, `the kernel was not told about ${mode} mode`);
+    assert.equal(row.children[index].classList.contains('active'), true, `the ${mode} button is not lit`);
+    assert.equal(row.children.filter((button) => button.classList.contains('active')).length, 1, 'two modes cannot be on at once');
+  }
+  assert.match(elementFor('edit-mode-hint').textContent, /Vertices only/i, 'the row must say what a selection will take');
+  EditMode.exit();
+});
+
+/* "Smooth shading does not work" is a claim about the material the viewport
+   draws with, so the test drives the two buttons in the sheet and reads the
+   material afterwards, not the kernel flag alone. */
+test('Shade Smooth and Shade Flat reach the material the viewport draws with', async () => {
+  const EditMode = await loadBridge();
+  const { api, FE } = makeShell();
+  FE.current = 'core';
+  const select = makeModeSelect(api, FE);
+  select.value = 'edit';
+  select.onchange();
+  assert.equal(EditMode.isActive(), true, 'the bridge did not enter Edit Mode');
+
+  EditMode.runTool('smooth');
+  assert.equal(exp.fe_edit_get_shade(), 1, 'the kernel did not switch to smooth shading');
+  assert.equal(cube.material.flatShading, false, 'the material still shades flat after Shade Smooth');
+  const smooth = Array.from(cube.geometry.attributes.normal.array).slice(0, 9).map((v) => Math.abs(v));
+  assert.ok(smooth.every((v) => Math.abs(v - 0.5773503) < 0.002), `a smooth cube corner must lean equally on all three faces, got ${smooth}`);
+
+  EditMode.runTool('flat');
+  assert.equal(exp.fe_edit_get_shade(), 0, 'the kernel did not switch to flat shading');
+  assert.equal(cube.material.flatShading, true, 'the material still shades smooth after Shade Flat');
+  EditMode.exit();
 });
 
 test('a build without the Edit Mode module says so instead of doing nothing', () => {
