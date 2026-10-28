@@ -171,6 +171,38 @@ test('every slider on the water panel is captured and restored, not just the one
   assert.match(main, /function restore\(s\)[\s\S]{0,1200}restoreStudioSettings\(s\.A\)/);
 });
 
+test('nothing the settings document stores is a dead field', () => {
+  /* The flip side of the slider test above: a key can be written into every
+     saved document and never read back. `waterVisible` was one — it was stored
+     as the literal `true` and restored as the literal `true`, so a sea the user
+     had hidden (an imported open world with no ocean, say) came back on every
+     reload and the field itself carried no information. Every captured key must
+     be read by restoreStudioSettings (or be the water level, which the
+     normaliser reads as a whole object). */
+  const main = readFileSync('terrain-main-04.js', 'utf8');
+  const capture = main.slice(main.indexOf('function captureStudioSettings()'), main.indexOf('\nfunction normalizeSavedWaterLevel'));
+  const restore = main.slice(main.indexOf('function restoreStudioSettings(a)'), main.indexOf('\nconst shareHistoryArray'));
+  const body = capture.slice(capture.indexOf('return{') + 7, capture.lastIndexOf('}'));
+  const keys = [];
+  let depth = 0, part = '';
+  for (const ch of body) {
+    if ('({['.includes(ch)) depth++;
+    if (')}]'.includes(ch)) depth--;
+    if (ch === ',' && depth === 0) { keys.push(part); part = ''; } else part += ch;
+  }
+  keys.push(part);
+  const named = keys.map((k) => k.split(':')[0].trim()).filter((k) => /^[A-Za-z_]\w*$/.test(k));
+  assert.ok(named.length >= 30, `the document still carries the whole studio (${named.length} keys)`);
+  assert.ok(named.includes('waterVisible'), 'the sea being shown or hidden is part of the scene');
+  const wholeObject = new Set(['wl']); // read through normalizeSavedWaterLevel(a, wl)
+  for (const key of named) {
+    if (wholeObject.has(key)) continue;
+    assert.ok(restore.includes(`a.${key}`), `saved \`${key}\` must be read back, or it is a field that does nothing`);
+  }
+  assert.match(main, /waterVisible:water\.visible!==false/, 'the saved visibility is the real one');
+  assert.match(main, /water\.visible=a\.waterVisible!==false/, 'and it is applied again on load');
+});
+
 test('panel edits are batched into one write, and never lost on unload', () => {
   const env = boot();
   for (let i = 0; i < 6; i++) vm.runInContext('queueStudioConfigSave()', env.context);

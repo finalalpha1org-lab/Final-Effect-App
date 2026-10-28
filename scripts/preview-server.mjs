@@ -1,6 +1,7 @@
 import http from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -23,6 +24,23 @@ const MIME_TYPES = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+/* The preview serves `build/client` first because that is what a deploy ships,
+   but a source edit made after the last build would then be hidden behind the
+   older bundle — the studio would keep showing the previous version of a
+   material, which looks exactly like a feature that does not work. Serve the
+   newest copy of a file that exists in both places instead, and the refresh
+   always shows what is on disk. */
+export function newestExisting(candidates) {
+  let best = null;
+  let bestTime = -Infinity;
+  for (const candidate of candidates) {
+    if (!existsSync(candidate) || !statSync(candidate).isFile()) continue;
+    const time = statSync(candidate).mtimeMs;
+    if (time > bestTime) { best = candidate; bestTime = time; }
+  }
+  return best;
+}
+
 function resolveAsset(urlPath) {
   let clean = decodeURIComponent(urlPath.split("?")[0] || "/");
   let forceDownloadName = null;
@@ -43,11 +61,8 @@ function resolveAsset(urlPath) {
     path.join(ROOT, "wasm", rel),
   ];
 
-  for (const candidate of candidates) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) {
-      return { filePath: candidate, forceDownloadName };
-    }
-  }
+  const filePath = newestExisting(candidates);
+  if (filePath) return { filePath, forceDownloadName };
   if (!path.extname(rel)) {
     const fallback = existsSync(path.join(BUILD_CLIENT, "index.html"))
       ? path.join(BUILD_CLIENT, "index.html")
@@ -97,6 +112,12 @@ const server = http.createServer((req, res) => {
   res.end(body);
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Final Effect 3D Studio Preview listening on http://${HOST}:${PORT}`);
-});
+/* Only listen when this file is the program being run: the tests import it to
+   check the file resolution, and an import must not take a port. */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  server.listen(PORT, HOST, () => {
+    console.log(`Final Effect 3D Studio Preview listening on http://${HOST}:${PORT}`);
+  });
+}
+
+export { server, resolveAsset };
