@@ -62,6 +62,29 @@ hover/press, and pill tags. Focus rings are visible on every interactive
 element, icons align on the text baseline (`.ico-wrap`), and text selection and
 sheet scrollbars use the same accent.
 
+## Bottom sheets have a grab handle
+
+Every bottom sheet carries a grab handle on its top edge - camera, light, add
+3D, modifiers, animation, Edit Mode, and the render / settings panels that dock
+to the bottom on a phone. It is a 44 px bar in a 16 px sticky strip, and it is
+the same control on all of them.
+
+| Gesture | Result |
+| --- | --- |
+| Drag up | the panel follows the finger |
+| Let go past halfway | it settles at 92 % of the viewport, still scrollable |
+| Let go below halfway | it settles back at the height its CSS asks for |
+| Tap | toggles between the two, so a thumb that misses the drag gets there anyway |
+
+The handles are inserted by one controller (marked `FE-SHEET-GRIP` in
+`index.html`) rather than written into each panel, so a sheet added later cannot
+be the one panel without a handle, and `tests/sheet-grip.test.mjs` asks the page
+which sheets it has and then checks each one got exactly one handle and that the
+drag, the tap and the "never smaller than its own height" rule all behave.
+
+A desktop modal is centred rather than docked, so `.render-modal-window`'s
+handle is hidden above 900 px.
+
 ## Naming
 
 The 3D studio is called **3D Workspace** everywhere (home card, breadcrumb,

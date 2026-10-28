@@ -43,12 +43,28 @@ button never "does nothing" once.
 ## The UI is this app's own
 
 The bottom toolbar stops being the object toolbar and becomes a **left-to-right
-bar of four categories** — Select, Transform, Mesh, Shading — followed by the
-vertex/edge/face switch, undo/redo, see-through, snap and Done. Tapping a
-category opens **its own sub-toolbar** in a scrollable sheet directly above the
-bar, in the same sheet language as every other panel in the app: a header with
-live counts, a grid of tools with SVG icons, the amount slider for the current
-tool, the axis lock, proportional editing and one line of help.
+bar of four categories** — Select, Transform, Mesh, Shading — followed by
+see-through, snap, live counts and Done. Tapping a category opens **its own
+sub-toolbar** in a scrollable sheet directly above the bar, in the same sheet
+language as every other panel in the app: a header with live counts, a grid of
+tools with SVG icons, the amount slider for the current tool, the axis lock,
+proportional editing and one line of help. Undo and redo are not repeated in
+the sheet; they live in the top bar where they already were.
+
+### The vertex / edge / face switch
+
+The switch is **its own row, directly above the Select tools** — Vertices,
+Edges, Faces, with the live choice lit and a one-line label of what it takes
+("Vertices only"). It is not a Select tool: it decides what every tap, box and
+circle in the mode is allowed to take, and it is the only such selector, so
+there is no way to be tapping points while the row says faces. In vertex mode a
+box dragged across a whole model takes its points and no edges or faces; in edge
+mode the same box takes only edges **both** of whose ends are inside it; in face
+mode only faces all three of whose corners are inside. Tap follows the same
+rule (`fe_edit_pick` returns the element of the current mode). Edges and faces
+are still *derived* from the vertex flags inside the kernel, so the three modes
+can never disagree about the mesh; the switch changes what a pick and a box are
+allowed to touch, and which kind the tools operate on.
 
 The sheet is a bottom sheet in portrait and docks to the right edge in landscape,
 exactly like the camera and light sheets.
@@ -74,9 +90,22 @@ vertex per corner, the kernel's triangles, its vertex colours — and rebuilds t
 geometry, so the exporter, the physics bridge and the scene registry all see the
 edit.
 
+Smooth normals are computed in the kernel by summing each face normal **weighted
+by the angle that face subtends at the vertex**. Area weighting - the obvious
+choice, and the one this kernel shipped first - is visibly wrong on a
+quad-split model: of the two triangles of a face only one owns the corner, so
+that face counts half as much as its neighbours and a smooth-shaded cube comes
+out lopsided. The angle is unchanged by the split, the two halves add up to the
+quad's own corner angle, and a cube's eight smooth normals land exactly on
+`(±0.5774, ±0.5774, ±0.5774)`. Both the vertex normals and the split render
+mesh use that weight, and `cpp/tests/fe_editmesh_tests.cpp` asserts the
+symmetry.
+
 Flat shading is a material property, not extra geometry: the kernel keeps the
 indexed mesh and the bridge sets `material.flatShading` from
-`fe_edit_get_shade()`.
+`fe_edit_get_shade()`. Smooth and flat therefore differ twice over - in the
+normals the kernel emits and in the flag the material carries - so neither can
+silently do nothing.
 
 ## Kernel ABI
 

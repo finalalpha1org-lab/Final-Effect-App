@@ -348,23 +348,39 @@ void triangleArea(uint32_t t, float& area) {
   area = 0.5f * sqrtf(cx * cx + cy * cy + cz * cz);
 }
 
+/* The angle of triangle `t` at its corner `k`, in radians.
+ *
+ * Vertex normals used to be summed with the triangle *area* as the weight, and
+ * on a quad-split model that is visibly wrong: of the two triangles of a face,
+ * one owns the corner and the other does not, so that face counts half as much
+ * as its neighbour and a smooth-shaded cube comes out lopsided. The angle the
+ * corner actually subtends inside the face is unchanged by the split - the two
+ * halves add up to the quad's own corner angle - which is the weighting every
+ * modelling package uses and the reason smooth shading reads as smooth. */
+float cornerAngle(uint32_t t, uint32_t k) {
+  const uint32_t a = M.tri[t * 3 + k];
+  const uint32_t b = M.tri[t * 3 + (k + 1) % 3];
+  const uint32_t c = M.tri[t * 3 + (k + 2) % 3];
+  const float ux = M.x[b] - M.x[a], uy = M.y[b] - M.y[a], uz = M.z[b] - M.z[a];
+  const float vx = M.x[c] - M.x[a], vy = M.y[c] - M.y[a], vz = M.z[c] - M.z[a];
+  const float cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+  const float cross = sqrtf(cx * cx + cy * cy + cz * cz);
+  const float dot = ux * vx + uy * vy + uz * vz;
+  if (cross < 1e-20f && dot == 0.0f) return 0.0f;
+  return atan2f(cross, dot);
+}
+
 void vertexNormals(float* nx, float* ny, float* nz) {
   for (uint32_t i = 0; i < M.nv; ++i) { nx[i] = 0.0f; ny[i] = 0.0f; nz[i] = 0.0f; }
   for (uint32_t t = 0; t < M.nt; ++t) {
     float fx, fy, fz;
     faceNormal(t, fx, fy, fz);
-    const float ax = M.x[M.tri[t * 3]], ay = M.y[M.tri[t * 3]], az = M.z[M.tri[t * 3]];
-    const float bx = M.x[M.tri[t * 3 + 1]], by = M.y[M.tri[t * 3 + 1]], bz = M.z[M.tri[t * 3 + 1]];
-    const float cx = M.x[M.tri[t * 3 + 2]], cy = M.y[M.tri[t * 3 + 2]], cz = M.z[M.tri[t * 3 + 2]];
-    const float ux = bx - ax, uy = by - ay, uz = bz - az;
-    const float vx = cx - ax, vy = cy - ay, vz = cz - az;
-    const float wx = uy * vz - uz * vy, wy = uz * vx - ux * vz, wz = ux * vy - uy * vx;
-    const float area = 0.5f * sqrtf(wx * wx + wy * wy + wz * wz);
     for (uint32_t k = 0; k < 3; ++k) {
       const uint32_t v = M.tri[t * 3 + k];
-      nx[v] += fx * area;
-      ny[v] += fy * area;
-      nz[v] += fz * area;
+      const float weight = cornerAngle(t, k);
+      nx[v] += fx * weight;
+      ny[v] += fy * weight;
+      nz[v] += fz * weight;
     }
   }
   for (uint32_t i = 0; i < M.nv; ++i) {
@@ -916,9 +932,15 @@ uint32_t buildRenderMesh() {
       for (uint32_t i = 0; i < count; ++i) {
         if (g_groupOf[i] != g) continue;
         const uint32_t f = g_faceList[start + i];
-        ax += fnx[f] * farea[f];
-        ay += fny[f] * farea[f];
-        az += fnz[f] * farea[f];
+        /* Same weight as vertexNormals: the angle the face subtends at v, so a
+           quad keeps its full share after being split into two triangles. */
+        float weight = 0.0f;
+        for (uint32_t k = 0; k < 3; ++k) {
+          if (M.tri[f * 3 + k] == v) { weight = cornerAngle(f, k); break; }
+        }
+        ax += fnx[f] * weight;
+        ay += fny[f] * weight;
+        az += fnz[f] * weight;
       }
       const float len = sqrtf(ax * ax + ay * ay + az * az);
       if (len > 1e-20f) { ax /= len; ay /= len; az /= len; }

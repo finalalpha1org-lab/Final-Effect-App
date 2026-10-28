@@ -42,6 +42,7 @@ unsigned int fe_edit_build_render(void);
 unsigned int fe_edit_render_vert_count(void);
 unsigned int fe_edit_render_idx_count(void);
 const float* fe_edit_render_pos_ptr(void);
+const float* fe_edit_render_nrm_ptr(void);
 const unsigned int* fe_edit_render_idx_ptr(void);
 unsigned int fe_edit_undo(void);
 unsigned int fe_edit_redo(void);
@@ -408,6 +409,22 @@ static void testRenderMesh(void) {
   const unsigned int* idx = fe_edit_render_idx_ptr();
   for (unsigned int i = 0; i < fe_edit_render_idx_count(); ++i) CHECK(idx[i] < verts);
   CHECK(p[0] == p[0]);
+
+  /* A smooth cube has one normal per corner, and that normal must be the same
+     distance from all three faces: (+-0.5774, +-0.5774, +-0.5774). Weighting
+     the faces by triangle area instead of by the angle they subtend leaves the
+     face that owns the quad's corner counting twice as much as its neighbours,
+     which is a lopsided, visibly banded surface. */
+  const float* n = fe_edit_render_nrm_ptr();
+  const float kInv = 0.5773503f;
+  for (unsigned int i = 0; i < verts; ++i) {
+    const float nx = n[i * 3], ny = n[i * 3 + 1], nz = n[i * 3 + 2];
+    const float len = sqrtf(nx * nx + ny * ny + nz * nz);
+    CHECK_MSG(len > 0.99f && len < 1.01f, "a smooth normal must be a unit vector");
+    CHECK_MSG(fabsf(nx) > kInv - 0.002f && fabsf(nx) < kInv + 0.002f, "the corner normal leans on x as far as on y and z");
+    CHECK_MSG(fabsf(ny) > kInv - 0.002f && fabsf(ny) < kInv + 0.002f, "the corner normal leans on y as far as on x and z");
+    CHECK_MSG(fabsf(nz) > kInv - 0.002f && fabsf(nz) < kInv + 0.002f, "the corner normal leans on z as far as on x and y");
+  }
 
   /* A sharp edge splits the normal, so the render mesh grows. */
   loadCube();

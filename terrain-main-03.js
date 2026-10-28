@@ -15,6 +15,12 @@ const RULE={grass:[.8,0],tallgrass:[.82,0],flower:[.6,0],daisy:[.6,0],tulip:[.6,
 function add(k,x,z,f=1,yaw=0,force=false,y0,sl0){
 const K=KIND[k]||ensure(k),bd=BLD[k];if(!K)return 0;const edge=force?0.05:1+(bd||0);if(Math.abs(x)>S/2-edge||Math.abs(z)>S/2-edge)return 0;if(K.list.length>=K.max){if(!force)return 0;if(!growManualCapacity(k,K.list.length+1))return 0;if(K.list.length>=K.max)return 0}
 const y=y0===undefined||bd?(bd?bY(x,z,bd):hgt(x,z)):y0,[ms,sp]=RULE[k]||[9,0],m=mAt(x,z),sl=sl0===undefined||bd?slope(x,z):sl0,minAbove=bd?.7:RK[k]?-.3:force?.05:.25,grassKind=k==='grass'||k==='tallgrass',waterDepth=wl-y,shallowWaterGrass=force&&grassKind&&waterDepth>=.45&&waterDepth<=shallowBrushDepth;if(y<wl+minAbove&&!shallowWaterGrass)return 0;
+/* Nothing grows under water. The gate below is the one the panel promises:
+   a manual stroke may stand grass and tall grass in the shallows it painted
+   (up to the shallow-water depth), and a rock may sit in the surf, but no
+   palm, pine or shrub may be planted on the seabed or left standing in the
+   lagoon when the ground under it is wet. Auto-scatter needs dry land. */
+if(y<wl+minAbove&&!(grassKind&&force&&waterDepth<=shallowBrushDepth))return 0;
 if(!force){if(!bd&&!RK[k]&&sl>ms)return 0;if(!bd&&!RK[k]&&k!='palm'&&f<1.5&&R()>veg)return 0;if(bd?m>1:k=='palm'?(biome==='jungle'?(m===2||m===4||m===5):m!=3):!RK[k]&&(['grass','tallgrass','flower','daisy','tulip','lavender'].includes(k)?m!=0:m>1))return 0;if((k=='grass'||k=='tallgrass')&&vn(x*.09+9,z*.09+4)*f<(k=='tallgrass'?.18:.32))return 0;if(k in TL&&y>snowL+TL[k])return 0;if(PATCH[k]&&vn(x*.05+3,z*.05+8)*f<.22+scatterClustering*.46)return 0;if(RK[k]&&f<1.5&&R()>.25+sl*.8)return 0}
 const s=SM[k]*(1+(R()-.5)*2*K.vr);if(bd&&!force){for(const q in BLD)if(KIND[q].list.some(o=>(o.x-x)**2+(o.z-z)**2<(bd+BLD[q])**2*.8))return 0}else if(FP[k]&&!force){if(occBlocked(x,z,FP[k]*s*K.size,k,SPACING_KINDS.has(k)?br.minGap:0))return 0}else if(!force&&sp&&K.list.some(o=>(o.x-x)**2+(o.z-z)**2<(sp*(o.s+s)*.5)**2))return 0;
 K.list.push({x,y,z,s,r:bd?yaw+Math.floor(R()*4)*1.5708:R()*6.28,a:bd?.94+R()*.12:.88+R()*.24,v:.82+R()*.3,manual:!!force});if(FP[k]&&!force)occAdd(x,z,FP[k]*s*K.size,k);return 1}
@@ -288,6 +294,27 @@ scatterFill(bigCount,pickBig);
 for(const[n,c]of tab)scatterFill(c,()=>n,COVER_KINDS.has(n)?{maxSlope:(RULE[n]||[9])[0],clump:.25+scatterClustering*.45,patch:22}:null);
 if(kb)clearUnderB();for(const k in KIND)sync(k)}
 function resnap(){for(const k in KIND){KIND[k].list.forEach(o=>o.y=BLD[k]?bY(o.x,o.z,BLD[k]):hgt(o.x,o.z));sync(k)}}
+/* The ground moved under a brush stroke. Every plant inside the changed
+   rectangle has to follow it in the same frame, or a raised hill leaves its
+   trees hanging in the air and a carved valley leaves them standing in the
+   water — which is exactly what "the trees float" looked like. Only the
+   species that read as objects (canopies, rocks, buildings) are re-snapped on
+   every stroke; ground cover is cheap to leave until the stroke ends. */
+function resnapRect(x0,x1,z0,z1){
+ const wx0=x0*D-S/2,wx1=x1*D-S/2,wz0=z0*D-S/2,wz1=z1*D-S/2,touched=[];
+ for(const k in KIND){
+  if(!FP[k]&&!RK[k]&&!BLD[k])continue;
+  const K=KIND[k];if(!K.list||!K.list.length)continue;
+  let hit=false;
+  for(const o of K.list){
+   if(o.x<wx0-3||o.x>wx1+3||o.z<wz0-3||o.z>wz1+3)continue;
+   o.y=BLD[k]?bY(o.x,o.z,BLD[k]):hgt(o.x,o.z);hit=true;
+  }
+  if(hit)touched.push(k);
+ }
+ for(const k of touched)sync(k);
+ return touched.length;
+}
 
 
 

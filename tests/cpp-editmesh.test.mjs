@@ -236,6 +236,155 @@ test('selection is shared by the three modes and the tap ray respects depth', ()
   assert.equal(boxed, 8, 'a full-screen box did not select the cube');
 });
 
+/* The three modes are what decides a pick. Edges and faces are derived from
+   the vertex flags inside the kernel (an edge is selected when both of its
+   endpoints are), so the test asks the question that actually separates them:
+   does the same rectangle take a corner's point in vertex mode and nothing at
+   all in edge and face mode, where an element has to be *entirely* inside. */
+test('a selection takes only the kind of element the mode asks for', () => {
+  const exp = loadEngine();
+  /* A turned camera, not the axis-aligned one: straight on, the front and back
+     corners of the cube land on the same pixel and a corner rectangle cannot
+     tell them apart. */
+  const clip = new Float32Array(16);
+  {
+    const ay = 0.44, ax = 0.31;
+    const cy = Math.cos(ay), sy = Math.sin(ay), cx = Math.cos(ax), sx = Math.sin(ax);
+    /* R = Rx * Ry, column-major, scaled to NDC and with a depth column. */
+    const R = [
+      [cy, 0, sy],
+      [sx * sy, cx, -sx * cy],
+      [-cx * sy, sx, cx * cy]
+    ];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) clip[col * 4 + row] = 0.5 * R[row][col];
+    }
+    clip[10] = -0.6; clip[15] = 1;
+  }
+  const project = (x, y, z) => {
+    const px = clip[0] * x + clip[4] * y + clip[8] * z + clip[12];
+    const py = clip[1] * x + clip[5] * y + clip[9] * z + clip[13];
+    return [(px * 0.5 + 0.5), 1 - (py * 0.5 + 0.5)];
+  };
+  const withClip = (fn) => {
+    exp.fe_arena_reset();
+    const ptr = exp.fe_malloc(64);
+    new Float32Array(exp.memory.buffer, ptr, 16).set(clip);
+    const value = fn(ptr);
+    exp.fe_arena_reset();
+    return value;
+  };
+  const box = (x0, y0, x1, y1) => withClip((ptr) => exp.fe_edit_select_box(ptr, x0, y0, x1, y1, 0, 1));
+  /* The pick only *finds* the element under the finger; the bridge then hands
+     that index back to the kernel, which is the step that selects it. */
+  const tap = (x = 0.5, y = 0.5) => {
+    const index = withClip((ptr) => exp.fe_edit_pick(ptr, x, y));
+    if (index < 0) return index;
+    exp.fe_arena_reset();
+    const out = exp.fe_malloc(4);
+    new Uint32Array(exp.memory.buffer, out, 1)[0] = index;
+    exp.fe_edit_select_by_index(exp.fe_edit_get_mode(), 1, out, 0);
+    exp.fe_arena_reset();
+    return index;
+  };
+  const flagged = (ptr, count) => {
+    const view = new Uint8Array(exp.memory.buffer, ptr, count);
+    let set = 0;
+    for (const flag of view) if (flag) set++;
+    return set;
+  };
+  /* A thumb-sized rectangle around one corner, built from where that corner
+     actually lands on screen. No other corner is anywhere near it. */
+  const [cx0, cy0] = project(CUBE_VERTS[0], CUBE_VERTS[1], CUBE_VERTS[2]);
+  for (let v = 1; v < 8; v++) {
+    const [qx, qy] = project(CUBE_VERTS[v * 3], CUBE_VERTS[v * 3 + 1], CUBE_VERTS[v * 3 + 2]);
+    assert.ok(Math.hypot(qx - cx0, qy - cy0) > 0.06, `corner ${v} projects onto corner 0`);
+  }
+  const corner = [cx0 - 0.02, cy0 - 0.02, cx0 + 0.02, cy0 + 0.02];
+
+  uploadCube(exp);
+  exp.fe_edit_set_mode(0);
+  assert.equal(box(...corner), 1, 'vertex mode must take the point inside the rectangle');
+  exp.fe_edit_set_mode(1);
+  assert.equal(box(...corner), 0, 'edge mode must not take an edge it only half covers');
+  exp.fe_edit_set_mode(2);
+  assert.equal(box(...corner), 0, 'face mode must not take a face it only partly covers');
+
+  /* The whole screen takes everything of the mode's own kind. The rectangle
+     returns how many *points* ended up selected - an edge and a face are made
+     of points - so the count that describes the mode's own kind is asked for
+     separately. */
+  uploadCube(exp);
+  exp.fe_edit_set_mode(0);
+  assert.equal(box(0, 0, 1, 1), 8, 'vertex mode must take the eight points');
+  assert.equal(exp.fe_edit_sel_count(), 8, 'and count them as points');
+  uploadCube(exp);
+  exp.fe_edit_set_mode(1);
+  box(0, 0, 1, 1);
+  assert.equal(exp.fe_edit_sel_count(), 18, 'edge mode must take the eighteen edges');
+  assert.equal(flagged(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()), 12, 'and their twelve faces follow');
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  box(0, 0, 1, 1);
+  assert.equal(exp.fe_edit_sel_count(), 12, 'face mode must take the twelve faces');
+
+  /* A tap answers the same way: one point, or the two ends of one edge, or the
+     three corners of one face. It is aimed at a corner, because a tap in the
+     middle of a face is not near a point in vertex mode. */
+  uploadCube(exp);
+  exp.fe_edit_set_mode(0);
+  exp.fe_edit_select_none();
+  assert.ok(tap(cx0, cy0) >= 0, 'a tap on a corner found no point');
+  assert.equal(flagged(exp.fe_edit_vert_sel_ptr(), exp.fe_edit_vert_count()), 1, 'vertex mode taps one point');
+  assert.equal(flagged(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()), 0, 'vertex mode touches no face');
+
+  uploadCube(exp);
+  exp.fe_edit_set_mode(1);
+  assert.ok(tap(cx0, cy0) >= 0, 'a tap on a corner found no edge');
+  assert.equal(flagged(exp.fe_edit_edge_sel_ptr(), exp.fe_edit_edge_count()), 1, 'edge mode taps one edge');
+  assert.equal(flagged(exp.fe_edit_vert_sel_ptr(), exp.fe_edit_vert_count()), 2, 'and takes exactly its two ends');
+
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  const picked = tap(cx0, cy0);
+  assert.ok(picked >= 0 && picked < 12, `a tap on a corner found no face, got ${picked}`);
+  assert.equal(flagged(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()), 1, 'face mode taps one face');
+  assert.equal(flagged(exp.fe_edit_vert_sel_ptr(), exp.fe_edit_vert_count()), 3, 'and takes exactly its three corners');
+});
+
+/* Smooth shading is geometry, not a flag the renderer may or may not honour:
+   one normal per corner of a cube, leaning equally on all three of its faces.
+   Area weighting leaves the quad that owns the corner counting twice, which is
+   the lopsided surface a user reads as "smooth does not work". */
+test('smooth shading emits one symmetric normal per corner', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_shade(1);
+  assert.equal(exp.fe_edit_get_shade(), 1);
+  const verts = exp.fe_edit_build_render();
+  assert.equal(verts, 8, 'a cube with no sharp edges keeps its eight corners');
+  const normals = new Float32Array(exp.memory.buffer, exp.fe_edit_render_nrm_ptr(), verts * 3);
+  const near = (a, b) => Math.abs(a - b) < 2e-3;
+  for (let i = 0; i < verts; i++) {
+    const nx = normals[i * 3], ny = normals[i * 3 + 1], nz = normals[i * 3 + 2];
+    assert.ok(near(Math.hypot(nx, ny, nz), 1), `normal ${i} is not a unit vector`);
+    assert.ok(near(Math.abs(nx), 0.5773503), `normal ${i} leans on x less than on the other axes`);
+    assert.ok(near(Math.abs(ny), 0.5773503), `normal ${i} leans on y less than on the other axes`);
+    assert.ok(near(Math.abs(nz), 0.5773503), `normal ${i} leans on z less than on the other axes`);
+  }
+
+  /* A sharp edge splits that corner back into two normals, so smooth and flat
+     really are two different meshes and flat shading needs no flag. */
+  exp.fe_edit_set_mode(1);
+  exp.fe_edit_select_all();
+  exp.fe_edit_mark_sharp(1);
+  const split = exp.fe_edit_build_render();
+  assert.ok(split > 8, `marking every edge sharp must split the corners, got ${split}`);
+
+  exp.fe_edit_set_shade(0);
+  assert.equal(exp.fe_edit_get_shade(), 0);
+});
+
 test('transform, undo and redo round-trip through the artifact', () => {
   const exp = loadEngine();
   uploadCube(exp);

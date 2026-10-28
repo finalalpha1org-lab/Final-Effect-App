@@ -126,6 +126,18 @@
     const studio = global.FE?.current || 'core';
     return document.getElementById('toolbar-' + studio) || null;
   }
+  /* The point / edge / face switch. It is its own row above the tools of the
+     Select category, because it is the one control that decides what *every*
+     tap, box and circle in this mode can touch; the buttons are the shipped
+     markup in index.html, so there is exactly one set of them. */
+  function modeRow() { return byId('edit-mode-row'); }
+  function modeButtons() {
+    const row = modeRow();
+    if (row) return Array.from(row.querySelectorAll('[data-edit-mode]'));
+    const bar = byId('edit-category-bar');
+    return bar ? Array.from(bar.querySelectorAll('[data-edit-mode]')) : [];
+  }
+
   function engine() { return global.FECppEngine; }
   function core() { return global.FE?.engines?.core || null; }
   function T() { return global.THREE; }
@@ -1357,6 +1369,16 @@
     return result;
   }
 
+  /* What the current mode will and will not pick, in one line. This is the
+     promise the mode makes: a box dragged over a whole cube selects its eight
+     points and nothing else, so the line says so rather than leaving the user
+     to find out by tapping. */
+  function modeText() {
+    if (state.mode === 'edge') return 'Edges only';
+    if (state.mode === 'face') return 'Faces only';
+    return 'Vertices only';
+  }
+
   /* ---- sheet UI ----------------------------------------------------------- */
 
   /* The only thing this feature adds to the main toolbar: one button, made
@@ -1408,7 +1430,13 @@
 
   function bindCategoryBar() {
     const bar = byId('edit-category-bar');
-    if (!bar) return;
+    /* Bound on every pass, not once: the row is the shipped markup, and a
+       sheet that is rebuilt or re-opened must never come back with three
+       buttons that look live and are not. Three assignments are free. */
+    modeButtons().forEach((button) => {
+      button.onclick = () => setMode(button.dataset.editMode);
+    });
+    if (!bar) { setBarState(); return; }
     if (!barBound) {
       /* Categories and the point / edge / face switch are the panel's own
          header: tapping the open category folds the tools away, tapping
@@ -1428,9 +1456,6 @@
           openSheet();
           setBarState();
         };
-      });
-      bar.querySelectorAll('[data-edit-mode]').forEach((button) => {
-        button.onclick = () => setMode(button.dataset.editMode);
       });
       /* Undo and redo are not repeated here. They live in the top bar, they
          already work on this mesh, and a second pair would be two buttons that
@@ -1458,15 +1483,17 @@
       toggle.setAttribute('aria-pressed', String(open));
       toggle.classList.toggle('active', open);
     }
+    modeButtons().forEach((button) => {
+      const on = button.dataset.editMode === state.mode;
+      button.classList.toggle('active', on);
+      button.setAttribute('aria-pressed', String(on));
+    });
+    const modeHint = byId('edit-mode-hint');
+    if (modeHint) modeHint.textContent = modeText();
     const bar = byId('edit-category-bar');
     if (!bar) return;
     bar.querySelectorAll('[data-edit-category]').forEach((button) => {
       const on = button.dataset.editCategory === state.category;
-      button.classList.toggle('active', on);
-      button.setAttribute('aria-pressed', String(on));
-    });
-    bar.querySelectorAll('[data-edit-mode]').forEach((button) => {
-      const on = button.dataset.editMode === state.mode;
       button.classList.toggle('active', on);
       button.setAttribute('aria-pressed', String(on));
     });
@@ -1491,7 +1518,10 @@
       button.onclick = () => runTool(button.dataset.editCommand);
     });
     global.FEIcons?.hydrate?.(body);
+    const row = modeRow();
+    if (row) row.hidden = false;
     syncSheet();
+    setBarState();
   }
 
   function syncSheet() {
@@ -1563,13 +1593,20 @@
 
   function hintText(tool) {
     if (!tool) return '';
-    if (stats.selected === 0) {
-      return 'Tap a point, edge or face to select it. Drag one finger elsewhere to orbit.';
+    const element = state.mode === 'edge' ? 'edge' : state.mode === 'face' ? 'face' : 'point';
+    /* Under the Select category the line describes the rule the switched-on
+       mode follows, because the rule really is different: a box takes a point
+       when the point is inside it, an edge only when both of its ends are, and
+       a face only when all three of its corners are. */
+    if (tool.cat === 'select') {
+      if (state.mode === 'edge') return 'Taps and boxes take whole edges. Drag one finger elsewhere to orbit.';
+      if (state.mode === 'face') return 'Taps and boxes take a whole face. Drag one finger elsewhere to orbit.';
+      return 'Taps and boxes take points. Drag one finger elsewhere to orbit.';
     }
+    if (stats.selected === 0) return `Tap a ${element} to select it, then use this tool. Drag one finger elsewhere to orbit.`;
     if (tool.id === 'move' || tool.id === 'pick') return 'Drag an arrow to move the selection. Drag the mesh elsewhere to orbit.';
     if (tool.id === 'rotate') return 'Drag a ring to turn the selection.';
     if (tool.id === 'scale') return 'Drag a bar to scale the selection.';
-    if (state.mode === 'vertex') return 'Tap a vertex to select. Drag one finger elsewhere to orbit.';
     if (tool.id === 'extrude') return state.mode === 'face' ? 'Extrude the selected faces along their normals.' : 'Extrude each selected face on its own.';
     return '';
   }

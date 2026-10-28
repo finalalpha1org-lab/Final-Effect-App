@@ -835,3 +835,59 @@ test('a lateral branch shares its parent ring, so the wood is one surface', asyn
   assert.ok(belowGround > 40, 'the tree has a buried foot');
   assert.ok(reachesOut > 10, 'the roots reach out under the soil');
 });
+
+test('a limb is one shell, not a stack of collars', async () => {
+  const { core } = await bootBridge();
+  const cpp = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
+  /* tubeSegment() used to start a fresh tube at every joint: the palm came
+     back as fifteen unconnected shells and the pine as a hundred and thirty.
+     Those were the "cardboard segments" — each collar was drawn on its own and
+     the wind moved every one of them by a different amount. A continuation now
+     borrows the previous ring, so a trunk is a single connected piece of wood
+     from the root collar to the leader. */
+  assert.match(cpp, /const int32_t start = joined \? gChain\.first : gVert;/, 'a continued segment reuses the previous ring');
+  assert.match(cpp, /for \(int32_t ring = joined \? 1 : 0; ring < 2; \+\+ring\)/, 'and does not emit its own first ring');
+  for (const [name, kind] of [['palm', 16], ['pine', 18], ['spruce', 19], ['oak', 0]]) {
+    const tree = core.floraTree(kind, 4321, 2);
+    assert.ok(tree && tree.idx && tree.part, `${name} must carry indices and material groups`);
+    /* Connected components over the wood only: wood is part 0, and the
+       foliage group has its own authoring pass. */
+    const parent = new Int32Array(tree.verts).map((_, i) => i);
+    const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+    for (let t = 0; t + 2 < tree.idx.length; t += 3) {
+      if (Math.round(tree.part[tree.idx[t]]) !== 0) continue;
+      union(tree.idx[t], tree.idx[t + 1]);
+      union(tree.idx[t + 1], tree.idx[t + 2]);
+    }
+    let height = 0;
+    for (let i = 0; i < tree.verts; i++) height = Math.max(height, tree.pos[i * 3 + 1]);
+    const span = new Map();
+    for (let i = 0; i < tree.verts; i++) {
+      if (Math.round(tree.part[i]) !== 0) continue;
+      const r = find(i), y = tree.pos[i * 3 + 1], s = span.get(r) || [Infinity, -Infinity];
+      span.set(r, [Math.min(s[0], y), Math.max(s[1], y)]);
+    }
+    const tallest = Math.max(...[...span.values()].map(([lo, hi]) => hi - lo));
+    assert.ok(tallest > height * 0.85, `${name}: one connected piece has to carry the trunk (${tallest.toFixed(1)} m of ${height.toFixed(1)} m)`);
+  }
+});
+
+test('no plant loses its whole canopy to a detail step', async () => {
+  const { core } = await bootBridge();
+  /* Detail is a budget, not a silhouette. At the phone's detail the needles and
+     fronds were thinned to a handful of blades (a 15 m pine carried 140 foliage
+     triangles), which is why a palm read as a pole and a pine as a stick. */
+  const foliage = (tree) => {
+    let n = 0;
+    for (let t = 0; t + 2 < tree.idx.length; t += 3) if (Math.round(tree.part[tree.idx[t]]) !== 0) n++;
+    return n;
+  };
+  for (const [name, kind] of [['palm', 16], ['pine', 18], ['spruce', 19]]) {
+    const low = core.floraTree(kind, 77, 1), high = core.floraTree(kind, 77, 2);
+    const lo = foliage(low), hi = foliage(high);
+    assert.ok(lo >= 600, `${name} keeps a real canopy at the phone's detail (got ${lo} foliage triangles)`);
+    assert.ok(lo < hi, `${name} detail 1 must still be cheaper than detail 2 (${lo} vs ${hi})`);
+    assert.ok(lo > hi * 0.25, `${name} detail 1 keeps at least a quarter of the full canopy (${lo} of ${hi})`);
+  }
+});
