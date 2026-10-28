@@ -72,7 +72,11 @@ G(sl('Continentality',0,1,.02,cs.continentality,v=>CL.set('continentality',v)),s
 el('<div class="hint" id="fe-climate-readout">Reading the climate field…</div>'),
 chips([['f','Fog from climate: '+(cs.fog?'on':'off')],['w','Wet surfaces from rain: '+(cs.wetnessFromRain?'on':'off')],['t','Storm tornadoes: '+(cs.autoTornado?'on':'off')]],0,v=>{if(v=='f')CL.set('fog',!cs.fog);else if(v=='w')CL.set('wetnessFromRain',!cs.wetnessFromRain);else CL.set('autoTornado',!cs.autoTornado)}),
 btn('Long-wave tsunami at its real phase speed (you launch it)',()=>{const o=CL.tsunami(WX.tsu.amp,120);WX.tsu.spd=Math.max(10,Math.min(50,Math.round(o.speed)));tsuLaunch();const q=document.getElementById('fe-climate-readout');if(q)q.textContent='Long wave '+o.speed.toFixed(0)+' m/s · wavelength '+Math.round(o.wavelength/1000)+' km · run-up '+o.runup.toFixed(1)+' m'})]:[];
-return [...climate,chips([['clear','☀ Clear'],['fog','🌫 Fog'],['drizzle','🌦 Drizzle'],['rain','🌧 Rain'],['storm','⛈ Storm'],['blizzard','🌨 Snow']],WX.preset,wxPreset),
+return [...climate,chips([['clear','Clear'],['fog','Fog'],['drizzle','Drizzle'],['rain','Rain'],['storm','Storm'],['blizzard','Snow']],WX.preset,wxPreset),
+/* One chip decides whether the climate kernel may drive the weather. Off, the
+   sliders below are the only authority and nothing writes over them; on, the
+   kernel owns cloud/rain/storm/snow and the sliders show what it decided. */
+chips([['climate','Weather follows climate: '+((window.FELandscapeWeather&&window.FELandscapeWeather.settings.enabled)?'on':'off')]],(window.FELandscapeWeather&&window.FELandscapeWeather.settings.enabled)?'climate':'',v=>{const W=window.FELandscapeWeather;if(!W)return;const on=!W.settings.enabled;W.set('enabled',on);msg(on?'The climate kernel now drives the weather':'The weather sliders are back in charge');build()}),
 G(sl('Rain',0,1,.05,WX.rainT,v=>{WX.rainT=v;WX.preset=''}),sl('Overcast',0,1,.05,WX.overT,v=>WX.overT=v),sl('Storm',0,1,.05,WX.stormT,v=>WX.stormT=v),sl('Wind',0,3,.1,windUser,v=>windUser=v)),
 el('<div class="hint">Snow</div>'),
 G(sl('Snowfall',0,1,.05,WX.snowfallT,v=>{WX.snowfallT=v;WX.snowAuto=false}),sl('Snow cover',0,1,.05,WX.coverT,v=>{WX.coverT=v;WX.snowAuto=false}),sl('Melt speed',0,3,.1,WX.melt,v=>WX.melt=v)),

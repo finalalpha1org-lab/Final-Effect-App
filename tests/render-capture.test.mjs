@@ -201,7 +201,7 @@ test('both engines render from the same capture rule', () => {
 const METHODS_START = engineSource.indexOf('    renderCamera() {');
 const METHODS_END = engineSource.indexOf('    async startStillRender() {');
 
-function captureHarness({ shading = 'rendered', shadowCatcher = true, source = 'scene' } = {}) {
+function captureHarness({ shading = 'rendered', shadowCatcher = true, source = 'scene', superSample } = {}) {
   assert.ok(METHODS_START > 0 && METHODS_END > METHODS_START, 'the capture methods are where the test expects them');
   const methods = engineSource.slice(METHODS_START, METHODS_END).replace(/,\s*$/, '');
   const factory = new Function('window', 'document', 'THREE', `return {${methods}};`);
@@ -251,6 +251,9 @@ function captureHarness({ shading = 'rendered', shadowCatcher = true, source = '
 
   const obj = factory(window, document, THREE);
   obj.renderState = { shadowCatcher, tonemap: 0, exposure: 1, contrast: 1, saturation: 1, temperature: 0, bloom: 0, vignette: 0, chromatic: 0, grain: 0 };
+  /* Every harness asks for an explicit sampling factor except the one that
+     checks the default, so the assertions do not depend on matchMedia. */
+  if (superSample !== undefined) obj.renderState.superSample = superSample;
   obj.ready = true;
   obj.exports = { fe_arena_reset: () => {}, fe_postprocess_rgba8: () => 0 };
   obj.allocU8 = (n) => ({ ptr: 1, view: new Uint8ClampedArray(n) });
@@ -284,7 +287,14 @@ test('the real capture hides the editor, owns the camera, and puts both back', (
   assert.equal(h.grid.visible, true, 'the viewport got its grid back');
   assert.equal(h.rig.view.enabled, true, 'and its camera crop');
   assert.deepEqual(Array.from(h.rig.projectionMatrix.elements), rigProjection, 'with the same projection it had before');
-  assert.deepEqual(h.sizes, [[1920, 1080], [800, 600]], 'and the renderer is back at viewport size');
+  /* A still is supersampled and box-filtered down, so the framebuffer is twice
+     the output and the viewport size is restored afterwards. */
+  assert.deepEqual(h.sizes, [[3840, 2160], [800, 600]], 'the still renders at 2x and the renderer is back at viewport size');
+
+  /* The factor is a setting: a handset asks for 1x, not 2x. */
+  const one = captureHarness({ source: 'scene', superSample: 1 });
+  one.obj.renderSingleWebGLPostFXFrame(one.canvas, 1920, 1080);
+  assert.deepEqual(one.sizes, [[1920, 1080], [800, 600]], 'a 1x still renders at output size');
 });
 
 test('the capture honours the shadow-catcher switch and the viewport source', () => {

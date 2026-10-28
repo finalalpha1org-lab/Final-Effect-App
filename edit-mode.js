@@ -198,12 +198,25 @@
     const colours = colour ? new Float32Array(vertCount * 3) : null;
     if (colours) colours.set(colour.array.subarray(0, vertCount * 3));
 
+    /* The viewport hands over three.js geometry, where a cube arrives as 24
+       split corners. The kernel welds them back into 8 shared vertices, so the
+       editor sees the surface the modeller meant: 8 points, 12 edges, 6 quads.
+       Normals travel too, only so the kernel can tell a hard surface from a
+       smooth one before the split is gone. */
+    const normal = geometry.attributes.normal;
+    const normals = normal ? new Float32Array(normal.array.subarray(0, vertCount * 3)) : null;
+
     return withArena(null, (exp2) => {
       const posPtr = copyIn(exp2, positions, Float32Array);
       const triPtr = copyIn(exp2, triangles, Uint32Array);
       const colPtr = colours ? copyIn(exp2, colours, Float32Array) : 0;
+      const nrmPtr = normals ? copyIn(exp2, normals, Float32Array) : 0;
       if (!posPtr || !triPtr) { toast('The engine could not reserve memory for this mesh.'); return false; }
-      return exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr) === 1;
+      /* Asked before the upload: after it, the split vertices no longer exist. */
+      const smooth = nrmPtr ? exp2.fe_edit_detect_smooth(posPtr, nrmPtr, vertCount) : 1;
+      if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr) !== 1) return false;
+      exp2.fe_edit_set_shade(smooth ? 1 : 0);
+      return true;
     }) === true;
   }
 
@@ -311,8 +324,54 @@
 
   /* ---- overlay ----------------------------------------------------------- */
 
-  const OVERLAY_UNSELECTED = [0.42, 0.46, 0.58];
+  /* One rule for every wireframe colour: the editor draws the *opposite* of
+     the surface it is editing. A pale model gets near-black lines and dots, a
+     dark model gets pale ones, and both stay readable whichever way the
+     material is set, instead of a fixed grey that disappears on a white cube
+     and again on a black one. The selection is always orange. */
+  const OVERLAY_DARK = 0x0b1220;
+  const OVERLAY_LIGHT = 0xdbe4f0;
   const OVERLAY_SELECTED = [1.0, 0.62, 0.16];
+
+  function overlayTone() {
+    const target = state.target;
+    const materials = target ? (Array.isArray(target.material) ? target.material : [target.material]) : [];
+    let sum = 0;
+    let n = 0;
+    for (const material of materials) {
+      if (!material?.color || typeof material.color.r !== 'number') continue;
+      sum += 0.2126 * material.color.r + 0.7152 * material.color.g + 0.0722 * material.color.b;
+      n++;
+    }
+    /* No colour to speak of: assume a light surface, which is what every
+       primitive in this app is. */
+    const luminance = n ? sum / n : 0.8;
+    return {
+      wire: luminance > 0.35 ? OVERLAY_DARK : OVERLAY_LIGHT,
+      point: luminance > 0.35 ? [0.045, 0.07, 0.125] : [0.86, 0.9, 0.96]
+    };
+  }
+
+  /* One tiny round sprite, generated once. A texture-less Points draws a
+     square, and a cube's eight corners then read as eight blocks. */
+  let dotTexture = null;
+  function dotSprite() {
+    const THREE = T();
+    if (dotTexture || !THREE) return dotTexture;
+    if (typeof document === 'undefined' || !document.createElement) return null;
+    const canvas = document.createElement('canvas');
+    if (!canvas || !canvas.getContext) return null;
+    canvas.width = 32;
+    canvas.height = 32;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+    context.beginPath();
+    context.arc(16, 16, 14, 0, Math.PI * 2);
+    context.fillStyle = '#ffffff';
+    context.fill();
+    dotTexture = new THREE.CanvasTexture ? new THREE.CanvasTexture(canvas) : null;
+    return dotTexture;
+  }
 
   function ensureOverlay() {
     const THREE = T();
@@ -320,26 +379,50 @@
     if (!THREE || !target) return null;
     if (state.overlay && state.overlay.parent === target) return state.overlay;
 
+    /* A fresh overlay gets fresh CPU buffers: the cached ones belong to the
+       buffers that were just thrown away, and a geometry attribute whose array
+       is replaced behind its back is a driver bug waiting to happen. */
+    state.dotBuffer = null;
+    state.dotColour = null;
+    state.faceBuffer = null;
+
     const group = new THREE.Group();
     group.name = 'EditModeOverlay';
     group.userData.isEditorHelper = true;
 
+    /* Wireframe and selection are two objects with one flat colour each. A
+       line is one pixel wide and does not need a colour channel per vertex,
+       and a single unmistakable colour reads better on a pale surface than a
+       per-vertex tint ever did. */
     const edgeGeometry = new THREE.BufferGeometry();
     edgeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3).setUsage(THREE.DynamicDrawUsage));
-    edgeGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(6), 3).setUsage(THREE.DynamicDrawUsage));
     const edges = new THREE.LineSegments(edgeGeometry, new THREE.LineBasicMaterial({
-      vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false
+      color: OVERLAY_DARK, transparent: true, opacity: 0.95, depthWrite: false
     }));
     edges.name = 'EditEdges';
     edges.frustumCulled = false;
     edges.userData.isEditorHelper = true;
     edges.renderOrder = 5;
 
+    const selectedGeometry = new THREE.BufferGeometry();
+    selectedGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3).setUsage(THREE.DynamicDrawUsage));
+    const selectedEdges = new THREE.LineSegments(selectedGeometry, new THREE.LineBasicMaterial({
+      color: 0xffa02c, transparent: true, opacity: 1, depthWrite: false
+    }));
+    selectedEdges.name = 'EditEdgesSelected';
+    selectedEdges.frustumCulled = false;
+    selectedEdges.userData.isEditorHelper = true;
+    selectedEdges.renderOrder = 6;
+
     const dotGeometry = new THREE.BufferGeometry();
     dotGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3).setUsage(THREE.DynamicDrawUsage));
     dotGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(3), 3).setUsage(THREE.DynamicDrawUsage));
+    /* A square sprite on every corner turns a small model into a blob. The
+       dots are round, a few pixels across, and drawn on the surface like the
+       points they stand for. */
     const dots = new THREE.Points(dotGeometry, new THREE.PointsMaterial({
-      vertexColors: true, size: 8, sizeAttenuation: false, transparent: true, depthWrite: false
+      vertexColors: true, size: 5, sizeAttenuation: false, transparent: true,
+      depthWrite: false, alphaTest: 0.45, map: dotSprite()
     }));
     dots.name = 'EditVertexDots';
     dots.frustumCulled = false;
@@ -356,10 +439,46 @@
     faces.userData.isEditorHelper = true;
     faces.renderOrder = 4;
 
-    group.add(edges, dots, faces);
+    group.add(edges, selectedEdges, dots, faces);
     target.add(group);
     state.overlay = group;
     return group;
+  }
+
+  /* Overlay buffers live for the whole session and grow by replacement: a
+     BufferAttribute whose array is swapped behind its back is not something
+     every driver uploads correctly, so the attribute itself is replaced. */
+  function ensureEdgeBuffer(object, needed) {
+    const attribute = object.geometry.attributes.position;
+    if (attribute && attribute.array.length >= needed) return attribute.array;
+    const THREE = T();
+    const capacity = Math.max(needed, attribute ? attribute.array.length * 2 : 96);
+    const array = new Float32Array(capacity);
+    object.geometry.setAttribute('position', new THREE.BufferAttribute(array, 3).setUsage(THREE.DynamicDrawUsage));
+    return array;
+  }
+
+  /* `vertices` is how many line ends to draw, which is twice the edge count.
+     The wireframe follows the see-through switch: through the model it is a
+     pale line, on the surface it is a dark one, and the material has to be
+     told which it is because the two are drawn differently. */
+  function drawEdges(object, vertices, selected) {
+    const attribute = object.geometry.attributes.position;
+    attribute.count = Math.max(vertices, 2);
+    attribute.needsUpdate = true;
+    object.geometry.setDrawRange(0, Math.max(vertices, 2));
+    object.visible = vertices > 0;
+    const through = !!state.xray;
+    object.material.depthTest = !through;
+    if (!selected) {
+      const colour = overlayTone().wire;
+      if (object.material.color.getHex() !== colour) object.material.color.setHex(colour);
+      if (object.material.transparent !== through) {
+        object.material.transparent = through;
+        object.material.needsUpdate = true;
+      }
+      object.material.opacity = through ? 0.85 : 1;
+    }
   }
 
   function refreshOverlay() {
@@ -377,67 +496,84 @@
     const edgeA = u32(exp.fe_edit_edge_ptr(), edgeCount);
     const edgeB = u32(exp.fe_edit_edge_b_ptr(), edgeCount);
     const edgeSel = u8(exp.fe_edit_edge_sel_ptr(), edgeCount);
+    /* The kernel decides which edges a modeller should see. Two triangles that
+       share an edge and face the same way are one quad, and the diagonal
+       between them is not an edge of the model, so it is not drawn. */
+    const edgeShow = u8(exp.fe_edit_edge_display_ptr(), edgeCount);
     const faceSel = u8(exp.fe_edit_face_sel_ptr(), triCount);
     const tris = u32(exp.fe_edit_idx_ptr(), triCount * 3);
 
     const edges = group.getObjectByName('EditEdges');
+    const selectedEdges = group.getObjectByName('EditEdgesSelected');
     const dots = group.getObjectByName('EditVertexDots');
     const faces = group.getObjectByName('EditFaceHighlight');
 
-    /* wireframe */
-    if (!state.edgeBuffer || state.edgeBuffer.length < edgeCount * 6) {
-      state.edgeBuffer = new Float32Array(Math.max(edgeCount * 6, 96));
-      state.edgeColour = new Float32Array(Math.max(edgeCount * 6, 96));
-    }
-    const eb = state.edgeBuffer;
-    const ec = state.edgeColour;
+    /* Two passes over the same edge table: the wireframe of the surface, and
+       the edges the user is working with. The mask decides what the surface
+       has; the selection only decides the colour, except in edge mode where a
+       diagonal the user picked is drawn so the tool has something to show. */
+    let baseCount = 0;
+    let selectedCount = 0;
     for (let e = 0; e < edgeCount; e++) {
       const a = edgeA[e];
       const b = edgeB[e];
-      eb[e * 6] = positions[a * 3]; eb[e * 6 + 1] = positions[a * 3 + 1]; eb[e * 6 + 2] = positions[a * 3 + 2];
-      eb[e * 6 + 3] = positions[b * 3]; eb[e * 6 + 4] = positions[b * 3 + 1]; eb[e * 6 + 5] = positions[b * 3 + 2];
       const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
-      const c = on ? OVERLAY_SELECTED : OVERLAY_UNSELECTED;
-      ec[e * 6] = c[0]; ec[e * 6 + 1] = c[1]; ec[e * 6 + 2] = c[2];
-      ec[e * 6 + 3] = c[0]; ec[e * 6 + 4] = c[1]; ec[e * 6 + 5] = c[2];
+      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
+      if (on) selectedCount++; else baseCount++;
     }
-    const edgeGeometry = edges.geometry;
-    edgeGeometry.attributes.position.array = eb;
-    edgeGeometry.attributes.position.count = Math.max(edgeCount * 2, 2);
-    edgeGeometry.attributes.position.needsUpdate = true;
-    edgeGeometry.attributes.color.array = ec;
-    edgeGeometry.attributes.color.count = Math.max(edgeCount * 2, 2);
-    edgeGeometry.attributes.color.needsUpdate = true;
-    edgeGeometry.setDrawRange(0, edgeCount * 2);
-    edges.visible = edgeCount > 0;
-    edges.material.depthTest = !state.xray;
+    const base = ensureEdgeBuffer(edges, baseCount * 6);
+    const chosen = ensureEdgeBuffer(selectedEdges, selectedCount * 6);
+    let baseAt = 0;
+    let chosenAt = 0;
+    for (let e = 0; e < edgeCount; e++) {
+      const a = edgeA[e];
+      const b = edgeB[e];
+      const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
+      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
+      const target = on ? chosen : base;
+      let at = on ? chosenAt : baseAt;
+      target[at] = positions[a * 3]; target[at + 1] = positions[a * 3 + 1]; target[at + 2] = positions[a * 3 + 2];
+      target[at + 3] = positions[b * 3]; target[at + 4] = positions[b * 3 + 1]; target[at + 5] = positions[b * 3 + 2];
+      at += 6;
+      if (on) chosenAt = at; else baseAt = at;
+    }
+    drawEdges(edges, baseCount * 2, false);
+    drawEdges(selectedEdges, selectedCount * 2, true);
 
     /* vertex dots */
     if (!state.dotBuffer || state.dotBuffer.length < vertexCount * 3) {
       state.dotBuffer = new Float32Array(Math.max(vertexCount * 3, 96));
       state.dotColour = new Float32Array(Math.max(vertexCount * 3, 96));
+      dots.geometry.setAttribute('position', new THREE.BufferAttribute(state.dotBuffer, 3).setUsage(THREE.DynamicDrawUsage));
+      dots.geometry.setAttribute('color', new THREE.BufferAttribute(state.dotColour, 3).setUsage(THREE.DynamicDrawUsage));
     }
     const db = state.dotBuffer;
     const dc = state.dotColour;
+    const tone = overlayTone();
     for (let v = 0; v < vertexCount; v++) {
       db[v * 3] = positions[v * 3]; db[v * 3 + 1] = positions[v * 3 + 1]; db[v * 3 + 2] = positions[v * 3 + 2];
-      const c = vertSel[v] ? OVERLAY_SELECTED : OVERLAY_UNSELECTED;
+      const c = vertSel[v] ? OVERLAY_SELECTED : tone.point;
       dc[v * 3] = c[0]; dc[v * 3 + 1] = c[1]; dc[v * 3 + 2] = c[2];
     }
     const dotGeometry = dots.geometry;
-    dotGeometry.attributes.position.array = db;
     dotGeometry.attributes.position.count = Math.max(vertexCount, 1);
     dotGeometry.attributes.position.needsUpdate = true;
-    dotGeometry.attributes.color.array = dc;
     dotGeometry.attributes.color.count = Math.max(vertexCount, 1);
     dotGeometry.attributes.color.needsUpdate = true;
     dotGeometry.setDrawRange(0, vertexCount);
     dots.visible = state.mode === 'vertex' && vertexCount > 0;
-    dots.material.depthTest = !state.xray;
+    /* In point mode the dots are the selection, so they stay on top; the
+       wireframe is depth-tested so the shape reads as a solid. */
+    dots.material.depthTest = state.mode === 'vertex' ? !state.xray : true;
+    dots.material.size = vertexCount > 2000 ? 4 : vertexCount > 400 ? 5 : 6;
 
-    /* selected faces */
+    /* Selected faces are only painted in face mode. In point mode every
+       vertex of a face can be selected without the face being selected, and
+       flooding the model orange hides the very wireframe being edited. */
     let selectedFaces = 0;
-    for (let t = 0; t < triCount; t++) if (faceSel[t]) selectedFaces++;
+    if (state.mode === 'face') {
+      for (let t = 0; t < triCount; t++) if (faceSel[t]) selectedFaces++;
+    }
     const faceGeometry = faces.geometry;
     if (selectedFaces > 0) {
       if (!state.faceBuffer || state.faceBuffer.length < selectedFaces * 9) {
@@ -463,6 +599,208 @@
       faces.visible = false;
       faceGeometry.setDrawRange(0, 0);
     }
+  }
+
+  /* ---- the on-canvas gizmo ----------------------------------------------- */
+
+  /* Three arrows, three rings, three bars, drawn at the selection in the
+     object's own space. The kernel owns the geometry of the handles — where
+     they sit, how big they are, which one a finger landed on, and what a drag
+     of that handle does — so the same numbers decide the drawing and the
+     editing. Nothing here touches a vertex. */
+  const GIZMO_COLOURS = [0xef4444, 0x22c55e, 0x3b82f6];
+  const gizmo = { group: null, mode: 0, drag: null };
+
+  function gizmoSpace() {
+    /* 0 = move, 1 = rotate, 2 = scale: the same three spaces the kernel picks
+       handles in, and the tool the user is holding decides which one shows. */
+    if (state.tool === 'rotate') return 1;
+    if (state.tool === 'scale') return 2;
+    return 0;
+  }
+
+  function handleMaterial(colour, opacity) {
+    const THREE = T();
+    return new THREE.MeshBasicMaterial({
+      color: colour, transparent: true, opacity: opacity ?? 0.95,
+      depthTest: false, depthWrite: false, toneMapped: false
+    });
+  }
+
+  function buildGizmo(mode) {
+    const THREE = T();
+    const group = new THREE.Group();
+    const pickables = [];
+    /* Every handle is authored along +Y in a unit-long space and then turned
+       onto its axis, so one arrow shape serves X, Y and Z. */
+    const along = (object, axis) => {
+      if (axis === 0) object.rotation.z = -Math.PI / 2;
+      else if (axis === 2) object.rotation.x = Math.PI / 2;
+      return object;
+    };
+
+    for (let axis = 0; axis < 3; axis++) {
+      const material = handleMaterial(GIZMO_COLOURS[axis]);
+      const part = new THREE.Group();
+      if (mode === 1) {
+        /* A torus is born in the XY plane, turning about Z. To ring the X axis
+           it must lie in YZ, to ring Y in XZ, and to ring Z it needs nothing.
+           The arrow alignment below is *not* applied on top of that: two
+           rotations about different axes would leave two rings on one plane. */
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.016, 6, 56), material);
+        if (axis === 0) ring.rotation.y = Math.PI / 2;
+        else if (axis === 1) ring.rotation.x = Math.PI / 2;
+        part.add(ring);
+        part.userData.handle = axis;
+        pickables.push(part);
+        group.add(part);
+        continue;
+      } else if (mode === 2) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.9, 6), material);
+        bar.position.y = 0.45;
+        const grip = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), material);
+        grip.position.y = 0.96;
+        part.add(bar, grip);
+      } else {
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.78, 6), material);
+        shaft.position.y = 0.39;
+        const head = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.24, 12), material);
+        head.position.y = 0.87;
+        part.add(shaft, head);
+      }
+      along(part, axis);
+      part.userData.handle = axis;
+      pickables.push(part);
+      group.add(part);
+    }
+
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), handleMaterial(0xf8fafc));
+    group.add(hub);
+
+    group.name = 'EditGizmo';
+    group.userData.isEditorHelper = true;
+    group.traverse((object) => {
+      object.userData.isEditorHelper = true;
+      object.renderOrder = 9;
+      object.frustumCulled = false;
+    });
+    return group;
+  }
+
+  function disposeGizmo() {
+    const group = gizmo.group;
+    if (!group) return;
+    group.parent?.remove(group);
+    group.traverse((object) => {
+      object.geometry?.dispose?.();
+      if (Array.isArray(object.material)) object.material.forEach((m) => m?.dispose?.());
+      else object.material?.dispose?.();
+    });
+    gizmo.group = null;
+    gizmo.mode = -1;
+  }
+
+  function ensureGizmo() {
+    const target = state.target;
+    const THREE = T();
+    if (!THREE || !target) return null;
+    const mode = gizmoSpace();
+    if (gizmo.group && gizmo.group.parent === target && gizmo.mode === mode) return gizmo.group;
+    disposeGizmo();
+    gizmo.group = buildGizmo(mode);
+    gizmo.mode = mode;
+    target.add(gizmo.group);
+    return gizmo.group;
+  }
+
+  /* Pivot and on-screen size, both from the kernel, both read inside one arena
+     because the two calls share the projection matrix. */
+  function gizmoFrame() {
+    const exp = exportsOf();
+    if (!exp) return null;
+    const matrix = clipMatrix();
+    if (!matrix) return null;
+    return withArena(null, (e) => {
+      const clipPtr = e.fe_malloc(64);
+      const pivotPtr = e.fe_malloc(12);
+      if (!clipPtr || !pivotPtr) return null;
+      new Float32Array(memory(), clipPtr, 16).set(matrix.elements);
+      e.fe_edit_gizmo_pivot(pivotPtr);
+      return {
+        matrix,
+        pivot: Float32Array.from(new Float32Array(memory(), pivotPtr, 3)),
+        size: e.fe_edit_gizmo_size(clipPtr)
+      };
+    });
+  }
+
+  function gizmoAspect() {
+    const canvas = canvasElement();
+    return canvas && canvas.clientHeight ? canvas.clientWidth / canvas.clientHeight : 1;
+  }
+
+  function updateGizmo() {
+    const exp = exportsOf();
+    const target = state.target;
+    if (!exp || !target) return;
+    const group = ensureGizmo();
+    if (!group) return;
+    /* No selection, no handles: a grab handle with nothing to grab is a dead
+       affordance, and a tap through it must still reach the mesh. */
+    if (stats.selected === 0) { group.visible = false; return; }
+    const frame = gizmoFrame();
+    if (!frame || !(frame.size > 0)) { group.visible = false; return; }
+    group.visible = true;
+    group.position.set(frame.pivot[0], frame.pivot[1], frame.pivot[2]);
+    group.scale.setScalar(frame.size);
+  }
+
+  function gizmoPick(point) {
+    return withClip((e, ptr) => e.fe_edit_gizmo_pick(ptr, point.x, point.y, gizmoAspect(), 0.07, gizmoSpace()));
+  }
+
+  function beginGizmoDrag(point, handle) {
+    const exp = exportsOf();
+    if (!exp || handle < 0) return false;
+    const begun = withClip((e, ptr) => e.fe_edit_gizmo_begin(ptr, point.x, point.y, gizmoAspect(), 0.07, gizmoSpace()));
+    if (begun < 0) return false;
+    /* One snapshot for the whole drag. The kernel applies the movement in
+       increments, so an interrupted drag leaves the mesh where the finger
+       stopped, not where the gesture started. */
+    exp.fe_edit_undo_push();
+    gizmo.drag = { handle: begun, applied: 0, moved: 0, start: point };
+    captureOrbit(false);
+    return true;
+  }
+
+  function dragGizmo(point) {
+    const exp = exportsOf();
+    const drag = gizmo.drag;
+    if (!exp || !drag) return;
+    const result = withClip((e, ptr) => {
+      const outPtr = e.fe_malloc(12);
+      if (!outPtr) return null;
+      const handle = e.fe_edit_gizmo_drag(ptr, point.x, point.y, gizmoAspect(), outPtr);
+      if (handle < 0) return null;
+      return { handle, amount: new Float32Array(memory(), outPtr, 1)[0] };
+    });
+    if (!result) return;
+    drag.applied = result.amount;
+    drag.moved = Math.max(drag.moved, Math.hypot(point.x - drag.start.x, point.y - drag.start.y));
+    refresh();
+  }
+
+  function endGizmoDrag(cancelled) {
+    const exp = exportsOf();
+    const drag = gizmo.drag;
+    gizmo.drag = null;
+    captureOrbit(true);
+    if (!exp) return;
+    exp.fe_edit_gizmo_end();
+    /* A tap on a handle only: drop the snapshot rather than leave an empty
+       step in the history. */
+    if (!cancelled && drag && drag.moved < 0.004) exp.fe_edit_undo();
+    refresh();
   }
 
   /* ---- stats ------------------------------------------------------------- */
@@ -492,6 +830,7 @@
     applyShading();
     refreshOverlay();
     readStats();
+    updateGizmo();
     syncSheet();
   }
 
@@ -754,13 +1093,18 @@
     if (box) box.hidden = true;
   }
 
+  /* A tap is a finger that stayed put. The allowance is in pixels, because a
+     finger on a phone drifts a millimetre or two and the same 1 % of the
+     canvas is 9 px across and 4 px down when the viewport is a wide one. */
+  const TAP_SLOP = 12;
+
   /* A tap on the canvas in Select mode picks the vertex / edge / face under the
      finger. It is measured, not intercepted: no preventDefault, no pointer
      capture, so a drag still belongs to OrbitControls. */
   function handleTap(tap) {
     const exp = exportsOf();
     if (!exp) return;
-    if (tap.moved > 0.012) return;
+    if (tap.moved > TAP_SLOP) return;
     const kind = MODES[state.mode].kind;
     const index = pickAt(tap.last);
     if (index >= 0) selectIndex(kind, index, tap.additive);
@@ -770,21 +1114,48 @@
 
   const pointer = { canvas: null, down: null, move: null, up: null, tap: null };
 
+  function tapDistance(tap, point) {
+    return Math.hypot(
+      (point.x - tap.startX) * tap.pixelsX,
+      (point.y - tap.startY) * tap.pixelsY
+    );
+  }
+
   function attachPointer() {
     if (pointer.canvas) return;
     const canvas = canvasElement();
     if (!canvas) return;
 
     pointer.down = (event) => {
-      if (!state.active || event.button === 2 || state.drag) return;
-      const tool = BY_ID.get(state.tool);
-      if (!tool) return;
+      if (!state.active || event.button === 2) return;
       const point = normalise(event);
       if (!point) return;
+
+      /* Two fingers mean a pinch or a two-finger orbit. The pick that was in
+         flight belongs to the first finger alone, so it is dropped. */
+      if (event.isPrimary === false) { pointer.tap = null; return; }
+
+      if (state.drag || gizmo.drag) return;
+
+      /* The handles come first, in every tool: they are drawn on top, they are
+         the easy thing to hit, and a tap that misses them falls through to the
+         mesh or to OrbitControls exactly as before. */
+      const handle = stats.selected > 0 ? gizmoPick(point) : -1;
+      if (handle >= 0 && beginGizmoDrag(point, handle)) {
+        event.stopPropagation();
+        event.preventDefault();
+        state.pointerId = event.pointerId;
+        canvas.setPointerCapture?.(event.pointerId);
+        return;
+      }
+
+      const tool = BY_ID.get(state.tool);
+      if (!tool) return;
       if (!DRAG_TOOLS.has(tool.id)) {
         if (tool.id === 'pick') {
           pointer.tap = {
             startX: point.x, startY: point.y,
+            pixelsX: point.pixelsX, pixelsY: point.pixelsY,
             last: point,
             moved: 0,
             additive: !!(event.shiftKey || event.ctrlKey || event.metaKey)
@@ -799,8 +1170,17 @@
       state.pointerId = event.pointerId;
       canvas.setPointerCapture?.(event.pointerId);
     };
+
     pointer.move = (event) => {
       if (!state.active) return;
+      if (gizmo.drag) {
+        if (event.pointerId !== state.pointerId) return;
+        const point = normalise(event);
+        if (!point) return;
+        event.stopPropagation();
+        dragGizmo(point);
+        return;
+      }
       if (state.drag) {
         if (event.pointerId !== state.pointerId) return;
         const point = normalise(event);
@@ -815,10 +1195,19 @@
       const point = normalise(event);
       if (!point) return;
       tap.last = point;
-      tap.moved = Math.max(tap.moved, Math.hypot(point.x - tap.startX, point.y - tap.startY));
+      tap.moved = Math.max(tap.moved, tapDistance(tap, point));
     };
+
     pointer.up = (event) => {
       if (!state.active) return;
+      if (gizmo.drag) {
+        if (event.pointerId !== state.pointerId) return;
+        event.stopPropagation();
+        try { canvas.releasePointerCapture?.(event.pointerId); } catch { /* already released */ }
+        state.pointerId = null;
+        endGizmoDrag(event.type === 'pointercancel');
+        return;
+      }
       if (state.drag) {
         if (event.pointerId !== state.pointerId) return;
         const point = normalise(event) || state.drag.last;
@@ -846,6 +1235,7 @@
   function detachPointer() {
     const canvas = pointer.canvas;
     pointer.tap = null;
+    gizmo.drag = null;
     if (!canvas) return;
     canvas.removeEventListener('pointerdown', pointer.down, { capture: true });
     canvas.removeEventListener('pointermove', pointer.move, { capture: true });
@@ -969,18 +1359,71 @@
 
   /* ---- sheet UI ----------------------------------------------------------- */
 
-  /* The bar is static markup (index.html) so its four entries exist before any
-     script runs and can be reviewed in the page itself. This only binds them
-     and keeps their pressed state honest. */
+  /* The only thing this feature adds to the main toolbar: one button, made
+     here, that opens the panel of edit tools. Nothing that was already in the
+     toolbar is touched, moved or hidden, and the button goes away with the
+     mode. The toolbar is rewritten by the app when the object tools open, so a
+     small observer puts the button back if that happens while editing. */
   let barBound = false;
+  let toolsObserver = null;
+  let toolsButton = null;
+
+  function editToolsButton() {
+    return toolsButton && toolsButton.parentNode ? toolsButton : null;
+  }
+
+  function makeEditToolsButton() {
+    const bar = activeToolbar();
+    if (!bar) return null;
+    if (toolsButton && toolsButton.parentNode === bar) return toolsButton;
+    const button = document.createElement('button');
+    button.className = 'tool';
+    button.id = 'edit-tools-btn';
+    button.type = 'button';
+    button.dataset.editTools = '1';
+    button.innerHTML = '<i class="ico" data-ico="extrude"></i><span>Edit tools</span>';
+    button.onclick = (event) => {
+      event?.stopPropagation?.();
+      const sheet = byId('edit-sheet');
+      if (sheet && sheet.classList.contains('open')) closeSheet();
+      else { renderSheet(); openSheet(); }
+      setBarState();
+    };
+    /* First in the row: the toolbar scrolls, and a button appended past the
+       fold is a button nobody finds. Nothing that was already here is
+       rewritten, moved away or hidden; this one merely sits in front. */
+    if (bar.firstChild) bar.insertBefore(button, bar.firstChild);
+    else bar.appendChild(button);
+    toolsButton = button;
+    global.FEIcons?.hydrate?.(button);
+    return button;
+  }
+
+  function removeEditToolsButton() {
+    if (toolsButton?.parentNode) toolsButton.parentNode.removeChild(toolsButton);
+    toolsButton = null;
+    toolsObserver?.disconnect?.();
+    toolsObserver = null;
+  }
 
   function bindCategoryBar() {
     const bar = byId('edit-category-bar');
     if (!bar) return;
     if (!barBound) {
+      /* Categories and the point / edge / face switch are the panel's own
+         header: tapping the open category folds the tools away, tapping
+         another one switches to it. */
       bar.querySelectorAll('[data-edit-category]').forEach((button) => {
         button.onclick = () => {
-          state.category = button.dataset.editCategory;
+          const id = button.dataset.editCategory;
+          const sheet = byId('edit-sheet');
+          const open = !!(sheet && !sheet.hidden && sheet.classList.contains('open'));
+          if (open && id === state.category) {
+            closeSheet();
+            setBarState();
+            return;
+          }
+          state.category = id;
           renderSheet();
           openSheet();
           setBarState();
@@ -989,28 +1432,32 @@
       bar.querySelectorAll('[data-edit-mode]').forEach((button) => {
         button.onclick = () => setMode(button.dataset.editMode);
       });
-      const undo = byId('edit-undo');
-      if (undo) undo.onclick = undoAction;
-      const redo = byId('edit-redo');
-      if (redo) redo.onclick = redoAction;
+      /* Undo and redo are not repeated here. They live in the top bar, they
+         already work on this mesh, and a second pair would be two buttons that
+         do the same thing in the same app. */
       const xray = byId('edit-xray');
       if (xray) xray.onclick = () => { state.xray = !state.xray; setBarState(); refresh(); };
       const snap = byId('edit-snap');
       if (snap) snap.onclick = () => { state.snap = !state.snap; applySnap(); setBarState(); syncSheet(); };
       const done = byId('edit-done');
       if (done) done.onclick = () => exit();
+      const close = byId('edit-sheet-close');
+      if (close) close.onclick = () => { closeSheet(); setBarState(); };
       barBound = true;
     }
-    /* Outside the bind guard: re-entering the mode after leaving it must put
-       the object toolbar away again. */
-    const objectBar = activeToolbar();
-    if (objectBar) objectBar.hidden = true;
-    bar.hidden = false;
     global.FEIcons?.hydrate?.(bar);
+    makeEditToolsButton();
     setBarState();
   }
 
   function setBarState() {
+    const toggle = editToolsButton();
+    if (toggle) {
+      const sheet = byId('edit-sheet');
+      const open = !!(sheet && sheet.classList.contains('open'));
+      toggle.setAttribute('aria-pressed', String(open));
+      toggle.classList.toggle('active', open);
+    }
     const bar = byId('edit-category-bar');
     if (!bar) return;
     bar.querySelectorAll('[data-edit-category]').forEach((button) => {
@@ -1100,10 +1547,6 @@
       const label = state.mode === 'vertex' ? 'verts' : state.mode === 'edge' ? 'edges' : 'faces';
       status.textContent = `${stats.verts.toLocaleString()} verts · ${stats.edges.toLocaleString()} edges · ${stats.faces.toLocaleString()} faces · ${stats.selected.toLocaleString()} ${label} selected`;
     }
-    const undo = byId('edit-undo');
-    if (undo) undo.disabled = stats.undo === 0;
-    const redo = byId('edit-redo');
-    if (redo) redo.disabled = stats.redo === 0;
     const prop = byId('edit-prop');
     if (prop) { prop.classList.toggle('on', state.propEnabled); prop.setAttribute('aria-pressed', String(state.propEnabled)); }
     const propRow = byId('edit-prop-row');
@@ -1120,6 +1563,12 @@
 
   function hintText(tool) {
     if (!tool) return '';
+    if (stats.selected === 0) {
+      return 'Tap a point, edge or face to select it. Drag one finger elsewhere to orbit.';
+    }
+    if (tool.id === 'move' || tool.id === 'pick') return 'Drag an arrow to move the selection. Drag the mesh elsewhere to orbit.';
+    if (tool.id === 'rotate') return 'Drag a ring to turn the selection.';
+    if (tool.id === 'scale') return 'Drag a bar to scale the selection.';
     if (state.mode === 'vertex') return 'Tap a vertex to select. Drag one finger elsewhere to orbit.';
     if (tool.id === 'extrude') return state.mode === 'face' ? 'Extrude the selected faces along their normals.' : 'Extrude each selected face on its own.';
     return '';
@@ -1244,6 +1693,8 @@
     state.tool = 'pick';
     state.category = 'select';
     state.overlay = null;
+    disposeGizmo();
+    stats.selected = 0;
     view.capacity = 0; view.index = null; view.geometry = null;
 
     const exp = exportsOf();
@@ -1253,17 +1704,37 @@
     applyProportional();
     exp.fe_edit_build_render();
 
+    /* The object gizmo and the orange selection outline both describe the
+       shape as it was before it was edited: an attach handle for whole-object
+       transforms that are not what this mode does, and an outline that would
+       sit at the old silhouette while the wireframe moves. Both step aside
+       for the duration and come back on exit. */
     const eng2 = core();
     eng2?.transformControls?.detach?.();
+    if (eng2?.transformControls) eng2.transformControls.visible = false;
+    const outline = object.getObjectByName?.('SelectionOutlineHelper');
+    if (outline) outline.visible = false;
+    state.hiddenOutline = outline || null;
     document.body?.classList.add('edit-mode');
 
     bindCategoryBar();
     renderSheet();
     openSheet();
     attachPointer();
+    /* The app rewrites the object toolbar when its own tools open. While this
+       mode is live, the one edit button is part of that toolbar and has to
+       survive the rewrite. */
+    const bar = activeToolbar();
+    if (bar && typeof global.MutationObserver === 'function') {
+      toolsObserver?.disconnect?.();
+      toolsObserver = new global.MutationObserver(() => {
+        if (state.active && (!toolsButton || !toolsButton.parentNode)) makeEditToolsButton();
+      });
+      toolsObserver.observe(bar, { childList: true });
+    }
     refresh();
     global.dispatchEvent(new CustomEvent('fe:editmode', { detail: { active: true } }));
-    toast('Edit Mode — tap vertices, or pick a tool below');
+    toast('Edit Mode — tap a point to select it, then drag the arrows');
     return true;
   }
 
@@ -1275,17 +1746,28 @@
     clearMarquee();
     if (state.overlay?.parent) state.overlay.parent.remove(state.overlay);
     state.overlay = null;
+    disposeGizmo();
     commitToObject();
     state.target = null;
     state.view = null;
     closeSheet();
     document.body?.classList.remove('edit-mode');
-    const bar = byId('edit-category-bar');
-    if (bar) bar.hidden = true;
-    const objectBar = activeToolbar();
-    if (objectBar) objectBar.hidden = false;
+    removeEditToolsButton();
     const eng = core();
     if (eng?.oc) { eng.oc.enableRotate = true; eng.oc.enablePan = true; eng.oc.enabled = true; }
+    if (eng?.transformControls) eng.transformControls.visible = true;
+    /* The outline is a copy of the geometry's edges, so the old one has to go:
+       the shape it was drawn around no longer exists. */
+    const outline = state.hiddenOutline;
+    state.hiddenOutline = null;
+    if (outline) {
+      outline.parent?.remove(outline);
+      outline.geometry?.dispose?.();
+      outline.material?.dispose?.();
+    }
+    if (typeof global.applyMeshSelectionOutline === 'function' && typeof global.activeObject !== 'undefined') {
+      try { global.applyMeshSelectionOutline(global.activeObject); } catch { /* no selection to outline */ }
+    }
     /* Keep the mode dropdown honest: Edit Mode can be left from the bar, from
        the dropdown, or by leaving the studio. */
     const modeSelect = byId('core-mode');

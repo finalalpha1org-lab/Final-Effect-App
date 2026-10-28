@@ -13,7 +13,6 @@ return mkTex(c)}
 function leafTexSpecies(kind){const[c,x]=cv2(256,256),cfg={oak:{n:9,len:38,w:14,hue:92,sat:48,light:33},birch:{n:18,len:28,w:10,hue:102,sat:42,light:40},shrub:{n:22,len:22,w:12,hue:112,sat:43,light:32},sage:{n:16,len:26,w:9,hue:104,sat:27,light:44},ash:{n:14,len:32,w:8,hue:96,sat:46,light:35}}[kind]||{n:16,len:27,w:10,hue:100,sat:45,light:28};const draw=(px,py,ang,len,w)=>{x.save();x.translate(px,py);x.rotate(ang);x.beginPath();if(kind==='oak'){x.moveTo(0,0);for(let j=1;j<=5;j++){const q=j/6,yy=-w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q-.07),yy*1.55,len*q,yy*.58)}x.lineTo(len,0);for(let j=5;j>=1;j--){const q=j/6,yy=w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q+.07),yy*1.55,len*q,yy*.58)}x.closePath()}else{x.moveTo(0,0);x.quadraticCurveTo(len*.22,-w*1.25,len*.78,-w*.5);x.quadraticCurveTo(len,0,len*.78,w*.5);x.quadraticCurveTo(len*.22,w*1.25,0,0);x.closePath()}const g=x.createLinearGradient(0,-w,len,w);g.addColorStop(0,hsl(cfg.hue+R()*12,cfg.sat,cfg.light-7+R()*5));g.addColorStop(1,hsl(cfg.hue-5+R()*14,cfg.sat+5,cfg.light+8+R()*9));x.fillStyle=g;x.fill();x.strokeStyle='rgba(205,220,155,.42)';x.lineWidth=.65;x.beginPath();x.moveTo(1,0);x.lineTo(len*.94,0);for(let v=1;v<4;v++){const q=v/4;x.moveTo(len*q,0);x.lineTo(len*q+len*.1,-w*.55);x.moveTo(len*q,0);x.lineTo(len*q+len*.1,w*.55)}x.stroke();x.restore()};x.strokeStyle=kind==='birch'?'rgba(92,74,45,.9)':'rgba(70,53,32,.85)';x.lineWidth=2.1;x.beginPath();x.moveTo(128,254);x.quadraticCurveTo(111,132,132,10);x.stroke();if(kind==='acacia'){for(let j=0;j<7;j++){const yy=225-j*31,sg=j%2?1:-1;x.strokeStyle='rgba(80,78,49,.8)';x.lineWidth=1;x.beginPath();x.moveTo(128,yy);x.lineTo(128+sg*46,yy-18);x.stroke();for(let k=0;k<6;k++){const q=(k+.4)/6,px=128+sg*46*q,py=yy-18*q;draw(px,py,sg*(.1+R()*.25),13+R()*8,4+R()*2)}}}else{for(let i=0;i<cfg.n;i++){const t=(i+.45)/cfg.n,sg=i%2?1:-1,px=128+(t-.5)*17,py=245-t*224,len=cfg.len*(.72+R()*.58),w=cfg.w*(.72+R()*.52);draw(px,py,-1.57+sg*(.48+R()*.42),len,w)}}return mkTex(c)}
 function needleTex(){const[c,x]=cv2(128,256);x.strokeStyle='#4a3a26';x.lineWidth=3;x.beginPath();x.moveTo(64,256);x.lineTo(64,10);x.stroke();
 for(let i=0;i<260;i++){const t=R(),y=250-t*236,s=i%2?1:-1,len=(46-t*20)*(.6+R()*.4),a=s*(.5+R()*.55);x.strokeStyle=hsl(110+R()*16,38+R()*14,20+R()*16);x.lineWidth=1.3+R()*.6;x.beginPath();x.moveTo(64,y);x.lineTo(64+Math.sin(a)*len,y-Math.cos(a)*len*.7);x.stroke()}return mkTex(c)}
-function grassTex(){const[c,x]=cv2(256,512);x.scale(2,2);for(let i=0;i<84;i++){const bx=4+R()*120,w=1.2+R()*2.1,tip=20+R()*116,bend=(R()-.5)*72,g=x.createLinearGradient(0,256,0,tip);g.addColorStop(0,hsl(76+R()*26,42+R()*12,8+R()*8));g.addColorStop(.56,hsl(82+R()*26,48+R()*12,20+R()*14));g.addColorStop(1,hsl(68+R()*38,45+R()*20,34+R()*24));x.fillStyle=g;x.beginPath();x.moveTo(bx-w,256);x.quadraticCurveTo(bx+bend*.3-w*.5,150,bx+bend,tip);x.quadraticCurveTo(bx+bend*.3+w*.5,150,bx+w,256);x.fill()}return mkTex(c)}
 function barkTex(k){const[c,x]=cv2(256,512),b={oak:'rgb(86,65,48)',pine:'rgb(96,70,54)',birch:'rgb(224,221,212)',palm:'rgb(132,112,86)',char:'rgb(30,26,24)'}[k];x.fillStyle=b;x.fillRect(0,0,256,512);
 if(k=='palm'){let y=0;while(y<512){const hg=14+R()*14,g=x.createLinearGradient(0,y,0,y+hg);g.addColorStop(0,'rgba(30,22,12,.5)');g.addColorStop(.18,'rgba(30,22,12,.18)');g.addColorStop(1,'rgba(30,22,12,0)');x.fillStyle=g;x.fillRect(0,y,256,hg);for(let q=0;q<6;q++){x.fillStyle='rgba(20,14,8,.35)';x.fillRect(R()*256,y+R()*3,10+R()*30,1+R()*2)}y+=hg}for(let i=0;i<700;i++){x.strokeStyle=`rgba(${R()<.5?'40,28,16':'170,150,120'},${.06+R()*.12})`;x.lineWidth=1+R()*1.5;const px=R()*256;x.beginPath();x.moveTo(px,R()*512);x.lineTo(px+(R()-.5)*4,R()*512);x.stroke()}}
 else if(k=='birch'){for(let i=0;i<140;i++){x.fillStyle=`rgba(18,16,14,${.45+R()*.45})`;x.fillRect(R()*256,R()*512,12+R()*56,3+R()*5)}for(let i=0;i<120;i++){x.fillStyle=`rgba(150,145,135,${.15+R()*.2})`;x.fillRect(R()*256,R()*512,20+R()*40,12+R()*28)}}
@@ -70,10 +69,79 @@ const shd=t=>{const q=.7+.3*t;return[q,q,q]},flc=c=>()=>c,UB=[1,1,0],bkU=[3,4,.4
 const LFT=leafTex(),OAKL=leafTexSpecies('oak'),BIRL=leafTexSpecies('birch'),SHRL=leafTexSpecies('shrub'),ACAL=leafTexSpecies('acacia'),SAGL=leafTexSpecies('sage'),ASHL=leafTexSpecies('ash'),NDT=needleTex(),PTT=petalTex(),FRT=frondTex(),RFT=roofTex(),BT={oak:barkTex('oak'),pine:barkTex('pine'),birch:barkTex('birch'),palm:barkTex('palm'),char:barkTex('char'),cactus:cactusTex()};
 const BN=Object.fromEntries(Object.entries(BT).map(([k,t])=>[k,normFrom(t.image,k=='palm'?1.8:k=='cactus'?2.5:4)]));
 const BR=Object.fromEntries(Object.entries(BT).map(([k,t])=>[k,roughTex(t.image,k=='birch'?.88:k=='cactus'?.86:.9)]));
+/* Stone. A rock had no texture at all: only vertex colour, so at close range a
+   boulder was flat-shaded paint and the studio's measured granite roughness had
+   nothing to act on — `normalScale` on a material with no normal map is a
+   number nobody reads. These three maps are the delivery vehicle for the
+   kernel's rock micro-structure (fracture relief and grain), which the realism
+   module paints in once the engine is up; until then they are a plain, tileable
+   grain rather than a flat fill. The albedo map stays near-white on purpose:
+   the stone's colour is the vertex colour, and the map only modulates it. */
+function rockTex(kind){const[c,x]=cv2(256,256),g=kind==='basalt'?236:kind==='sandstone'?242:239;
+x.fillStyle=`rgb(${g},${g},${g})`;x.fillRect(0,0,256,256);
+for(let i=0;i<900;i++){const s2=R()<.5?0:255,v=R()*.055;x.fillStyle=`rgba(${s2},${s2},${s2},${v})`;
+ const px=R()*256,py=R()*256,rr=1+R()*(kind==='basalt'?5:9);x.beginPath();x.arc(px,py,rr,0,6.283);x.fill()}
+for(let i=0;i<26;i++){const a=R()*6.283,px=128,py=128;x.strokeStyle=`rgba(60,58,56,${.035+R()*.075})`;x.lineWidth=.7+R()*1.6;
+ x.beginPath();x.moveTo(px,py);let cx0=px,cy0=py,l2=16+R()*40;for(let k=0;k<4;k++){const aa=a+(R()-.5)*1.1;cx0+=Math.cos(aa)*l2;cy0+=Math.sin(aa)*l2;x.lineTo(cx0,cy0)}x.stroke()}
+return mkTex(c)}
+/* Grass blade micro-structure.
+   A lawn blade is not a flat strip of plastic: it is folded down a midrib, it
+   carries parallel veins a fraction of a millimetre wide, and its cuticle is
+   waxy enough to catch a highlight. Every blade used to be vertex colour and
+   nothing else, which is why a close-up of the ground read as painted slats.
+   The albedo here stays near white on purpose — the vertex colours already
+   carry the plant's green, so this only modulates them; a coloured map would
+   double the pigment and mute the grass, which is exactly the mistake the old
+   blade atlas made. `v` runs from the soil to the tip, so a texture can be laid
+   along the blade instead of repeating on every quad.
+   Pure function of (w, h, seed): no canvas, so it can be checked numerically. */
+function bladePixels(w,h,seed){
+  let st=(seed>>>0)||1;const rnd=()=>{st^=st<<13;st>>>=0;st^=st>>>17;st^=st<<5;st>>>=0;return st/4294967296};
+  const albedo=new Uint8ClampedArray(w*h*4),normal=new Uint8ClampedArray(w*h*4);
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++){
+    const u=i/(w-1||1),v=j/(h-1||1),mid=Math.abs(u-.5)*2,k=(j*w+i)*4;
+    /* Four veins a side, a groove over the midrib, and the dry, browning tip a
+       blade gets late in the season. */
+    const vein=Math.pow(Math.abs(Math.sin((u-.5)*Math.PI*6)),16);
+    const groove=Math.exp(-mid*mid*26);
+    const dry=v>.86?(v-.86)/.14:0;
+    const lum=246-groove*9-vein*8-mid*mid*5+(rnd()-.5)*3.2-dry*9;
+    albedo[k]=lum+dry*9; albedo[k+1]=lum+dry*3; albedo[k+2]=lum-dry*10; albedo[k+3]=255;
+    /* Tangent-space normal: the blade folds away from its midrib, and the veins
+       ripple across that fold. */
+    let nx=(u-.5)*2*.5+Math.sin((u-.5)*Math.PI*6)*.09;
+    const ny=-dry*.18, nzSq=1-nx*nx-ny*ny, nz=Math.sqrt(nzSq>1e-4?nzSq:1e-4), l=Math.hypot(nx,ny,nz);
+    normal[k]=(nx/l*.5+.5)*255; normal[k+1]=(ny/l*.5+.5)*255; normal[k+2]=(nz/l*.5+.5)*255; normal[k+3]=255;
+  }
+  return {albedo,normal};
+}
+const BLADE=(()=>{
+  const W=128,H=256,px=bladePixels(W,H,0x9e3779b9);
+  const [ca,x]=cv2(W,H),[cn,y]=cv2(W,H);
+  const ia=x.createImageData(W,H),inr=y.createImageData(W,H);
+  ia.data.set(px.albedo);inr.data.set(px.normal);
+  x.putImageData(ia,0,0);y.putImageData(inr,0,0);
+  /* Colour vs data: the albedo is sRGB-decoded, the normal map is not. */
+  return {albedo:mkTex(ca),normal:mkTex(cn,false)};
+})();
+/* A data map, not a colour: no sRGB decode on the way to the shader. */
+function rockBlank(colour){const[c,x]=cv2(256,256);x.fillStyle=colour;x.fillRect(0,0,256,256);return mkTex(c,false)}
+const ROCKTEX={};
+for(const kind of ['granite','sandstone','basalt']){
+ ROCKTEX[kind]={albedo:rockTex(kind),normal:rockBlank('#8080ff'),rough:rockBlank('#ffffff')};
+}
+/* The material options one rock kind needs. Every one of them is a real map:
+   albedo grain, tangent-space fracture normal, and the roughness variation a
+   weathered face has between its polished and its chalky patches. */
+/* `det` stays off: the terrain detail shader injects high-frequency bump that
+   shimmers when the camera zooms into a stone, so the rock carries its own
+   normal and roughness maps instead. */
+const ROCKMAT=kind=>Object.assign({nt:1,std:1,ns:.9},
+ {map:ROCKTEX[kind].albedo,nm:ROCKTEX[kind].normal,rm:ROCKTEX[kind].rough});
 const HTV=[stuccoC,brickC,sidingC].map(f=>facade(128,128,3,3,f)),HT=HTV[0],AT=facade(128,96,3,3,aptC),OT=facade(96,96,3,3,offC),GT=facade(96,96,3,3,glsC);
 /* grass tufts: crossed alpha cards, two layers */
-const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col)}}return gaGeo(g)})();
-const tallGrassG=(()=>{const g=GA(),count=detail>=3?20:detail>=2?16:12;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=1.05+R()*1.35,width=.014+R()*.024,lean=.12+R()*.43,curve=(R()-.5)*.22,base=[.10+R()*.08,.22+R()*.14,.035+R()*.035],tip=[.18+R()*.15,.36+R()*.2,.055+R()*.055],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.025+.975*Math.pow(1-t,.74)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<4;j++){const t0=j/4,t1=(j+1)/4,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.025,sa],col)}}return gaGeo(g)})();
+const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col,[[0,t0],[1,t0],[1,t1],[0,t1]])}}return gaGeo(g)})();
+const tallGrassG=(()=>{const g=GA(),count=detail>=3?20:detail>=2?16:12;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=1.05+R()*1.35,width=.014+R()*.024,lean=.12+R()*.43,curve=(R()-.5)*.22,base=[.10+R()*.08,.22+R()*.14,.035+R()*.035],tip=[.18+R()*.15,.36+R()*.2,.055+R()*.055],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.025+.975*Math.pow(1-t,.74)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<4;j++){const t0=j/4,t1=(j+1)/4,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.025,sa],col,[[0,t0],[1,t0],[1,t1],[0,t1]])}}return gaGeo(g)})();
 
 function indexSubsetGeometry(g,fraction){const h=g.clone();const index=g.index;if(index){const keep=Math.max(6,Math.floor(index.count*fraction/3)*3);h.setIndex(new THREE.BufferAttribute(index.array.slice(0,keep),1))}return h}
 const grassLowG=buildLowDetail(()=>indexSubsetGeometry(grassG,.42)),tallGrassLowG=buildLowDetail(()=>indexSubsetGeometry(tallGrassG,.5)),grassLowGeometry=grassLowG;
@@ -496,9 +564,9 @@ function applyGrownPlants(only) {
 }
 window.__feGrownPlants = applyGrownPlants;
 
-function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,lodGeom:grassLowG}]],false);
+function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:grassLowG}]],false);
 mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
-mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,lodGeom:tallGrassLowG}]],false);
+mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:tallGrassLowG}]],false);
 mk('daisy',14000,flowerParts('daisy'),false);
 mk('tulip',12000,flowerParts('tulip'),false);
 mk('lavender',12000,flowerParts('lavender'),false);
@@ -507,7 +575,7 @@ mk('oak',1500,TV3(treeBuilder('oak',oakTreeJs,3),{map:BT.oak,w:.0015,nt:1,phys:1
 mk('birch',1500,TV3(treeBuilder('birch',birchTreeJs,3),{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true);
 mk('palm',1000,TV(palmTree,{map:BT.palm,w:.002,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.palm,ns:.55,rm:BR.palm},{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.0025,wf:.03}),true);
 mk('shrub',4000,TV3(treeBuilder('shrub',shrubTreeJs,3),{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true);
-mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),{nt:1,std:1,vi:v,vn:3}]),true);KIND.rock.vr=.7;
+mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),Object.assign(ROCKMAT('granite'),{vi:v,vn:3})]),true);KIND.rock.vr=.7;
 mk('house',1500,[...[0,1,2].flatMap(v=>[[houseW,{pbr:HTV[v][2],map:HTV[v][0],em:HTV[v][1],bump:.5,vi:v,vn:3,sn:1,part:'wall'}],[houseR,{std:1,map:RFV[v],ds:1,bump:.8,vi:v,vn:3,sn:1,part:'roof'}]]),[houseB,{nt:1,sn:1,part:'base'}]],true);
 mk('block',500,[[blockW,{pbr:AT[2],map:AT[0],em:AT[1],bump:.5,sn:1,part:'shell'}],[blockB,{nt:1,sn:1,part:'base'}]],true);
 mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[midB,{nt:1,sn:1,part:'base'}]],true);
@@ -537,8 +605,8 @@ LZ('acacia',1200,()=>TV(treeBuilder('acacia',acaciaTreeJs,2),bk('oak',.002),{map
 LZ('joshua',1200,()=>TV(joshuaTree,bk('oak',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.02}));
 LZ('agave',2000,()=>TV(agaveTree,bk('cactus',.004),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.004}));
 LZ('sage',3000,()=>TV(sageTree,bk('oak',.015),{map:SAGL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.sage.nm,ns:.28,rm:LEAF_PBR.sage.rm,roughness:.82,w:.015,wf:.025}));
-LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),{nt:1,std:1,det:1,vi:v,vn:3}]));
-LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),{nt:1,std:1,det:1,vi:v,vn:3}]));
+LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),Object.assign(ROCKMAT('sandstone'),{vi:v,vn:3})]));
+LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),Object.assign(ROCKMAT('basalt'),{vi:v,vn:3})]));
 LZ('deadtree',1200,()=>SX(deadTree,{map:BT.char,nt:1,std:1,nm:BN.char,ns:.65,rm:BR.char,w:.0016}));
 LZ('ashbush',3000,()=>TV(treeBuilder('ashbush',ashBushTreeJs,2),bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
 /* Ferns are the grammar species: `fernTree`/`treeFernTree` stay as the fallback
@@ -549,5 +617,5 @@ LZ('fern',3000,()=>TV(treeBuilder('fern',fernTree,2),bk('palm',.01),{map:LLT,cut
 /* The build routines run inside this try-block, so their const textures
    are block scoped. Publish them so the realism module can re-synthesise
    bark / leaf micro-structure into the very same canvases the meshes use. */
-window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL};
+window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL,ROCK:ROCKTEX};
 }catch(e){MODELS_ERR=e;showErr('Models fallback: '+e.message);fallbackModels()}

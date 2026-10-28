@@ -349,6 +349,19 @@
     const ctx = canvas.getContext('2d');
     const tile = 256, gutter = 4, cell = tile + gutter * 2;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /* Fill every cell with its own surface colour before copying tiles in. The
+       atlas is updated tile by tile across idle slices, and clearing it to
+       transparent black meant that any frame rendered in between sampled a
+       black ground for every painted cell. A flat colour is a far better
+       placeholder than a hole. */
+    const defs = globals().OW_SURFACE_DEFS || [];
+    maps.forEach((texture, i) => {
+      const rgb = defs[i] && defs[i].rgb;
+      if (!rgb) return;
+      const px = (i % 4) * cell, py = Math.floor(i / 4) * cell;
+      ctx.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+      ctx.fillRect(px, py, cell, cell);
+    });
     maps.forEach((texture, i) => {
       const img = texture && texture.image;
       if (!img) return;
@@ -414,6 +427,31 @@
           shadeColour(colour, buf, { depth: cfg[0] === 'moss' ? 0.12 : 0.4 });
           if (normal) paintNormal(normal, buf);
           if (rough) paintRough(rough, buf);
+        });
+      }
+    }
+
+    /* Stone: fracture relief and grain for the three rock kinds. The rock had
+       a measured roughness and a normalScale sitting on a material with no
+       normal map to scale, so none of the measured values could reach a pixel.
+       These three maps are what carries them: the albedo only modulates the
+       vertex colour (granite is coloured by its own vertex colour, not by a
+       texture), the normal map is the fractured face, and the roughness map is
+       the difference between a polished and a chalky patch of the same stone. */
+    const rocks = tex && tex.ROCK;
+    if (rocks) {
+      const rockSeed = { granite: 137, sandstone: 151, basalt: 163 };
+      for (const key of Object.keys(rocks)) {
+        const entry = rocks[key];
+        if (!entry) continue;
+        const seed = rockSeed[key] || 137;
+        const strength = key === 'basalt' ? 0.95 : 1.15;
+        jobs.push(() => {
+          const buf = detail('rock', 256, 256, seed, strength);
+          if (!buf) return;
+          if (entry.albedo) shadeColour(entry.albedo, buf, { depth: 0.2 });
+          if (entry.normal) paintNormal(entry.normal, buf);
+          if (entry.rough) paintRough(entry.rough, buf);
         });
       }
     }
@@ -548,7 +586,10 @@
       const isCard = material.alphaTest > 0 && !!material.map;
       switch (role) {
         case 'rock': {
-          const s = surface(name === 'basalt' ? 'basalt' : 'granite');
+          /* A sandstone ledge is not a granite tor: the measured sandstones
+             roughness is nearly 0.82 against granite's 0.60, and the studio
+             ships both kinds. */
+          const s = surface(name === 'basalt' ? 'basalt' : name === 'sandrock' ? 'sandstone' : 'granite');
           material.roughness = blend(authored.roughness, s.roughness, 0.6);
           material.metalness = 0;
           if (material.normalScale && material.normalScale.setScalar) material.normalScale.setScalar((authored.normalScale || 0.6) * 1.25);
@@ -764,7 +805,7 @@
     }
     for (const name of Object.keys(SPECIES)) {
       if (SPECIES[name] !== 'rock') continue;
-      const s = surface(name === 'basalt' ? 'basalt' : 'granite', { wet });
+      const s = surface(name === 'basalt' ? 'basalt' : name === 'sandrock' ? 'sandstone' : 'granite', { wet });
       forKindMaterials(name, (material) => {
         if (material.userData.feAuthored) material.roughness = blend(material.userData.feAuthored.roughness, s.roughness, 0.6);
       });

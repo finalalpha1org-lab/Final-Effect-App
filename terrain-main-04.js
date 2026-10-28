@@ -52,9 +52,11 @@ function navg(){ngb.forEach(({b,a,s})=>{const v=AX[a].clone().multiplyScalar(s).
 const US=[],RS=[];function configuredHistoryLimit(){try{const s=JSON.parse(localStorage.getItem('fe_global_settings_v1')||'{}'),n=Number(s.undoLimit);return Number.isFinite(n)?Math.min(1000,Math.max(1,Math.round(n))):100}catch{return 100}}let historyLimit=configuredHistoryLimit();function trimHistory(stack){while(stack.length>historyLimit)stack.shift()}function setHistoryLimit(v){const n=Number(v);if(Number.isFinite(n))historyLimit=Math.min(1000,Math.max(1,Math.round(n)));trimHistory(US);trimHistory(RS)}
 const enc=l=>{const a=new Float32Array(l.length*7);l.forEach((o,i)=>a.set([o.x,o.y,o.z,o.s,o.r,o.a,o.v],i*7));return a};
 const dec=a=>{const l=[];for(let i=0;i<a.length;i+=7)l.push({x:a[i],y:a[i+1],z:a[i+2],s:a[i+3],r:a[i+4],a:a[i+5],v:a[i+6]});return l};
-function captureStudioSettings(){return{seed,hs,rockT,snowL,biome,wl,wlUserSet,waterVisible:true,waterProfile:wp,waterQuality,ampUser,wspd,waveChop,waterWavePeriod,waterWaveScale,waterWindSpeed,waterWindDir,waveAuto,clarity:U.clar.value,transparency:U.uTransparency.value,refraction:U.uRefraction.value,reflect:U.uReflect.value,turbidity:U.uTurbidity.value,foam:U.uFoamAmt.value,foamThreshold:U.uFoamThreshold.value,shoreFoam:U.uShoreFoam.value,deep:U.deep.value.toArray(),shallow:U.shal.value.toArray(),turbid:U.uTurbidColor.value.toArray(),tod,az,cov,fogD,windUser,season,floraHeight:(window.FELandscapeFlora&&window.FELandscapeFlora.shape)?window.FELandscapeFlora.shape.height:1,floraDensity:(window.FELandscapeFlora&&window.FELandscapeFlora.shape)?window.FELandscapeFlora.shape.density:1,floraRules:window.__feFloraRuleText||'',sky:JSON.stringify(SKY),wx:JSON.stringify(WX)}}
+function captureStudioSettings(){return{seed,hs,rockT,snowL,biome,wl,wlUserSet,waterVisible:water.visible!==false,waterProfile:wp,waterQuality,ampUser,wspd,waveChop,waterWavePeriod,waterWaveScale,waterWindSpeed,waterWindDir,waveAuto,clarity:U.clar.value,transparency:U.uTransparency.value,roughness:U.uRoughness.value,refraction:U.uRefraction.value,reflect:U.uReflect.value,turbidity:U.uTurbidity.value,foam:U.uFoamAmt.value,foamThreshold:U.uFoamThreshold.value,shoreFoam:U.uShoreFoam.value,deep:U.deep.value.toArray(),shallow:U.shal.value.toArray(),turbid:U.uTurbidColor.value.toArray(),tod,az,cov,fogD,windUser,season,floraHeight:(window.FELandscapeFlora&&window.FELandscapeFlora.shape)?window.FELandscapeFlora.shape.height:1,floraDensity:(window.FELandscapeFlora&&window.FELandscapeFlora.shape)?window.FELandscapeFlora.shape.density:1,floraRules:window.__feFloraRuleText||'',sky:JSON.stringify(SKY),wx:JSON.stringify(WX)}}
 function normalizeSavedWaterLevel(saved,current){if(!Number.isFinite(saved?.wl))return current;return saved.wl===-6&&saved.wlUserSet!==true?0:saved.wl}
-function restoreStudioSettings(a){if(!a)return;const flora=window.FELandscapeFlora;if(flora&&typeof flora.setShape==='function'&&(Number.isFinite(a.floraHeight)||Number.isFinite(a.floraDensity)))flora.setShape(Number.isFinite(a.floraHeight)?a.floraHeight:1,Number.isFinite(a.floraDensity)?a.floraDensity:1);if(typeof a.floraRules==='string'&&a.floraRules)window.__fePendingGrammar=a.floraRules;seed=a.seed??seed;hs=a.hs??hs;rockT=a.rockT??rockT;snowL=a.snowL??snowL;biome=a.biome||biome;wl=normalizeSavedWaterLevel(a,wl);wlUserSet=a.wlUserSet===true;water.position.y=wl;U.wy.value=wl;if(Number.isFinite(a.waterProfile))setWater(a.waterProfile);if(Number.isFinite(a.waterQuality))setWaterQuality(a.waterQuality);water.visible=true;ampUser=a.ampUser??ampUser;U.amp.value=ampUser;wspd=a.wspd??wspd;waveChop=a.waveChop??waveChop;waterWavePeriod=a.waterWavePeriod??waterWavePeriod;waterWaveScale=a.waterWaveScale??waterWaveScale;waterWindSpeed=a.waterWindSpeed??waterWindSpeed;waterWindDir=a.waterWindDir??waterWindDir;U.uWavePeriod.value=waterWavePeriod;U.uWaveScale.value=waterWaveScale;U.uChop.value=waveChop;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed*windUser;if(Number.isFinite(a.clarity))U.clar.value=a.clarity;if(Number.isFinite(a.transparency))U.uTransparency.value=a.transparency;if(Number.isFinite(a.refraction))U.uRefraction.value=a.refraction;if(Number.isFinite(a.reflect))U.uReflect.value=a.reflect;if(Number.isFinite(a.turbidity))U.uTurbidity.value=a.turbidity;if(Number.isFinite(a.foam))U.uFoamAmt.value=a.foam;if(Number.isFinite(a.foamThreshold))U.uFoamThreshold.value=a.foamThreshold;if(Number.isFinite(a.shoreFoam))U.uShoreFoam.value=a.shoreFoam;if(a.deep)U.deep.value.fromArray(a.deep);if(a.shallow)U.shal.value.fromArray(a.shallow);if(a.turbid)U.uTurbidColor.value.setRGB(...a.turbid);tod=a.tod??tod;az=a.az??az;cov=a.cov??cov;fogD=a.fogD??fogD;windUser=a.windUser??windUser;U.uWindSpeed.value=waterWindSpeed*windUser;season=a.season||season;if(typeof a.waveAuto==='boolean'){waveAuto=a.waveAuto;waveAutoApplied=-1;if(waveAuto&&typeof stepWaveClimate==='function')stepWaveClimate()}if(a.sky)try{Object.assign(SKY,JSON.parse(a.sky))}catch(error){console.warn('Sky autosave data was invalid:',error)}if(a.wx)try{Object.assign(WX,JSON.parse(a.wx))}catch(error){console.warn('Weather autosave data was invalid:',error)}syncWaterPhysical();updSky()}
+function restoreStudioSettings(a){if(!a)return;const flora=window.FELandscapeFlora;if(flora&&typeof flora.setShape==='function'&&(Number.isFinite(a.floraHeight)||Number.isFinite(a.floraDensity)))flora.setShape(Number.isFinite(a.floraHeight)?a.floraHeight:1,Number.isFinite(a.floraDensity)?a.floraDensity:1);if(typeof a.floraRules==='string'&&a.floraRules)window.__fePendingGrammar=a.floraRules;seed=a.seed??seed;hs=a.hs??hs;rockT=a.rockT??rockT;snowL=a.snowL??snowL;biome=a.biome||biome;wl=normalizeSavedWaterLevel(a,wl);wlUserSet=a.wlUserSet===true;water.position.y=wl;U.wy.value=wl;if(Number.isFinite(a.waterProfile))setWater(a.waterProfile);if(Number.isFinite(a.waterQuality))setWaterQuality(a.waterQuality);water.visible=a.waterVisible!==false;ampUser=a.ampUser??ampUser;U.amp.value=ampUser;wspd=a.wspd??wspd;waveChop=a.waveChop??waveChop;waterWavePeriod=a.waterWavePeriod??waterWavePeriod;waterWaveScale=a.waterWaveScale??waterWaveScale;waterWindSpeed=a.waterWindSpeed??waterWindSpeed;waterWindDir=a.waterWindDir??waterWindDir;U.uWavePeriod.value=waterWavePeriod;U.uWaveScale.value=waterWaveScale;U.uChop.value=waveChop;U.uWindDir.value.set(Math.cos(waterWindDir*Math.PI/180),Math.sin(waterWindDir*Math.PI/180));U.uWindSpeed.value=waterWindSpeed*windUser;if(Number.isFinite(a.clarity))U.clar.value=a.clarity;if(Number.isFinite(a.transparency))U.uTransparency.value=a.transparency;/* After setWater(), so a surface roughness the user dialled in survives the reload
+   instead of snapping back to the preset's value. */
+if(Number.isFinite(a.roughness))U.uRoughness.value=a.roughness;if(Number.isFinite(a.refraction))U.uRefraction.value=a.refraction;if(Number.isFinite(a.reflect))U.uReflect.value=a.reflect;if(Number.isFinite(a.turbidity))U.uTurbidity.value=a.turbidity;if(Number.isFinite(a.foam))U.uFoamAmt.value=a.foam;if(Number.isFinite(a.foamThreshold))U.uFoamThreshold.value=a.foamThreshold;if(Number.isFinite(a.shoreFoam))U.uShoreFoam.value=a.shoreFoam;if(a.deep)U.deep.value.fromArray(a.deep);if(a.shallow)U.shal.value.fromArray(a.shallow);if(a.turbid)U.uTurbidColor.value.setRGB(...a.turbid);tod=a.tod??tod;az=a.az??az;cov=a.cov??cov;fogD=a.fogD??fogD;windUser=a.windUser??windUser;U.uWindSpeed.value=waterWindSpeed*windUser;season=a.season||season;if(typeof a.waveAuto==='boolean'){waveAuto=a.waveAuto;waveAutoApplied=-1;if(waveAuto&&typeof stepWaveClimate==='function')stepWaveClimate()}if(a.sky)try{Object.assign(SKY,JSON.parse(a.sky))}catch(error){console.warn('Sky autosave data was invalid:',error)}if(a.wx)try{Object.assign(WX,JSON.parse(a.wx))}catch(error){console.warn('Weather autosave data was invalid:',error)}syncWaterPhysical();updSky()}
 const shareHistoryArray=(value,candidates)=>{for(const old of candidates){if(!old||old.length!==value.length)continue;let same=true;for(let i=0;i<value.length;i++)if(value[i]!==old[i]){same=false;break}if(same)return old}return value};
 const snap=()=>{const prior=[US[US.length-1],RS[RS.length-1]].filter(Boolean);return{H:shareHistoryArray(H.slice(),prior.map(s=>s.H)),M:shareHistoryArray(MI.slice(),prior.map(s=>s.M)),SA:shareHistoryArray(SWA.slice(),prior.map(s=>s.SA)),SB:shareHistoryArray(SWB.slice(),prior.map(s=>s.SB)),SC:shareHistoryArray(SWC.slice(),prior.map(s=>s.SC)),K:Object.fromEntries(Object.keys(KIND).map(k=>[k,shareHistoryArray(enc(KIND[k].list),prior.map(s=>s.K?.[k]))])),KM:Object.fromEntries(Object.keys(KIND).map(k=>[k,shareHistoryArray(Uint8Array.from(KIND[k].list,o=>o.manual?1:0),prior.map(s=>s.KM?.[k]))])),A:captureStudioSettings(),O:objs.map(o=>({t:o.userData.n.split('.')[0],n:o.userData.n,p:o.position.toArray(),q:o.quaternion.toArray(),s:o.scale.toArray(),c:tints(o).map(m=>m.material.color.getHex())}))}};
 function restore(s){/* Undo/redo replaces the heightfield wholesale, so any live erosion run has to
@@ -79,7 +81,15 @@ U.top.value.setRGB(...mx([.01,.015,.05],[.08,.26,.7],day));
 U.hor.value.setRGB(...mx(mx([.03,.04,.09],[.55,.75,.95],day),[1,.45,.2],dusk*.55));
 U.sun.value.setRGB(1,.8,.55).multiplyScalar(cl(e*8+1,0,1));{const o=WX.over*.85,g=1-.55*(1-day);U.top.value.lerp(new THREE.Color(.36*g+.02,.39*g+.02,.44*g+.03),o*.9);U.hor.value.lerp(new THREE.Color(.5*g+.03,.53*g+.03,.58*g+.04),o);U.sun.value.multiplyScalar(1-o*.9)}
 const rm=mode=='render'&&!ortho;grid.visible=!rm;scene.children.forEach(o=>{if(o.type=='Line')o.visible=!rm});scene.fog.color.copy(U.hor.value);scene.fog.density=U.fd.value=rm?fogD*(1+WX.over*1.8+WX.rain*2.2):0;sky.visible=rm&&!PLANON;scene.background=rm?null:BG;
-sun.color.setRGB(1,.7+.3*l,.45+.55*l);hemi.color.setRGB(...mx([.08,.1,.18],[.62,.76,.95],day));hemi.groundColor.setRGB(...mx([.03,.03,.04],[.3,.25,.16],day));U.ni.value=1-day;U.cov.value=Math.max(cov,WX.over);envFill.color.setRGB(...mx([.38,.49,.72],[.76,.86,1],day));envFill.groundColor.setRGB(...mx([.18,.18,.23],[.36,.29,.2],day));envFill.intensity=environmentFillLevel(!SAFE.env,day,WX.over);BMAT.forEach(m=>m.emissiveIntensity=cl(1.1-day*1.6,0,1)*1.5);sun.intensity=solid?.5:2.2*l*(1-WX.over*.8);hemiBase=hemi.intensity=solid?1.1:(.2+.62*day)*(1+WX.over*.15);sun.castShadow=!solid&&!SAFE.shadow;if(SKYREADY){try{skyApply(d,day,e,l,solid)}catch(er){SKYREADY=false;showErr('Sky studio: '+er.message)}}
+sun.color.setRGB(1,.7+.3*l,.45+.55*l);hemi.color.setRGB(...mx([.08,.1,.18],[.62,.76,.95],day));hemi.groundColor.setRGB(...mx([.03,.03,.04],[.3,.25,.16],day));U.ni.value=1-day;U.cov.value=Math.max(cov,WX.over);envFill.color.setRGB(...mx([.38,.49,.72],[.76,.86,1],day));envFill.groundColor.setRGB(...mx([.18,.18,.23],[.36,.29,.2],day));envFill.intensity=environmentFillLevel(!SAFE.env,day,WX.over);BMAT.forEach(m=>m.emissiveIntensity=cl(1.1-day*1.6,0,1)*1.5);/* Light budget. Sun, hemisphere and fill used to stack to roughly three
+   times the irradiance a diffuse surface needs, and ACES then rolled the
+   whole island towards white: that is the washed-out "no material" look.
+   The sun keeps the shape and the shadows, the two fills only lift the
+   shade, and the total stays near 1 on a flat surface at noon so the
+   palette keeps its saturation. Night has its own floor, so the ground is
+   moonlit rather than black. */
+sun.intensity=solid?.5:1.9*l*(1-WX.over*.8);hemiBase=hemi.intensity=solid?1.1:(.15+.45*day)*(1+WX.over*.15);sun.castShadow=!solid&&!SAFE.shadow;if(SKYREADY){try{skyApply(d,day,e,l,solid)}catch(er){SKYREADY=false;showErr('Sky studio: '+er.message)}}
+try{skyEnvSource()}catch(error){SKY_ENV.fails++}
 objs.forEach(o=>o.traverse(c=>{if(c.isPointLight)c.intensity=(1-day)*2.2}));
 clouds.forEach((g,i)=>{g.visible=false;g.children.forEach(s=>s.material.color.setRGB(...mx(mx([.1,.11,.16],[1,1,1],day),[1,.6,.4],dusk*.5)))})}
 let shadowFocusAt=0,shadowFocusX=NaN,shadowFocusY=NaN,shadowFocusZ=NaN,shadowFocusRadius=0;
@@ -150,13 +160,113 @@ float lit=texture2D(uTreeMap,(vW.xz+50.)/100.).r*uLit*(grm*.85+.15)*step(uWy+.1,
 float pud=uWetG*smoothstep(.5,.8,vn2(vW.xz*.4))*smoothstep(.9,.985,gn.y)*step(uWy+.15,vW.y);diffuseColor.rgb*=1.-pud*.4;
 float snowA=clamp(uSnowG*smoothstep(.5,.9,gn.y)*step(uWy+.1,vW.y)*1.7,0.,1.);float snowMacro=vn2(vW.xz*.16),snowFine=tri(vW,26.,gn),snowBlend=clamp(.74+snowMacro*.18+snowFine*.28,0.,1.);vec3 snowBase=mix(vec3(.64,.75,.86),vec3(.97,.985,1.),snowBlend);float snowLuma=clamp(.88+(snowMacro-.5)*.12+(snowFine-.5)*.20,.72,1.06);diffuseColor.rgb=mix(diffuseColor.rgb,snowBase*snowLuma,snowA);
 float udep=max(uWy-vW.y,0.);
-if(udep>0.){vec3 ab=exp(-udep*vec3(.42,.12,.075));float c1=1.-abs(vn2(vW.xz*.82+vec2(uT*.34,uT*.22))*2.-1.),c2=1.-abs(vn2(vW.xz*1.37-vec2(uT*.27,uT*.39)+5.)*2.-1.);float ca=pow(c1*c2,3.)*exp(-udep*.22)*smoothstep(.06,1.8,udep);diffuseColor.rgb=diffuseColor.rgb*ab+vec3(.07,.27,.23)*ca*uDet+vec3(0.,.025,.045)*(1.-ab.g)*.5;}float surfSum=dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.));if(uSurfacePaintEnabled>.5&&surfSum>.001){vec3 surfN=abs(normalize(cross(dFdx(vW),dFdy(vW))));surfN/=max(dot(surfN,vec3(1.)),.001);vec3 surfWarp=vec3(vn2(vW.xz*.023+vec2(13.7)),vn2(vW.xy*.027+vec2(41.1)),vn2(vW.yz*.019+vec2(73.3)))-.5;vec3 customSurface=vec3(0.);if(vSurfaceWeightsA.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.16,surfWarp,0.)*vSurfaceWeightsA.x;if(vSurfaceWeightsA.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.15,surfWarp,1.)*vSurfaceWeightsA.y;if(vSurfaceWeightsA.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.14,surfWarp,2.)*vSurfaceWeightsA.z;if(vSurfaceWeightsA.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.13,surfWarp,3.)*vSurfaceWeightsA.w;if(vSurfaceWeightsB.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.18,surfWarp,4.)*vSurfaceWeightsB.x;if(vSurfaceWeightsB.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.13,surfWarp,5.)*vSurfaceWeightsB.y;if(vSurfaceWeightsB.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.16,surfWarp,6.)*vSurfaceWeightsB.z;if(vSurfaceWeightsB.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.18,surfWarp,7.)*vSurfaceWeightsB.w;if(vSurfaceWeightsC.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.11,surfWarp,8.)*vSurfaceWeightsC.x;if(vSurfaceWeightsC.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.11,surfWarp,9.)*vSurfaceWeightsC.y;if(vSurfaceWeightsC.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.22,surfWarp,10.)*vSurfaceWeightsC.z;if(vSurfaceWeightsC.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.2,surfWarp,11.)*vSurfaceWeightsC.w;float surfaceGrain=tri(vW,3.7,surfN)-.5;customSurface=customSurface/max(surfSum,.001)*(1.+surfaceGrain*.1);diffuseColor.rgb=mix(diffuseColor.rgb,customSurface,clamp(surfSum,0.,1.));}`;
+if(udep>0.){vec3 ab=exp(-udep*vec3(.42,.12,.075));float c1=1.-abs(vn2(vW.xz*.82+vec2(uT*.34,uT*.22))*2.-1.),c2=1.-abs(vn2(vW.xz*1.37-vec2(uT*.27,uT*.39)+5.)*2.-1.);float ca=pow(c1*c2,3.)*exp(-udep*.22)*smoothstep(.06,1.8,udep);diffuseColor.rgb=diffuseColor.rgb*ab+vec3(.07,.27,.23)*ca*uDet+vec3(0.,.025,.045)*(1.-ab.g)*.5;}float surfSum=dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.));if(uSurfacePaintEnabled>.5&&surfSum>.001){vec3 surfN=abs(normalize(cross(dFdx(vW),dFdy(vW))));surfN/=max(dot(surfN,vec3(1.)),.001);vec3 surfWarp=vec3(vn2(vW.xz*.023+vec2(13.7)),vn2(vW.xy*.027+vec2(41.1)),vn2(vW.yz*.019+vec2(73.3)))-.5;vec3 customSurface=vec3(0.);if(vSurfaceWeightsA.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.16,surfWarp,0.)*vSurfaceWeightsA.x;if(vSurfaceWeightsA.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.15,surfWarp,1.)*vSurfaceWeightsA.y;if(vSurfaceWeightsA.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.14,surfWarp,2.)*vSurfaceWeightsA.z;if(vSurfaceWeightsA.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.13,surfWarp,3.)*vSurfaceWeightsA.w;if(vSurfaceWeightsB.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.18,surfWarp,4.)*vSurfaceWeightsB.x;if(vSurfaceWeightsB.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.13,surfWarp,5.)*vSurfaceWeightsB.y;if(vSurfaceWeightsB.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.16,surfWarp,6.)*vSurfaceWeightsB.z;if(vSurfaceWeightsB.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.18,surfWarp,7.)*vSurfaceWeightsB.w;if(vSurfaceWeightsC.x>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.11,surfWarp,8.)*vSurfaceWeightsC.x;if(vSurfaceWeightsC.y>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.11,surfWarp,9.)*vSurfaceWeightsC.y;if(vSurfaceWeightsC.z>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.22,surfWarp,10.)*vSurfaceWeightsC.z;if(vSurfaceWeightsC.w>.001)customSurface+=surfTri(uSurfAtlas,vW,surfN,.2,surfWarp,11.)*vSurfaceWeightsC.w;float surfaceGrain=tri(vW,3.7,surfN)-.5;customSurface=customSurface/max(surfSum,.001)*(1.+surfaceGrain*.1);
+/* A painted cell only replaces the ground when the atlas actually has
+   colour in it. The atlas is drawn from twelve canvas tiles and the C++
+   surface pass repaints them over the first frames; sampling it before it
+   has a single pixel returns black, and mixing that in at full weight is
+   exactly what made painted land read as a hole in the scene. */
+float surfLive=dot(customSurface,vec3(.2126,.7152,.0722));
+float surfValid=smoothstep(.004,.05,surfLive);
+diffuseColor.rgb=mix(diffuseColor.rgb,mix(diffuseColor.rgb,customSurface,surfValid),clamp(surfSum,0.,1.));}`;
 function injectDetail(m,inst){m.customProgramCacheKey=()=>'det-surface-pbr-v2-'+(inst?'I':'T');m.onBeforeCompile=s=>{s.uniforms.uDet=DET;s.uniforms.uWy=U.wy;s.uniforms.uT=U.t;s.uniforms.uWetG=FXU.wet;s.uniforms.uRainK=U.rain;s.uniforms.uSnowG=FXU.snowK;s.uniforms.uAutG=FXU.aut;s.uniforms.uLit=FXU.lit;s.uniforms.uTreeMap=FXU.treeMap;s.uniforms.uSurfAtlas={value:OW_SURFACE_ATLAS};s.uniforms.uSurfacePaintEnabled={value:m.userData?.surfacePaintEnabled?1:0};
 s.vertexShader='attribute vec4 surfaceWeightsA;attribute vec4 surfaceWeightsB;attribute vec4 surfaceWeightsC;varying vec4 vSurfaceWeightsA,vSurfaceWeightsB,vSurfaceWeightsC;varying vec3 vW;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvSurfaceWeightsA=surfaceWeightsA;vSurfaceWeightsB=surfaceWeightsB;vSurfaceWeightsC=surfaceWeightsC;\nvW=(modelMatrix*\n#ifdef USE_INSTANCING\ninstanceMatrix*\n#endif\nvec4(transformed,1.0)).xyz;');
 s.fragmentShader=TG+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>'+TD).replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(mix(mix(roughnessFactor,.4,max(wet*uDet,uWetG*.8)),.6,snowA),.06,pud);\n/* Rain intensity drops the roughness of soil and stone straight from the\n   uniform: falling water is glossy before it has had time to pool. */\nroughnessFactor*=mix(1.,.62,clamp(uRainK,0.,1.));roughnessFactor=mix(roughnessFactor,.045,clamp(pud*uRainK,0.,1.));float surfRoughSum=(dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.)))*uSurfacePaintEnabled;if(surfRoughSum>.001){float surfRough=(dot(vSurfaceWeightsA,vec4(.9,.84,.92,.96))+dot(vSurfaceWeightsB,vec4(.98,.9,.96,.94))+dot(vSurfaceWeightsC,vec4(.74,.66,.88,.98)))/max(surfRoughSum,.001);roughnessFactor=mix(roughnessFactor,surfRough,clamp(surfRoughSum,0.,1.));}').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nvec2 rip=vec2(sin(vW.x*7.1+uT*3.3)+.6*sin(vW.x*13.7-uT*4.1),cos(vW.z*6.7+uT*2.9)+.6*cos(vW.z*12.3-uT*3.7));normal=bumpN(-vViewPosition,normal,vec2(dFdx(dn),dFdy(dn))*ud*.35+rip*.055*clamp(pud*uRainK,0.,1.));')}}
 injectDetail(tm,false);
 tm.normalScale.set(.08,.08);ren.toneMappingExposure=1.25;
-// Keep PBR materials on their original surface maps; environment lighting is the additive HemisphereLight only.
+/* ---- Sky environment: what metal and glass reflect --------------------
+   Buildings carry a real metalness map — a window slot is metalness 0.59,
+   roughness 0.13 — but the studio set scene.environment = null, so those
+   surfaces had nothing to reflect. Metal with no environment renders as flat
+   grey paint, which is the whole difference between glass and cardboard at a
+   distance. The sky the dome already draws is analytic, so the same four
+   values are baked once into a small equirect and prefiltered with PMREM, and
+   the result is attached to the building materials only. The terrain keeps its
+   own lighting budget: it is painted by the surface pass, and a global
+   environment is what used to wash the painted biome out. */
+const SKY_ENV = { tex: null, target: null, pmrem: null, canvas: null, stamp: '', fails: 0, at: 0, applied: -1 };
+/* The building and metal materials only. Their authored envMapIntensity is
+   clamped so the sky can add the reflection a window needs without turning a
+   plaster wall into a mirror. */
+function applySkyEnv() {
+  if (!SKY_ENV.tex) return;
+  for (const m of BMAT) {
+    m.envMap = SKY_ENV.tex;
+    m.envMapIntensity = Math.min(Number.isFinite(m.envMapIntensity) ? m.envMapIntensity : 1, 0.55);
+    m.needsUpdate = true;
+  }
+  SKY_ENV.applied = BMAT.length;
+}
+function skyEnvSource(force) {
+  const W = 192, H = 96;
+  const stamp = [tod, az, WX.over, WX.rain, mode].join(',');
+  /* The world is built after the first sky update, so a material list that has
+     grown since the bake is caught here rather than leaving every building
+     without the environment it was created for. */
+  if (BMAT.length !== SKY_ENV.applied) applySkyEnv();
+  if (!force && stamp === SKY_ENV.stamp) return SKY_ENV.tex;
+  if (SKY_ENV.fails > 2) return null;
+  /* One PMREM per sky change, not per frame: the equirect is 18k pixels of a
+     closed-form gradient, and dragging the time of day must not re-enter the
+     prefilter faster than the eye can see it. */
+  const now = performance.now();
+  if (!force && SKY_ENV.tex && now - SKY_ENV.at < 220) return SKY_ENV.tex;
+  try {
+    if (!SKY_ENV.canvas) {
+      SKY_ENV.canvas = document.createElement('canvas');
+      SKY_ENV.canvas.width = W;
+      SKY_ENV.canvas.height = H;
+    }
+    const ctx = SKY_ENV.canvas.getContext('2d');
+    if (!ctx) return null;
+    const img = ctx.createImageData(W, H);
+    const top = U.top.value, hor = U.hor.value, sunC = U.sun.value, sd = U.sd.value;
+    const sdl = Math.hypot(sd.x, sd.y, sd.z) || 1;
+    const sx = sd.x / sdl, sy = sd.y / sdl, sz = sd.z / sdl;
+    for (let y = 0; y < H; y++) {
+      /* Row 0 of the canvas is the zenith: an equirect texture has v = 1 at
+         +Y, and three reads it with the same convention the dome shader uses
+         (pow(clamp(d.y,0,1),.55) between horizon and zenith). */
+      const lat = (0.5 - (y + 0.5) / H) * Math.PI;
+      const dy = Math.sin(lat), r = Math.cos(lat);
+      for (let x = 0; x < W; x++) {
+        const lon = ((x + 0.5) / W - 0.5) * Math.PI * 2;
+        const dx = r * Math.cos(lon), dz = r * Math.sin(lon);
+        const up = Math.max(dy, 0);
+        const k = Math.pow(up, 0.55);
+        const c = Math.max(dx * sx + dy * sy + dz * sz, 0);
+        const glow = Math.pow(c, 600) * 3 + Math.pow(c, 12) * 0.25;
+        const i = (y * W + x) * 4;
+        img.data[i] = cl(Math.round((hor.r + (top.r - hor.r) * k + sunC.r * glow) * 255), 0, 255);
+        img.data[i + 1] = cl(Math.round((hor.g + (top.g - hor.g) * k + sunC.g * glow) * 255), 0, 255);
+        img.data[i + 2] = cl(Math.round((hor.b + (top.b - hor.b) * k + sunC.b * glow) * 255), 0, 255);
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const source = new THREE.CanvasTexture(SKY_ENV.canvas);
+    source.mapping = THREE.EquirectangularReflectionMapping;
+    if ('colorSpace' in source && THREE.SRGBColorSpace !== undefined) source.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in source) source.encoding = THREE.sRGBEncoding;
+    source.needsUpdate = true;
+    if (!SKY_ENV.pmrem) SKY_ENV.pmrem = new THREE.PMREMGenerator(ren);
+    const target = SKY_ENV.pmrem.fromEquirectangular(source);
+    source.dispose();
+    const previous = SKY_ENV.target;
+    SKY_ENV.tex = target.texture;
+    SKY_ENV.target = target;
+    if (previous) { try { previous.dispose(); } catch (error) { /* already gone */ } }
+    SKY_ENV.stamp = stamp;
+    SKY_ENV.at = now;
+    applySkyEnv();
+    return SKY_ENV.tex;
+  } catch (error) {
+    SKY_ENV.fails++;
+    if (SKY_ENV.fails === 1) showErr('Sky reflections: ' + error.message);
+    return SKY_ENV.tex;
+  }
+}
+window.__feSkyEnv = skyEnvSource;
 scene.environment=null;
 
 tm.envMapIntensity=.5;

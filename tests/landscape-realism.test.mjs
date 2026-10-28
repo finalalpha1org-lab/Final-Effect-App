@@ -263,11 +263,24 @@ test('the upgrade paints the C++ micro-structure into the shipped canvases once'
   const normalSet = Object.fromEntries(Object.entries(textureSet).map(([k, t]) => [k, texture(fakeCanvas(t.image.width, t.image.height))]));
   const roughSet = Object.fromEntries(Object.entries(textureSet).map(([k, t]) => [k, texture(fakeCanvas(t.image.width, t.image.height))]));
   const leaf = { generic: { nm: texture(fakeCanvas()), rm: texture(fakeCanvas()) }, oak: { nm: texture(fakeCanvas()), rm: texture(fakeCanvas()) } };
+  /* The stone textures the studio ships: albedo starts near white (it
+     modulates the mineral vertex colour), the data maps start at their neutral
+     value. */
+  const filled = (value) => {
+    const canvas = fakeCanvas();
+    canvas.__pixels.fill(value);
+    for (let i = 3; i < canvas.__pixels.length; i += 4) canvas.__pixels[i] = 255;
+    return canvas;
+  };
+  const rockTex = {};
+  for (const kind of ['granite', 'sandstone', 'basalt']) {
+    rockTex[kind] = { albedo: texture(filled(239)), normal: texture(filled(128)), rough: texture(filled(255)) };
+  }
   const terrain = { grass: texture(fakeCanvas()), soil: texture(fakeCanvas()), rock: texture(fakeCanvas()), snow: texture(fakeCanvas()), rough: texture(fakeCanvas()) };
   const maps = [texture(fakeCanvas()), texture(fakeCanvas())];
   const atlas = texture(fakeCanvas(1056, 264)); /* 4 tiles per row, 264px cell */
   const { api, run, context } = loadRealism({ kinds });
-  context.__feLandscapeTex = { BT: textureSet, BN: normalSet, BR: roughSet, LEAF_PBR: leaf };
+  context.__feLandscapeTex = { BT: textureSet, BN: normalSet, BR: roughSet, LEAF_PBR: leaf, ROCK: rockTex };
   context.TERRAIN_PBR = terrain;
   context.OW_SURFACE_MAPS = maps;
   context.OW_SURFACE_ATLAS = atlas;
@@ -294,6 +307,23 @@ test('the upgrade paints the C++ micro-structure into the shipped canvases once'
   }
   assert.ok(textureSet.oak.needsUpdate && normalSet.oak.needsUpdate && roughSet.oak.needsUpdate, 'bark colour, normal and roughness all move together');
   assert.ok(leaf.oak.nm.needsUpdate && leaf.oak.rm.needsUpdate, 'leaf cards get veins');
+  /* Stone: every rock kind receives all three maps, and the albedo really
+     carries the kernel's grain instead of a flat fill. */
+  for (const [kind, set] of Object.entries(rockTex)) {
+    for (const map of ['albedo', 'normal', 'rough']) {
+      assert.ok(set[map].needsUpdate, `${kind} ${map} map must be painted from the kernel`);
+    }
+    const px = set.albedo.image.__pixels;
+    let spread = 0;
+    for (let i = 0; i < 256; i++) spread = Math.max(spread, Math.abs(px[i * 4] - px[0]));
+    assert.ok(spread > 0, `${kind} albedo must carry grain, not one flat value`);
+    /* Albedo modulates the mineral vertex colour, so it has to stay bright:
+       a mid-grey map would darken the stone by half on top of the vertex
+       colour that is already the stone. */
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += px[i * 4];
+    assert.ok(sum / 256 > 150, `${kind} albedo must stay near white (mean ${(sum / 256).toFixed(0)})`);
+  }
   assert.ok(atlas.needsUpdate, 'the biome atlas is rebuilt from the repainted tiles');
   /* Materials are grounded in the measured table. */
   const rock = kinds.rock.meshes[0].material;

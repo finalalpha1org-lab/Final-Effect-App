@@ -44,6 +44,35 @@ float g_snapIncrement = 0.1f;
 
 uint8_t g_triMark[kMaxTris];
 uint32_t g_vertMap[kMaxVerts];
+/* Per-edge wireframe mask and the dihedral threshold it is built from. A
+   triangle mesh has a diagonal across every quad face; Blender's edit mode
+   does not show them because its faces are quads. Ours are triangles, so the
+   diagonal is hidden by angle instead: an edge whose two faces are nearly
+   coplanar is internal structure, not a silhouette. */
+uint8_t g_edgeDisplay[kMaxEdges];
+float g_displayAngle = 0.6f;
+uint32_t g_weldMerged = 0;
+uint8_t g_vertUsed[kMaxVerts];
+uint32_t g_vertNew[kMaxVerts];
+
+/* One drag of one handle. The gizmo is not a three.js TransformControls: its
+   picking and its maths live here, next to the mesh, so a finger drag is one
+   kernel call per frame and the handles obey proportional editing and the axis
+   lock exactly like the tools in the sheet do. */
+struct GizmoState {
+  bool active;
+  int32_t handle;   /* 0 = X, 1 = Y, 2 = Z, -1 = none */
+  uint32_t space;   /* 0 translate, 1 rotate, 2 scale */
+  float pivot[3];
+  float size;
+  float startX;
+  float startY;
+  float startT;
+  float startAngle;
+  float startDist;
+  float applied;
+};
+GizmoState GZ = {false, -1, 0u, {0.0f, 0.0f, 0.0f}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 uint32_t g_vertStamp[kMaxVerts];
 uint8_t g_vertMark[kMaxVerts];
 
@@ -378,6 +407,79 @@ void rebuildEdges() {
       g_hash[slot] = e + 1;
     }
   }
+  /* Which of these edges belong in the wireframe (see g_edgeDisplay). */
+  const float cosLimit = fe::cosf(g_displayAngle * fe::kDeg2Rad);
+  for (uint32_t e = 0; e < E.n; ++e) {
+    if (E.f1[e] == kNoFace) { g_edgeDisplay[e] = 1; continue; }
+    float ax, ay, az, bx, by, bz;
+    faceNormal(E.f0[e], ax, ay, az);
+    faceNormal(E.f1[e], bx, by, bz);
+    g_edgeDisplay[e] = (ax * bx + ay * by + az * bz) < cosLimit ? 1u : 0u;
+  }
+}
+
+/* ---- welding -------------------------------------------------------------
+   three.js hands over a triangle soup: a cube's eight corners arrive as
+   twenty-four vertices, one per face. Editing that soup is why picking a
+   corner used to tear the cube open - the corner was three separate vertices
+   and only one of them moved - and why the overlay drew twenty-four dots on
+   an eight-corner box. Everything from upload onwards works on a welded mesh:
+   coincident vertices become one, triangles that collapse are dropped, and the
+   vertex indices are compacted so no orphan is left to draw. */
+void weldVertices() {
+  const float eps = 1.0e-5f;
+  const float inv = 1.0f / eps;
+  for (uint32_t i = 0; i < kHashSize; ++i) g_hash[i] = 0;
+  uint32_t merged = 0;
+  for (uint32_t v = 0; v < M.nv; ++v) {
+    const int32_t cx = static_cast<int32_t>(fe::floorf(M.x[v] * inv));
+    const int32_t cy = static_cast<int32_t>(fe::floorf(M.y[v] * inv));
+    const int32_t cz = static_cast<int32_t>(fe::floorf(M.z[v] * inv));
+    uint32_t slot = (static_cast<uint32_t>(cx) * 73856093u) ^
+                    (static_cast<uint32_t>(cy) * 19349663u) ^
+                    (static_cast<uint32_t>(cz) * 83492791u);
+    slot &= (kHashSize - 1u);
+    uint32_t rep = v;
+    for (;;) {
+      const uint32_t entry = g_hash[slot];
+      if (entry == 0) { g_hash[slot] = v + 1; break; }
+      const uint32_t u = entry - 1;
+      const int32_t ux = static_cast<int32_t>(fe::floorf(M.x[u] * inv));
+      const int32_t uy = static_cast<int32_t>(fe::floorf(M.y[u] * inv));
+      const int32_t uz = static_cast<int32_t>(fe::floorf(M.z[u] * inv));
+      if (ux == cx && uy == cy && uz == cz) { rep = u; ++merged; break; }
+      slot = (slot + 1) & (kHashSize - 1u);
+    }
+    g_vertMap[v] = rep;
+  }
+  g_weldMerged = merged;
+  if (merged == 0) return;
+
+  /* Re-index the triangles and drop the ones that collapsed onto themselves. */
+  uint32_t keep = 0;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    const uint32_t a = g_vertMap[M.tri[t * 3]], b = g_vertMap[M.tri[t * 3 + 1]], c = g_vertMap[M.tri[t * 3 + 2]];
+    if (a == b || b == c || a == c) continue;
+    M.tri[keep * 3] = a; M.tri[keep * 3 + 1] = b; M.tri[keep * 3 + 2] = c;
+    ++keep;
+  }
+  M.nt = keep;
+
+  /* Compact the vertex array so the survivors are 0..n-1 in first-use order. */
+  for (uint32_t v = 0; v < M.nv; ++v) g_vertUsed[v] = 0;
+  for (uint32_t i = 0; i < M.nt * 3u; ++i) g_vertUsed[M.tri[i]] = 1;
+  uint32_t next = 0;
+  for (uint32_t v = 0; v < M.nv; ++v) {
+    if (!g_vertUsed[v]) { g_vertNew[v] = kNoFace; continue; }
+    g_vertNew[v] = next;
+    if (next != v) {
+      M.x[next] = M.x[v]; M.y[next] = M.y[v]; M.z[next] = M.z[v];
+      M.cr[next] = M.cr[v]; M.cg[next] = M.cg[v]; M.cb[next] = M.cb[v];
+    }
+    ++next;
+  }
+  for (uint32_t i = 0; i < M.nt * 3u; ++i) M.tri[i] = g_vertNew[M.tri[i]];
+  M.nv = next;
 }
 
 uint32_t findEdge(uint32_t a, uint32_t b) {
@@ -1231,6 +1333,158 @@ uint32_t selectRegion(const float* clip, float minX, float minY, float maxX, flo
   return selectedVertCount();
 }
 
+/* ---- on-canvas gizmo -----------------------------------------------------
+   Projection, picking and the drag maths for the handles drawn at the
+   selection: three arrows for translate, three rings for rotate and three
+   bars for scale. Screen coordinates are the same normalised pair the picking
+   code already takes, (0,0) top-left, and `aspect` is viewport width/height,
+   so a handle is as easy to grab on a portrait phone as on a wide window. */
+
+/* Share of the viewport height one handle covers. */
+constexpr float kGizmoScreenShare = 0.18f;
+
+bool projectLocal(const float* clip, float x, float y, float z, float& sx, float& sy, float& depth) {
+  const float w = clip[3] * x + clip[7] * y + clip[11] * z + clip[15];
+  if (w <= 1e-6f) return false;
+  sx = ((clip[0] * x + clip[4] * y + clip[8] * z + clip[12]) / w) * 0.5f + 0.5f;
+  sy = 1.0f - (((clip[1] * x + clip[5] * y + clip[9] * z + clip[13]) / w) * 0.5f + 0.5f);
+  depth = (clip[2] * x + clip[6] * y + clip[10] * z + clip[14]) / w;
+  return true;
+}
+
+void selectionPivot(float* out) {
+  float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < M.nv; ++i) {
+    if (!M.vsel[i]) continue;
+    sx += M.x[i]; sy += M.y[i]; sz += M.z[i];
+    ++n;
+  }
+  if (n) {
+    out[0] = sx / float(n); out[1] = sy / float(n); out[2] = sz / float(n);
+    return;
+  }
+  /* Nothing selected: the handles sit at the middle of the mesh, which is
+     where a first tap is going to land anyway. */
+  float mn[3] = {1e30f, 1e30f, 1e30f}, mx[3] = {-1e30f, -1e30f, -1e30f};
+  for (uint32_t i = 0; i < M.nv; ++i) {
+    if (M.x[i] < mn[0]) mn[0] = M.x[i];
+    if (M.y[i] < mn[1]) mn[1] = M.y[i];
+    if (M.z[i] < mn[2]) mn[2] = M.z[i];
+    if (M.x[i] > mx[0]) mx[0] = M.x[i];
+    if (M.y[i] > mx[1]) mx[1] = M.y[i];
+    if (M.z[i] > mx[2]) mx[2] = M.z[i];
+  }
+  if (M.nv == 0) { out[0] = out[1] = out[2] = 0.0f; return; }
+  out[0] = (mn[0] + mx[0]) * 0.5f;
+  out[1] = (mn[1] + mx[1]) * 0.5f;
+  out[2] = (mn[2] + mx[2]) * 0.5f;
+}
+
+/* Local units that cover about 18 % of the viewport height at the pivot, so
+   the handles keep the same size on screen as the camera pulls back and stay
+   big enough to hit with a fingertip. */
+float gizmoSize(const float* clip, const float pivot[3]) {
+  float px, py, pd;
+  if (!projectLocal(clip, pivot[0], pivot[1], pivot[2], px, py, pd)) return 1.0f;
+  float best = 0.0f;
+  for (int a = 0; a < 3; ++a) {
+    float tip[3] = {pivot[0], pivot[1], pivot[2]};
+    tip[a] += 1.0f;
+    float tx, ty, td;
+    if (!projectLocal(clip, tip[0], tip[1], tip[2], tx, ty, td)) continue;
+    const float d = fe::sqrtf((tx - px) * (tx - px) + (ty - py) * (ty - py));
+    if (d > best) best = d;
+  }
+  if (best < 1e-6f) return 1.0f;
+  return kGizmoScreenShare / best;
+}
+
+float pointSegDistance(float ax, float ay, float bx, float by, float px, float py) {
+  const float vx = bx - ax, vy = by - ay;
+  const float len2 = vx * vx + vy * vy;
+  float t = 0.0f;
+  if (len2 > 1e-12f) t = ((px - ax) * vx + (py - ay) * vy) / len2;
+  t = clampf(t, 0.0f, 1.0f);
+  const float dx = ax + vx * t - px, dy = ay + vy * t - py;
+  return fe::sqrtf(dx * dx + dy * dy);
+}
+
+/* The two local directions perpendicular to an axis, so a rotation ring can be
+   sampled in screen space whatever the view orientation is. */
+void axisBasis(int32_t axis, float* u, float* v) {
+  if (axis == 0) { u[0] = 0.0f; u[1] = 1.0f; u[2] = 0.0f; v[0] = 0.0f; v[1] = 0.0f; v[2] = 1.0f; }
+  else if (axis == 1) { u[0] = 0.0f; u[1] = 0.0f; u[2] = 1.0f; v[0] = 1.0f; v[1] = 0.0f; v[2] = 0.0f; }
+  else { u[0] = 1.0f; u[1] = 0.0f; u[2] = 0.0f; v[0] = 0.0f; v[1] = 1.0f; v[2] = 0.0f; }
+}
+
+/* How far along the handle's axis the pointer sits, in world units. */
+float axisParam(const float* clip, float aspect, const float pivot[3], float size,
+                int32_t axis, float cx, float cy, float& tipDepth, float& pivotDepth) {
+  float px, py, pd, tx, ty, td;
+  tipDepth = 0.0f;
+  pivotDepth = 0.0f;
+  if (!projectLocal(clip, pivot[0], pivot[1], pivot[2], px, py, pd)) return 0.0f;
+  float tip[3] = {pivot[0], pivot[1], pivot[2]};
+  tip[axis] += size;
+  if (!projectLocal(clip, tip[0], tip[1], tip[2], tx, ty, td)) return 0.0f;
+  tipDepth = td;
+  pivotDepth = pd;
+  const float fix = (tx - px) * aspect, fiy = ty - py;
+  const float len2 = fix * fix + fiy * fiy;
+  if (len2 < 1e-10f) return 0.0f;
+  return (((cx - px) * aspect) * fix + (cy - py) * fiy) / len2;
+}
+
+int32_t pickGizmo(const float* clip, float cx, float cy, float aspect, float hit, uint32_t space) {
+  if (!clip || M.nv == 0) return -1;
+  float pivot[3];
+  selectionPivot(pivot);
+  const float size = gizmoSize(clip, pivot);
+  float px, py, pd;
+  if (!projectLocal(clip, pivot[0], pivot[1], pivot[2], px, py, pd)) return -1;
+  const float ox = px * aspect, oy = py;
+  const float mx = cx * aspect, my = cy;
+  int32_t best = -1;
+  float bestD = hit;
+  for (int32_t a = 0; a < 3; ++a) {
+    float d;
+    if (space == 1u) {
+      float u[3], v[3];
+      axisBasis(a, u, v);
+      float ux, uy, ud, vx, vy, vd;
+      float up[3] = {pivot[0] + u[0] * size, pivot[1] + u[1] * size, pivot[2] + u[2] * size};
+      float vp[3] = {pivot[0] + v[0] * size, pivot[1] + v[1] * size, pivot[2] + v[2] * size};
+      if (!projectLocal(clip, up[0], up[1], up[2], ux, uy, ud)) continue;
+      if (!projectLocal(clip, vp[0], vp[1], vp[2], vx, vy, vd)) continue;
+      d = 1e30f;
+      for (int32_t k = 0; k < 32; ++k) {
+        const float t = float(k) * (6.2831853f / 32.0f);
+        const float rx = ox + (ux * aspect - ox) * fe::cosf(t) + (vx * aspect - ox) * fe::sinf(t);
+        const float ry = oy + (uy - oy) * fe::cosf(t) + (vy - oy) * fe::sinf(t);
+        const float ddx = rx - mx, ddy = ry - my;
+        const float dd = fe::sqrtf(ddx * ddx + ddy * ddy);
+        if (dd < d) d = dd;
+      }
+    } else {
+      float tip[3] = {pivot[0], pivot[1], pivot[2]};
+      tip[a] += size;
+      float tx, ty, td;
+      if (!projectLocal(clip, tip[0], tip[1], tip[2], tx, ty, td)) continue;
+      d = pointSegDistance(ox, oy, tx * aspect, ty, mx, my);
+    }
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  return best;
+}
+
+/* Kernel axis codes: move/scale take 1 = X, 2 = Y, 3 = Z; rotate takes
+   1 = X, 2 = Y, 0 = Z. */
+uint32_t transformAxis(int32_t handle, uint32_t space) {
+  if (space == 1u) return handle == 0 ? 1u : handle == 1 ? 2u : 0u;
+  return handle == 0 ? 1u : handle == 1 ? 2u : 3u;
+}
+
 } // namespace fe_edit
 
 using namespace fe_edit;
@@ -1257,6 +1511,9 @@ FE_EXPORT void fe_edit_reset(void) {
   g_snapIncrement = 0.1f;
   clipClear();
   undoClear();
+  g_weldMerged = 0;
+  GZ.active = false;
+  GZ.handle = -1;
   g_outVerts = 0;
   g_outIdxCount = 0;
   g_outSplit = 0;
@@ -1289,6 +1546,10 @@ FE_EXPORT uint32_t fe_edit_upload(uint32_t vertCount, const float* positions,
     const uint32_t v = indices[i];
     M.tri[i] = v < vertCount ? v : 0;
   }
+  for (uint32_t t = 0; t < M.nt; ++t) M.fsel[t] = 0;
+  /* Weld before the edge table exists: an edge list built over duplicates
+     would describe a mesh that is not the one being edited. */
+  weldVertices();
   for (uint32_t t = 0; t < M.nt; ++t) M.fsel[t] = 0;
   rebuildEdges();
   syncSelFromVerts();
@@ -2011,5 +2272,149 @@ FE_EXPORT const float* fe_edit_clip_pos_ptr(void) {
   return interleaved;
 }
 FE_EXPORT const uint32_t* fe_edit_clip_idx_ptr(void) { return C.tri; }
+
+/* ---- Edit Mode display masks and the on-canvas gizmo ------------------- */
+
+FE_EXPORT uint32_t fe_edit_weld_count(void) { return g_weldMerged; }
+FE_EXPORT const uint8_t* fe_edit_edge_display_ptr(void) { return g_edgeDisplay; }
+
+FE_EXPORT void fe_edit_set_display_angle(float degrees) {
+  g_displayAngle = clampf(degrees, 0.0f, 180.0f);
+  rebuildEdges();
+}
+
+/* Whether a mesh that arrived with split vertices was authored smooth or
+   faceted. Coincident vertices that carry the same normal were smooth; the
+   ones that do not were a hard surface, and the edit mesh must go on shading
+   it that way or a cube turns into a ball the moment it is edited. */
+FE_EXPORT uint32_t fe_edit_detect_smooth(const float* positions, const float* normals, uint32_t count) {
+  if (!positions || !normals || count == 0 || count > kMaxVerts) return 1;
+  const float eps = 1.0e-5f;
+  const float inv = 1.0f / eps;
+  for (uint32_t i = 0; i < kHashSize; ++i) g_hash[i] = 0;
+  for (uint32_t v = 0; v < count; ++v) {
+    const int32_t cx = static_cast<int32_t>(fe::floorf(positions[v * 3] * inv));
+    const int32_t cy = static_cast<int32_t>(fe::floorf(positions[v * 3 + 1] * inv));
+    const int32_t cz = static_cast<int32_t>(fe::floorf(positions[v * 3 + 2] * inv));
+    uint32_t slot = (static_cast<uint32_t>(cx) * 73856093u) ^
+                    (static_cast<uint32_t>(cy) * 19349663u) ^
+                    (static_cast<uint32_t>(cz) * 83492791u);
+    slot &= (kHashSize - 1u);
+    for (;;) {
+      const uint32_t entry = g_hash[slot];
+      if (entry == 0) { g_hash[slot] = v + 1; break; }
+      const uint32_t u = entry - 1;
+      const int32_t ux = static_cast<int32_t>(fe::floorf(positions[u * 3] * inv));
+      const int32_t uy = static_cast<int32_t>(fe::floorf(positions[u * 3 + 1] * inv));
+      const int32_t uz = static_cast<int32_t>(fe::floorf(positions[u * 3 + 2] * inv));
+      if (ux == cx && uy == cy && uz == cz) {
+        const float d = normals[u * 3] * normals[v * 3] +
+                        normals[u * 3 + 1] * normals[v * 3 + 1] +
+                        normals[u * 3 + 2] * normals[v * 3 + 2];
+        if (d < 0.999f) return 0;
+        break;
+      }
+      slot = (slot + 1) & (kHashSize - 1u);
+    }
+  }
+  return 1;
+}
+
+FE_EXPORT uint32_t fe_edit_gizmo_pivot(float* out) {
+  if (!out) return 0;
+  selectionPivot(out);
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < M.nv; ++i) if (M.vsel[i]) ++n;
+  return n;
+}
+
+FE_EXPORT float fe_edit_gizmo_size(const float* clip) {
+  if (!clip) return 1.0f;
+  float pivot[3];
+  selectionPivot(pivot);
+  return gizmoSize(clip, pivot);
+}
+
+FE_EXPORT int32_t fe_edit_gizmo_pick(const float* clip, float cx, float cy, float aspect,
+                                     float hit, uint32_t space) {
+  return pickGizmo(clip, cx, cy, aspect, hit, space);
+}
+
+FE_EXPORT int32_t fe_edit_gizmo_begin(const float* clip, float cx, float cy, float aspect,
+                                      float hit, uint32_t space) {
+  const int32_t handle = pickGizmo(clip, cx, cy, aspect, hit, space);
+  GZ.active = false;
+  GZ.handle = handle;
+  if (handle < 0) return -1;
+  GZ.space = space > 2u ? 0u : space;
+  selectionPivot(GZ.pivot);
+  GZ.size = gizmoSize(clip, GZ.pivot);
+  GZ.startX = cx;
+  GZ.startY = cy;
+  GZ.applied = 0.0f;
+  float tipDepth = 0.0f, pivotDepth = 0.0f;
+  GZ.startT = axisParam(clip, aspect, GZ.pivot, GZ.size, handle, cx, cy, tipDepth, pivotDepth);
+  float px, py, pd;
+  projectLocal(clip, GZ.pivot[0], GZ.pivot[1], GZ.pivot[2], px, py, pd);
+  const float mx = cx * aspect - px * aspect, my = cy - py;
+  GZ.startAngle = fe::atan2f(my, mx);
+  GZ.startDist = fe::sqrtf(mx * mx + my * my);
+  if (GZ.startDist < 1e-4f) GZ.startDist = 1e-4f;
+  /* Which way the handle points relative to the eye decides the sign of a
+     rotation: positive about an axis looks counter-clockwise from its tip. */
+  GZ.startDist = (tipDepth < pivotDepth) ? -GZ.startDist : GZ.startDist;
+  GZ.active = true;
+  return handle;
+}
+
+/* Applies the drag to the selection and reports what it did:
+   out[0] accumulated value, out[1] handle, out[2] space. */
+FE_EXPORT int32_t fe_edit_gizmo_drag(const float* clip, float cx, float cy, float aspect, float* out) {
+  if (!GZ.active || GZ.handle < 0 || !clip || M.nv == 0) return -1;
+  float px, py, pd;
+  projectLocal(clip, GZ.pivot[0], GZ.pivot[1], GZ.pivot[2], px, py, pd);
+  const float mx = cx * aspect - px * aspect, my = cy - py;
+  const uint32_t axis = transformAxis(GZ.handle, GZ.space);
+  if (GZ.space == 0u) {
+    float tipDepth = 0.0f, pivotDepth = 0.0f;
+    const float t = axisParam(clip, aspect, GZ.pivot, GZ.size, GZ.handle, cx, cy, tipDepth, pivotDepth);
+    const float world = (t - GZ.startT) * GZ.size;
+    const float step = world - GZ.applied;
+    float d[3] = {0.0f, 0.0f, 0.0f};
+    d[GZ.handle] = step;
+    if (step != 0.0f) fe_edit_move(d[0], d[1], d[2], axis);
+    GZ.applied = world;
+    if (out) { out[0] = world; out[1] = float(GZ.handle); out[2] = float(GZ.space); }
+    return GZ.handle;
+  }
+  if (GZ.space == 1u) {
+    const float angle = fe::atan2f(my, mx);
+    float delta = (angle - GZ.startAngle) * 57.2957795f;
+    while (delta > 180.0f) delta -= 360.0f;
+    while (delta < -180.0f) delta += 360.0f;
+    /* The stored start distance carries the sign of the axis direction. */
+    const float signedDelta = GZ.startDist < 0.0f ? -delta : delta;
+    const float step = signedDelta - GZ.applied;
+    if (step != 0.0f) fe_edit_rotate(step, axis);
+    GZ.applied = signedDelta;
+    if (out) { out[0] = signedDelta; out[1] = float(GZ.handle); out[2] = float(GZ.space); }
+    return GZ.handle;
+  }
+  float factor = fe::sqrtf(mx * mx + my * my) / (GZ.startDist < 0.0f ? -GZ.startDist : GZ.startDist);
+  factor = clampf(factor, 0.01f, 100.0f);
+  const float step = factor / (GZ.applied > 0.0f ? GZ.applied : 1.0f);
+  if (step != 1.0f) fe_edit_scale(step, step, step, axis);
+  GZ.applied = factor;
+  if (out) { out[0] = factor; out[1] = float(GZ.handle); out[2] = float(GZ.space); }
+  return GZ.handle;
+}
+
+FE_EXPORT void fe_edit_gizmo_end(void) {
+  GZ.active = false;
+  GZ.handle = -1;
+  GZ.applied = 0.0f;
+}
+
+FE_EXPORT int32_t fe_edit_gizmo_active(void) { return GZ.active ? GZ.handle : -1; }
 
 } // extern "C"

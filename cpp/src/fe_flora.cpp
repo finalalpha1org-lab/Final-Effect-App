@@ -40,7 +40,10 @@ using namespace fe;
 constexpr int32_t MAX_VERT = 24000;
 constexpr int32_t MAX_IDX = 72000;
 constexpr int32_t MAX_LEAF = 3200;
-constexpr int32_t MAX_NODES = 420;
+/* A joint budget, not a vertex budget: every ring costs `sides` vertices, and
+   the near tier needs enough joints to bend a limb instead of drawing a stick
+   between two of them. 1 400 joints is a large oak; nothing here is per frame. */
+constexpr int32_t MAX_NODES = 1400;
 constexpr int32_t MAX_ATTRACTORS = 420;
 
 float gPos[MAX_VERT * 3];
@@ -68,14 +71,26 @@ uint32_t gIdx[MAX_IDX];
 /* x, y, z, dir.x, dir.y, dir.z, size, colourT, sway, phase */
 constexpr int32_t LEAF_STRIDE = 10;
 float gLeaf[MAX_LEAF * LEAF_STRIDE];
+/* Albedo for a blade, frond and frondlet, in linear light. Every one of
+   these emitters used to write (shade, shade, shade) -- a grey vertex
+   colour -- and relied on a texture that lawns and ferns do not have, so
+   grass rendered as white spikes. The default is a mid leaf green
+   (sRGB 0.32, 0.48, 0.24) and each species overrides it. */
+float gLeafCol[3] = { 0.084f, 0.190f, 0.047f };
 
 /* Leaf cards are grown here too. The anchor buffer above says where a leaf sits
    and which way its twig points; this second buffer is the quad the renderer
    actually draws — four vertices, two triangles, the same roll, taper and
    crown-facing normal the studio used to compute in JavaScript. A card is 17
    floats, so 3200 anchors is well under a megabyte. */
-constexpr int32_t CARD_V = 4;
-constexpr int32_t CARD_I = 6;
+/* A leaf card used to be one flat quad, which is why a crown read as a heap of
+   cardboard shards: every card was a single plane with a single normal, so it
+   either caught the sun as a whole or not at all. Six vertices now form a
+   two-by-three strip that arches along the midrib and folds across it, so one
+   leaf has a range of normals and the canopy breaks up into light and shadow
+   the way real foliage does. The JS side reads the stride from the kernel. */
+constexpr int32_t CARD_V = 6;
+constexpr int32_t CARD_I = 12;
 float gCardPos[MAX_LEAF * CARD_V * 3];
 float gCardNrm[MAX_LEAF * CARD_V * 3];
 float gCardCol[MAX_LEAF * CARD_V * 3];
@@ -99,7 +114,16 @@ int32_t gLeafN = 0;
 /* ---------------------------------------------------------------- */
 struct Rng {
   uint32_t s;
-  explicit Rng(uint32_t seed) : s(seed ? seed : 0x9e3779b9u) {}
+  explicit Rng(uint32_t seed) {
+    /* Avalanche the seed first. Xorshift's first outputs from 11, 22 and 33 are
+       nearly the same number, so every "unique" tree was drawing the same
+       opening values and only diverged deeper in. */
+    uint32_t v = seed + 0x9e3779b9u;
+    v ^= v >> 16; v *= 0x7feb352du;
+    v ^= v >> 15; v *= 0x846ca68bu;
+    v ^= v >> 16;
+    s = v ? v : 0x9e3779b9u;
+  }
   uint32_t next() {
     s ^= s << 13;
     s ^= s >> 17;
@@ -188,21 +212,82 @@ int32_t pushVert(V3 p, V3 n, float u, float v, float r, float g, float b, float 
 
 void pushTri(int32_t a, int32_t b, int32_t c) {
   if (a < 0 || b < 0 || c < 0 || gIdxN + 3 > MAX_IDX) return;
-  /* Counter-clockwise seen from outside, which is what OpenGL/WebGL want for
-     the front face. Every emitter in this file orders its quad corners as
-     (a, b, c, d) walking the surface the other way round, so the winding is
-     reversed here, once, rather than at two dozen call sites. Getting this
-     wrong is invisible in a wireframe but not in the picture: with the default
-     FrontSide material the engine culled the bark we should see and drew the
-     inside of every trunk, limb and rock instead -- the flat, hollow, plastic
-     look the trees were criticised for. */
+  /* Wound so the face points the way its vertices' normals do. Every emitter
+     in this file orders its corners walking the surface one way round, so the
+     order is reversed once, here, instead of at two dozen call sites — but the
+     order alone is not enough: a ring stitched to a ring on a twisted frame
+     comes out mirrored, and those few dozen faces were culled, showing the
+     hollow inside of a trunk through its own bark. Testing the face against the
+     smoothed normal catches every emitter, including the ones that do not
+     exist yet. */
+  const float e1x = gPos[b * 3] - gPos[a * 3];
+  const float e1y = gPos[b * 3 + 1] - gPos[a * 3 + 1];
+  const float e1z = gPos[b * 3 + 2] - gPos[a * 3 + 2];
+  const float e2x = gPos[c * 3] - gPos[a * 3];
+  const float e2y = gPos[c * 3 + 1] - gPos[a * 3 + 1];
+  const float e2z = gPos[c * 3 + 2] - gPos[a * 3 + 2];
+  const float nx = e1y * e2z - e1z * e2y;
+  const float ny = e1z * e2x - e1x * e2z;
+  const float nz = e1x * e2y - e1y * e2x;
+  const float vx = gNrm[a * 3] + gNrm[b * 3] + gNrm[c * 3];
+  const float vy = gNrm[a * 3 + 1] + gNrm[b * 3 + 1] + gNrm[c * 3 + 1];
+  const float vz = gNrm[a * 3 + 2] + gNrm[b * 3 + 2] + gNrm[c * 3 + 2];
+  const bool flip = nx * vx + ny * vy + nz * vz < 0.0f;
   gIdx[gIdxN++] = uint32_t(a);
-  gIdx[gIdxN++] = uint32_t(c);
-  gIdx[gIdxN++] = uint32_t(b);
+  gIdx[gIdxN++] = uint32_t(flip ? c : b);
+  gIdx[gIdxN++] = uint32_t(flip ? b : c);
 }
 
 /* Cylinder between two points. `hint` carries the previous ring's frame so a
  * chain of segments does not visibly twist; returns the frame to pass on. */
+/* ---------------------------------------------------------------- */
+/* Bark relief                                                       */
+/* ---------------------------------------------------------------- */
+
+/* How deep a real trunk's furrows are, in metres: oak and cedar crack into deep
+   plates, birch is papery, a palm's leaf scars stand proud by about a
+   centimetre, a saguaro's ribs are deeper still. Capped against the limb radius
+   so a 2 cm twig is not carved like a 60 cm trunk. Set per species before the
+   skeleton is meshed. */
+float gBarkAmp = 0.0f;
+
+/* A hash that lands on one joint's position, so two segments meeting at a
+   joint compute the same furrow there and the bark cannot open a step. */
+float barkHash(V3 p) {
+  const float h = sinf(p.x * 12.9898f + p.y * 78.233f + p.z * 37.719f) * 43758.5453f;
+  return h - floorf(h);
+}
+
+/* Ridge pitch is a real distance — one furrow every ~3.8 cm of circumference,
+   which is what oak and pine actually show — so a trunk carries many ridges
+   around it and a twig only three. The count is limited to a quarter of the
+   ring's sample count, or the relief aliases into noise on a coarse ring. */
+int32_t barkLobes(float r, int32_t sides) {
+  int32_t lobes = int32_t(6.2831853f * r / 0.038f);
+  if (lobes < 3) lobes = 3;
+  const int32_t limit = sides / 4;
+  if (lobes > limit) lobes = limit;
+  return lobes < 3 ? 3 : lobes;
+}
+
+/* Furrow depth as a fraction of the ring radius, and the slope of its wall at
+   this angle. Depth 0 means "this limb is too fine to carve". */
+float barkDepth(float r, int32_t sides) {
+  if (gBarkAmp <= 0.0f || sides < 8) return 0.0f;
+  return minf(gBarkAmp, r * 0.085f) / r;
+}
+
+/* d(theta) in -1..1 and its derivative: the ridge profile and the way its wall
+   leans, which is what tilts the shading normal. */
+void barkProfile(float th, int32_t lobes, float bh1, float bh2, float bh3,
+                 float& outD, float& outSlope) {
+  const float a1 = th * float(lobes) + bh1;
+  const float a2 = a1 * 2.0f + (bh2 - bh1 * 2.0f);
+  const float a3 = a1 * 3.0f + (bh3 - bh1 * 3.0f);
+  outD = 0.62f * sinf(a1) + 0.26f * sinf(a2) + 0.12f * sinf(a3);
+  outSlope = float(lobes) * (0.62f * cosf(a1) + 0.52f * cosf(a2) + 0.36f * cosf(a3));
+}
+
 V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
                float uvScale, float shade, float rnd, V3 hint, bool capEnd,
                float sway0 = 0.0f, float sway1 = 0.0f, float ph = 0.0f) {
@@ -229,11 +314,28 @@ V3 tubeSegment(V3 a, V3 b, float r0, float r1, int32_t sides, float v0,
     const float r = ring ? r1 : r0;
     gPenSway = ring ? sway1 : sway0;
     gPenPh = ph;
+    /* Bark relief, keyed on the joint this ring stands on: two segments that
+       meet here hash the same position and therefore cut the same furrow, so
+       the limb stays sealed end to end. */
+    const float relief = barkDepth(r, sides);
+    const int32_t lobes = barkLobes(r, sides);
+    const float rh = barkHash(c);
+    const float bh1 = rh * kTwoPi, bh2 = (rh * 3.7f - floorf(rh * 3.7f)) * kTwoPi,
+                bh3 = (rh * 11.3f - floorf(rh * 11.3f)) * kTwoPi;
     for (int32_t j = 0; j <= sides; ++j) {
       const float th = (float(j) / float(sides)) * kTwoPi;
       const float cs = cosf(th), sn = sinf(th);
       const V3 n = v3(u.x * cs + w.x * sn, u.y * cs + w.y * sn, u.z * cs + w.z * sn);
-      pushVert(add(c, mul(n, r)), n, (float(j) / float(sides)) * uSpan, v0 + (ring ? length : 0.0f) * uvScale,
+      float rr = r;
+      V3 nrm = n;
+      if (relief > 0.0f) {
+        float d = 0.0f, slope = 0.0f;
+        barkProfile(th, lobes, bh1, bh2, bh3, d, slope);
+        rr *= 1.0f + relief * d;
+        const V3 tang = add(mul(u, -sn), mul(w, cs));
+        nrm = norm(sub(n, mul(tang, relief * slope)));
+      }
+      pushVert(add(c, mul(n, rr)), nrm, (float(j) / float(sides)) * uSpan, v0 + (ring ? length : 0.0f) * uvScale,
                shade, rnd, cen);
     }
   }
@@ -361,10 +463,30 @@ struct Node {
   float radius;
   float len;       /* accumulated distance from the root          */
   uint8_t terminal;
+  uint8_t isRoot;  /* a buttress root: tapers outward at the collar */
+  uint8_t level;   /* 0 = trunk and roots, 1..n = branching orders   */
+  uint8_t spare;
 };
 
 Node gNodes[MAX_NODES];
 int32_t gNodeN = 0;
+
+/* A tree is one surface, not a pile of tubes. Every joint owns exactly one ring
+   of vertices, and both the segment arriving at it and every segment leaving it
+   are bridged to that same ring, so the mesh is connected by construction: no
+   crack at a fork, and — because the wind values are read from the joint rather
+   than from the segment — no piece of the tree can blow away from the piece it
+   grows out of. */
+struct Ring {
+  int32_t start;
+  int32_t sides;
+  float radius;
+};
+Ring gRing[MAX_NODES];
+V3 gTan[MAX_NODES];   /* tangent at the joint                             */
+V3 gUf[MAX_NODES];    /* ring frame, parallel-transported from the root    */
+V3 gVf[MAX_NODES];
+float gNSway[MAX_NODES];
 /* Swing phase accumulated down each branch path. Two limbs of equal length
    still get different phases because the path that reached them differs. */
 float gNodePh[MAX_NODES];
@@ -426,6 +548,9 @@ int32_t addNode(V3 p, int32_t parent, float lenAcc) {
   gNodes[i].radius = 0.0f;
   gNodes[i].len = lenAcc;
   gNodes[i].terminal = 0;
+  gNodes[i].isRoot = 0;
+  gNodes[i].level = 0;
+  gNodes[i].spare = 0;
   return i;
 }
 
@@ -445,18 +570,21 @@ inline float swayOf(float len, float radius, const SpeciesSpec& s) {
   return clampf(path * (0.55f + 0.45f * thin), 0.0f, 1.0f);
 }
 
+inline float swayOf(float len, float radius, const SpeciesSpec& s);
+
+/* The trunk, as a skeleton only: nodes from the buried collar up to the point
+   where the crown takes over. Meshing happens once, after the whole tree
+   exists, so the trunk is the same surface as the limbs it carries. */
 int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
   const float lean = rng.range(-0.12f, 0.12f);
   const float leanZ = rng.range(-0.12f, 0.12f);
   const float wobble = rng.range(0.0f, 1.0f) * 0.35f;
   /* The foot of a tree is wider than the stem and buried a little, so the trunk
-     grows out of the ground instead of being stood on it: without the collar a
-     cylinder meeting a slope leaves a visible ring of daylight, and without the
-     burial an 8 cm trunk on a 20 cm dip in the terrain floats. */
-  const float footDepth = 0.10f + s.trunkRadius * 0.45f;
+     grows out of the ground instead of being stood on it. */
+  const float footDepth = 0.06f + s.trunkRadius * 0.22f;
   int32_t prev = addNode(v3(0.0f, -footDepth, 0.0f), -1, 0.0f);
   if (prev < 0) return -1;
-  gNodePh[prev] = 0.0f;
+  gNodePh[prev] = rng.range(0.0f, kTwoPi);
   V3 frame = v3(1.0f, 0.0f, 0.0f);
   for (int32_t i = 1; i <= s.segments; ++i) {
     const float t = float(i) / float(s.segments);
@@ -465,23 +593,67 @@ int32_t buildTrunk(const SpeciesSpec& s, Rng& rng, V3& outFrame) {
     const V3 p = v3(lean * y * y * 0.12f + sway, y, leanZ * y * y * 0.12f + sway * 0.6f);
     const int32_t idx = addNode(p, prev, s.trunkTop * t);
     if (idx < 0) return prev;
-    /* Flare: 55% wider at the collar, gone by a fifth of the way up the trunk,
-       which is the buttress profile of an oak or an ash rather than a cone. */
-    const float flareT = clampf(1.0f - float(i - 1) / (float(s.segments) * 0.22f), 0.0f, 1.0f);
-    const float flare = 1.0f + 0.55f * flareT * flareT;
-    const float r0 = s.trunkRadius * (1.0f - 0.72f * float(i - 1) / float(s.segments)) * flare;
-    const float r1 = s.trunkRadius * (1.0f - 0.72f * t);
-    const float shade = 0.70f + 0.30f * clampf(p.y / (s.trunkTop + 1.0f), 0.0f, 1.0f);
-    const float segLen = len(sub(p, gNodes[prev].p));
-    const float ph = gNodePh[prev] + segLen * 1.6f;
-    frame = tubeSegment(gNodes[prev].p, p, r0, r1, s.tubes, s.trunkTop * t * 0.35f, 0.35f,
-                        shade, 0.35f + 0.3f * t, frame, false,
-                        swayOf(gNodes[prev].len, r0, s), swayOf(gNodes[idx].len, r1, s), ph);
-    gNodePh[idx] = ph;
     prev = idx;
   }
   outFrame = frame;
   return prev;
+}
+
+/* Buttress roots: real ones, grown from the collar rather than drawn on it.
+   Each is a chain of nodes that leaves the trunk above ground, crosses the
+   soil line and runs under it, so the flare reads from every angle and the
+   roots are part of the same surface as the trunk. */
+void buildRoots(const SpeciesSpec& s, Rng& rng, int32_t trunkTip) {
+  if (s.trunkRadius < 0.03f) return;
+  const int32_t count = s.trunkRadius > 0.35f ? 6 : s.trunkRadius > 0.14f ? 5 : 4;
+  const int32_t collar = gNodes[trunkTip].parent >= 0 ? trunkTip : 0;
+  const float baseY = gNodes[trunkTip].p.y * 0.5f;
+  for (int32_t r = 0; r < count; ++r) {
+    const float a = float(r) * kTwoPi / float(count) + rng.range(-0.35f, 0.35f);
+    const float reach = s.trunkRadius * rng.range(1.7f, 3.1f);
+    int32_t parent = collar;
+    for (int32_t k = 0; k < 3; ++k) {
+      const float t = float(k + 1) / 3.0f;
+      const float spread = reach * t * t;
+      const float y = baseY * (1.0f - t) - s.trunkRadius * 0.30f * t - 0.02f;
+      const float wander = rng.range(-0.16f, 0.16f) * reach * 0.25f;
+      const V3 p = v3(cosf(a + wander) * spread, y, sinf(a + wander) * spread);
+      const int32_t idx = addNode(p, parent, gNodes[parent].len + len(sub(p, gNodes[parent].p)));
+      if (idx < 0) return;
+      gNodes[idx].isRoot = 1;
+      gNodePh[idx] = gNodePh[parent] + 0.25f;
+      parent = idx;
+    }
+  }
+}
+
+/* Radii. The trunk keeps its own profile — a collar flare thinning to the crown
+   base — instead of the da Vinci rule, which is a *branching* law and would
+   thin a trunk to the wrong diameter. Everything above the collar keeps da
+   Vinci, so a fork splits its girth between its children as a real one does. */
+void assignRadii(const SpeciesSpec& s, int32_t trunkTip) {
+  for (int32_t i = 0; i <= trunkTip && i < gNodeN; ++i) {
+    const float t = clampf(gNodes[i].len / maxf(0.01f, s.trunkTop), 0.0f, 1.0f);
+    const float flareT = clampf(1.0f - t / 0.16f, 0.0f, 1.0f);
+    const float flare = 1.0f + 0.34f * flareT * flareT * flareT;
+    gNodes[i].radius = s.trunkRadius * (1.0f - 0.74f * t) * flare;
+  }
+  float rootReach = 0.0f;
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    if (gNodes[i].isRoot) rootReach = maxf(rootReach, len(gNodes[i].p));
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    const int32_t p = gNodes[i].parent;
+    if (p >= 0 && p < i && !gNodes[i].isRoot && gNodes[p].radius > 0.0f) {
+      const float cap = gNodes[p].radius * 0.86f;
+      if (gNodes[i].radius > cap) gNodes[i].radius = cap;
+    }
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    if (!gNodes[i].isRoot) continue;
+    const float t = rootReach > 0.0f ? clampf(len(gNodes[i].p) / rootReach, 0.0f, 1.0f) : 1.0f;
+    gNodes[i].radius = maxf(0.012f, s.trunkRadius * (0.46f * (1.0f - t) + 0.10f));
+  }
 }
 
 /* Space colonisation (Runions et al. 2007). Attraction points fill the crown;
@@ -645,41 +817,387 @@ void meshBranches(const SpeciesSpec& s, Rng& rng, int32_t firstBranch, V3 hint) 
   }
 }
 
+/* A limb is a curve, but the colony only ever puts a joint where it stepped.
+   Splitting the long segments keeps a limb from being a straight stick between
+   two widely spaced joints, and it is where the extra rings of a near-tier tree
+   come from — geometry that rounds a silhouette instead of merely adding
+   facets to it. New joints are appended, so no existing index moves. */
+void refineSkeleton(float maxSeg) {
+  if (maxSeg <= 0.0f) return;
+  const int32_t n0 = gNodeN;
+  for (int32_t i = 0; i < n0; ++i) {
+    const int32_t child = i;
+    const int32_t parent = gNodes[child].parent;
+    if (parent < 0) continue;
+    const V3 a = gNodes[parent].p, b = gNodes[child].p;
+    const float L = len(sub(b, a));
+    if (L <= maxSeg) continue;
+    const int32_t pieces = int32_t(ceilf(L / maxSeg));
+    if (pieces < 2 || pieces > 6) continue;
+    int32_t prev = parent;
+    for (int32_t k = 1; k < pieces; ++k) {
+      const float t = float(k) / float(pieces);
+      const V3 pm = add(a, mul(sub(b, a), t));
+      const int32_t idx = addNode(pm, prev, gNodes[parent].len + L * t);
+      if (idx < 0) return;
+      gNodes[idx].radius = lerpf(gNodes[parent].radius, gNodes[child].radius, t);
+      gNodes[idx].isRoot = gNodes[child].isRoot;
+      gNodes[idx].level = gNodes[child].level;
+      gNodePh[idx] = gNodePh[parent] + L * t * 1.6f;
+      prev = idx;
+    }
+    gNodes[child].parent = prev;
+    gNodes[child].len = gNodes[parent].len + L;
+  }
+}
+
+/* Refinement inserts a joint *between* a node and its parent, which leaves the
+   parent sitting later in the array than the child. Every pass below walks the
+   array in order and reads its parent's frame, phase and radius, so a child
+   would inherit whatever the last plant happened to leave behind — the same
+   seed growing a different tree. Re-laying the skeleton out parent-first, once,
+   removes the whole class of problem instead of guarding each pass. */
+void orderNodes(void) {
+  if (gNodeN < 2) return;
+  Node tmp[MAX_NODES];
+  int32_t order[MAX_NODES];
+  int32_t stack[MAX_NODES];
+  bool seen[MAX_NODES] = {};
+  int32_t sp = 0, count = 0;
+  /* The foot node is the only root; the rest hang off it. */
+  stack[sp++] = 0;
+  order[0] = 0;
+  while (sp > 0) {
+    const int32_t i = stack[--sp];
+    order[count++] = i;
+    for (int32_t c = gNodeN - 1; c >= 1; --c) {
+      if (seen[c] || c == i) continue;
+      if (gNodes[c].parent == i) { seen[c] = true; stack[sp++] = c; }
+    }
+    if (sp > MAX_NODES) return;
+  }
+  /* Anything orphaned by a clamped colony keeps its geometry-free state out of
+     the mesh: it is simply dropped. */
+  if (count < 2) return;
+  int32_t newIndex[MAX_NODES];
+  for (int32_t k = 0; k < count; ++k) newIndex[order[k]] = k;
+  for (int32_t k = 0; k < count; ++k) tmp[k] = gNodes[order[k]];
+  for (int32_t k = 0; k < count; ++k) {
+    const int32_t oldParent = tmp[k].parent;
+    tmp[k].parent = (oldParent >= 0 && newIndex[oldParent] < count) ? newIndex[oldParent] : -1;
+    gNodePh[k] = gNodePh[order[k]];
+    gNodes[k] = tmp[k];
+  }
+  gNodeN = count;
+}
+
+/* ---- the connected mesher -------------------------------------------------
+   One ring per joint. The trunk, every limb, every twig and every buttress
+   root are bridged to those rings, so the whole plant is a single connected
+   surface and every wind value it carries belongs to the joint it grew from. */
+
+V3 rotAxis(V3 v, V3 axis, float a);   /* defined below, used to transport frames */
+
+inline int32_t sidesForRadius(float r, int32_t maxSides, int32_t minSides) {
+  /* Round wood, even on the twigs: a 2 cm branch at five sides reads as a
+     plank when its silhouette crosses the sky. The far tier is allowed to
+     square off, the near tier is not. */
+  const int32_t n = int32_t(float(minSides) + r * 46.0f);
+  return n < minSides ? minSides : (n > maxSides ? maxSides : n);
+}
+
+/* Frames. The tangent at a joint is the mean of the directions it connects,
+   and the frame is the parent's frame turned by the smallest rotation that
+   takes the parent tangent onto this one. That is parallel transport: the bark
+   does not wind round the limb between two joints, which is what a per-segment
+   frame does and why the old bark texture spiralled like a corkscrew. */
+void buildFrames(void) {
+  /* One adjacency pass, not a scan of every node per node: at 1 400 joints the
+     quadratic form cost more to grow one tree than the whole studio spends
+     placing a stand of them. */
+  int32_t childHead[MAX_NODES];
+  int32_t childNext[MAX_NODES];
+  for (int32_t i = 0; i < gNodeN; ++i) childHead[i] = -1;
+  for (int32_t i = 1; i < gNodeN; ++i) {
+    const int32_t p = gNodes[i].parent;
+    if (p < 0 || p >= i) continue;
+    childNext[i] = childHead[p];
+    childHead[p] = i;
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    V3 sum = v3(0.0f, 0.0f, 0.0f);
+    if (gNodes[i].parent >= 0) sum = add(sum, norm(sub(gNodes[i].p, gNodes[gNodes[i].parent].p)));
+    for (int32_t c = childHead[i]; c >= 0; c = childNext[c]) {
+      sum = add(sum, norm(sub(gNodes[c].p, gNodes[i].p)));
+    }
+    if (len(sum) < 1e-5f) sum = v3(0.0f, 1.0f, 0.0f);
+    gTan[i] = norm(sum);
+    if (gNodes[i].parent >= 0) {
+      const V3 incoming = norm(sub(gNodes[i].p, gNodes[gNodes[i].parent].p));
+      if (dot(gTan[i], incoming) < 0.05f) gTan[i] = incoming;
+    }
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    const int32_t parent = gNodes[i].parent;
+    if (parent < 0) {
+      const V3 t = gTan[i];
+      const V3 ref = absf(t.y) > 0.9f ? v3(1.0f, 0.0f, 0.0f) : v3(0.0f, 1.0f, 0.0f);
+      gUf[i] = norm(sub(ref, mul(t, dot(ref, t))));
+      gVf[i] = cross(t, gUf[i]);
+      continue;
+    }
+    const V3 tp = gTan[parent], ti = gTan[i];
+    const V3 axis = cross(tp, ti);
+    const float sn = len(axis);
+    const float cs = clampf(dot(tp, ti), -1.0f, 1.0f);
+    if (sn < 1e-6f) {
+      gUf[i] = gUf[parent];
+      gVf[i] = gVf[parent];
+      continue;
+    }
+    const V3 a = mul(axis, 1.0f / sn);
+    gUf[i] = norm(rotAxis(gUf[parent], a, atan2f(sn, cs)));
+    gVf[i] = cross(ti, gUf[i]);
+  }
+}
+
+/* Wind at a joint, and the phase that makes neighbouring limbs swing out of
+   step. Both are properties of the joint, never of the segment: two vertices
+   standing on the same joint always receive the same displacement, so a fork
+   cannot open up however hard the wind blows. */
+void computeNodeWind(const SpeciesSpec& s) {
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    gNSway[i] = (gNodes[i].isRoot || gNodes[i].parent < 0)
+      ? 0.0f : swayOf(gNodes[i].len, gNodes[i].radius, s);
+    if (gNodes[i].parent >= 0 && !gNodes[i].isRoot) {
+      const int32_t p = gNodes[i].parent;
+      gNodePh[i] = gNodePh[p] + len(sub(gNodes[i].p, gNodes[p].p)) * 1.6f;
+    }
+  }
+}
+
+float barkDepthFor(int32_t kind) {
+  switch (kind) {
+    case SP_OAK: return 0.018f;
+    case SP_BIRCH: return 0.0045f;
+    case SP_ACACIA: return 0.011f;
+    case SP_DEADTREE: return 0.008f;
+    case SP_PINE: case SP_SPRUCE: case SP_JUNIPER: return 0.013f;
+    case SP_KRUMM: return 0.010f;
+    case SP_PALM: return 0.009f;
+    case SP_TREEFERN: return 0.006f;
+    case SP_SAGUARO: case SP_BARREL: return 0.020f;
+    case SP_SAGE: case SP_JOSHUA: return 0.005f;
+    default: return 0.0035f;
+  }
+}
+
+/* One ring of vertices at a joint. Buttress lobes on the lowest rings of the
+   trunk are what make the flare read as roots rather than as a cone. */
+void emitRing(int32_t i, int32_t sides) {
+  const V3 c = gNodes[i].p;
+  const float r = maxf(0.004f, gNodes[i].radius);
+  const float bark = clampf(0.34f + gNodes[i].p.y * 0.03f, 0.34f, 0.95f);
+  gPenSway = gNSway[i];
+  gPenPh = gNodePh[i];
+  gPenPart = 0.0f;
+  gRing[i].start = gVert;
+  gRing[i].sides = sides;
+  gRing[i].radius = r;
+  const float tile = maxf(0.22f, 6.2831853f * r * 0.55f);
+  /* A per-vertex random for the bark shader. It must not be periodic: taking it
+     from the joint index modulo anything lays a visible stripe up every limb,
+     which is the "obviously procedural" tell this whole pass exists to remove. */
+  const float hash = (sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f - floorf(sinf(float(i) * 12.9898f + gNodePh[i]) * 43758.5453f));
+  /* Bark furrows. The pitch is a real distance — one ridge every ~3.8 cm of
+     circumference, which is what oak and pine actually show — so a trunk gets
+     many ridges around it and a twig gets three, instead of every limb carrying
+     the same number of grooves and the bark reading as a pattern. The highest
+     harmonic is kept under a quarter of the ring's sample count, or the relief
+     would alias into noise on the coarse rings of a thin limb. */
+  const float reliefDepth = gNodes[i].isRoot ? 0.0f : barkDepth(r, sides);
+  const int32_t lobes = barkLobes(r, sides);
+  const float h2 = hash * 3.7f - floorf(hash * 3.7f);
+  const float h3 = hash * 11.3f - floorf(hash * 11.3f);
+  /* The phase drifts with the joint's own distance along the limb, so the
+     ridges wander up a trunk instead of standing in straight ruled grooves. */
+  const float bh1 = hash * kTwoPi + gNodes[i].len * 0.9f;
+  const float bh2 = h2 * kTwoPi + gNodes[i].len * 1.7f;
+  const float bh3 = h3 * kTwoPi;
+  const V3 cen = gNodes[i].p;
+  const float lobePhase = gNodePh[i] * 0.7f;
+  const float lobeAmt = gNodes[i].level == 0 && !gNodes[i].isRoot
+    ? clampf(1.0f - gNodes[i].p.y / maxf(0.15f, 0.5f), 0.0f, 1.0f) * 0.22f : 0.0f;
+  for (int32_t j = 0; j < sides; ++j) {
+    const float th = float(j) / float(sides) * kTwoPi;
+    const float cs = cosf(th), sn = sinf(th);
+    V3 n = v3(gUf[i].x * cs + gVf[i].x * sn, gUf[i].y * cs + gVf[i].y * sn,
+              gUf[i].z * cs + gVf[i].z * sn);
+    float rr = r;
+    if (lobeAmt > 0.0f) {
+      const float lobe = cosf(th * 5.0f + lobePhase);
+      if (lobe > 0.0f) rr *= 1.0f + lobeAmt * lobe * lobe * lobe;
+    }
+    V3 nrm = n;
+    if (reliefDepth > 0.0f) {
+      float d = 0.0f, slope = 0.0f;
+      barkProfile(th, lobes, bh1, bh2, bh3, d, slope);
+      rr *= 1.0f + reliefDepth * d;
+      /* The normal follows the furrow wall: the ridge is lit on its flank and
+         falls into shadow in the valley. */
+      const V3 tang = add(mul(gUf[i], -sn), mul(gVf[i], cs));
+      nrm = norm(sub(n, mul(tang, reliefDepth * slope)));
+    }
+    pushVert(add(c, mul(n, rr)), nrm, float(j) / float(sides) * tile,
+             gNodes[i].len * 0.55f, bark, 0.35f + 0.62f * hash, cen);
+  }
+}
+
+/* Bridge two rings of different counts. The angular step is the finer of the
+   two and each end of a quad repeats whichever ring is coarser, so no hole can
+   survive between a 4-sided twig and a 12-sided trunk. */
+void stitchRings(int32_t parent, int32_t child) {
+  const Ring& A = gRing[parent];
+  const Ring& B = gRing[child];
+  if (A.sides < 3 || B.sides < 3) return;
+  const int32_t steps = A.sides > B.sides ? A.sides : B.sides;
+  for (int32_t k = 0; k < steps; ++k) {
+    const float t0 = float(k) / float(steps), t1 = float(k + 1) / float(steps);
+    const int32_t a0 = int32_t(floorf(t0 * float(A.sides) + 0.5f)) % A.sides;
+    const int32_t a1 = int32_t(floorf(t1 * float(A.sides) + 0.5f)) % A.sides;
+    const int32_t b0 = int32_t(floorf(t0 * float(B.sides) + 0.5f)) % B.sides;
+    const int32_t b1 = int32_t(floorf(t1 * float(B.sides) + 0.5f)) % B.sides;
+    if (a0 == a1 && b0 == b1) continue;
+    const int32_t va0 = A.start + a0, va1 = A.start + a1;
+    const int32_t vb0 = B.start + b0, vb1 = B.start + b1;
+    if (a0 == a1) { pushTri(va0, vb0, vb1); continue; }
+    if (b0 == b1) { pushTri(va0, vb0, va1); continue; }
+    pushTri(va0, vb0, va1);
+    pushTri(va1, vb0, vb1);
+  }
+}
+
+/* A tip closes with a fan, so no hollow tube end shows at the end of a twig or
+   a root. */
+void capRing(int32_t i) {
+  const Ring& R = gRing[i];
+  if (R.sides < 3) return;
+  const V3 dir = gTan[i];
+  gPenSway = gNSway[i];
+  gPenPh = gNodePh[i];
+  gPenPart = 0.0f;
+  const V3 c = add(gNodes[i].p, mul(dir, R.radius * 0.85f));
+  const int32_t tip = pushVert(c, dir, 0.5f, gNodes[i].len * 0.55f, 0.5f, 0.2f, gNodes[i].p);
+  if (tip < 0) return;
+  for (int32_t j = 0; j < R.sides; ++j) {
+    pushTri(R.start + j, tip, R.start + (j + 1) % R.sides);
+  }
+}
+
+/* The whole plant, in one pass: rings first, then every bridge. */
+void meshSkeleton(const SpeciesSpec& s, int32_t maxSides, int32_t minSides) {
+  (void)s;
+  buildFrames();
+  computeNodeWind(s);
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    emitRing(i, sidesForRadius(gNodes[i].radius, maxSides, minSides));
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    const int32_t parent = gNodes[i].parent;
+    if (parent >= 0) stitchRings(parent, i);
+  }
+  /* The buried foot is closed so the trunk is solid from any angle. */
+  if (gNodeN > 0) {
+    const Ring& R = gRing[0];
+    gPenSway = gNSway[0];
+    gPenPh = gNodePh[0];
+    const V3 down = mul(gTan[0], -1.0f);
+    const int32_t centre = pushVert(gNodes[0].p, down, 0.5f, 0.0f, 0.28f, 0.2f, gNodes[0].p);
+    if (centre >= 0) {
+      for (int32_t j = 0; j < R.sides; ++j) pushTri(R.start + j, R.start + (j + 1) % R.sides, centre);
+    }
+  }
+  for (int32_t i = 0; i < gNodeN; ++i) {
+    if (gNodes[i].terminal) capRing(i);
+  }
+}
+
 /* Phyllotaxis: the golden angle keeps successive leaves from shading each
- * other, so the canopy fills evenly instead of in visible rings. */
-void emitLeafAnchors(const SpeciesSpec& s, Rng& rng, int32_t firstBranch) {
+ * other, so the canopy fills evenly instead of in visible rings.
+ *
+ * A leaf grows on a twig, not on a fingertip. Only the finest wood carries
+ * foliage — anything thinner than three times the species' terminal radius —
+ * and the anchors are spread along that wood by distance, so the inside of the
+ * crown is as leafy as its shell. Anchoring them only on the terminal joints,
+ * as this did, left a hollow crown with every leaf piled into a shell of flat
+ * sheets at the very tips. */
+void emitLeafAnchors(const SpeciesSpec& s, Rng& rng, int32_t firstBranch, int32_t detail) {
   if (!s.leaves) return;
   const float golden = 2.39996323f; /* 137.5 degrees */
   float phase = rng.range(0.0f, kTwoPi);
+  /* "Fine enough to carry a leaf" is relative to the plant in hand: the da
+     Vinci radii of a birch bottom out above any absolute threshold copied from
+     an oak, which is how a birch ended up with no leaves at all. */
+  float rMin = 1e9f, rMax = 0.0f;
   for (int32_t i = firstBranch; i < gNodeN; ++i) {
-    if (!gNodes[i].terminal) continue;
-    const V3 p = gNodes[i].p;
-    const V3 outward = norm(sub(p, v3(0.0f, s.crownY, 0.0f)));
-    const float t = clampf((p.y - (s.crownY - s.crownRY)) / (2.0f * s.crownRY), 0.0f, 1.0f);
-    for (int32_t c = 0; c < s.cards; ++c) {
+    if (gNodes[i].isRoot || gNodes[i].parent < 0) continue;
+    rMin = minf(rMin, gNodes[i].radius);
+    rMax = maxf(rMax, gNodes[i].radius);
+  }
+  if (rMin > rMax) return;
+  const float fine = rMin + (rMax - rMin) * 0.42f;
+  float twigLength = 0.0f;
+  for (int32_t i = firstBranch; i < gNodeN; ++i) {
+    const int32_t p = gNodes[i].parent;
+    if (p < 0 || gNodes[i].isRoot || gNodes[i].radius > fine) continue;
+    twigLength += len(sub(gNodes[i].p, gNodes[p].p));
+  }
+  if (twigLength < 1e-4f) return;
+  /* A budget, not a rule. One card is a whole shoot, so a mature oak needs a
+     few hundred of them, not thousands: `s.cards` sets the species' density and
+     the tier trims it for distance. */
+  const float tier = detail <= 0 ? 0.42f : detail == 1 ? 0.72f : 1.0f;
+  const float budget = clampf(float(s.cards) * 190.0f * tier, 90.0f,
+                              float(MAX_LEAF) * 0.55f);
+  const float spacing = twigLength / budget;
+  float carry = rng.range(0.0f, spacing);
+  for (int32_t i = firstBranch; i < gNodeN; ++i) {
+    const int32_t p = gNodes[i].parent;
+    if (p < 0 || gNodes[i].isRoot || gNodes[i].radius > fine) continue;
+    const V3 a = gNodes[p].p;
+    const V3 b = gNodes[i].p;
+    const float seg = len(sub(b, a));
+    carry += seg;
+    while (carry >= spacing) {
+      carry -= spacing;
       if (gLeafN >= MAX_LEAF) return;
+      const float along = seg > 1e-5f ? clampf(1.0f - carry / seg, 0.0f, 1.0f) : 1.0f;
+      const V3 base = add(a, mul(sub(b, a), along));
+      const V3 outward = norm(sub(base, v3(0.0f, s.crownY, 0.0f)));
+      const float t = clampf((base.y - (s.crownY - s.crownRY)) / (2.0f * s.crownRY), 0.0f, 1.0f);
       phase += golden;
-      const float ring = 0.55f + 0.45f * rng.f();
-      const V3 d = norm(v3(outward.x * ring + cosf(phase) * 0.55f,
-                           -0.15f + rng.range(-0.25f, 0.55f),
-                           outward.z * ring + sinf(phase) * 0.55f));
+      const float ring = 0.45f + 0.55f * rng.f();
+      const V3 d = norm(v3(outward.x * ring + cosf(phase) * 0.75f,
+                           -0.35f + rng.range(-0.3f, 0.5f),
+                           outward.z * ring + sinf(phase) * 0.75f));
       float* leaf = &gLeaf[gLeafN * LEAF_STRIDE];
-      leaf[0] = p.x + d.x * 0.03f;
-      leaf[1] = p.y + d.y * 0.03f;
-      leaf[2] = p.z + d.z * 0.03f;
+      leaf[0] = base.x + d.x * 0.02f;
+      leaf[1] = base.y + d.y * 0.02f;
+      leaf[2] = base.z + d.z * 0.02f;
       leaf[3] = d.x; leaf[4] = d.y; leaf[5] = d.z;
-      leaf[6] = s.leafSize * (0.78f + 0.42f * rng.f());
+      leaf[6] = s.leafSize * (0.72f + 0.5f * rng.f());
       leaf[7] = 0.2f + 0.8f * t;
-      /* The card inherits its branch tip's compliance and phase, so leaves ride
-         the limb instead of fluttering in place. */
-      leaf[8] = swayOf(gNodes[i].len, gNodes[i].radius, s);
-      leaf[9] = gNodePh[i];
+      /* The card inherits the joint's own compliance and phase — the same
+         numbers its twig's ring vertices carry — so a leaf rides the limb and
+         can never drift off the end of it. The two ends of a twig have nearly
+         the same sway, so a leaf between them never tears away. */
+      leaf[8] = gNSway[p] * (1.0f - along) + gNSway[i] * along;
+      leaf[9] = gNodePh[p] * (1.0f - along) + gNodePh[i] * along;
       ++gLeafN;
     }
   }
 }
 
-/* ---------------------------------------------------------------- */
 /* Leaf cards                                                       */
 /* ---------------------------------------------------------------- */
 /* Per-species card colouring. `petal` > 0 also grows bloom cards: the pale
@@ -729,31 +1247,56 @@ void pushCard(V3 b, V3 dir, float size, float roll, float c0r, float c0g, float 
   const float shadow = 0.85f + 0.30f * rnd;
   const float col[3] = { lerpf(c0r, c1r, t) * shadow, lerpf(c0g, c1g, t) * shadow,
                          lerpf(c0b, c1b, t) * shadow };
-  const V3 corner[4] = {
-    sub(b, mul(axis, h)), add(b, mul(axis, h)),
-    add(tip, mul(axis, h)), sub(tip, mul(axis, h))
-  };
-  const float uv[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
   const V3 centroid = mul(add(b, tip), 0.5f);
   const int32_t base = gCardV;
-  for (int32_t k = 0; k < 4; ++k) {
-    const int32_t i = gCardV++;
-    gCardPos[i * 3] = corner[k].x; gCardPos[i * 3 + 1] = corner[k].y; gCardPos[i * 3 + 2] = corner[k].z;
-    gCardNrm[i * 3] = n.x; gCardNrm[i * 3 + 1] = n.y; gCardNrm[i * 3 + 2] = n.z;
-    gCardCol[i * 3] = col[0]; gCardCol[i * 3 + 1] = col[1]; gCardCol[i * 3 + 2] = col[2];
-    gCardUv[i * 2] = uv[k][0]; gCardUv[i * 2 + 1] = uv[k][1];
-    gCardRnd[i] = rnd;
-    gCardCen[i * 3] = centroid.x; gCardCen[i * 3 + 1] = centroid.y; gCardCen[i * 3 + 2] = centroid.z;
-    gCardSway[i] = sway;
-    gCardPh[i] = phase;
-    gCardPart[i] = part;
+  /* 3 rows x 2 columns. The midrib droops, the two halves fold towards each
+     other, and the normal turns with the fold, so a single card shades across
+     its own width instead of flipping as one flat plane. */
+  const float droop = size * 0.10f;
+  for (int32_t r0 = 0; r0 < 3; ++r0) {
+    const float fr = float(r0) * 0.5f;
+    const V3 along = add(b, mul(sub(tip, b), fr));
+    const float width = h * (1.0f - 0.28f * fr);
+    for (int32_t c0 = 0; c0 < 2; ++c0) {
+      const float side = c0 ? 1.0f : -1.0f;
+      const int32_t i = gCardV++;
+      const V3 p = add(sub(along, mul(n, droop * fr * fr)), mul(axis, side * width));
+      const V3 vn = norm(add(add(n, mul(axis, side * 0.42f)), mul(v, (fr - 0.5f) * 0.22f)));
+      gCardPos[i * 3] = p.x; gCardPos[i * 3 + 1] = p.y; gCardPos[i * 3 + 2] = p.z;
+      gCardNrm[i * 3] = vn.x; gCardNrm[i * 3 + 1] = vn.y; gCardNrm[i * 3 + 2] = vn.z;
+      gCardCol[i * 3] = col[0]; gCardCol[i * 3 + 1] = col[1]; gCardCol[i * 3 + 2] = col[2];
+      gCardUv[i * 2] = c0 ? 1.0f : 0.0f; gCardUv[i * 2 + 1] = fr;
+      gCardRnd[i] = rnd;
+      gCardCen[i * 3] = centroid.x; gCardCen[i * 3 + 1] = centroid.y; gCardCen[i * 3 + 2] = centroid.z;
+      gCardSway[i] = sway;
+      gCardPh[i] = phase;
+      gCardPart[i] = part;
+    }
   }
-  gCardIdx[gCardI++] = uint32_t(base);
-  gCardIdx[gCardI++] = uint32_t(base + 1);
-  gCardIdx[gCardI++] = uint32_t(base + 2);
-  gCardIdx[gCardI++] = uint32_t(base);
-  gCardIdx[gCardI++] = uint32_t(base + 2);
-  gCardIdx[gCardI++] = uint32_t(base + 3);
+  /* Two quads. The card normal was flipped towards the outside of the crown a
+     moment ago, so the winding has to follow it: emitted blind, half the cards
+     ended up front-facing away from their own normal and were culled, which is
+     exactly the shard-of-cardboard look the crowns had. */
+  const V3 face = cross(axis, v);
+  const bool flip = dot(face, n) > 0.0f;
+  for (int32_t r0 = 0; r0 < 2; ++r0) {
+    const int32_t a = base + r0 * 2, bq = a + 1, c1 = a + 2, d = a + 3;
+    if (!flip) {
+      gCardIdx[gCardI++] = uint32_t(a);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(d);
+    } else {
+      gCardIdx[gCardI++] = uint32_t(a);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(c1);
+      gCardIdx[gCardI++] = uint32_t(bq);
+      gCardIdx[gCardI++] = uint32_t(d);
+      gCardIdx[gCardI++] = uint32_t(c1);
+    }
+  }
   ++gCardN;
 }
 
@@ -802,12 +1345,13 @@ struct RockSpec {
   float tint[3];
   float moss;      /* lichen mask strength: 0 = too young/bare for a crust */
   float banding;   /* sedimentary banding weight                          */
+  float tile;      /* metres per texture repeat: the stone's real grain   */
 };
 
 const RockSpec kRock[ROCK_COUNT] = {
-  /* granite   */ { 6, { 1.00f, 1.00f, 1.00f }, 1.00f, 0.07f },
-  /* sandstone */ { 6, { 1.40f, 0.98f, 0.68f }, 0.25f, 0.17f },
-  /* basalt    */ { 9, { 0.34f, 0.33f, 0.34f }, 0.00f, 0.07f }
+  /* granite   */ { 6, { 1.00f, 1.00f, 1.00f }, 1.00f, 0.07f, 0.55f },
+  /* sandstone */ { 6, { 1.40f, 0.98f, 0.68f }, 0.25f, 0.17f, 0.75f },
+  /* basalt    */ { 9, { 0.34f, 0.33f, 0.34f }, 0.00f, 0.07f, 0.42f }
 };
 
 struct Plane {
@@ -839,6 +1383,11 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
   const float sx = rng.range(0.95f, 1.35f);
   const float sy = rng.range(0.55f, 0.90f);
   const float sz = rng.range(0.80f, 1.20f);
+  /* Texture scale, in metres. A boulder and a hand specimen are made of the
+     same granite, so the grain has to be the same size on both: the UVs below
+     are arc lengths divided by this, not 0..1 across whatever shape came out.
+     The repeat count around the stone is rounded to a whole number so the
+     meridian seam closes instead of cutting the grain. */
 
   auto radiusAt = [&](V3 dir) -> float {
     float sum = 0.0f;
@@ -859,6 +1408,27 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
     const float r = radiusAt(norm(d));
     return v3(d.x / l * r * sx, d.y / l * r * sy + 0.45f, d.z / l * r * sz);
   };
+
+  /* Mean radius of the body that was actually grown, so one texture repeat is
+     `tile` metres of stone and not `tile` metres of whatever bounding box the
+     seed happened to produce. Sampled on the same grid the mesh uses. */
+  float radiusSum = 0.0f;
+  int32_t radiusN = 0;
+  for (int32_t j = 0; j <= 12; ++j) {
+    const float th = float(j) / 12.0f * kPi;
+    const float st = sinf(th), ct = cosf(th);
+    for (int32_t i = 0; i < 16; ++i) {
+      const float f = float(i) / 16.0f * kTwoPi;
+      radiusSum += radiusAt(v3(st * cosf(f), ct, st * sinf(f)));
+      ++radiusN;
+    }
+  }
+  const float meanR = radiusN > 0 ? radiusSum / float(radiusN) : 1.0f;
+  const float uvTile = maxf(0.08f, rs.tile);
+  const float rMean = meanR * (sx + sz) * 0.5f;
+  int32_t uRepeat = int32_t(floorf(kTwoPi * rMean / uvTile + 0.5f));
+  if (uRepeat < 2) uRepeat = 2;
+  const float vScale = meanR * sy / uvTile;
 
   const int32_t nu = detail >= 2 ? 40 : 32;
   const int32_t nv = detail >= 2 ? 26 : 20;
@@ -894,7 +1464,9 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
       const float rr = ((q + 0.025f) * (1.0f - moss) + 0.17f * moss) * rs.tint[0];
       const float gg = ((q + 0.008f) * (1.0f - moss) + 0.27f * moss) * rs.tint[1];
       const float bb = ((q - 0.020f) * (1.0f - moss) + 0.09f * moss) * rs.tint[2];
-      pushVert(p, n, float(i) / float(nu), float(j) / float(nv), rr, gg, bb,
+      const float uu = float(i) / float(nu) * float(uRepeat);
+      const float vv = th * vScale;
+      pushVert(p, n, uu, vv, rr, gg, bb,
                nn, v3(0.0f, 0.45f, 0.0f));
       if (prevRow >= 0 && i > 0) {
         const int32_t a0 = prevRow + i - 1, a1 = prevRow + i;
@@ -980,6 +1552,11 @@ void applyShape(SpeciesSpec& s) {
   s.attractors = a < 16 ? 16 : (a > 380 ? 380 : a);
   const int32_t seg = int32_t(float(s.segments) * (0.85f + 0.15f * d) + 0.5f);
   s.segments = seg < 3 ? 3 : (seg > 26 ? 26 : seg);
+  /* Density has to shorten the colony's stride, not only add attraction
+     points: a denser crown that steps as far as a sparse one converges to a
+     thinner skeleton, which is how the slider could add "branches" and return
+     fewer vertices. */
+  s.step *= 1.0f / (0.55f + 0.45f * d);
 }
 
 int32_t lsExpand(const LsProd* rules, int32_t ruleN, const char* axiom,
@@ -1256,7 +1833,9 @@ void blade(V3 root, V3 bendAxis, float length, float width, float lean,
       const V3 nrm = (cols == 2)
                         ? norm(add(n, mul(widthAxis, c == 0 ? -0.28f : 0.28f)))
                         : norm(add(n, mul(widthAxis, (c == 0) ? -0.55f : (c == 2 ? 0.55f : 0.0f))));
-      pushVert(v, nrm, float(c) * 0.5f, t, lerpf(shade0, shade1, t), rnd, cen);
+      const float bs = lerpf(shade0, shade1, t);
+      pushVert(v, nrm, float(c) * 0.5f, t, bs * gLeafCol[0], bs * gLeafCol[1],
+               bs * gLeafCol[2], rnd, cen);
     }
     if (r + 1 < rows) p = add(p, mul(tangent, ds));
   }
@@ -2090,8 +2669,29 @@ int32_t generateSage(uint32_t seed, int32_t detail) {
 /* ---------------------------------------------------------------- */
 /* Tree entry point                                                 */
 /* ---------------------------------------------------------------- */
+/* Linear albedo per kind. Foliage is never one green: a fern is darker and
+   bluer than a lawn, a sagebrush is grey-silver, a succulent is dusty
+   green and a palm frond is deep and slightly yellow. */
+void setLeafAlbedo(int32_t kind) {
+  float r = 0.084f, g = 0.190f, b = 0.047f;
+  switch (kind) {
+    case SP_TALLGRASS: case SP_FLOWER: r = 0.105f; g = 0.205f; b = 0.055f; break;
+    case SP_FERN: case SP_TREEFERN: r = 0.045f; g = 0.120f; b = 0.038f; break;
+    case SP_DAISY: case SP_TULIP: case SP_LAVENDER: r = 0.070f; g = 0.165f; b = 0.048f; break;
+    case SP_SAGUARO: case SP_BARREL: case SP_AGAVE: r = 0.095f; g = 0.150f; b = 0.085f; break;
+    case SP_SAGE: case SP_JUNIPER: r = 0.125f; g = 0.145f; b = 0.105f; break;
+    case SP_JOSHUA: r = 0.110f; g = 0.115f; b = 0.060f; break;
+    case SP_PALM: r = 0.050f; g = 0.125f; b = 0.036f; break;
+    case SP_PEBBLE: r = 0.320f; g = 0.310f; b = 0.290f; break;
+    default: break;
+  }
+  gLeafCol[0] = r; gLeafCol[1] = g; gLeafCol[2] = b;
+}
+
 int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   if (kind < 0 || kind >= SP_COUNT) return 0;
+  setLeafAlbedo(kind);
+  gBarkAmp = barkDepthFor(kind);
   gNodeN = 0;
   gAttN = 0;
   /* Habit-locked species first: a pine, a prickly pear and a sagebrush are
@@ -2129,24 +2729,46 @@ int32_t generateTree(int32_t kind, uint32_t seed, int32_t detail) {
   applyShape(s);
   Rng rng(seed ^ 0x51ed270bu);
 
+  /* Vigour. Two oaks of one species are never the same size — one grew in the
+     open, one under a taller neighbour — so the species table is a mean and
+     each seed gets its own stature and spread around it. Without this every
+     seed reached the same height to the millimetre, which is what made a stand
+     of trees read as a repeated asset. */
+  const float habit = rng.range(0.90f, 1.10f);
+  const float spread = rng.range(0.88f, 1.12f);
+  s.trunkTop *= habit;
+  s.crownY *= habit;
+  s.crownRY *= habit;
+  s.crownRX *= spread;
+
   V3 frame = v3(1.0f, 0.0f, 0.0f);
   const int32_t trunkTip = buildTrunk(s, rng, frame);
   if (trunkTip < 0) return 0;
   const int32_t firstBranch = trunkTip + 1;
+  (void)frame;
 
-  colonise(s, rng, trunkTip);
-  meshBranches(s, rng, firstBranch, frame);
-  emitLeafAnchors(s, rng, firstBranch);
-
-  /* Root flare: three short buttresses so the trunk does not look inserted. */
-  for (int32_t i = 0; i < 3; ++i) {
-    const float a = float(i) * kTwoPi / 3.0f + rng.range(-0.4f, 0.4f);
-    const float d = s.trunkRadius * rng.range(1.6f, 2.4f);
-    const V3 from = v3(0.0f, -s.trunkRadius * 0.15f, 0.0f);
-    const V3 to = v3(cosf(a) * d, -s.trunkRadius * 0.55f, sinf(a) * d);
-    tubeSegment(from, to, s.trunkRadius * 0.34f, s.trunkRadius * 0.08f,
-                detail >= 2 ? 6 : 4, 0.0f, 0.35f, 0.66f, 0.4f, v3(1.0f, 0.0f, 0.0f), true);
+  /* Roots are grafted on before the crown, so the collar ring is already the
+     joint they share with the trunk. */
+  buildRoots(s, rng, trunkTip);
+  /* Detail is what the same skeleton is grown with: a fatter, coarser far tier
+     and a finer near one, not a different plant. */
+  if (detail <= 0) {
+    if (s.attractors > 200) s.attractors = s.attractors * 6 / 10;
+    s.step *= 1.22f;
+  } else if (detail >= 2) {
+    s.attractors += s.attractors * 3 / 10;
+    if (s.attractors > MAX_ATTRACTORS) s.attractors = MAX_ATTRACTORS;
+    s.step *= 0.88f;
   }
+  colonise(s, rng, trunkTip);
+  assignRadii(s, trunkTip);
+  refineSkeleton(detail >= 2 ? 0.20f : 0.0f);
+  orderNodes();
+
+  const int32_t maxSides = detail >= 2 ? 16 : detail == 1 ? 10 : 6;
+  const int32_t minSides = detail >= 2 ? 6 : 5;
+  meshSkeleton(s, maxSides, minSides);
+  emitLeafAnchors(s, rng, firstBranch, detail);
   return gVert;
 }
 
@@ -2504,9 +3126,13 @@ void generateBuilding(int32_t kind, uint32_t seed, int32_t detail) {
     gPenPart = 2.0f;
     facadeBox(v3(0.0f, h + 6.2f, 0.0f), v3(w * 0.5f - 0.8f, 0.2f, d * 0.5f - 0.8f), 1.8f, 0.56f, 0.5f);
     /* A 4 m aerial on the plant deck, which is what a roof of this height
-     * actually carries. */
+     * actually carries. It is steel, not concrete trim: painted as part 2 it
+     * also added two phantom storeys to the building's own storey count. */
+    gPenPart = 0.0f;
+    tinted(v3(0.42f, 0.44f, 0.46f));
     facadeBox(v3(0.0f, h + 8.3f, 0.0f), v3(0.12f, 1.9f, 0.12f), 1.0f, 0.62f, 0.5f);
     facadeBox(v3(0.0f, h + 9.6f, 0.0f), v3(0.05f, 0.5f, 0.05f), 1.0f, 0.66f, 0.5f);
+    tinted(v3(1.0f, 1.0f, 1.0f));
   }
 }
 

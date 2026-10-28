@@ -60,6 +60,17 @@ unsigned int fe_edit_pick(const float*, float, float);
 void fe_edit_undo_push(void);
 unsigned int fe_edit_select_by_index(unsigned int, unsigned int, const unsigned int*, unsigned int);
 unsigned int fe_edit_flip_normals(void);
+unsigned int fe_edit_weld_count(void);
+const unsigned char* fe_edit_edge_display_ptr(void);
+void fe_edit_set_display_angle(float);
+unsigned int fe_edit_detect_smooth(const float*, const float*, unsigned int);
+unsigned int fe_edit_gizmo_pivot(float*);
+float fe_edit_gizmo_size(const float*);
+int fe_edit_gizmo_pick(const float*, float, float, float, float, unsigned int);
+int fe_edit_gizmo_begin(const float*, float, float, float, float, unsigned int);
+int fe_edit_gizmo_drag(const float*, float, float, float, float*);
+void fe_edit_gizmo_end(void);
+int fe_edit_gizmo_active(void);
 }
 
 static int g_failures = 0;
@@ -438,6 +449,240 @@ static void testSelectionWalk(void) {
   CHECK(picked >= -1);
 }
 
+/* ---- welding, the edge-display mask, and the on-canvas gizmo ----------- */
+
+/* Two triangles that share a diagonal, arriving the way three.js sends them:
+   every corner split, so six vertices for a shape with four. */
+static void uploadSplitQuad(const float* corners, const float* normals) {
+  /* corners: A B C D, each three floats. Triangles (A,B,C) and (A,C,D). */
+  static float pos[18];
+  static const unsigned int tris[6] = { 0, 1, 2, 3, 4, 5 };
+  static const int order[6] = { 0, 1, 2, 0, 2, 3 };
+  for (int i = 0; i < 6; ++i) {
+    const int c = order[i] * 3;
+    pos[i * 3] = corners[c];
+    pos[i * 3 + 1] = corners[c + 1];
+    pos[i * 3 + 2] = corners[c + 2];
+  }
+  fe_edit_reset();
+  CHECK(fe_edit_upload(6, pos, 2, tris, 0) == 1);
+  (void)normals;
+}
+
+static void testWeldAndDisplay(void) {
+  /* A flat quad: weld back to four corners, five edges (four sides plus the
+     diagonal), and only the four sides are drawn, because the diagonal of a
+     quad is not an edge of the surface. */
+  static const float quad[12] = {
+    -1, -1, 0,   1, -1, 0,   1, 1, 0,  -1, 1, 0
+  };
+  static const float flatNormals[18] = {
+    0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1
+  };
+  uploadSplitQuad(quad, flatNormals);
+  CHECK_MSG(fe_edit_vert_count() == 4, "a split quad must weld back to four vertices");
+  CHECK(fe_edit_tri_count() == 2);
+  CHECK_MSG(fe_edit_weld_count() == 2, "two coincident corners pairs must have merged");
+  CHECK_MSG(fe_edit_edge_count() == 5, "a quad has four sides and one diagonal");
+
+  {
+    const unsigned char* shown = fe_edit_edge_display_ptr();
+    int drawn = 0;
+    for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
+    CHECK_MSG(drawn == 4, "the diagonal of a flat quad must not be drawn as an edge");
+  }
+
+  /* The same four corners folded along the diagonal are two faces that meet
+     at an angle: now the shared edge is real and must be drawn. */
+  static const float folded[12] = {
+    -1, -1, 0,   1, -1, 0,   1, 1, 1,  -1, 1, 0
+  };
+  uploadSplitQuad(folded, flatNormals);
+  {
+    const unsigned char* shown = fe_edit_edge_display_ptr();
+    int drawn = 0;
+    for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
+    CHECK_MSG(drawn == 5, "a folded quad keeps its shared edge");
+    /* The threshold is a setting: at a shallow angle the diagonal goes away
+       again without touching the topology. */
+    fe_edit_set_display_angle(45.0f);
+    drawn = 0;
+    shown = fe_edit_edge_display_ptr();
+    for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
+    CHECK_MSG(drawn == 4, "a shallow fold is below the display threshold");
+    fe_edit_set_display_angle(0.6f);
+    CHECK(fe_edit_edge_count() == 5);
+  }
+
+  /* Faceted or smooth authoring, decided before the split goes away. */
+  uploadSplitQuad(quad, flatNormals);
+  {
+    static float pos[18];
+    static float nrm[18];
+    for (int i = 0; i < 6; ++i) {
+      pos[i * 3] = quad[(i % 4) * 3];
+      pos[i * 3 + 1] = quad[(i % 4) * 3 + 1];
+      pos[i * 3 + 2] = quad[(i % 4) * 3 + 2];
+      nrm[i * 3] = 0.0f;
+      nrm[i * 3 + 1] = 0.0f;
+      nrm[i * 3 + 2] = 1.0f;
+    }
+    CHECK_MSG(fe_edit_detect_smooth(pos, nrm, 6) == 1, "one shared normal per corner is a smooth surface");
+    /* Vertex 1 and vertex 5 are the same corner; give them opposing normals,
+       which is what a split cube looks like, and the surface is faceted. */
+    nrm[5 * 3 + 2] = -1.0f;
+    CHECK_MSG(fe_edit_detect_smooth(pos, nrm, 6) == 0, "a flipped corner normal means a hard surface");
+  }
+}
+
+/* The same projection fe_edit_gizmo_* uses, so a test can ask where a handle
+   lands on screen instead of hard-coding pixel fractions. */
+static void projectPoint(const float* clip, float x, float y, float z, float* sx, float* sy) {
+  const float w = clip[3] * x + clip[7] * y + clip[11] * z + clip[15];
+  *sx = ((clip[0] * x + clip[4] * y + clip[8] * z + clip[12]) / w) * 0.5f + 0.5f;
+  *sy = 1.0f - (((clip[1] * x + clip[5] * y + clip[9] * z + clip[13]) / w) * 0.5f + 0.5f);
+}
+
+static void testGizmo(void) {
+  static const float quad[12] = {
+    -1, -1, 0,   1, -1, 0,   1, 1, 0,  -1, 1, 0
+  };
+  uploadSplitQuad(quad, 0);
+  fe_edit_select_all();
+
+  /* An oblique orthographic projection, written column-major the way a
+     three.js Matrix4 stores itself: X runs right, Y runs up, Z runs up-right.
+     A head-on camera would flatten the Z arrow onto the pivot, so the test
+     would not be measuring three handles. */
+  const float clip[16] = {
+    0.4f, 0.0f, 0.0f, 0.0f,
+    0.0f, 0.4f, 0.0f, 0.0f,
+    0.2f, 0.2f, 0.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+  };
+
+  float pivot[3] = { 9, 9, 9 };
+  CHECK(fe_edit_gizmo_pivot(pivot) == 4);
+  CHECK_NEAR(pivot[0], 0.0, 1e-5);
+  CHECK_NEAR(pivot[1], 0.0, 1e-5);
+  CHECK_NEAR(pivot[2], 0.0, 1e-5);
+
+  const float size = fe_edit_gizmo_size(clip);
+  CHECK_MSG(size > 0.0f, "the gizmo must have an on-screen size");
+  /* A one-unit axis covers 0.2 of the screen height, and the handle is a
+     fixed 18 % slice of the viewport whatever the zoom is. */
+  CHECK_NEAR(size, 0.9, 1e-4);
+
+  float px, py;
+  projectPoint(clip, pivot[0], pivot[1], pivot[2], &px, &py);
+  CHECK_NEAR(px, 0.5, 1e-5);
+  CHECK_NEAR(py, 0.5, 1e-5);
+
+  /* The middle of each arrow, computed from where its tip lands. */
+  float mid[3][2];
+  float tip[3][2];
+  for (int a = 0; a < 3; ++a) {
+    float t[3] = { pivot[0], pivot[1], pivot[2] };
+    t[a] += size;
+    projectPoint(clip, t[0], t[1], t[2], &tip[a][0], &tip[a][1]);
+    mid[a][0] = (px + tip[a][0]) * 0.5f;
+    mid[a][1] = (py + tip[a][1]) * 0.5f;
+  }
+
+  CHECK(fe_edit_gizmo_pick(clip, mid[0][0], mid[0][1], 1.0f, 0.06f, 0) == 0);
+  CHECK(fe_edit_gizmo_pick(clip, mid[1][0], mid[1][1], 1.0f, 0.06f, 0) == 1);
+  CHECK(fe_edit_gizmo_pick(clip, mid[2][0], mid[2][1], 1.0f, 0.06f, 0) == 2);
+  CHECK_MSG(fe_edit_gizmo_pick(clip, 0.02f, 0.98f, 1.0f, 0.06f, 0) == -1, "empty screen is not a handle");
+
+  static float before[12];
+  {
+    const float* p0 = fe_edit_pos_interleaved_ptr();
+    for (int i = 0; i < 12; ++i) before[i] = p0[i];
+  }
+
+  /* Drag the X arrow three quarters of the way along it: t goes 0.5 -> 0.75,
+     so the selection moves a quarter of the handle length. */
+  const float fx = px + (tip[0][0] - px) * 0.75f;
+  const float fy = py + (tip[0][1] - py) * 0.75f;
+  float out[3] = { 0, 0, 0 };
+  CHECK(fe_edit_gizmo_begin(clip, mid[0][0], mid[0][1], 1.0f, 0.06f, 0) == 0);
+  CHECK(fe_edit_gizmo_active() == 0);
+  CHECK(fe_edit_gizmo_drag(clip, fx, fy, 1.0f, out) == 0);
+  CHECK_NEAR(out[0], size * 0.25, 1e-3);
+  {
+    const float* p1 = fe_edit_pos_interleaved_ptr();
+    int moved = 0;
+    for (int v = 0; v < 4; ++v) {
+      if (fabsf(p1[v * 3] - before[v * 3] - size * 0.25f) < 1e-3f) ++moved;
+      CHECK_NEAR(p1[v * 3 + 1], before[v * 3 + 1], 1e-5);
+      CHECK_NEAR(p1[v * 3 + 2], before[v * 3 + 2], 1e-5);
+    }
+    CHECK_MSG(moved == 4, "a drag of the X arrow must move every selected vertex by the same X");
+  }
+  /* Dragging back to where it started puts the shape back. */
+  CHECK(fe_edit_gizmo_drag(clip, mid[0][0], mid[0][1], 1.0f, out) == 0);
+  {
+    const float* p2 = fe_edit_pos_interleaved_ptr();
+    for (int i = 0; i < 12; ++i) CHECK_NEAR(p2[i], before[i], 1e-4);
+  }
+  fe_edit_gizmo_end();
+  CHECK(fe_edit_gizmo_active() == -1);
+
+  /* The Z arrow is a real axis, not a copy of X: it moves only Z. */
+  {
+    const float fz0 = px + (tip[2][0] - px) * 0.75f;
+    const float fz1 = py + (tip[2][1] - py) * 0.75f;
+    CHECK(fe_edit_gizmo_begin(clip, mid[2][0], mid[2][1], 1.0f, 0.06f, 0) == 2);
+    CHECK(fe_edit_gizmo_drag(clip, fz0, fz1, 1.0f, out) == 2);
+    const float* p3 = fe_edit_pos_interleaved_ptr();
+    int movedZ = 0;
+    for (int v = 0; v < 4; ++v) {
+      if (fabsf(p3[v * 3 + 2] - before[v * 3 + 2]) > 1e-3f) ++movedZ;
+      CHECK_NEAR(p3[v * 3], before[v * 3], 1e-4);
+      CHECK_NEAR(p3[v * 3 + 1], before[v * 3 + 1], 1e-4);
+    }
+    CHECK_MSG(movedZ == 4, "the Z arrow must move the selection in Z");
+    fe_edit_gizmo_end();
+  }
+  /* Undo whatever the two drags did, so the scale test starts from the quad. */
+  fe_edit_undo_clear();
+  uploadSplitQuad(quad, 0);
+  fe_edit_select_all();
+
+  /* Scale space: the same bars, a different kernel call. */
+  CHECK(fe_edit_gizmo_pick(clip, mid[0][0], mid[0][1], 1.0f, 0.06f, 2) == 0);
+  CHECK(fe_edit_gizmo_begin(clip, mid[0][0], mid[0][1], 1.0f, 0.06f, 2) == 0);
+  CHECK(fe_edit_gizmo_drag(clip, fx, fy, 1.0f, out) == 0);
+  {
+    const float* p4 = fe_edit_pos_interleaved_ptr();
+    CHECK_MSG(fabsf(p4[3] - 1.0f) > 1e-3f, "the scale handle must change the shape");
+    CHECK_NEAR(p4[1], -1.0, 1e-5);
+  }
+  fe_edit_gizmo_end();
+
+  /* Rotate space: the rings. A point on the ring grabs a handle, and a drag
+     turns the selection instead of moving it. */
+  {
+    float on[3] = { pivot[0], pivot[1] + size, pivot[2] };
+    float rx, ry;
+    projectPoint(clip, on[0], on[1], on[2], &rx, &ry);
+    const int handle = fe_edit_gizmo_pick(clip, rx, ry, 1.0f, 0.06f, 1);
+    CHECK_MSG(handle >= 0, "a point on a rotation ring must grab a handle");
+    CHECK(fe_edit_gizmo_begin(clip, rx, ry, 1.0f, 0.06f, 1) >= 0);
+    CHECK(fe_edit_gizmo_drag(clip, px + (rx - px) * -1.0f, py + (ry - py) * 1.4f, 1.0f, out) >= 0);
+    fe_edit_gizmo_end();
+  }
+  CHECK_MSG(fe_edit_gizmo_begin(clip, 0.05f, 0.95f, 1.0f, 0.06f, 1) == -1, "a miss must not start a drag");
+  CHECK(fe_edit_gizmo_active() == -1);
+
+  /* Nothing selected: the handles sit at the middle of the mesh and the pivot
+     reports zero selected vertices. */
+  fe_edit_select_none();
+  CHECK(fe_edit_gizmo_pivot(pivot) == 0);
+  CHECK_NEAR(pivot[0], 0.0, 1e-5);
+  checkIntegrity("gizmo");
+}
+
 int main(void) {
   testUpload();
   testSelection();
@@ -457,6 +702,8 @@ int main(void) {
   testRenderMesh();
   testProportional();
   testSelectionWalk();
+  testWeldAndDisplay();
+  testGizmo();
 
   if (g_failures == 0) {
     printf("All Final Effect C++20 Edit Mode tests passed\n");

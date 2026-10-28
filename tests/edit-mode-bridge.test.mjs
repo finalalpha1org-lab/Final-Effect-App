@@ -29,6 +29,7 @@ class Vector3 {
     this.x = e[column * 4]; this.y = e[column * 4 + 1]; this.z = e[column * 4 + 2];
     return this;
   }
+  setScalar(v) { this.x = v; this.y = v; this.z = v; return this; }
   length() { return Math.hypot(this.x, this.y, this.z); }
   normalize() { const l = this.length() || 1; this.x /= l; this.y /= l; this.z /= l; return this; }
   distanceTo(v) { return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z); }
@@ -44,6 +45,10 @@ class Matrix4 {
       }
     }
     return this;
+  }
+  multiply(m) {
+    const a = { elements: this.elements.slice() };
+    return this.multiplyMatrices(a, m);
   }
 }
 
@@ -74,7 +79,8 @@ class BufferGeometry {
 }
 
 class Object3D {
-  constructor() { this.children = []; this.parent = null; this.userData = {}; this.position = new Vector3(); this.scale = new Vector3(1, 1, 1); this.matrixWorld = new Matrix4(); this.quaternion = null; this.visible = true; }
+  constructor() { this.children = []; this.parent = null; this.userData = {}; this.position = new Vector3(); this.scale = new Vector3(1, 1, 1); this.rotation = new Vector3(); this.matrixWorld = new Matrix4(); this.quaternion = null; this.visible = true; this.frustumCulled = true; this.renderOrder = 0; }
+  traverse(callback) { callback(this); for (const child of this.children) child.traverse?.(callback); }
   add(...children) { for (const child of children) { child.parent = this; this.children.push(child); } return this; }
   remove(child) { const at = this.children.indexOf(child); if (at >= 0) { this.children.splice(at, 1); child.parent = null; } return this; }
   getObjectByName(name) {
@@ -87,13 +93,24 @@ class Object3D {
   worldToLocal(v) { return v.clone().sub(this.position); }
 }
 
+class Color {
+  constructor(value = 0xffffff) { this.setHex(value); }
+  setHex(value) { this.hex = value >>> 0; this.r = ((this.hex >> 16) & 255) / 255; this.g = ((this.hex >> 8) & 255) / 255; this.b = (this.hex & 255) / 255; return this; }
+  getHex() { return this.hex; }
+}
+
 class Material {
-  constructor(options = {}) { Object.assign(this, options); this.needsUpdate = false; }
+  constructor(options = {}) {
+    const { color, ...rest } = options;
+    Object.assign(this, rest);
+    if (color !== undefined) this.color = color instanceof Color ? color : new Color(color);
+    this.needsUpdate = false;
+  }
   dispose() { this.disposed = true; }
 }
 
 const THREE = {
-  Vector3, Matrix4, BufferAttribute, BufferGeometry, Object3D, Material,
+  Vector3, Matrix4, BufferAttribute, BufferGeometry, Object3D, Material, Color,
   DynamicDrawUsage: 35048,
   DoubleSide: 2,
   Group: class Group extends Object3D { constructor() { super(); this.name = ''; } },
@@ -106,9 +123,15 @@ const THREE = {
   Mesh: class Mesh extends Object3D {
     constructor(geometry = new BufferGeometry(), material = new Material()) { super(); this.geometry = geometry; this.material = material; this.isMesh = true; this.renderOrder = 0; }
   },
+  CylinderGeometry: class CylinderGeometry extends BufferGeometry {},
+  ConeGeometry: class ConeGeometry extends BufferGeometry {},
+  TorusGeometry: class TorusGeometry extends BufferGeometry {},
+  BoxGeometry: class BoxGeometry extends BufferGeometry {},
+  SphereGeometry: class SphereGeometry extends BufferGeometry {},
   LineBasicMaterial: class LineBasicMaterial extends Material {},
   PointsMaterial: class PointsMaterial extends Material {},
-  MeshBasicMaterial: class MeshBasicMaterial extends Material {}
+  MeshBasicMaterial: class MeshBasicMaterial extends Material {},
+  CanvasTexture: class CanvasTexture { constructor(canvas) { this.image = canvas; } }
 };
 
 /* ---- a scene good enough for the bridge --------------------------------- */
@@ -216,7 +239,8 @@ class StubElement {
   get innerHTML() { return this._html; }
   setAttribute(name, value) { this[name] = value; }
   getAttribute(name) { return this[name] ?? null; }
-  appendChild(child) { this.children.push(child); return child; }
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
+  removeChild(child) { const at = this.children.indexOf(child); if (at >= 0) this.children.splice(at, 1); child.parentNode = null; return child; }
   querySelectorAll(selector) {
     const attr = /^\[data-([a-z-]+)\]$/.exec(selector);
     if (!attr) return [];
@@ -255,7 +279,11 @@ globalThis.document = {
   querySelector: () => null,
   querySelectorAll: () => [],
   addEventListener() {},
-  createElement: () => new StubElement()
+  createElement: () => Object.assign(new StubElement(), {
+    width: 0,
+    height: 0,
+    getContext: () => ({ beginPath() {}, arc() {}, fill() {}, set fillStyle(value) { this._fill = value; }, get fillStyle() { return this._fill; } })
+  })
 };
 globalThis.CustomEvent = class CustomEvent {
   constructor(type, init) { this.type = type; this.detail = init?.detail; }
@@ -377,17 +405,23 @@ test('the bridge refuses an object with no mesh and reports it', () => {
   assert.ok(toasts.some((message) => /select a mesh/i.test(message)), 'the user must be told why nothing happened');
 });
 
-test("the mode's own bar opens sub-toolbars and their buttons reach the kernel", () => {
+test("one button in the main toolbar opens the edit tools, and they reach the kernel", () => {
   elementFor('toolbar-core').hidden = false;
   assert.equal(EditMode.enter(), true);
 
-  /* The object toolbar is put away and the left-to-right category bar takes
-     its place, with the sub-toolbar sheet open above it. */
-  assert.equal(elementFor('toolbar-core').hidden, true, 'the object toolbar must step aside');
-  assert.equal(elementFor('edit-category-bar').hidden, false, 'the category bar must be visible');
+  /* Nothing that was already in the main toolbar changes, and nothing is
+     hidden: the edit feature adds exactly one button to it. */
+  assert.equal(elementFor('toolbar-core').hidden, false, 'the object toolbar must stay as it was');
+  const toggle = elementFor('toolbar-core').children.find((child) => child.id === 'edit-tools-btn');
+  assert.ok(toggle, 'the main toolbar must gain one Edit tools button');
+  assert.equal(toggle.dataset.tool, undefined, 'it must not pretend to be one of the object tools');
+
+  /* Its panel carries the categories, the point / edge / face switch, and the
+     tools of the open category; the sheet opens with the mode. */
   const sheet = elementFor('edit-sheet');
-  assert.equal(sheet.hidden, false, 'the sub-toolbar sheet opens with the mode');
+  assert.equal(sheet.hidden, false, 'the tool panel opens with the mode');
   assert.ok(sheet.classList.contains('open'));
+  assert.equal(elementFor('edit-category-bar').hidden, false, 'the categories live inside that panel');
 
   const tools = elementFor('edit-sheet-tools');
   assert.equal(tools.children.length, 12, 'the Select sub-toolbar lists its twelve tools');
@@ -398,7 +432,7 @@ test("the mode's own bar opens sub-toolbars and their buttons reach the kernel",
 
   const bar = elementFor('edit-category-bar');
   const mesh = bar.children.find((button) => button.dataset.editCategory === 'mesh');
-  assert.ok(mesh, 'the Mesh category button is missing from the shipped bar');
+  assert.ok(mesh, 'the Mesh category button is missing from the shipped panel');
   mesh.click();
   assert.equal(EditMode.state.category, 'mesh');
   assert.equal(elementFor('edit-sheet-tools').children.length, 15, 'the Mesh sub-toolbar replaced the Select one');
@@ -415,8 +449,24 @@ test("the mode's own bar opens sub-toolbars and their buttons reach the kernel",
   meshTools.children.find((button) => button.dataset.editCommand === 'poke').click();
   assert.ok(exp.fe_edit_tri_count() > before, 'Poke did not split the selected faces');
   assert.equal(elementFor('edit-amount-row').hidden, true, 'Poke has no amount to set');
+
+  /* Undo and redo are in the top bar, so the edit panel carries no second pair:
+     a duplicate would be two buttons doing one job in the same screen. */
+  const barIds = [...(readFileSync('index.html', 'utf8').matchAll(/<button[^>]*id="(edit-[a-z-]+)"/g))].map((m) => m[1]);
+  assert.ok(!barIds.includes('edit-undo'), 'the edit panel must not carry an undo button');
+  assert.ok(!barIds.includes('edit-redo'), 'the edit panel must not carry a redo button');
+
+  /* The one button folds the panel away and gives the whole viewport back. */
+  toggle.click();
+  assert.equal(elementFor('edit-sheet').hidden, true, 'the toggle button folds the tools away');
+  toggle.click();
+  assert.equal(elementFor('edit-sheet').hidden, false, 'and opens them again');
+
   EditMode.exit();
-  assert.equal(elementFor('edit-category-bar').hidden, true, 'leaving hides the category bar again');
+  assert.equal(elementFor('edit-sheet').hidden, true, 'leaving folds the panel');
+  assert.equal(elementFor('toolbar-core').children.some((child) => child.id === 'edit-tools-btn'), false,
+    'leaving takes the one added button away again');
+  assert.equal(elementFor('toolbar-core').hidden, false, 'and the object toolbar is still there');
 });
 
 test('the Edit tool in the main bar is not Edit Mode and never switches the mode', () => {
@@ -437,11 +487,16 @@ test('the Edit tool in the main bar is not Edit Mode and never switches the mode
   assert.match(bridge, /events\.addEventListener\?\.\('fe:mode'/, 'the bridge enters on fe:mode');
   assert.ok(!/window\.FEEditMode/.test(bridge), 'the bridge must not reach through the window it lives on');
 
-  /* The new main toolbar and its sub-toolbars are this app's own: a
-     left-to-right row of categories above a left-to-right row of tools. */
-  const barCss = html.slice(html.indexOf('#edit-category-bar {'), html.indexOf('#edit-sheet {'));
-  assert.match(barCss, /#edit-category-bar \.tool \{ gap: 6px; \}/, 'the category bar is a row of tools');
+  /* The edit tools are one panel of this app's own language: a left-to-right
+     row of categories over a left-to-right row of tools, both scrollable, and
+     neither one a copy of another application's panel. */
+  const barCss = html.slice(html.indexOf('.edit-sheet-head {'), html.indexOf('#edit-sheet-tools {'));
+  assert.match(barCss, /\.edit-sheet-head \.tool \{ gap: 6px;/, 'the category row is a row of tools');
   const subCss = html.slice(html.indexOf('#edit-sheet-tools {'), html.indexOf('.edit-sheet-row {'));
-  assert.match(subCss, /flex-wrap: nowrap/, 'the sub-toolbar is one row, not a grid of tiles');
+  assert.match(subCss, /flex-wrap: nowrap/, 'the tool row is one row, not a grid of tiles');
   assert.match(subCss, /overflow-x: auto/, 'and it scrolls sideways when it runs out of room');
+  /* The panel floats; it does not wall the viewport in. */
+  const sheetCss = html.slice(html.indexOf('#edit-sheet {'), html.indexOf('.edit-sheet-head {'));
+  assert.match(sheetCss, /position: fixed/, 'the tool panel is a popover');
+  assert.match(sheetCss, /border-radius: 14px/, 'and it has its own rounded shape');
 });
