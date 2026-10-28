@@ -781,14 +781,57 @@ test('a tree grows out of the ground with a buttressed collar, not stood on it',
   assert.ok(collar > stem * 1.15, `the collar (${collar.toFixed(3)}) must be visibly wider than the stem (${stem.toFixed(3)})`);
 });
 
-test('a lateral branch is rooted inside its parent instead of butted against it', async () => {
-  /* The join is in the kernel, so pin the rule rather than the pixels: a limb
-     that leaves at an angle is sunk back along its own axis and flares, a
-     leader continues the parent's line at the parent's radius. */
+test('a lateral branch shares its parent ring, so the wood is one surface', async () => {
+  /* The join used to be a hack: a lateral tube was sunk back along its own axis
+     and flared so the seam stayed out of sight, and that still left the crown as
+     a pile of free-floating tubes. A tree is now built the way a tree is shaped:
+     one ring of vertices per joint, and every segment bridged to the rings it
+     leaves from and arrives at. The join is topological, so there is nothing to
+     hide, no matter which way a limb leans.
+
+     Pinning the source alone would let the mesh regress without the test
+     noticing, so this also walks the real oak indices and proves the wood is a
+     single connected surface. */
   const cpp = readFileSync('cpp/src/fe_flora.cpp', 'utf8');
-  assert.match(cpp, /const bool leader = dot\(dir, pdir\) > 0\.75f;/);
-  assert.match(cpp, /const float sink = leader \? 0\.0f : r0 \* 0\.85f;/);
-  assert.match(cpp, /const float rootR = leader \? r0 \* 0\.98f : maxf\(r0 \* 0\.50f, r1 \* 1\.20f\);/);
-  /* Winding is fixed in one place for every emitter in the file. */
-  assert.match(cpp, /gIdx\[gIdxN\+\+\] = uint32_t\(a\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(c\);\n  gIdx\[gIdxN\+\+\] = uint32_t\(b\);/);
+  assert.match(cpp, /struct Ring \{\s*int32_t start;\s*int32_t sides;\s*float radius;/, 'one ring per joint');
+  assert.match(cpp, /for \(int32_t i = 0; i < gNodeN; \+\+i\) \{\s*const int32_t parent = gNodes\[i\]\.parent;\s*if \(parent >= 0\) stitchRings\(parent, i\);/, 'every segment is stitched to its parent ring');
+  assert.match(cpp, /gRing\[i\]\.start = gVert;/, 'a joint owns one ring of vertices');
+  /* The old per-segment tube cannot come back as the tree's mesher. */
+  const treePath = cpp.slice(cpp.indexOf('int32_t generateTree('), cpp.indexOf('FE_EXPORT int32_t fe_flora_tree('));
+  assert.equal(/tubeSegment\(/.test(treePath), false, 'the tree is not a pile of tubes');
+  /* Winding is still decided in one place, and now it checks itself instead of
+     trusting the caller: a stitched ring on a twisted frame used to mirror a
+     handful of faces. */
+  assert.match(cpp, /const bool flip = nx \* vx \+ ny \* vy \+ nz \* vz < 0\.0f;/, 'the face is oriented against its own normal');
+
+  const { core } = await bootBridge();
+  const oak = core.floraTree(0, 4242, 2);
+  /* Union-find over the index buffer: if any limb, twig, root or tip were its
+     own tube, the wood would fall into hundreds of islands. */
+  const parent = new Int32Array(oak.verts);
+  for (let i = 0; i < parent.length; i++) parent[i] = i;
+  const find = (x) => {
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+  };
+  for (let i = 0; i < oak.idx.length; i += 3) {
+    const a = find(oak.idx[i]), b = find(oak.idx[i + 1]), c = find(oak.idx[i + 2]);
+    parent[b] = a;
+    parent[c] = find(a);
+  }
+  const roots = new Set();
+  for (let i = 0; i < parent.length; i++) roots.add(find(i));
+  assert.equal(roots.size, 1, `the oak must be one connected organism (got ${roots.size} islands)`);
+
+  /* And the roots are grown from the collar, not drawn on it: the buried foot
+     carries buttresses that reach out past the trunk radius. */
+  assert.match(cpp, /void buildRoots\(const SpeciesSpec& s, Rng& rng, int32_t trunkTip\)/, 'root buttresses are grown from the collar');
+  let reachesOut = 0, belowGround = 0;
+  for (let i = 0; i < oak.verts; i++) {
+    const y = oak.pos[i * 3 + 1], r = Math.hypot(oak.pos[i * 3], oak.pos[i * 3 + 2]);
+    if (y < 0) belowGround++;
+    if (y < 0 && r > 0.7) reachesOut++;
+  }
+  assert.ok(belowGround > 40, 'the tree has a buried foot');
+  assert.ok(reachesOut > 10, 'the roots reach out under the soil');
 });
