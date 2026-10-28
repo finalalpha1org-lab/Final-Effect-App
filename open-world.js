@@ -416,7 +416,9 @@ function owTileTopology(seg){let t=OW_TOPOLOGY.get(seg);if(t)return t;const tn=s
 for(const t of OW_TOPOLOGY.values()){OW_SHARED.add(t.index);OW_SHARED.add(t.weightsA);OW_SHARED.add(t.weightsB);if(t.weightsC)OW_SHARED.add(t.weightsC)}
 let owTerrainMat=null;
 function owMakeTerrainMat(){const m=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.84,metalness:0,normalMap:tm.normalMap,normalScale:new THREE.Vector2(.08,.08),side:THREE.DoubleSide});m.color.setScalar(.9);m.envMapIntensity=.5;
- injectDetail(m,false);const f=m.onBeforeCompile;m.onBeforeCompile=function(s,r){f.call(this,s,r);s.fragmentShader=s.fragmentShader.replace('uLit*(grm','0.*(grm')};m.customProgramCacheKey=()=>'ow-terrain-v1';return m}
+ injectDetail(m,false);/* The open-world ground swaps the leaf-litter tint off. It is one more
+   injection on the same material, not a replacement of the detail pass. */
+addShader(m,'ow-lit',()=>'ow-terrain-v1',s=>{s.fragmentShader=s.fragmentShader.replace('uLit*(grm','0.*(grm')});return m}
 /* ---------- height cache (blocks of 64 m @ 2 m) ---------- */
 const blocks=new Map(),BNK=33;
 function owBlock(bx,bz){const key=(bx+4096)*8192+(bz+4096);let b=blocks.get(key);if(b)return b;b=new Float32Array(BNK*BNK);const x0=bx*64,z0=bz*64;for(let j=0;j<BNK;j++)for(let i=0;i<BNK;i++)b[j*BNK+i]=OWM.height(x0+i*2,z0+j*2);blocks.set(key,b);
@@ -659,7 +661,7 @@ function folTick(budget){const c=owCam,P=OW.fp||(OW.fp={});let t=performance.now
 /* ================= Part 4 — enter / exit, isolated settings, explore, UI ================= */
 const kcSave=()=>{const o={};for(const k in KIND){const K=KIND[k];o[k]={size:K.size,vr:K.vr,tint:K.tint.slice()}}return o},kcLoad=o=>{for(const k in o){const K=KIND[k];if(!K)continue;K.size=o[k].size;K.vr=o[k].vr;K.tint=o[k].tint.slice()}};
 function ctxSave(){return{A:captureStudioSettings(),exp:ren.toneMappingExposure,SAFE:Object.assign({},SAFE),shQ,pxQ,det:DET.value,lf:lodFullDistance,detail,smooth:smoothPreviewAuto,kc:kcSave(),biome,season}}
-function ctxLoad(c){restoreStudioSettings(c.A);ren.toneMappingExposure=c.exp;const gOld=SAFE.ground;Object.assign(SAFE,c.SAFE);if(gOld!==SAFE.ground){if(SAFE.ground){tm.onBeforeCompile=()=>{};tm.customProgramCacheKey=()=>'plainT'}else injectDetail(tm,false);tm.needsUpdate=true}
+function ctxLoad(c){restoreStudioSettings(c.A);ren.toneMappingExposure=c.exp;const gOld=SAFE.ground;Object.assign(SAFE,c.SAFE);if(gOld!==SAFE.ground){if(SAFE.ground)shaderOff(tm,true);else{shaderOff(tm,false);injectDetail(tm,false)}tm.needsUpdate=true}
  if(shQ!==c.shQ){shQ=c.shQ;sun.shadow.mapSize.set(shQ,shQ);if(sun.shadow.map){sun.shadow.map.dispose();sun.shadow.map=null}}
  pxQ=c.pxQ;DET.value=c.det;lodFullDistance=c.lf;lodPending=true;lodIndex=0;smoothPreviewAuto=c.smooth;adaptiveScale=1;applyPreviewPixelRatio();if(c.detail!==detail)applyDetail(c.detail);kcLoad(c.kc);biome=c.biome;season=c.season;
  waterReflectionReady=false;sun.shadow.needsUpdate=true;updSky()}

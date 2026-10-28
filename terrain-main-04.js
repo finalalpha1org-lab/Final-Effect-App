@@ -139,6 +139,9 @@ $('#bw').onclick=()=>{closeExploreSheet();showPanel(false);cam.position.set(58,4
 
 /* ultra realism: terrain detail shader, depth-aware water, quality controls */
 let shQ=HANDSET?1024:2048,pxQ=Math.min(devicePixelRatio,2),smoothPreviewAuto=false,adaptiveScale=1,adaptiveSlow=0,adaptiveFast=0,adaptiveLast=0,adaptiveFPS=60,previewCameraMovedAt=performance.now();let lastPreviewPixelRatio=ren.getPixelRatio();const previewCameraAnchor=cam.position.clone(),DET={value:.4};
+/* Shared with the triplanar material layers, which are installed by an earlier
+   file and can only reach this object through the window. */
+window.FE_DET=DET;
 const TG=`uniform float uDet,uWy,uT,uWetG,uRainK,uSnowG,uAutG,uLit,uSurfacePaintEnabled;uniform sampler2D uTreeMap,uSurfAtlas;varying vec3 vW;varying vec4 vSurfaceWeightsA,vSurfaceWeightsB,vSurfaceWeightsC;
 float hs(vec2 p){vec3 p3=fract(vec3(p.xyx)*.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}float hs3(vec3 p){p=fract(p*.1031);p+=dot(p,p.zyx+31.32);return fract((p.x+p.y)*p.z);}
 float vn2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hs(i),hs(i+vec2(1.,0.)),f.x),mix(hs(i+vec2(0.,1.)),hs(i+vec2(1.,1.)),f.x),f.y);}
@@ -169,9 +172,9 @@ if(udep>0.){vec3 ab=exp(-udep*vec3(.42,.12,.075));float c1=1.-abs(vn2(vW.xz*.82+
 float surfLive=dot(customSurface,vec3(.2126,.7152,.0722));
 float surfValid=smoothstep(.004,.05,surfLive);
 diffuseColor.rgb=mix(diffuseColor.rgb,mix(diffuseColor.rgb,customSurface,surfValid),clamp(surfSum,0.,1.));}`;
-function injectDetail(m,inst){m.customProgramCacheKey=()=>'det-surface-pbr-v2-'+(inst?'I':'T');m.onBeforeCompile=s=>{s.uniforms.uDet=DET;s.uniforms.uWy=U.wy;s.uniforms.uT=U.t;s.uniforms.uWetG=FXU.wet;s.uniforms.uRainK=U.rain;s.uniforms.uSnowG=FXU.snowK;s.uniforms.uAutG=FXU.aut;s.uniforms.uLit=FXU.lit;s.uniforms.uTreeMap=FXU.treeMap;s.uniforms.uSurfAtlas={value:OW_SURFACE_ATLAS};s.uniforms.uSurfacePaintEnabled={value:m.userData?.surfacePaintEnabled?1:0};
+function injectDetail(m,inst){addShader(m,'detail',()=>'det-surface-pbr-v3-'+(inst?'I':'T'),s=>{s.uniforms.uDet=DET;s.uniforms.uWy=U.wy;s.uniforms.uT=U.t;s.uniforms.uWetG=FXU.wet;s.uniforms.uRainK=U.rain;s.uniforms.uSnowG=FXU.snowK;s.uniforms.uAutG=FXU.aut;s.uniforms.uLit=FXU.lit;s.uniforms.uTreeMap=FXU.treeMap;s.uniforms.uSurfAtlas={value:OW_SURFACE_ATLAS};s.uniforms.uSurfacePaintEnabled={value:m.userData?.surfacePaintEnabled?1:0};
 s.vertexShader='attribute vec4 surfaceWeightsA;attribute vec4 surfaceWeightsB;attribute vec4 surfaceWeightsC;varying vec4 vSurfaceWeightsA,vSurfaceWeightsB,vSurfaceWeightsC;varying vec3 vW;\n'+s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvSurfaceWeightsA=surfaceWeightsA;vSurfaceWeightsB=surfaceWeightsB;vSurfaceWeightsC=surfaceWeightsC;\nvW=(modelMatrix*\n#ifdef USE_INSTANCING\ninstanceMatrix*\n#endif\nvec4(transformed,1.0)).xyz;');
-s.fragmentShader=TG+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>'+TD).replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(mix(mix(roughnessFactor,.4,max(wet*uDet,uWetG*.8)),.6,snowA),.06,pud);\n/* Rain intensity drops the roughness of soil and stone straight from the\n   uniform: falling water is glossy before it has had time to pool. */\nroughnessFactor*=mix(1.,.62,clamp(uRainK,0.,1.));roughnessFactor=mix(roughnessFactor,.045,clamp(pud*uRainK,0.,1.));float surfRoughSum=(dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.)))*uSurfacePaintEnabled;if(surfRoughSum>.001){float surfRough=(dot(vSurfaceWeightsA,vec4(.9,.84,.92,.96))+dot(vSurfaceWeightsB,vec4(.98,.9,.96,.94))+dot(vSurfaceWeightsC,vec4(.74,.66,.88,.98)))/max(surfRoughSum,.001);roughnessFactor=mix(roughnessFactor,surfRough,clamp(surfRoughSum,0.,1.));}').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nvec2 rip=vec2(sin(vW.x*7.1+uT*3.3)+.6*sin(vW.x*13.7-uT*4.1),cos(vW.z*6.7+uT*2.9)+.6*cos(vW.z*12.3-uT*3.7));normal=bumpN(-vViewPosition,normal,vec2(dFdx(dn),dFdy(dn))*ud*.35+rip*.055*clamp(pud*uRainK,0.,1.));')}}
+s.fragmentShader=TG+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>'+TD).replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(mix(mix(roughnessFactor,.4,max(wet*uDet,uWetG*.8)),.6,snowA),.06,pud);\n/* Rain intensity drops the roughness of soil and stone straight from the\n   uniform: falling water is glossy before it has had time to pool. */\nroughnessFactor*=mix(1.,.62,clamp(uRainK,0.,1.));roughnessFactor=mix(roughnessFactor,.045,clamp(pud*uRainK,0.,1.));float surfRoughSum=(dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.)))*uSurfacePaintEnabled;if(surfRoughSum>.001){float surfRough=(dot(vSurfaceWeightsA,vec4(.9,.84,.92,.96))+dot(vSurfaceWeightsB,vec4(.98,.9,.96,.94))+dot(vSurfaceWeightsC,vec4(.74,.66,.88,.98)))/max(surfRoughSum,.001);roughnessFactor=mix(roughnessFactor,surfRough,clamp(surfRoughSum,0.,1.));}').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nvec2 rip=vec2(sin(vW.x*7.1+uT*3.3)+.6*sin(vW.x*13.7-uT*4.1),cos(vW.z*6.7+uT*2.9)+.6*cos(vW.z*12.3-uT*3.7));normal=bumpN(-vViewPosition,normal,vec2(dFdx(dn),dFdy(dn))*ud*.35+rip*.055*clamp(pud*uRainK,0.,1.));')})};
 injectDetail(tm,false);
 tm.normalScale.set(.08,.08);ren.toneMappingExposure=1.25;
 /* ---- Sky environment: what metal and glass reflect --------------------
@@ -273,14 +276,22 @@ tm.envMapIntensity=.5;
 const OLD_S='uniform vec3 top,hor,sun,sd;varying vec3 p;void main(){vec3 d=normalize(p);vec3 c=mix(hor,top,pow(clamp(d.y,0.,1.),.55));float s=max(dot(d,sd),0.);c+=sun*(pow(s,600.)*3.+pow(s,12.)*.25);gl_FragColor=vec4(c,1.);}';
 
 let fr=0,shFall=false;
-let skyTier=2,waterCompileErrorShown=false,groundOld=0;
+let skyTier=2,waterCompileErrorShown=false,groundOld=0,groundTier=2;
 function badProg(m){try{const pr=ren.properties.get(m),p=pr&&pr.currentProgram;return !!(p&&p.diagnostics&&p.diagnostics.runnable===false)}catch(e){return false}}
 function progLog(m){try{const d=ren.properties.get(m).currentProgram.diagnostics;return((d.fragmentShader&&d.fragmentShader.log)||(d.vertexShader&&d.vertexShader.log)||d.programLog||'').slice(0,300)}catch(e){return''}}
 function checkShaders(){if(!ren.info.programs)return;
 if(badProg(sky.material)){shFall=true;showErr('Sky shader: '+progLog(sky.material));if(skyTier==2){skyTier=1;sky.material.fragmentShader=SKYFS(1)}else if(skyTier==1){skyTier=0;sky.material.fragmentShader=OLD_S}sky.material.needsUpdate=true}
 if(!waterCompileErrorShown&&badProg(water.material)){waterCompileErrorShown=true;showErr('Water PBR shader: '+progLog(water.material))}
 
-if(!groundOld&&badProg(tm)){groundOld=1;shFall=true;showErr('Ground shader: '+progLog(tm));tm.onBeforeCompile=()=>{};tm.customProgramCacheKey=()=>'plain';tm.needsUpdate=true}
+/* The ground's material is a stack: the triplanar layers, then the detail
+   pass. If the device refuses the combined program, drop only the newest pass
+   and try again, and only fall all the way back to the stock shader when even
+   the layers will not compile. Blanking every injection on the first failure
+   is what left the land with no material at all. */
+if(!groundOld&&badProg(tm)){
+ if(groundTier==2){groundTier=1;showErr('Ground detail shader: '+progLog(tm));shaderDrop(tm,'detail');tm.needsUpdate=true}
+ else{groundOld=1;shFall=true;showErr('Ground shader: '+progLog(tm));shaderOff(tm,true)}
+}
 for(const k in KIND){const K=KIND[k];if(K.plain)continue;const mm=K.meshes.find(m=>badProg(m.material));if(mm){K.plain=1;shFall=true;showErr('Shader for '+k+': '+progLog(mm.material));K.meshes.forEach(m=>{m.material=new THREE.MeshLambertMaterial({vertexColors:true,side:THREE.DoubleSide});m.customDepthMaterial=null})}}}
 /* A billboard that will not compile would leave distant trees invisible, so it
    turns the layer off and the far band goes back to the low-detail mesh. */
@@ -295,6 +306,6 @@ applyPreviewPixelRatio();
 function diagText(){try{return'tod '+tod.toFixed(1)+' | sun '+sun.intensity.toFixed(2)+' | hemi '+hemi.intensity.toFixed(2)+' | env fill '+envFill.intensity.toFixed(2)+' | fog '+scene.fog.density.toFixed(4)+' | env map off (fill-light only) | shadows '+(sun.castShadow?'on':'off')+' | fallback '+(shFall?'yes':'no')+' | wet '+FXU.wet.value.toFixed(2)+' snow '+FXU.snowK.value.toFixed(2)}catch(e){return'diagnostics unavailable'}}
 function safeToggle(v){SAFE[v]=SAFE[v]?0:1;
 if(v=='lights')updSky();
-if(v=='ground'){if(SAFE.ground){tm.onBeforeCompile=()=>{};tm.customProgramCacheKey=()=>'plainT'}else injectDetail(tm,false);tm.needsUpdate=true}
+if(v=='ground'){if(SAFE.ground)shaderOff(tm,true);else{shaderOff(tm,false);injectDetail(tm,false)}tm.needsUpdate=true}
 if(v=='env')updSky()
 if(v=='shadow')sun.castShadow=!SAFE.shadow&&mode=='render'}
