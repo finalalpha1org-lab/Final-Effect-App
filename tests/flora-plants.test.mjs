@@ -138,6 +138,60 @@ test('bark is displaced geometry, and its furrows tilt the shading normal', asyn
   assert.ok(tilt.acacia > tilt.birch, 'acacia is fissured too');
 });
 
+test('no two trees of a species come out the same, not even neighbouring seeds', async () => {
+  /* A forest where every oak is the same oak is the tell that gives a procedural
+     scene away, and a seed that only nudges a constant (instead of re-running
+     the growth) produces near-copies: two trees that differ by a couple of
+     centimetres of lean. These are the two failures a per-species seed has to
+     avoid, asserted on the grown geometry itself. */
+  const { core } = await boot();
+  const hash = (mesh) => {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < mesh.pos.length; i++) h = Math.imul(h ^ Math.round(mesh.pos[i] * 4096), 16777619) >>> 0;
+    return h;
+  };
+  const SEEDS = [11, 12, 13, 4242, 4243, 987654, 555001, 9];
+  for (const [name, kind] of Object.entries({ oak: 0, birch: 1, acacia: 2, pine: 21, palm: 16 })) {
+    const built = SEEDS.map((seed) => core.floraTree(kind, seed, 2));
+    const hashes = new Set(built.map(hash));
+    assert.equal(hashes.size, SEEDS.length, `${name}: every seed must grow its own tree (${hashes.size}/${SEEDS.length} distinct)`);
+
+    /* Neighbouring seeds must diverge structurally, not by a hairsbreadth.
+       Broadleaves are grown by colonisation, so their limb count follows the
+       seed; a crown that only rotates would keep the vertex count identical for
+       every seed, which is the signature of a re-randomised copy. */
+    if (['oak', 'birch', 'acacia'].includes(name)) {
+      const counts = new Set(built.map((m) => m.verts));
+      assert.ok(counts.size >= 4, `${name}: the growth itself has to vary, not just the placement (${counts.size} distinct sizes)`);
+      for (let i = 1; i < built.length; i++) {
+        const a = built[i - 1], b = built[i];
+        if (a.verts !== b.verts) continue;
+        let moved = 0, n = Math.min(a.verts, b.verts);
+        for (let v = 0; v < n; v++) {
+          if (Math.abs(a.pos[v * 3] - b.pos[v * 3]) + Math.abs(a.pos[v * 3 + 1] - b.pos[v * 3 + 1]) +
+              Math.abs(a.pos[v * 3 + 2] - b.pos[v * 3 + 2]) > 0.002) moved++;
+        }
+        assert.ok(moved / n > 0.9, `${name}: adjacent seeds must not produce near-copies (${(moved / n * 100).toFixed(0)}% moved)`);
+      }
+    }
+    /* Leaves too: the cards are grown with the tree, so their placements have to
+       change with the seed even when the count does not. */
+    const cards = SEEDS.map((seed) => {
+      core.floraTree(kind, seed, 2);
+      return core.floraCards();
+    });
+    const first = cards.map((c) => (c ? c.cards : 0));
+    if (first.some((n) => n > 0)) {
+      const cardSigs = new Set(cards.map((c) => {
+        let h = 5381 >>> 0;
+        for (let i = 0; i < c.pos.length; i += 12) h = Math.imul(h ^ Math.round(c.pos[i] * 256), 16777619) >>> 0;
+        return h;
+      }));
+      assert.equal(cardSigs.size, SEEDS.length, `${name}: leaf cards are grown with the tree, so they move with the seed (${cardSigs.size}/${SEEDS.length})`);
+    }
+  }
+});
+
 test('a plant is deterministic for a seed and a different plant for another', async () => {
   const { core } = await boot();
   for (const name of PLANTS) {
