@@ -140,6 +140,37 @@ test('wrongly typed fields are ignored instead of poisoning a live value', () =>
   assert.equal('unknown' in env.context.FELandscapeWeather.settings, false);
 });
 
+test('every slider on the water panel is captured and restored, not just the ones we remembered', () => {
+  /* "Setting කිසිම එකක් වැඩ නෑ" traced to this class of bug: the panel wrote a
+     uniform, the autosave did not read it, so the reload silently reverted the
+     control (and undo/redo reverted it too, because undo restores the same
+     settings object). The list of sliders is derived from the panel source, so
+     a slider added later cannot silently escape the autosave. */
+  const main = readFileSync('terrain-main-04.js', 'utf8');
+  const capture = main.slice(main.indexOf('function captureStudioSettings()'), main.indexOf('\nfunction normalizeSavedWaterLevel'));
+  const restore = main.slice(main.indexOf('function restoreStudioSettings(a)'), main.indexOf('\nconst shareHistoryArray'));
+  assert.ok(capture.length > 200 && restore.length > 200, 'both settings functions are present');
+
+  const sliders = [...panel.matchAll(/U\.([A-Za-z0-9_]+)\.value[\s\S]{0,40}?v=>U\.\1\.value=v/g)].map((m) => m[1]);
+  assert.ok(sliders.length >= 8, `the water panel still exposes its sliders (found ${sliders.length})`);
+
+  const captured = new Map([...capture.matchAll(/([A-Za-z0-9_]+):U\.([A-Za-z0-9_]+)\.value/g)].map((m) => [m[2], m[1]]));
+  for (const slider of sliders) {
+    assert.ok(captured.has(slider), `the water slider \`${slider}\` must be written into the settings document`);
+    /* ...and read back into the same uniform, after setWater() has run, or the
+       preset's own value would overwrite it again on every reload. */
+    const key = captured.get(slider);
+    assert.ok(restore.includes(`a.${key}`), `\`${key}\` must be restored`);
+    const write = restore.indexOf(`U.${slider}.value=a.${key}`);
+    assert.ok(write >= 0, `\`${key}\` must be written back to U.${slider}`);
+    const preset = restore.indexOf(`setWater(a.waterProfile)`);
+    assert.ok(preset < 0 || write > preset, `\`${key}\` has to be applied after setWater(), or the preset wins`);
+  }
+  /* Undo restores the same object, so a control that survives a reload also
+     survives undo — one mechanism, not two. */
+  assert.match(main, /function restore\(s\)[\s\S]{0,1200}restoreStudioSettings\(s\.A\)/);
+});
+
 test('panel edits are batched into one write, and never lost on unload', () => {
   const env = boot();
   for (let i = 0; i < 6; i++) vm.runInContext('queueStudioConfigSave()', env.context);

@@ -312,7 +312,7 @@ test('the page and both build scripts ship the grown flora', () => {
   assert.match(models, /mk\('shrub',4000,TV3\(treeBuilder\('shrub',shrubTreeJs,3\)/);
   assert.match(models, /LZ\('acacia',1200,\(\)=>TV\(treeBuilder\('acacia',acaciaTreeJs,2\)/);
   assert.match(models, /LZ\('ashbush',3000,\(\)=>TV\(treeBuilder\('ashbush',ashBushTreeJs,2\)/);
-  assert.match(models, /mk\('rock',1000,\[0,1,2\]\.map\(v=>\[rockBuilder\(\),\{nt:1,std:1,vi:v,vn:3\}\]\),true\)/);
+  assert.match(models, /mk\('rock',1000,\[0,1,2\]\.map\(v=>\[rockBuilder\(\),Object\.assign\(ROCKMAT\('granite'\),\{vi:v,vn:3\}\)\]\),true\)/);
   assert.match(models, /LZ\('sandrock',800,\(\)=>\[0,1,2\]\.map\(v=>\[rockBuilder\('sand'\)/);
   assert.match(models, /LZ\('basalt',1200,\(\)=>\[0,1,2\]\.map\(v=>\[rockBuilder\('basalt'\)/);
   assert.doesNotMatch(models, /\[rockG\(/, 'no call site may still resolve the removed rockG name');

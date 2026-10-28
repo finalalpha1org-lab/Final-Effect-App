@@ -1033,7 +1033,11 @@ function waterProfileFor(index){
  p.secchi=+(1.44/Math.max(kd,1e-4)).toFixed(1);
  p.clarity=cl(p.secchi/10,.3,4);
  p.turbidity=cl(sediment*.9+o[3]*.15,.02,1);
- p.transparency=cl(1-sediment*.55-o[3]*.25,.08,1);
+ /* How much of the bed a swimmer sees: it follows the Secchi depth, not the
+    silt load alone. A peat bog carries almost no suspended sediment but eats
+    its own light within a metre, and deriving transmission from sediment gave
+    it 92% — so the darkest water in the list rendered like glass. */
+ p.transparency=cl(.12+.88*(1-Math.exp(-p.secchi/6))-sediment*.25,.08,1);
  p.beaufort=beaufortOf(p.wind);
  p.optics={type:cl(p.jerlov|0,0,7),absorb:[+o[0].toFixed(4),+o[1].toFixed(4),+o[2].toFixed(4)],scatter:+o[3].toFixed(4)};
  return p;

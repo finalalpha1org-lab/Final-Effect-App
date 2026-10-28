@@ -1239,12 +1239,13 @@ struct RockSpec {
   float tint[3];
   float moss;      /* lichen mask strength: 0 = too young/bare for a crust */
   float banding;   /* sedimentary banding weight                          */
+  float tile;      /* metres per texture repeat: the stone's real grain   */
 };
 
 const RockSpec kRock[ROCK_COUNT] = {
-  /* granite   */ { 6, { 1.00f, 1.00f, 1.00f }, 1.00f, 0.07f },
-  /* sandstone */ { 6, { 1.40f, 0.98f, 0.68f }, 0.25f, 0.17f },
-  /* basalt    */ { 9, { 0.34f, 0.33f, 0.34f }, 0.00f, 0.07f }
+  /* granite   */ { 6, { 1.00f, 1.00f, 1.00f }, 1.00f, 0.07f, 0.55f },
+  /* sandstone */ { 6, { 1.40f, 0.98f, 0.68f }, 0.25f, 0.17f, 0.75f },
+  /* basalt    */ { 9, { 0.34f, 0.33f, 0.34f }, 0.00f, 0.07f, 0.42f }
 };
 
 struct Plane {
@@ -1276,6 +1277,11 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
   const float sx = rng.range(0.95f, 1.35f);
   const float sy = rng.range(0.55f, 0.90f);
   const float sz = rng.range(0.80f, 1.20f);
+  /* Texture scale, in metres. A boulder and a hand specimen are made of the
+     same granite, so the grain has to be the same size on both: the UVs below
+     are arc lengths divided by this, not 0..1 across whatever shape came out.
+     The repeat count around the stone is rounded to a whole number so the
+     meridian seam closes instead of cutting the grain. */
 
   auto radiusAt = [&](V3 dir) -> float {
     float sum = 0.0f;
@@ -1296,6 +1302,27 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
     const float r = radiusAt(norm(d));
     return v3(d.x / l * r * sx, d.y / l * r * sy + 0.45f, d.z / l * r * sz);
   };
+
+  /* Mean radius of the body that was actually grown, so one texture repeat is
+     `tile` metres of stone and not `tile` metres of whatever bounding box the
+     seed happened to produce. Sampled on the same grid the mesh uses. */
+  float radiusSum = 0.0f;
+  int32_t radiusN = 0;
+  for (int32_t j = 0; j <= 12; ++j) {
+    const float th = float(j) / 12.0f * kPi;
+    const float st = sinf(th), ct = cosf(th);
+    for (int32_t i = 0; i < 16; ++i) {
+      const float f = float(i) / 16.0f * kTwoPi;
+      radiusSum += radiusAt(v3(st * cosf(f), ct, st * sinf(f)));
+      ++radiusN;
+    }
+  }
+  const float meanR = radiusN > 0 ? radiusSum / float(radiusN) : 1.0f;
+  const float uvTile = maxf(0.08f, rs.tile);
+  const float rMean = meanR * (sx + sz) * 0.5f;
+  int32_t uRepeat = int32_t(floorf(kTwoPi * rMean / uvTile + 0.5f));
+  if (uRepeat < 2) uRepeat = 2;
+  const float vScale = meanR * sy / uvTile;
 
   const int32_t nu = detail >= 2 ? 40 : 32;
   const int32_t nv = detail >= 2 ? 26 : 20;
@@ -1331,7 +1358,9 @@ int32_t generateRock(int32_t kind, uint32_t seed, int32_t detail) {
       const float rr = ((q + 0.025f) * (1.0f - moss) + 0.17f * moss) * rs.tint[0];
       const float gg = ((q + 0.008f) * (1.0f - moss) + 0.27f * moss) * rs.tint[1];
       const float bb = ((q - 0.020f) * (1.0f - moss) + 0.09f * moss) * rs.tint[2];
-      pushVert(p, n, float(i) / float(nu), float(j) / float(nv), rr, gg, bb,
+      const float uu = float(i) / float(nu) * float(uRepeat);
+      const float vv = th * vScale;
+      pushVert(p, n, uu, vv, rr, gg, bb,
                nn, v3(0.0f, 0.45f, 0.0f));
       if (prevRow >= 0 && i > 0) {
         const int32_t a0 = prevRow + i - 1, a1 = prevRow + i;

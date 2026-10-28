@@ -70,6 +70,35 @@ const shd=t=>{const q=.7+.3*t;return[q,q,q]},flc=c=>()=>c,UB=[1,1,0],bkU=[3,4,.4
 const LFT=leafTex(),OAKL=leafTexSpecies('oak'),BIRL=leafTexSpecies('birch'),SHRL=leafTexSpecies('shrub'),ACAL=leafTexSpecies('acacia'),SAGL=leafTexSpecies('sage'),ASHL=leafTexSpecies('ash'),NDT=needleTex(),PTT=petalTex(),FRT=frondTex(),RFT=roofTex(),BT={oak:barkTex('oak'),pine:barkTex('pine'),birch:barkTex('birch'),palm:barkTex('palm'),char:barkTex('char'),cactus:cactusTex()};
 const BN=Object.fromEntries(Object.entries(BT).map(([k,t])=>[k,normFrom(t.image,k=='palm'?1.8:k=='cactus'?2.5:4)]));
 const BR=Object.fromEntries(Object.entries(BT).map(([k,t])=>[k,roughTex(t.image,k=='birch'?.88:k=='cactus'?.86:.9)]));
+/* Stone. A rock had no texture at all: only vertex colour, so at close range a
+   boulder was flat-shaded paint and the studio's measured granite roughness had
+   nothing to act on — `normalScale` on a material with no normal map is a
+   number nobody reads. These three maps are the delivery vehicle for the
+   kernel's rock micro-structure (fracture relief and grain), which the realism
+   module paints in once the engine is up; until then they are a plain, tileable
+   grain rather than a flat fill. The albedo map stays near-white on purpose:
+   the stone's colour is the vertex colour, and the map only modulates it. */
+function rockTex(kind){const[c,x]=cv2(256,256),g=kind==='basalt'?236:kind==='sandstone'?242:239;
+x.fillStyle=`rgb(${g},${g},${g})`;x.fillRect(0,0,256,256);
+for(let i=0;i<900;i++){const s2=R()<.5?0:255,v=R()*.055;x.fillStyle=`rgba(${s2},${s2},${s2},${v})`;
+ const px=R()*256,py=R()*256,rr=1+R()*(kind==='basalt'?5:9);x.beginPath();x.arc(px,py,rr,0,6.283);x.fill()}
+for(let i=0;i<26;i++){const a=R()*6.283,px=128,py=128;x.strokeStyle=`rgba(60,58,56,${.035+R()*.075})`;x.lineWidth=.7+R()*1.6;
+ x.beginPath();x.moveTo(px,py);let cx0=px,cy0=py,l2=16+R()*40;for(let k=0;k<4;k++){const aa=a+(R()-.5)*1.1;cx0+=Math.cos(aa)*l2;cy0+=Math.sin(aa)*l2;x.lineTo(cx0,cy0)}x.stroke()}
+return mkTex(c)}
+/* A data map, not a colour: no sRGB decode on the way to the shader. */
+function rockBlank(colour){const[c,x]=cv2(256,256);x.fillStyle=colour;x.fillRect(0,0,256,256);return mkTex(c,false)}
+const ROCKTEX={};
+for(const kind of ['granite','sandstone','basalt']){
+ ROCKTEX[kind]={albedo:rockTex(kind),normal:rockBlank('#8080ff'),rough:rockBlank('#ffffff')};
+}
+/* The material options one rock kind needs. Every one of them is a real map:
+   albedo grain, tangent-space fracture normal, and the roughness variation a
+   weathered face has between its polished and its chalky patches. */
+/* `det` stays off: the terrain detail shader injects high-frequency bump that
+   shimmers when the camera zooms into a stone, so the rock carries its own
+   normal and roughness maps instead. */
+const ROCKMAT=kind=>Object.assign({nt:1,std:1,ns:.9},
+ {map:ROCKTEX[kind].albedo,nm:ROCKTEX[kind].normal,rm:ROCKTEX[kind].rough});
 const HTV=[stuccoC,brickC,sidingC].map(f=>facade(128,128,3,3,f)),HT=HTV[0],AT=facade(128,96,3,3,aptC),OT=facade(96,96,3,3,offC),GT=facade(96,96,3,3,glsC);
 /* grass tufts: crossed alpha cards, two layers */
 const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col)}}return gaGeo(g)})();
@@ -507,7 +536,7 @@ mk('oak',1500,TV3(treeBuilder('oak',oakTreeJs,3),{map:BT.oak,w:.0015,nt:1,phys:1
 mk('birch',1500,TV3(treeBuilder('birch',birchTreeJs,3),{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true);
 mk('palm',1000,TV(palmTree,{map:BT.palm,w:.002,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.palm,ns:.55,rm:BR.palm},{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.0025,wf:.03}),true);
 mk('shrub',4000,TV3(treeBuilder('shrub',shrubTreeJs,3),{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true);
-mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),{nt:1,std:1,vi:v,vn:3}]),true);KIND.rock.vr=.7;
+mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),Object.assign(ROCKMAT('granite'),{vi:v,vn:3})]),true);KIND.rock.vr=.7;
 mk('house',1500,[...[0,1,2].flatMap(v=>[[houseW,{pbr:HTV[v][2],map:HTV[v][0],em:HTV[v][1],bump:.5,vi:v,vn:3,sn:1,part:'wall'}],[houseR,{std:1,map:RFV[v],ds:1,bump:.8,vi:v,vn:3,sn:1,part:'roof'}]]),[houseB,{nt:1,sn:1,part:'base'}]],true);
 mk('block',500,[[blockW,{pbr:AT[2],map:AT[0],em:AT[1],bump:.5,sn:1,part:'shell'}],[blockB,{nt:1,sn:1,part:'base'}]],true);
 mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[midB,{nt:1,sn:1,part:'base'}]],true);
@@ -537,8 +566,8 @@ LZ('acacia',1200,()=>TV(treeBuilder('acacia',acaciaTreeJs,2),bk('oak',.002),{map
 LZ('joshua',1200,()=>TV(joshuaTree,bk('oak',.003),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.003,wf:.02}));
 LZ('agave',2000,()=>TV(agaveTree,bk('cactus',.004),{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.004}));
 LZ('sage',3000,()=>TV(sageTree,bk('oak',.015),{map:SAGL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.sage.nm,ns:.28,rm:LEAF_PBR.sage.rm,roughness:.82,w:.015,wf:.025}));
-LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),{nt:1,std:1,det:1,vi:v,vn:3}]));
-LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),{nt:1,std:1,det:1,vi:v,vn:3}]));
+LZ('sandrock',800,()=>[0,1,2].map(v=>[rockBuilder('sand'),Object.assign(ROCKMAT('sandstone'),{vi:v,vn:3})]));
+LZ('basalt',1200,()=>[0,1,2].map(v=>[rockBuilder('basalt'),Object.assign(ROCKMAT('basalt'),{vi:v,vn:3})]));
 LZ('deadtree',1200,()=>SX(deadTree,{map:BT.char,nt:1,std:1,nm:BN.char,ns:.65,rm:BR.char,w:.0016}));
 LZ('ashbush',3000,()=>TV(treeBuilder('ashbush',ashBushTreeJs,2),bk('char',.015),{map:ASHL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.ash.nm,ns:.28,rm:LEAF_PBR.ash.rm,roughness:.82,w:.015,wf:.025}));
 /* Ferns are the grammar species: `fernTree`/`treeFernTree` stay as the fallback
@@ -549,5 +578,5 @@ LZ('fern',3000,()=>TV(treeBuilder('fern',fernTree,2),bk('palm',.01),{map:LLT,cut
 /* The build routines run inside this try-block, so their const textures
    are block scoped. Publish them so the realism module can re-synthesise
    bark / leaf micro-structure into the very same canvases the meshes use. */
-window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL};
+window.__feLandscapeTex={BT,BN,BR,LEAF_PBR,LFT,OAKL,BIRL,SHRL,ROCK:ROCKTEX};
 }catch(e){MODELS_ERR=e;showErr('Models fallback: '+e.message);fallbackModels()}

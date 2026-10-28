@@ -157,3 +157,92 @@ test('terrain water has no WASM/SPH simulation path or particle-grid control',()
   assert.doesNotMatch(html,/WATER_SIM|initWaterSPH|updateWaterSPH|sim_solver_sph_step|simulation_solver\.wasm|uSimTex/);
   assert.ok(html.includes('not a full Navier–Stokes/CFD solver or a guarantee of photographic realism'),'solver and rendering limits should remain explicit in the UI');
 });
+
+test('the colour a water preset actually puts on screen is physical, not a swatch', async () => {
+  /* The authored `deep` and `shallow` values are only the brightness reference:
+     `waterProfileFor` derives the colour the shader receives from the Jerlov
+     absorption coefficients (Beer–Lambert), the CDOM load and the silt. That
+     means the presets can be checked the way a photograph of the same water
+     would be — hue and relative depth — instead of trusting the hex values. */
+  const start = html.indexOf('const WATER_SILT=');
+  const end = html.indexOf('function setWater(', start);
+  assert.ok(start > 0 && end > start, 'the water optics block must exist');
+  const block = html.slice(start, end);
+  const cl = (v, a, b) => Math.min(b, Math.max(a, v));
+  const noCore = new Proxy({}, { get: () => undefined, has: () => true });
+  const sandbox = new Function('cl', 'core', 'window', `${block}; return { WATER_PROFILES, waterProfileFor, waterOpticalFor, waterColumnColour, waterShallowColour };`);
+  const api = sandbox(cl, noCore, {});
+
+  const toSrgb = (v) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
+  const luma = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  const names = api.WATER_PROFILES.map((p) => p.name);
+  assert.equal(names.length, 8, 'eight real water bodies');
+
+  const seen = {};
+  for (let i = 0; i < api.WATER_PROFILES.length; i++) {
+    const p = api.waterProfileFor(i);
+    for (const key of ['deep', 'shallow', 'turbid']) {
+      const c = p[key];
+      assert.equal(c.length, 3);
+      for (const v of c) assert.ok(Number.isFinite(v) && v >= 0 && v <= 1, `${p.name}.${key} must be a linear colour in 0..1`);
+      seen[`${i}:${key}`] = c;
+    }
+    /* Deep water is darker than the shallow edge: the column absorbs. */
+    assert.ok(luma(p.deep) < luma(p.shallow), `${p.name}: deep must be darker than shallow (${luma(p.deep).toFixed(3)} vs ${luma(p.shallow).toFixed(3)})`);
+    /* Secchi depth has to land in a range a diver would recognise. */
+    assert.ok(p.secchi > 0.3 && p.secchi < 40, `${p.name} visibility ${p.secchi} m is not a real water body`);
+    assert.ok(p.beaufort >= 0 && p.beaufort <= 11, `${p.name} sea state is inside the Beaufort scale`);
+    assert.deepEqual(Object.keys(p.optics).sort(), ['absorb', 'scatter', 'type']);
+  }
+
+  /* Hue, in the linear space the shader mixes in. */
+  const lake = api.waterProfileFor(4);
+  assert.ok(lake.deep[2] > lake.deep[0] && lake.deep[1] > lake.deep[0], 'an alpine lake is blue, not brown');
+  const lagoon = api.waterProfileFor(1);
+  assert.ok(lagoon.shallow[1] > lagoon.shallow[0] * 1.6 && lagoon.shallow[2] > lagoon.shallow[0] * 1.6,
+    `a lagoon over sand reads turquoise (${lagoon.shallow.map((v) => v.toFixed(3)).join(', ')})`);
+  /* Silt and tannin both take the blue out of the light coming back off the
+     bed, which is what separates these four from the ocean. */
+  for (const index of [2, 5, 6, 7]) {
+    const p = api.waterProfileFor(index);
+    assert.ok(p.shallow[2] < p.shallow[0] && p.shallow[2] < p.shallow[1],
+      `${p.name} must not read blue (${p.shallow.map((v) => v.toFixed(3)).join(', ')})`);
+  }
+  /* Tannin is a blue absorber rather than a dye, so a peat bog is amber. */
+  const bog = api.waterProfileFor(7);
+  assert.ok(bog.shallow[0] > bog.shallow[1] && bog.shallow[1] > bog.shallow[2],
+    `a peat bog is amber, not green (${bog.shallow.map((v) => v.toFixed(3)).join(', ')})`);
+
+  /* The visible surface colour, after the sRGB encode the canvas applies:
+     nothing may clip to black or to white. */
+  for (let i = 0; i < api.WATER_PROFILES.length; i++) {
+    const p = api.waterProfileFor(i);
+    const srgb = p.shallow.map(toSrgb);
+    for (const v of srgb) assert.ok(v > 0.02 && v < 0.98, `${p.name} shallow clips in sRGB (${srgb.map((x) => x.toFixed(2)).join(', ')})`);
+  }
+
+  /* Transmission is how much of the bed a swimmer sees, so it has to follow
+     the visibility and not the silt alone: a peat bog carries almost no
+     suspended sediment but absorbs its own light within a metre, and deriving
+     transmission from sediment alone made the darkest water in the list 92%
+     transmissive — glass, with a bog's colour. */
+  const clear = api.waterProfileFor(0), dark = api.waterProfileFor(7);
+  assert.ok(clear.transparency > 0.5, `clear ocean transmits (${clear.transparency.toFixed(2)})`);
+  assert.ok(dark.transparency < 0.45, `bog water does not (${dark.transparency.toFixed(2)})`);
+  assert.ok(dark.secchi < 3, 'and the engine knows it: the bog sees under two metres');
+  for (const [index, limit] of [[2, 0.2], [5, 0.3], [6, 0.2]]) {
+    const p = api.waterProfileFor(index);
+    assert.ok(p.transparency < limit, `${p.name} must not transmit like open water (${p.transparency.toFixed(2)})`);
+  }
+  /* Monotonic with visibility across the whole list: a shorter Secchi depth is
+     never more transmissive. */
+  const bySecchi = api.WATER_PROFILES.map((p, i) => api.waterProfileFor(i));
+  for (const a of bySecchi) for (const b of bySecchi) {
+    if (a.secchi < b.secchi * 0.5) assert.ok(a.transparency < b.transparency,
+      `${a.name} (${a.secchi} m) cannot be more transmissive than ${b.name} (${b.secchi} m)`);
+  }
+  /* Re-reading a preset must not re-derive it (the hydration is idempotent). */
+  const once = api.waterProfileFor(0).deep.slice();
+  const twice = api.waterProfileFor(0).deep.slice();
+  assert.deepEqual(once, twice, 'hydrating a preset twice must not drift its colour');
+});
