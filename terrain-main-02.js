@@ -85,6 +85,46 @@ for(let i=0;i<900;i++){const s2=R()<.5?0:255,v=R()*.055;x.fillStyle=`rgba(${s2},
 for(let i=0;i<26;i++){const a=R()*6.283,px=128,py=128;x.strokeStyle=`rgba(60,58,56,${.035+R()*.075})`;x.lineWidth=.7+R()*1.6;
  x.beginPath();x.moveTo(px,py);let cx0=px,cy0=py,l2=16+R()*40;for(let k=0;k<4;k++){const aa=a+(R()-.5)*1.1;cx0+=Math.cos(aa)*l2;cy0+=Math.sin(aa)*l2;x.lineTo(cx0,cy0)}x.stroke()}
 return mkTex(c)}
+/* Grass blade micro-structure.
+   A lawn blade is not a flat strip of plastic: it is folded down a midrib, it
+   carries parallel veins a fraction of a millimetre wide, and its cuticle is
+   waxy enough to catch a highlight. Every blade used to be vertex colour and
+   nothing else, which is why a close-up of the ground read as painted slats.
+   The albedo here stays near white on purpose — the vertex colours already
+   carry the plant's green, so this only modulates them; a coloured map would
+   double the pigment and mute the grass, which is exactly the mistake the old
+   blade atlas made. `v` runs from the soil to the tip, so a texture can be laid
+   along the blade instead of repeating on every quad.
+   Pure function of (w, h, seed): no canvas, so it can be checked numerically. */
+function bladePixels(w,h,seed){
+  let st=(seed>>>0)||1;const rnd=()=>{st^=st<<13;st>>>=0;st^=st>>>17;st^=st<<5;st>>>=0;return st/4294967296};
+  const albedo=new Uint8ClampedArray(w*h*4),normal=new Uint8ClampedArray(w*h*4);
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++){
+    const u=i/(w-1||1),v=j/(h-1||1),mid=Math.abs(u-.5)*2,k=(j*w+i)*4;
+    /* Four veins a side, a groove over the midrib, and the dry, browning tip a
+       blade gets late in the season. */
+    const vein=Math.pow(Math.abs(Math.sin((u-.5)*Math.PI*6)),16);
+    const groove=Math.exp(-mid*mid*26);
+    const dry=v>.86?(v-.86)/.14:0;
+    const lum=246-groove*9-vein*8-mid*mid*5+(rnd()-.5)*3.2-dry*9;
+    albedo[k]=lum+dry*9; albedo[k+1]=lum+dry*3; albedo[k+2]=lum-dry*10; albedo[k+3]=255;
+    /* Tangent-space normal: the blade folds away from its midrib, and the veins
+       ripple across that fold. */
+    let nx=(u-.5)*2*.5+Math.sin((u-.5)*Math.PI*6)*.09;
+    const ny=-dry*.18, nzSq=1-nx*nx-ny*ny, nz=Math.sqrt(nzSq>1e-4?nzSq:1e-4), l=Math.hypot(nx,ny,nz);
+    normal[k]=(nx/l*.5+.5)*255; normal[k+1]=(ny/l*.5+.5)*255; normal[k+2]=(nz/l*.5+.5)*255; normal[k+3]=255;
+  }
+  return {albedo,normal};
+}
+const BLADE=(()=>{
+  const W=128,H=256,px=bladePixels(W,H,0x9e3779b9);
+  const [ca,x]=cv2(W,H),[cn,y]=cv2(W,H);
+  const ia=x.createImageData(W,H),inr=y.createImageData(W,H);
+  ia.data.set(px.albedo);inr.data.set(px.normal);
+  x.putImageData(ia,0,0);y.putImageData(inr,0,0);
+  /* Colour vs data: the albedo is sRGB-decoded, the normal map is not. */
+  return {albedo:mkTex(ca),normal:mkTex(cn,false)};
+})();
 /* A data map, not a colour: no sRGB decode on the way to the shader. */
 function rockBlank(colour){const[c,x]=cv2(256,256);x.fillStyle=colour;x.fillRect(0,0,256,256);return mkTex(c,false)}
 const ROCKTEX={};
@@ -101,8 +141,8 @@ const ROCKMAT=kind=>Object.assign({nt:1,std:1,ns:.9},
  {map:ROCKTEX[kind].albedo,nm:ROCKTEX[kind].normal,rm:ROCKTEX[kind].rough});
 const HTV=[stuccoC,brickC,sidingC].map(f=>facade(128,128,3,3,f)),HT=HTV[0],AT=facade(128,96,3,3,aptC),OT=facade(96,96,3,3,offC),GT=facade(96,96,3,3,glsC);
 /* grass tufts: crossed alpha cards, two layers */
-const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col)}}return gaGeo(g)})();
-const tallGrassG=(()=>{const g=GA(),count=detail>=3?20:detail>=2?16:12;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=1.05+R()*1.35,width=.014+R()*.024,lean=.12+R()*.43,curve=(R()-.5)*.22,base=[.10+R()*.08,.22+R()*.14,.035+R()*.035],tip=[.18+R()*.15,.36+R()*.2,.055+R()*.055],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.025+.975*Math.pow(1-t,.74)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<4;j++){const t0=j/4,t1=(j+1)/4,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.025,sa],col)}}return gaGeo(g)})();
+const grassG=(()=>{const g=GA(),count=detail>=3?12:detail>=2?8:5;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=.38+R()*.76,width=.018+R()*.032,lean=.08+R()*.34,curve=(R()-.5)*.18,base=[.11+R()*.1,.19+R()*.13,.035+R()*.04],tip=[.19+R()*.16,.32+R()*.2,.055+R()*.07],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.035+.965*Math.pow(1-t,.78)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<3;j++){const t0=j/3,t1=(j+1)/3,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.02,sa],col,[[0,t0],[1,t0],[1,t1],[0,t1]])}}return gaGeo(g)})();
+const tallGrassG=(()=>{const g=GA(),count=detail>=3?20:detail>=2?16:12;for(let i=0;i<count;i++){const a=R()*6.2832,ca=Math.cos(a),sa=Math.sin(a),height=1.05+R()*1.35,width=.014+R()*.024,lean=.12+R()*.43,curve=(R()-.5)*.22,base=[.10+R()*.08,.22+R()*.14,.035+R()*.035],tip=[.18+R()*.15,.36+R()*.2,.055+R()*.055],side=[-sa,0,ca],pt=(t,s)=>{const w=width*(.025+.975*Math.pow(1-t,.74)),cx=ca*lean*t*t+side[0]*curve*Math.sin(t*3.1416),cz=sa*lean*t*t+side[2]*curve*Math.sin(t*3.1416);return[cx+side[0]*s*w*.5,height*t,cz+side[2]*s*w*.5]};for(let j=0;j<4;j++){const t0=j/4,t1=(j+1)/4,m=(t0+t1)*.5,q=m*m*(3-2*m),col=base.map((v,k)=>v+(tip[k]-v)*q);gaQ(g,[pt(t0,-1),pt(t0,1),pt(t1,1),pt(t1,-1)],[ca,.025,sa],col,[[0,t0],[1,t0],[1,t1],[0,t1]])}}return gaGeo(g)})();
 
 function indexSubsetGeometry(g,fraction){const h=g.clone();const index=g.index;if(index){const keep=Math.max(6,Math.floor(index.count*fraction/3)*3);h.setIndex(new THREE.BufferAttribute(index.array.slice(0,keep),1))}return h}
 const grassLowG=buildLowDetail(()=>indexSubsetGeometry(grassG,.42)),tallGrassLowG=buildLowDetail(()=>indexSubsetGeometry(tallGrassG,.5)),grassLowGeometry=grassLowG;
@@ -525,9 +565,9 @@ function applyGrownPlants(only) {
 }
 window.__feGrownPlants = applyGrownPlants;
 
-function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,lodGeom:grassLowG}]],false);
+function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:grassLowG}]],false);
 mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
-mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,lodGeom:tallGrassLowG}]],false);
+mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:tallGrassLowG}]],false);
 mk('daisy',14000,flowerParts('daisy'),false);
 mk('tulip',12000,flowerParts('tulip'),false);
 mk('lavender',12000,flowerParts('lavender'),false);

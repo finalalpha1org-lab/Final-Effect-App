@@ -500,6 +500,9 @@ function lowMeshesFor(k){
   const lowMat=m.material.clone();
   lowMat.onBeforeCompile=m.material.onBeforeCompile;
   lowMat.customProgramCacheKey=m.material.customProgramCacheKey;
+  /* The far tier keeps the albedo — it is one fetch and it carries the
+     colour of bark and blade — and drops the relief maps, which cost more
+     fetch bandwidth than a tree a few pixels tall can show. */
   lowMat.normalMap=null;lowMat.roughnessMap=null;lowMat.bumpMap=null;lowMat.needsUpdate=true;
   const low=new THREE.InstancedMesh(m.userData.lodGeom||m.geometry,lowMat,m.instanceMatrix.count);
   low.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
