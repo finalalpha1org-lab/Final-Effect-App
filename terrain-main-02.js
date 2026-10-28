@@ -3,16 +3,76 @@ try{
 const TEXA=Math.min(4,ren.capabilities.getMaxAnisotropy()||1);
 const cv2=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return[c,c.getContext('2d')]};
 const mkTex=(c,color=true)=>{const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;if('colorSpace'in t&&THREE.SRGBColorSpace!==undefined)t.colorSpace=color?THREE.SRGBColorSpace:THREE.NoColorSpace;else if('encoding'in t)t.encoding=color?THREE.sRGBEncoding:THREE.LinearEncoding;t.anisotropy=TEXA;return t};
+/* ---- Card mipmaps: keep the silhouette, not the average ----------------
+   A leaf card is a few percent opaque pixels on a mostly transparent square,
+   and its material is alpha-tested (cut .32..38). Ordinary mip generation
+   averages alpha, so by the second or third level the leaf has averaged down
+   past the test and the card stops drawing: a crown loses its leaves from the
+   outside in as it recedes, which reads as a shredded cutout rather than a
+   tree. The fix is the one every vegetation renderer uses - build the mip chain
+   so alpha coverage survives. Colour is averaged weighted by alpha (or every
+   leaf edge picks up a dark fringe from the transparent black around it), and
+   alpha keeps most of the strongest child instead of the mean, so a mip texel
+   that overlapped one leaf stays a leaf. */
+const COVER_KEEP=.72;
+function coverageMips(rgba,w,h){
+  const chain=[{data:rgba,width:w,height:h}];
+  let src=rgba,sw=w,sh=h;
+  while(sw>1||sh>1){
+    const dw=Math.max(1,sw>>1),dh=Math.max(1,sh>>1),out=new Uint8Array(dw*dh*4);
+    for(let y=0;y<dh;y++)for(let x=0;x<dw;x++){
+      let sa=0,sr=0,sg=0,sb=0,amax=0;
+      for(let dy=0;dy<2;dy++){
+        const yy=Math.min(sh-1,y*2+dy);
+        for(let dx=0;dx<2;dx++){
+          const xx=Math.min(sw-1,x*2+dx),i=(yy*sw+xx)*4,a=src[i+3];
+          sa+=a;sr+=src[i]*a;sg+=src[i+1]*a;sb+=src[i+2]*a;
+          if(a>amax)amax=a;
+        }
+      }
+      const o=(y*dw+x)*4;
+      if(sa>0){out[o]=Math.round(sr/sa);out[o+1]=Math.round(sg/sa);out[o+2]=Math.round(sb/sa)}
+      const avg=sa/4;
+      out[o+3]=Math.round(avg+(amax-avg)*COVER_KEEP);
+    }
+    chain.push({data:out,width:dw,height:dh});
+    src=out;sw=dw;sh=dh;
+  }
+  return chain;
+}
+const isPot=v=>v>0&&(v&(v-1))===0;
+/* A colour texture with the chain above. The canvas stays on `image`, because
+   the normal and roughness maps are derived from its pixels. */
+function mkCardTex(c,color=true){
+  if(!c||!c.getContext||!isPot(c.width)||!isPot(c.height))return mkTex(c,color);
+  let t;
+  try{
+    const w=c.width,h=c.height,px=c.getContext('2d').getImageData(0,0,w,h).data;
+    /* A typed array is never flipped by the driver, so the rows are reversed
+       here - the canvas is painted top row first, WebGL reads bottom row first. */
+    const flipped=new Uint8Array(px.length);
+    for(let y=0;y<h;y++)flipped.set(px.subarray(y*w*4,(y+1)*w*4),(h-1-y)*w*4);
+    const chain=coverageMips(flipped,w,h);
+    t=new THREE.DataTexture(chain[0].data,w,h,THREE.RGBAFormat);
+    t.mipmaps=chain;t.generateMipmaps=false;
+    t.minFilter=THREE.LinearMipmapLinearFilter;t.magFilter=THREE.LinearFilter;
+    t.wrapS=t.wrapT=THREE.RepeatWrapping;t.anisotropy=TEXA;
+    if('colorSpace' in t&&THREE.SRGBColorSpace!==undefined)t.colorSpace=color?THREE.SRGBColorSpace:THREE.NoColorSpace;
+    else if('encoding' in t)t.encoding=color?THREE.sRGBEncoding:THREE.LinearEncoding;
+    t.image=c;t.needsUpdate=true;
+  }catch(e){return mkTex(c,color)}
+  return t;
+}
 const hsl=(h,s,l)=>`hsl(${h},${s}%,${l}%)`;
 function leafTex(){const[c,x]=cv2(256,256);x.strokeStyle='#3a2e1c';x.lineWidth=3;x.beginPath();x.moveTo(128,256);x.quadraticCurveTo(116,150,134,24);x.stroke();
 for(let i=0;i<30;i++){const t=i/30,sd=i%2?1:-1,bx=128-10*(1-t)+4*t,by=248-t*220,ang=-1.57+sd*(.55+R()*.5),len=46+R()*30-t*14,w=11+R()*8;
 x.save();x.translate(bx,by);x.rotate(ang);x.beginPath();x.moveTo(0,0);x.bezierCurveTo(len*.25,-w,len*.7,-w*.8,len,0);x.bezierCurveTo(len*.7,w*.8,len*.25,w,0,0);
 const g=x.createLinearGradient(0,0,len,0);g.addColorStop(0,hsl(100+R()*20,45,25+R()*9));g.addColorStop(1,hsl(88+R()*30,50,35+R()*15));x.fillStyle=g;x.fill();
 x.strokeStyle='rgba(190,215,120,.45)';x.lineWidth=1;x.beginPath();x.moveTo(0,0);x.lineTo(len*.95,0);for(let v=1;v<5;v++){x.moveTo(len*v/5,0);x.lineTo(len*v/5+len*.12,-w*.6);x.moveTo(len*v/5,0);x.lineTo(len*v/5+len*.12,w*.6)}x.stroke();x.restore()}
-return mkTex(c)}
-function leafTexSpecies(kind){const[c,x]=cv2(256,256),cfg={oak:{n:9,len:38,w:14,hue:92,sat:48,light:33},birch:{n:18,len:28,w:10,hue:102,sat:42,light:40},shrub:{n:22,len:22,w:12,hue:112,sat:43,light:32},sage:{n:16,len:26,w:9,hue:104,sat:27,light:44},ash:{n:14,len:32,w:8,hue:96,sat:46,light:35}}[kind]||{n:16,len:27,w:10,hue:100,sat:45,light:28};const draw=(px,py,ang,len,w)=>{x.save();x.translate(px,py);x.rotate(ang);x.beginPath();if(kind==='oak'){x.moveTo(0,0);for(let j=1;j<=5;j++){const q=j/6,yy=-w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q-.07),yy*1.55,len*q,yy*.58)}x.lineTo(len,0);for(let j=5;j>=1;j--){const q=j/6,yy=w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q+.07),yy*1.55,len*q,yy*.58)}x.closePath()}else{x.moveTo(0,0);x.quadraticCurveTo(len*.22,-w*1.25,len*.78,-w*.5);x.quadraticCurveTo(len,0,len*.78,w*.5);x.quadraticCurveTo(len*.22,w*1.25,0,0);x.closePath()}const g=x.createLinearGradient(0,-w,len,w);g.addColorStop(0,hsl(cfg.hue+R()*12,cfg.sat,cfg.light-7+R()*5));g.addColorStop(1,hsl(cfg.hue-5+R()*14,cfg.sat+5,cfg.light+8+R()*9));x.fillStyle=g;x.fill();x.strokeStyle='rgba(205,220,155,.42)';x.lineWidth=.65;x.beginPath();x.moveTo(1,0);x.lineTo(len*.94,0);for(let v=1;v<4;v++){const q=v/4;x.moveTo(len*q,0);x.lineTo(len*q+len*.1,-w*.55);x.moveTo(len*q,0);x.lineTo(len*q+len*.1,w*.55)}x.stroke();x.restore()};x.strokeStyle=kind==='birch'?'rgba(92,74,45,.9)':'rgba(70,53,32,.85)';x.lineWidth=2.1;x.beginPath();x.moveTo(128,254);x.quadraticCurveTo(111,132,132,10);x.stroke();if(kind==='acacia'){for(let j=0;j<7;j++){const yy=225-j*31,sg=j%2?1:-1;x.strokeStyle='rgba(80,78,49,.8)';x.lineWidth=1;x.beginPath();x.moveTo(128,yy);x.lineTo(128+sg*46,yy-18);x.stroke();for(let k=0;k<6;k++){const q=(k+.4)/6,px=128+sg*46*q,py=yy-18*q;draw(px,py,sg*(.1+R()*.25),13+R()*8,4+R()*2)}}}else{for(let i=0;i<cfg.n;i++){const t=(i+.45)/cfg.n,sg=i%2?1:-1,px=128+(t-.5)*17,py=245-t*224,len=cfg.len*(.72+R()*.58),w=cfg.w*(.72+R()*.52);draw(px,py,-1.57+sg*(.48+R()*.42),len,w)}}return mkTex(c)}
+return mkCardTex(c)}
+function leafTexSpecies(kind){const[c,x]=cv2(256,256),cfg={oak:{n:9,len:38,w:14,hue:92,sat:48,light:33},birch:{n:18,len:28,w:10,hue:102,sat:42,light:40},shrub:{n:22,len:22,w:12,hue:112,sat:43,light:32},sage:{n:16,len:26,w:9,hue:104,sat:27,light:44},ash:{n:14,len:32,w:8,hue:96,sat:46,light:35}}[kind]||{n:16,len:27,w:10,hue:100,sat:45,light:28};const draw=(px,py,ang,len,w)=>{x.save();x.translate(px,py);x.rotate(ang);x.beginPath();if(kind==='oak'){x.moveTo(0,0);for(let j=1;j<=5;j++){const q=j/6,yy=-w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q-.07),yy*1.55,len*q,yy*.58)}x.lineTo(len,0);for(let j=5;j>=1;j--){const q=j/6,yy=w*Math.sin(q*3.1416);x.quadraticCurveTo(len*(q+.07),yy*1.55,len*q,yy*.58)}x.closePath()}else{x.moveTo(0,0);x.quadraticCurveTo(len*.22,-w*1.25,len*.78,-w*.5);x.quadraticCurveTo(len,0,len*.78,w*.5);x.quadraticCurveTo(len*.22,w*1.25,0,0);x.closePath()}const g=x.createLinearGradient(0,-w,len,w);g.addColorStop(0,hsl(cfg.hue+R()*12,cfg.sat,cfg.light-7+R()*5));g.addColorStop(1,hsl(cfg.hue-5+R()*14,cfg.sat+5,cfg.light+8+R()*9));x.fillStyle=g;x.fill();x.strokeStyle='rgba(205,220,155,.42)';x.lineWidth=.65;x.beginPath();x.moveTo(1,0);x.lineTo(len*.94,0);for(let v=1;v<4;v++){const q=v/4;x.moveTo(len*q,0);x.lineTo(len*q+len*.1,-w*.55);x.moveTo(len*q,0);x.lineTo(len*q+len*.1,w*.55)}x.stroke();x.restore()};x.strokeStyle=kind==='birch'?'rgba(92,74,45,.9)':'rgba(70,53,32,.85)';x.lineWidth=2.1;x.beginPath();x.moveTo(128,254);x.quadraticCurveTo(111,132,132,10);x.stroke();if(kind==='acacia'){for(let j=0;j<7;j++){const yy=225-j*31,sg=j%2?1:-1;x.strokeStyle='rgba(80,78,49,.8)';x.lineWidth=1;x.beginPath();x.moveTo(128,yy);x.lineTo(128+sg*46,yy-18);x.stroke();for(let k=0;k<6;k++){const q=(k+.4)/6,px=128+sg*46*q,py=yy-18*q;draw(px,py,sg*(.1+R()*.25),13+R()*8,4+R()*2)}}}else{for(let i=0;i<cfg.n;i++){const t=(i+.45)/cfg.n,sg=i%2?1:-1,px=128+(t-.5)*17,py=245-t*224,len=cfg.len*(.72+R()*.58),w=cfg.w*(.72+R()*.52);draw(px,py,-1.57+sg*(.48+R()*.42),len,w)}}return mkCardTex(c)}
 function needleTex(){const[c,x]=cv2(128,256);x.strokeStyle='#4a3a26';x.lineWidth=3;x.beginPath();x.moveTo(64,256);x.lineTo(64,10);x.stroke();
-for(let i=0;i<260;i++){const t=R(),y=250-t*236,s=i%2?1:-1,len=(46-t*20)*(.6+R()*.4),a=s*(.5+R()*.55);x.strokeStyle=hsl(110+R()*16,38+R()*14,20+R()*16);x.lineWidth=1.3+R()*.6;x.beginPath();x.moveTo(64,y);x.lineTo(64+Math.sin(a)*len,y-Math.cos(a)*len*.7);x.stroke()}return mkTex(c)}
+for(let i=0;i<260;i++){const t=R(),y=250-t*236,s=i%2?1:-1,len=(46-t*20)*(.6+R()*.4),a=s*(.5+R()*.55);x.strokeStyle=hsl(110+R()*16,38+R()*14,20+R()*16);x.lineWidth=1.3+R()*.6;x.beginPath();x.moveTo(64,y);x.lineTo(64+Math.sin(a)*len,y-Math.cos(a)*len*.7);x.stroke()}return mkCardTex(c)}
 function barkTex(k){const[c,x]=cv2(256,512),b={oak:'rgb(86,65,48)',pine:'rgb(96,70,54)',birch:'rgb(224,221,212)',palm:'rgb(132,112,86)',char:'rgb(30,26,24)'}[k];x.fillStyle=b;x.fillRect(0,0,256,512);
 if(k=='palm'){let y=0;while(y<512){const hg=14+R()*14,g=x.createLinearGradient(0,y,0,y+hg);g.addColorStop(0,'rgba(30,22,12,.5)');g.addColorStop(.18,'rgba(30,22,12,.18)');g.addColorStop(1,'rgba(30,22,12,0)');x.fillStyle=g;x.fillRect(0,y,256,hg);for(let q=0;q<6;q++){x.fillStyle='rgba(20,14,8,.35)';x.fillRect(R()*256,y+R()*3,10+R()*30,1+R()*2)}y+=hg}for(let i=0;i<700;i++){x.strokeStyle=`rgba(${R()<.5?'40,28,16':'170,150,120'},${.06+R()*.12})`;x.lineWidth=1+R()*1.5;const px=R()*256;x.beginPath();x.moveTo(px,R()*512);x.lineTo(px+(R()-.5)*4,R()*512);x.stroke()}}
 else if(k=='birch'){for(let i=0;i<140;i++){x.fillStyle=`rgba(18,16,14,${.45+R()*.45})`;x.fillRect(R()*256,R()*512,12+R()*56,3+R()*5)}for(let i=0;i<120;i++){x.fillStyle=`rgba(150,145,135,${.15+R()*.2})`;x.fillRect(R()*256,R()*512,20+R()*40,12+R()*28)}}
@@ -29,8 +89,8 @@ function cactusTex(){const[c,x]=cv2(256,512),g=x.createLinearGradient(0,0,0,512)
 for(let i=0;i<12;i++){const px=i*256/12,gr=x.createLinearGradient(px-10,0,px+10,0);gr.addColorStop(0,'rgba(20,50,25,0)');gr.addColorStop(.5,'rgba(18,44,22,.55)');gr.addColorStop(1,'rgba(20,50,25,0)');x.fillStyle=gr;x.fillRect(px-10,0,20,512);
 for(let y=6;y<512;y+=15+R()*8){x.fillStyle='rgba(236,226,170,.85)';x.beginPath();x.arc(px+(R()-.5)*3,y,1.3+R()*.8,0,6.283);x.fill();x.strokeStyle='rgba(220,208,150,.5)';x.lineWidth=.8;for(let k=0;k<4;k++){const a=R()*6.283;x.beginPath();x.moveTo(px,y);x.lineTo(px+Math.cos(a)*6,y+Math.sin(a)*6);x.stroke()}}}
 for(let i=0;i<2200;i++){x.fillStyle=`rgba(${R()<.5?'30,70,34':'150,180,110'},${R()*.07})`;x.fillRect(R()*256,R()*512,1+R()*3,1+R()*3)}return mkTex(c)}
-function petalTex(){const[c,x]=cv2(256,256);x.beginPath();x.moveTo(128,252);x.bezierCurveTo(92,210,58,108,128,12);x.bezierCurveTo(198,108,164,210,128,252);x.closePath();const g=x.createLinearGradient(0,252,0,12);g.addColorStop(0,'#fff1d4');g.addColorStop(.22,'#fffaf0');g.addColorStop(.7,'#ffffff');g.addColorStop(1,'#f8f5f0');x.fillStyle=g;x.fill();x.strokeStyle='rgba(230,195,160,.5)';x.lineWidth=1.1;x.stroke();x.strokeStyle='rgba(220,190,155,.28)';x.lineWidth=.8;for(let i=1;i<=7;i++){const q=i/8;x.beginPath();x.moveTo(128,240);x.quadraticCurveTo(128+(i%2?1:-1)*q*28,130,128+(i%2?1:-1)*q*33,34+q*26);x.stroke()}for(let i=0;i<120;i++){x.fillStyle=`rgba(175,145,115,${R()*.055})`;x.fillRect(66+R()*124,34+R()*192,1+R()*1.3,1+R()*1.3)}return mkTex(c)}
-function frondTex(){const[c,x]=cv2(64,256);x.strokeStyle='#5a7a2e';x.lineWidth=3;x.beginPath();x.moveTo(32,256);x.lineTo(32,4);x.stroke();for(let i=0;i<46;i++){const t=i/46,y=250-i*5.3,len=6+30*Math.sin(Math.min(1,t*1.05+.05)*3.0),s=hsl(92+R()*14,48,26+t*18);x.strokeStyle=s;x.lineWidth=2.4;x.beginPath();x.moveTo(32,y);x.lineTo(32-len,y-len*.7);x.moveTo(32,y);x.lineTo(32+len,y-len*.7);x.stroke()}return mkTex(c)}
+function petalTex(){const[c,x]=cv2(256,256);x.beginPath();x.moveTo(128,252);x.bezierCurveTo(92,210,58,108,128,12);x.bezierCurveTo(198,108,164,210,128,252);x.closePath();const g=x.createLinearGradient(0,252,0,12);g.addColorStop(0,'#fff1d4');g.addColorStop(.22,'#fffaf0');g.addColorStop(.7,'#ffffff');g.addColorStop(1,'#f8f5f0');x.fillStyle=g;x.fill();x.strokeStyle='rgba(230,195,160,.5)';x.lineWidth=1.1;x.stroke();x.strokeStyle='rgba(220,190,155,.28)';x.lineWidth=.8;for(let i=1;i<=7;i++){const q=i/8;x.beginPath();x.moveTo(128,240);x.quadraticCurveTo(128+(i%2?1:-1)*q*28,130,128+(i%2?1:-1)*q*33,34+q*26);x.stroke()}for(let i=0;i<120;i++){x.fillStyle=`rgba(175,145,115,${R()*.055})`;x.fillRect(66+R()*124,34+R()*192,1+R()*1.3,1+R()*1.3)}return mkCardTex(c)}
+function frondTex(){const[c,x]=cv2(64,256);x.strokeStyle='#5a7a2e';x.lineWidth=3;x.beginPath();x.moveTo(32,256);x.lineTo(32,4);x.stroke();for(let i=0;i<46;i++){const t=i/46,y=250-i*5.3,len=6+30*Math.sin(Math.min(1,t*1.05+.05)*3.0),s=hsl(92+R()*14,48,26+t*18);x.strokeStyle=s;x.lineWidth=2.4;x.beginPath();x.moveTo(32,y);x.lineTo(32-len,y-len*.7);x.moveTo(32,y);x.lineTo(32+len,y-len*.7);x.stroke()}return mkCardTex(c)}
 function roofTex(hu=10,sa=45,li=26){const[c,x]=cv2(128,128);x.fillStyle=hsl(hu,sa,Math.max(8,li-12));x.fillRect(0,0,128,128);for(let r=0;r<8;r++)for(let q=-1;q<9;q++){const px=q*16+(r%2)*8,py=r*16;x.fillStyle=hsl(hu+R()*8,sa,li+R()*10);x.fillRect(px+1,py+1,14,14);x.fillStyle='rgba(0,0,0,.35)';x.fillRect(px,py+13,16,3);x.fillStyle='rgba(255,255,255,.07)';x.fillRect(px+2,py+2,3,10)}return mkTex(c)}
 const wallFill=(x,ox,oy,w,h,col)=>{x.fillStyle=col;x.fillRect(ox,oy,w,h);for(let i=0;i<w*h/22;i++){const g=R()<.5?0:255;x.fillStyle=`rgba(${g},${g},${g},${R()*.07})`;x.fillRect(ox+R()*w,oy+R()*h,1+R()*2,1+R()*2)}};
 const glass=(x,ox,oy,w,h,a,b)=>{const g=x.createLinearGradient(0,oy,0,oy+h);g.addColorStop(0,a);g.addColorStop(1,b);x.fillStyle=g;x.fillRect(ox,oy,w,h);x.fillStyle='rgba(255,255,255,.14)';x.beginPath();x.moveTo(ox+w*.1,oy+h);x.lineTo(ox+w*.55,oy);x.lineTo(ox+w*.75,oy);x.lineTo(ox+w*.3,oy+h);x.fill()};
@@ -222,7 +282,7 @@ function palmTree(){const W=GA(),L=GA(),Hh=8+R()*2,lean=.7+R()*1.2,la=R()*6.283,
 const top=p,tp=[top[0],top[1]+.7,top[2]];tube(W,top,tp,.2,.16,7,[1,1]);
 for(let f=0;f<15;f++){const dead=f>=12;frond(L,W,[tp[0],tp[1]-.1,tp[2]],f*2.4+R()*.25,dead?-.7:.75-(f%4)*.12+(R()-.5)*.15,(dead?2.4:3.4)+R(),dead)}
 for(let k=0;k<5;k++){const a=R()*6.283,c=Math.cos(a),s=Math.sin(a);tube(W,[top[0]+c*.22,top[1]+.3,top[2]+s*.22],[top[0]+c*.3,top[1]+.05,top[2]+s*.3],.13,.13,6,[.2,.2])}return[gaGeo(W),gaGeo(L)]}
-function leafletTex(){const[c,x]=cv2(32,128),g=x.createLinearGradient(0,128,0,0);g.addColorStop(0,'#2f4a16');g.addColorStop(1,'#6f9a2c');x.fillStyle=g;x.beginPath();x.moveTo(16,128);x.bezierCurveTo(28,90,26,30,16,2);x.bezierCurveTo(6,30,4,90,16,128);x.fill();x.strokeStyle='rgba(210,230,140,.55)';x.lineWidth=1.5;x.beginPath();x.moveTo(16,126);x.lineTo(16,6);x.stroke();return mkTex(c)}
+function leafletTex(){const[c,x]=cv2(32,128),g=x.createLinearGradient(0,128,0,0);g.addColorStop(0,'#2f4a16');g.addColorStop(1,'#6f9a2c');x.fillStyle=g;x.beginPath();x.moveTo(16,128);x.bezierCurveTo(28,90,26,30,16,2);x.bezierCurveTo(6,30,4,90,16,128);x.fill();x.strokeStyle='rgba(210,230,140,.55)';x.lineWidth=1.5;x.beginPath();x.moveTo(16,126);x.lineTo(16,6);x.stroke();return mkCardTex(c)}
 const LLT=leafletTex();
 const LEAF_PBR={generic:{nm:normFrom(LFT.image,1.05),rm:roughTex(LFT.image,.82)},oak:{nm:normFrom(OAKL.image,.9),rm:roughTex(OAKL.image,.84)},birch:{nm:normFrom(BIRL.image,.8),rm:roughTex(BIRL.image,.82)},shrub:{nm:normFrom(SHRL.image,.85),rm:roughTex(SHRL.image,.86)},acacia:{nm:normFrom(ACAL.image,.8),rm:roughTex(ACAL.image,.88)},sage:{nm:normFrom(SAGL.image,.8),rm:roughTex(SAGL.image,.9)},ash:{nm:normFrom(ASHL.image,.8),rm:roughTex(ASHL.image,.85)},needle:{nm:normFrom(NDT.image,.9),rm:roughTex(NDT.image,.9)},palm:{nm:normFrom(LLT.image,.75),rm:roughTex(LLT.image,.88)},petal:{nm:normFrom(PTT.image,.38),rm:roughTex(PTT.image,.72)}};
 /* rocks: convex fracture planes (soft-min) + multi-octave noise + strata, moss on upward faces */
