@@ -89,6 +89,7 @@ sun.color.setRGB(1,.7+.3*l,.45+.55*l);hemi.color.setRGB(...mx([.08,.1,.18],[.62,
    palette keeps its saturation. Night has its own floor, so the ground is
    moonlit rather than black. */
 sun.intensity=solid?.5:1.9*l*(1-WX.over*.8);hemiBase=hemi.intensity=solid?1.1:(.15+.45*day)*(1+WX.over*.15);sun.castShadow=!solid&&!SAFE.shadow;if(SKYREADY){try{skyApply(d,day,e,l,solid)}catch(er){SKYREADY=false;showErr('Sky studio: '+er.message)}}
+try{skyEnvSource()}catch(error){SKY_ENV.fails++}
 objs.forEach(o=>o.traverse(c=>{if(c.isPointLight)c.intensity=(1-day)*2.2}));
 clouds.forEach((g,i)=>{g.visible=false;g.children.forEach(s=>s.material.color.setRGB(...mx(mx([.1,.11,.16],[1,1,1],day),[1,.6,.4],dusk*.5)))})}
 let shadowFocusAt=0,shadowFocusX=NaN,shadowFocusY=NaN,shadowFocusZ=NaN,shadowFocusRadius=0;
@@ -173,7 +174,99 @@ s.vertexShader='attribute vec4 surfaceWeightsA;attribute vec4 surfaceWeightsB;at
 s.fragmentShader=TG+s.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>'+TD).replace('#include <roughnessmap_fragment>','#include <roughnessmap_fragment>\nroughnessFactor=mix(mix(mix(roughnessFactor,.4,max(wet*uDet,uWetG*.8)),.6,snowA),.06,pud);\n/* Rain intensity drops the roughness of soil and stone straight from the\n   uniform: falling water is glossy before it has had time to pool. */\nroughnessFactor*=mix(1.,.62,clamp(uRainK,0.,1.));roughnessFactor=mix(roughnessFactor,.045,clamp(pud*uRainK,0.,1.));float surfRoughSum=(dot(vSurfaceWeightsA,vec4(1.))+dot(vSurfaceWeightsB,vec4(1.))+dot(vSurfaceWeightsC,vec4(1.)))*uSurfacePaintEnabled;if(surfRoughSum>.001){float surfRough=(dot(vSurfaceWeightsA,vec4(.9,.84,.92,.96))+dot(vSurfaceWeightsB,vec4(.98,.9,.96,.94))+dot(vSurfaceWeightsC,vec4(.74,.66,.88,.98)))/max(surfRoughSum,.001);roughnessFactor=mix(roughnessFactor,surfRough,clamp(surfRoughSum,0.,1.));}').replace('#include <normal_fragment_maps>','#include <normal_fragment_maps>\nvec2 rip=vec2(sin(vW.x*7.1+uT*3.3)+.6*sin(vW.x*13.7-uT*4.1),cos(vW.z*6.7+uT*2.9)+.6*cos(vW.z*12.3-uT*3.7));normal=bumpN(-vViewPosition,normal,vec2(dFdx(dn),dFdy(dn))*ud*.35+rip*.055*clamp(pud*uRainK,0.,1.));')}}
 injectDetail(tm,false);
 tm.normalScale.set(.08,.08);ren.toneMappingExposure=1.25;
-// Keep PBR materials on their original surface maps; environment lighting is the additive HemisphereLight only.
+/* ---- Sky environment: what metal and glass reflect --------------------
+   Buildings carry a real metalness map — a window slot is metalness 0.59,
+   roughness 0.13 — but the studio set scene.environment = null, so those
+   surfaces had nothing to reflect. Metal with no environment renders as flat
+   grey paint, which is the whole difference between glass and cardboard at a
+   distance. The sky the dome already draws is analytic, so the same four
+   values are baked once into a small equirect and prefiltered with PMREM, and
+   the result is attached to the building materials only. The terrain keeps its
+   own lighting budget: it is painted by the surface pass, and a global
+   environment is what used to wash the painted biome out. */
+const SKY_ENV = { tex: null, target: null, pmrem: null, canvas: null, stamp: '', fails: 0, at: 0, applied: -1 };
+/* The building and metal materials only. Their authored envMapIntensity is
+   clamped so the sky can add the reflection a window needs without turning a
+   plaster wall into a mirror. */
+function applySkyEnv() {
+  if (!SKY_ENV.tex) return;
+  for (const m of BMAT) {
+    m.envMap = SKY_ENV.tex;
+    m.envMapIntensity = Math.min(Number.isFinite(m.envMapIntensity) ? m.envMapIntensity : 1, 0.55);
+    m.needsUpdate = true;
+  }
+  SKY_ENV.applied = BMAT.length;
+}
+function skyEnvSource(force) {
+  const W = 192, H = 96;
+  const stamp = [tod, az, WX.over, WX.rain, mode].join(',');
+  /* The world is built after the first sky update, so a material list that has
+     grown since the bake is caught here rather than leaving every building
+     without the environment it was created for. */
+  if (BMAT.length !== SKY_ENV.applied) applySkyEnv();
+  if (!force && stamp === SKY_ENV.stamp) return SKY_ENV.tex;
+  if (SKY_ENV.fails > 2) return null;
+  /* One PMREM per sky change, not per frame: the equirect is 18k pixels of a
+     closed-form gradient, and dragging the time of day must not re-enter the
+     prefilter faster than the eye can see it. */
+  const now = performance.now();
+  if (!force && SKY_ENV.tex && now - SKY_ENV.at < 220) return SKY_ENV.tex;
+  try {
+    if (!SKY_ENV.canvas) {
+      SKY_ENV.canvas = document.createElement('canvas');
+      SKY_ENV.canvas.width = W;
+      SKY_ENV.canvas.height = H;
+    }
+    const ctx = SKY_ENV.canvas.getContext('2d');
+    if (!ctx) return null;
+    const img = ctx.createImageData(W, H);
+    const top = U.top.value, hor = U.hor.value, sunC = U.sun.value, sd = U.sd.value;
+    const sdl = Math.hypot(sd.x, sd.y, sd.z) || 1;
+    const sx = sd.x / sdl, sy = sd.y / sdl, sz = sd.z / sdl;
+    for (let y = 0; y < H; y++) {
+      /* Row 0 of the canvas is the zenith: an equirect texture has v = 1 at
+         +Y, and three reads it with the same convention the dome shader uses
+         (pow(clamp(d.y,0,1),.55) between horizon and zenith). */
+      const lat = (0.5 - (y + 0.5) / H) * Math.PI;
+      const dy = Math.sin(lat), r = Math.cos(lat);
+      for (let x = 0; x < W; x++) {
+        const lon = ((x + 0.5) / W - 0.5) * Math.PI * 2;
+        const dx = r * Math.cos(lon), dz = r * Math.sin(lon);
+        const up = Math.max(dy, 0);
+        const k = Math.pow(up, 0.55);
+        const c = Math.max(dx * sx + dy * sy + dz * sz, 0);
+        const glow = Math.pow(c, 600) * 3 + Math.pow(c, 12) * 0.25;
+        const i = (y * W + x) * 4;
+        img.data[i] = cl(Math.round((hor.r + (top.r - hor.r) * k + sunC.r * glow) * 255), 0, 255);
+        img.data[i + 1] = cl(Math.round((hor.g + (top.g - hor.g) * k + sunC.g * glow) * 255), 0, 255);
+        img.data[i + 2] = cl(Math.round((hor.b + (top.b - hor.b) * k + sunC.b * glow) * 255), 0, 255);
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const source = new THREE.CanvasTexture(SKY_ENV.canvas);
+    source.mapping = THREE.EquirectangularReflectionMapping;
+    if ('colorSpace' in source && THREE.SRGBColorSpace !== undefined) source.colorSpace = THREE.SRGBColorSpace;
+    else if ('encoding' in source) source.encoding = THREE.sRGBEncoding;
+    source.needsUpdate = true;
+    if (!SKY_ENV.pmrem) SKY_ENV.pmrem = new THREE.PMREMGenerator(ren);
+    const target = SKY_ENV.pmrem.fromEquirectangular(source);
+    source.dispose();
+    const previous = SKY_ENV.target;
+    SKY_ENV.tex = target.texture;
+    SKY_ENV.target = target;
+    if (previous) { try { previous.dispose(); } catch (error) { /* already gone */ } }
+    SKY_ENV.stamp = stamp;
+    SKY_ENV.at = now;
+    applySkyEnv();
+    return SKY_ENV.tex;
+  } catch (error) {
+    SKY_ENV.fails++;
+    if (SKY_ENV.fails === 1) showErr('Sky reflections: ' + error.message);
+    return SKY_ENV.tex;
+  }
+}
+window.__feSkyEnv = skyEnvSource;
 scene.environment=null;
 
 tm.envMapIntensity=.5;
