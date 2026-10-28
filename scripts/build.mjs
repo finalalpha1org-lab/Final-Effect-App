@@ -1,6 +1,7 @@
 import { build as esbuildBundle, transform } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { execSync } from "node:child_process";
 import { createStandaloneAppHtml, createStandaloneTerrainHtml } from "./standalone-html.mjs";
 import "./build-cpp-wasm.mjs";
 
@@ -214,7 +215,29 @@ try {
   console.warn("Script bundling skipped:", error && error.message);
 }
 
-writeFileSync("build/client/index.html", bundlableIndexHtml);
+/* ---- build identity ------------------------------------------------------
+   The ⚙ sheet shows the build a device is running, and the only trustworthy
+   source for that is the page the browser actually loaded. Stamping it here
+   means a cached shell reports the old date instead of looking identical to a
+   fresh one, which is the difference between "the fix did nothing" and "the
+   phone is running last week's app". */
+function buildStamp() {
+  const date = new Date().toISOString().slice(0, 16).replace("T", " ");
+  let sha = "";
+  try {
+    sha = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch (error) {
+    sha = "";
+  }
+  return (sha ? `${sha} · ` : "") + date + " UTC";
+}
+function stampBuild(html) {
+  const meta = `<meta name="fe-build" content="${buildStamp()}">`;
+  if (/<meta name="fe-build"[^>]*>/.test(html)) return html.replace(/<meta name="fe-build"[^>]*>/, meta);
+  return html.replace("<head>", `<head>\n${meta}`);
+}
+
+writeFileSync("build/client/index.html", stampBuild(bundlableIndexHtml));
 writeFileSync("build/client/Terrain_system_.html", bundlableTerrainHtml);
 
 const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
@@ -228,6 +251,8 @@ const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
    independently of the binary. The studio streams the real artifact instead
    (WebAssembly.instantiateStreaming, see terrain-main-01.js); only the
    single-file artifact, which is a download and not the app, still embeds it. */
+bundlableTerrainHtml = stampBuild(bundlableTerrainHtml);
+
 if (!bundlableTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
   const preload = '<link rel="preload" href="./fe_core_engine.wasm" as="fetch" crossorigin="anonymous">';
   writeFileSync(
@@ -273,5 +298,5 @@ const standaloneAppHtml = createStandaloneAppHtml(
     terrainStandaloneHtml: standaloneTerrainHtml,
   }
 );
-writeFileSync("build/client/Final-Effect-3D-Standalone.html", standaloneAppHtml);
+writeFileSync("build/client/Final-Effect-3D-Standalone.html", stampBuild(standaloneAppHtml));
 writeFileSync("Final-Effect-3D-Standalone.html", standaloneAppHtml);
