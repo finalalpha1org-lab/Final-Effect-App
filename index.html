@@ -75,10 +75,6 @@
      requests were the largest fixed cost of a cold start on a phone, and they
      made the app unusable offline. The files are byte-identical to the npm
      package (vendor/three/LICENSE). -->
-<script src="vendor/three/three.min.js"></script>
-<script src="vendor/three/OrbitControls.js"></script>
-<script src="vendor/three/TransformControls.js"></script>
-<script src="vendor/three/RGBELoader.js"></script>
 <script>
 window.onerror = function(msg, url, line, col, error) {
   console.warn("Global caught error:", msg, url, line, col, error);
@@ -2452,18 +2448,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 </style>
 </head>
 <body>
-<script src="fe-icons.js"></script>
-<script src="edit-mode.js"></script>
-<script src="render-capture.js"></script>
-<script src="render-preview.js"></script>
-<script src="render-export.js"></script>
-<script src="workspace-export.js"></script>
-<script src="fe-taa.js"></script>
-<script src="volume-atlas.js"></script>
-<script src="volume-library.js"></script>
-<script src="simulationCore.js"></script>
-<script src="modifier-engine.js"></script>
-<script src="fe-cpp-engine.js"></script>
 
 <div id="app">
   <!-- Home screen -->
@@ -2474,7 +2458,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           <h1>Final Effect 3D</h1>
           
         </div>
-        <p>All-Platform Mobile & Desktop Creation Suite — Choose a studio to start.</p>
+        <p>Reach Hollywood level. Choose a studio to start.</p>
       </div>
       <div class="home-actions-group">
         <button class="install-app-btn" type="button" onclick="openCppDiagnosticsModal()" style="background:linear-gradient(135deg,#059669,#10b981);border-color:#34d399;box-shadow:0 6px 18px rgba(16,185,129,0.28);" title="Measure animation, sculpt, touch and path-tracing speed on this device"><i class="ico" data-ico="flask"></i> Run Benchmark</button>
@@ -2627,23 +2611,23 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         </div>
         <div class="setting-item">
           <div class="setting-label">
-            <span>Mobile / Desktop GPU Performance Tier</span>
+            <span>GPU Performance Tier</span>
             <small>Adapts resolution and shadow quality to keep the viewport smooth</small>
           </div>
           <select class="setting-select" id="set-gpu-tier">
             <option value="0">Auto (Adaptive)</option>
-            <option value="1">Low (Mobile 60fps / Battery)</option>
-            <option value="2">Medium (Balanced Mobile)</option>
-            <option value="3">High (Flagship / Desktop Pro)</option>
+            <option value="1">Low (60 fps / Battery)</option>
+            <option value="2">Medium (Balanced)</option>
+            <option value="3">High (Flagship Phone)</option>
           </select>
         </div>
         <div class="autosave-status" id="cpp-perf-live-readout" style="color:#a5b4fc;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.28);">Adaptive performance ready</div>
         <div class="setting-item">
           <div class="setting-label">
-            <span>All-Platform Standalone App</span>
-            <small>Install full-screen PWA on Android, iOS, Windows, macOS or Linux</small>
+            <span>Add to Home Screen</span>
+            <small>Install the full-screen app on this phone (Android or iOS)</small>
           </div>
-          <button class="settings-action-btn" type="button" onclick="installFinalEffectPWA()">📲 Install App</button>
+          <button class="settings-action-btn" type="button" onclick="installFinalEffectPWA()"><i class="ico" data-ico="download"></i> Install App</button>
         </div>
       </div>
 
@@ -3934,6 +3918,27 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <div id="edit-marquee" hidden></div>
   </section>
 </template>
+
+<!-- Rendering libraries and studio engines load after the home screen markup:
+     none of the markup above uses them, and a phone should not wait for 1.8 MB
+     of JavaScript before the first paint. Order among them is unchanged. -->
+<script src="vendor/three/three.min.js"></script>
+<script src="vendor/three/OrbitControls.js"></script>
+<script src="vendor/three/TransformControls.js"></script>
+<script src="vendor/three/RGBELoader.js"></script>
+
+<script src="fe-icons.js"></script>
+<script src="edit-mode.js"></script>
+<script src="render-capture.js"></script>
+<script src="render-preview.js"></script>
+<script src="render-export.js"></script>
+<script src="workspace-export.js"></script>
+<script src="fe-taa.js"></script>
+<script src="volume-atlas.js"></script>
+<script src="volume-library.js"></script>
+<script src="simulationCore.js"></script>
+<script src="modifier-engine.js"></script>
+<script src="fe-cpp-engine.js"></script>
 
 <script>
 /* =========================================================
