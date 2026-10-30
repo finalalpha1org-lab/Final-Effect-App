@@ -1193,7 +1193,37 @@ const mx3=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t],sm
    an angle: 1.0 here is 45 degrees. */
 const slopeAt=(i,j)=>{const i0=Math.max(0,i-2),i1=Math.min(N,i+2),j0=Math.max(0,j-2),j1=Math.min(N,j+2);const dx=(H[j*W+i1]-H[j*W+i0])/Math.max(1e-4,(i1-i0)*D),dz=(H[j1*W+i]-H[j0*W+i])/Math.max(1e-4,(j1-j0)*D);return Math.hypot(dx,dz)};
 function mIdx(i,j){const k=j*W+i,h=H[k];if(MI[k]!=255)return MI[k];const n=vn(i*.071+seed*.17,j*.071-seed*.11),cliff=rockT+(.5-n)*.55;if(h<wl+.35+n*.55)return 3;if(h>snowL-1+(n-.5)*2.2)return 4;if(slopeAt(i,j)>cliff)return 2;if(h>9+(n-.5)*4)return 1;return 0}
-function col(i,j){const k=j*W+i,h=H[k],sl=slopeAt(i,j),paintSum=SWA[k*4]+SWA[k*4+1]+SWA[k*4+2]+SWA[k*4+3]+SWB[k*4]+SWB[k*4+1]+SWB[k*4+2]+SWB[k*4+3]+SWC[k*4]+SWC[k*4+1]+SWC[k*4+2]+SWC[k*4+3];let c;if(paintSum>.001){c=[0,0,0];for(let q=0;q<OW_SURFACE_DEFS.length;q++){const w=q<4?SWA[k*4+q]:q<8?SWB[k*4+q-4]:SWC[k*4+q-8],rgb=OW_SURFACE_DEFS[q].rgb;c[0]+=rgb[0]/255*w;c[1]+=rgb[1]/255*w;c[2]+=rgb[2]/255*w}c=c.map(x=>x/paintSum)}else if(MI[k]!=255)c=PAL[MI[k]]||PAL[0];else{const broad=vn(i*.045+seed*.09,j*.045-seed*.12),mid=vn(i*.14+seed*.23,j*.14-seed*.31),fine=vn(i*.36-seed*.17,j*.36+seed*.31),field=broad*.56+mid*.3+fine*.14,ground=sm(.4,.68,field+cl((h-12)*.002,-.03,.03));c=mx3(PAL[0],PAL[1],ground*.34);const rockThreshold=rockT+(broad-.5)*.5+(mid-.5)*.25,cliff=sm(rockThreshold-.25,rockThreshold+1.15,sl),outcrop=sm(.72,.9,field)*.25,rock=cl(cliff*.88+outcrop*(1-cliff*.65),0,1);c=mx3(c,PAL[2],rock);const shore=1-sm(wl-.35+(broad-.5)*.6,wl+1.55+(broad-.5)*1.3,h),dune=biome=='desert'?sm(.46,.69,field)*(1-cliff*.8):0,sand=cl(Math.max(shore,dune)*(1-cliff*.6),0,1);c=mx3(c,PAL[3],sand);const snowNoise=(broad-.5)*6+(mid-.5)*3+(fine-.5)*1.5,snow=sm(snowL-1.2+snowNoise,snowL+3.4+snowNoise,h)*(1-cliff*.25);c=mx3(c,PAL[4],snow);const variation=.9+.18*broad+.08*(mid-.5)+.06*(fine-.5)+.04*(hash(i,j*7)-.5);c=c.map(q=>q*variation)}const v=.94+.12*hash(i*3,j*7);C.setXYZ(k,c[0]*v,c[1]*v,c[2]*v)}
+/* The JS fallback shades exactly like the C++ kernel it stands in for: the
+   ground is built first, then the paint is mixed over it by how much of the
+   brush actually landed on the cell, in linear light. The old order let any
+   paint at all replace the ground outright, in display values - a hard, over
+   bright patch with a pen-sharp rim, which is what painting looked like. */
+const toLin=v=>{const x=v<=0?0:v>=1?1:v;return x<=.04045?x/12.92:Math.pow((x+.055)/1.055,2.4)};
+function col(i,j){
+ const k=j*W+i,h=H[k],sl=slopeAt(i,j);
+ let c;
+ if(MI[k]!=255)c=PAL[MI[k]]||PAL[0];
+ else{
+  const broad=vn(i*.045+seed*.09,j*.045-seed*.12),mid=vn(i*.14+seed*.23,j*.14-seed*.31),fine=vn(i*.36-seed*.17,j*.36+seed*.31),field=broad*.56+mid*.3+fine*.14,ground=sm(.4,.68,field+cl((h-12)*.002,-.03,.03));
+  c=mx3(PAL[0],PAL[1],ground*.34);
+  const rockThreshold=rockT+(broad-.5)*.5+(mid-.5)*.25,cliff=sm(rockThreshold-.25,rockThreshold+1.15,sl),outcrop=sm(.72,.9,field)*.25,rock=cl(cliff*.88+outcrop*(1-cliff*.65),0,1);
+  c=mx3(c,PAL[2],rock);
+  const shore=1-sm(wl-.35+(broad-.5)*.6,wl+1.55+(broad-.5)*1.3,h),dune=biome=='desert'?sm(.46,.69,field)*(1-cliff*.8):0,sand=cl(Math.max(shore,dune)*(1-cliff*.6),0,1);
+  c=mx3(c,PAL[3],sand);
+  const snowNoise=(broad-.5)*6+(mid-.5)*3+(fine-.5)*1.5,snow=sm(snowL-1.2+snowNoise,snowL+3.4+snowNoise,h)*(1-cliff*.25);
+  c=mx3(c,PAL[4],snow);
+  const variation=.9+.18*broad+.08*(mid-.5)+.06*(fine-.5)+.04*(hash(i,j*7)-.5);
+  c=c.map(q=>q*variation);
+ }
+ const paintSum=SWA[k*4]+SWA[k*4+1]+SWA[k*4+2]+SWA[k*4+3]+SWB[k*4]+SWB[k*4+1]+SWB[k*4+2]+SWB[k*4+3]+SWC[k*4]+SWC[k*4+1]+SWC[k*4+2]+SWC[k*4+3];
+ if(paintSum>.001){
+  const p=[0,0,0];
+  for(let q=0;q<OW_SURFACE_DEFS.length;q++){const w=q<4?SWA[k*4+q]:q<8?SWB[k*4+q-4]:SWC[k*4+q-8],rgb=OW_SURFACE_DEFS[q].rgb;p[0]+=toLin(rgb[0]/255)*w;p[1]+=toLin(rgb[1]/255)*w;p[2]+=toLin(rgb[2]/255)*w}
+  const cover=cl(paintSum,0,1);
+  c=[0,1,2].map(q=>c[q]+(p[q]/paintSum-c[q])*cover);
+ }
+ const v=.94+.12*hash(i*3,j*7);
+ C.setXYZ(k,c[0]*v,c[1]*v,c[2]*v)}
 /* A kernel that reports success but writes nothing is worse than one that
    fails: the zeroed Float32Array is uploaded to the GPU and the whole island
    turns black, which reads as a broken renderer rather than as missing colour.

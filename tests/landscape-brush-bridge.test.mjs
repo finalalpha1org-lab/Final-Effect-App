@@ -37,9 +37,23 @@ test('C++ shading blends painted PBR weights and falls back to the biome palette
  s.output=out;assert.equal(c.colors({...s,rect:[0,32,0,32]}),true);
  assert.ok(out.every(Number.isFinite));assert.ok(out.every(v=>v>=0&&v<=1.3));
  const sand=[185,150,96],k=5*33+5;for(const w of ['weightsA','weightsB','weightsC'])s[w].fill(0);
+ /* The paint buffer is a display swatch and the colour buffer is linear light,
+    so a fully covered cell must land on the linear value of the swatch, not on
+    the swatch itself (that mismatch made every painted patch a stop and a half
+    brighter than the ground it covered). */
+ const lin=v=>{const x=v/255;return x<=.04045?x/12.92:Math.pow((x+.055)/1.055,2.4)};
+ const base=out[k*3]; /* the unpainted ground, before any weight lands */
  s.weightsB[k*4+3]=1;s.materials[k]=255; // paint slot 7 = Sand
  assert.equal(c.colors({...s,rect:[k%33,k%33,Math.floor(k/33),Math.floor(k/33)]}),true);
- for(let q=0;q<3;q++)assert.ok(Math.abs(out[k*3+q]-sand[q]/255)<.06,`painted channel ${q}`); // the shade kernel keeps its ±6% colour variation
+ for(let q=0;q<3;q++)assert.ok(Math.abs(out[k*3+q]-lin(sand[q]))<.05,`painted channel ${q} is linear (${out[k*3+q].toFixed(3)} vs ${lin(sand[q]).toFixed(3)})`); // the shade kernel keeps its ±6% colour variation
+ /* Coverage is the mix weight: a cell the brush barely touched shows the
+    ground, not the full paint colour with a pen-sharp rim. */
+ const full=out[k*3];
+ s.weightsB[k*4+3]=.08;
+ assert.equal(c.colors({...s,rect:[k%33,k%33,Math.floor(k/33),Math.floor(k/33)]}),true);
+ const near=out[k*3];
+ assert.ok(Math.abs(near-(base+(full-base)*.08))<.05,`8% coverage must mix, not replace (${near.toFixed(3)} vs base ${base.toFixed(3)}, paint ${full.toFixed(3)})`);
+ s.weightsB[k*4+3]=1;
  s.weightsB.fill(0);s.materials[k]=2; // palette rock
  assert.equal(c.colors({...s,rect:[k%33,k%33,Math.floor(k/33),Math.floor(k/33)]}),true);
  assert.ok(Math.abs(out[k*3]-.42)<.04&&Math.abs(out[k*3+1]-.42)<.04&&Math.abs(out[k*3+2]-.44)<.04);

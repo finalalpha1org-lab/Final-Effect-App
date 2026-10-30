@@ -44,6 +44,12 @@ float continentalMountain(float x,float z,float seed,float mountain,uint32_t s){
 void mixInto(float& r,float& g,float& b,float tr,float tg,float tb,float t){
  r=lerpf(r,tr,t);g=lerpf(g,tg,t);b=lerpf(b,tb,t);
 }
+/* sRGB 0-1 to linear light, the same curve the JS palette conversion uses. */
+static inline float srgbToLinear(float c){
+ if(c<=.04045f)return c*(1.f/12.92f);
+ const float x=(c+.055f)*(1.f/1.055f);
+ return x*x*powf(x,.4f); /* x^2.4 */
+}
 void terrainColorAt(uint32_t i,uint32_t j){
  const uint32_t k=j*W+i;const float h=H[k];
  /* Rise over run over a 3 m central window, not the sum of two one-cell
@@ -56,13 +62,13 @@ void terrainColorAt(uint32_t i,uint32_t j){
  const float sl=sqrtf(gx*gx+gz*gz);
  float total=0;for(int c=0;c<3;c++)for(int q=0;q<4;q++)total+=weights[c][k*4+q];
  float r=0,g=0,b=0;
- if(total>.001f){
-  for(uint32_t q=0;q<gPaintCount&&q<12;q++){
-   const float w=q<4?weights[0][k*4+q]:q<8?weights[1][k*4+q-4]:weights[2][k*4+q-8];
-   r+=gPaintRGB[q*3]/255.f*w;g+=gPaintRGB[q*3+1]/255.f*w;b+=gPaintRGB[q*3+2]/255.f*w;
-  }
-  r/=total;g/=total;b/=total;
- }else if(materials[k]!=255){
+ /* The ground comes first, then the paint is laid over it - in that order,
+   because a painted cell still has ground underneath it. The old order tested
+   the paint first and let it replace the palette outright, normalised by
+   `total`, so a cell carrying 3% of a brush still rendered the full paint
+   colour: every stroke had a pen-sharp rim on virgin ground and no soft edge
+   at all. Coverage is the mix weight now. */
+ if(materials[k]!=255){
   const uint32_t p=(materials[k]<gPalCount?materials[k]:0)*3;r=gPal[p];g=gPal[p+1];b=gPal[p+2];
  }else{
   const uint32_t s=gNoiseSeed;
@@ -86,6 +92,23 @@ void terrainColorAt(uint32_t i,uint32_t j){
   mixInto(r,g,b,gPal[12],gPal[13],gPal[14],snow);
   const float variation=.9f+.18f*broad+.08f*(mid-.5f)+.06f*(fine-.5f)+.04f*(hash(int(i),int(j*7),s)-.5f);
   r*=variation;g*=variation;b*=variation;
+ }
+ if(total>.001f){
+  float pr=0,pg=0,pb=0;
+  for(uint32_t q=0;q<gPaintCount&&q<12;q++){
+   const float w=q<4?weights[0][k*4+q]:q<8?weights[1][k*4+q-4]:weights[2][k*4+q-8];
+   /* Paint is chosen as an sRGB swatch and the buffer is linear light, exactly
+      like the palette. Handing the swatch straight over made every painted
+      patch about a stop and a half brighter than the ground it covered, which
+      reads as a glowing blob with a hard edge - the other half of what
+      "painting leaves artifacts" looked like. */
+   pr+=srgbToLinear(gPaintRGB[q*3]*(1.f/255.f))*w;
+   pg+=srgbToLinear(gPaintRGB[q*3+1]*(1.f/255.f))*w;
+   pb+=srgbToLinear(gPaintRGB[q*3+2]*(1.f/255.f))*w;
+  }
+  pr/=total;pg/=total;pb/=total;
+  /* A brush edge lands partly on a cell: that is coverage, not a switch. */
+  mixInto(r,g,b,pr,pg,pb,clampf(total,0.f,1.f));
  }
  const float v=.94f+.12f*hash(int(i*3),int(j*7),gNoiseSeed);
  colors[k*3]=r*v;colors[k*3+1]=g*v;colors[k*3+2]=b*v;

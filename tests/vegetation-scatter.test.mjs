@@ -78,12 +78,22 @@ test('natural scatter validates its parameters',()=>{
   assert.equal(e.fe_terrain_scatter_natural(400,90,1,0,9,.3,0),-1);
 });
 
-test('ground cover uses the natural kernel while structural kinds keep the grid',()=>{
+test('every scattered kind is sampled on land, and only trees skip the kernel clumping',()=>{
   const src=readFileSync('terrain-main-03.js','utf8');
   assert.ok(src.includes("const COVER_KINDS=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);"));
-  assert.ok(src.includes('core.scatterNatural({count:batch,spread:S*.96,seed:seedBatch,water:wl,maxSlope:cover.maxSlope,clump:cover.clump,patch:cover.patch,output:SCBUF})'),'cover asks C++ for filtered candidates');
-  assert.ok(src.includes(':core.scatterBatch({count:batch,spread:S*.96,seed:seedBatch,output:SCBUF})'),'every other kind keeps the existing path');
-  assert.ok(src.includes('COVER_KINDS.has(n)?{maxSlope:(RULE[n]||[9])[0],clump:.25+scatterClustering*.45,patch:22}:null'));
+  assert.ok(src.includes('core.scatterNatural({count:batch,spread:S*.96,seed:seedBatch,water:wl,maxSlope:opts.maxSlope,clump:opts.clump,patch:opts.patch,output:SCBUF})'),'every kind asks C++ for terrain-filtered candidates');
+  assert.ok(src.includes(':core.scatterBatch({count:batch,spread:S*.96,seed:seedBatch,output:SCBUF})'),'the uniform grid stays as the fallback when the kernel lacks the sampler');
+  /* The uniform grid spent four fifths of a small island's tree budget in the
+     sea, so the survivors looked like scattered clumps however high the budget
+     went. Trees are sampled on land now, with no kernel clumping (the grove
+     gate in add() owns that) and no kernel slope limit (each species has its
+     own). Stone is sampled on land with a gentler clump field. */
+  assert.ok(src.includes('scatterFill(bigCount,pickBig,{maxSlope:9,clump:0,patch:22})'),'trees are sampled on land');
+  assert.ok(src.includes('maxSlope:stony?9:(RULE[n]||[9])[0]'),'stone ignores the species slope limit, the rest respect it');
+  assert.ok(src.includes('clump:stony?cl(.15+scatterClustering*.25,0,1):cl(.25+scatterClustering*.45,0,1)'));
+  const fills=[...src.matchAll(/scatterFill\([^;]*?,\s*(?:null|\{[^}]*\})\)/g)].map(m=>m[0]);
+  assert.ok(fills.length>=2,fills.join(' | '));
+  assert.ok(!fills.some(f=>/,\s*null\)$/.test(f)),'no kind is left on the uniform grid');
   const bridge=readFileSync('terrain-main-01.js','utf8');
   assert.ok(bridge.includes('fe_terrain_scatter_natural')&&bridge.includes('core.scatterNatural'));
 });
