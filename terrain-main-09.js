@@ -1,4 +1,12 @@
 
+/* One performance report per half second, to the shell's settings sheet. */
+function reportPerf(fps){
+ try{
+  if(parent===window)return;
+  parent.postMessage({type:'fe-perf',source:'landscape',fps:Math.round(fps),ms:+(1000/Math.max(fps,1)).toFixed(1),dpr:ren.getPixelRatio?ren.getPixelRatio():1,draws:ren.info.render.calls,tris:ren.info.render.triangles,tier:String(detail)},'*');
+ }catch(error){void error}
+}
+
 /* Explore Mode: first-person walking and helicopter-style aerial navigation. */
 const exSheet=document.getElementById('exploreSheet'),exButton=document.getElementById('ex'),exJoystick=document.getElementById('exJoystick'),exJoyKnob=document.getElementById('exJoyKnob');
 let exploreMode=null,exploreSaved=null,walkRig=null,lookPointerId=null,joyPointerId=null,lastLookX=0,lastLookY=0,exploreYaw=0,explorePitch=0,joyX=0,joyY=0,showWalkJoystick=true,gravityEnabled=true,gravityStrength=9.8,walkVelocityY=0,walkJumping=false,exploreCloseTimer=0,heliX=0,heliY=0,heliZ=0,heliYaw=0,heliAltitude=90,heliSpeed=12,heliVelocityX=0,heliVelocityZ=0,exploreTab='first';
@@ -77,5 +85,8 @@ function loop(){landscapeRaf=0;if(!landscapeActive||document.hidden)return;sched
 try{U.t.value+=dt*wspd;WU.value+=dt;try{wxStep(dt,realDt)}catch(er){if((wxFail=(window.wxFail||0)+1)<3)showErr('Weather: '+er.message);window.wxFail=wxFail}U.wy.value=water.position.y;stepWaveClimate();syncWaterPhysical();updateTessendorfOcean(n);fr++;updateWaterReflection();updateShoreSpray(dt);if(fr%90==20&&fr<1500)checkShaders();
 for(let ci=0;ci<clouds.length;ci++){const g=clouds[ci];g.position.x+=dt*2;if(g.position.x>260)g.position.x=-260}
 updateExplore(dt);if(!exploreMode)oc.update();if(OW?.active)owRefresh();updateDirectionalShadowFocus(n);updateFoliageLOD(n);frameStage='erosion';liveErosionTick(n);frameStage='';if(sel)sbx.setFromObject(sel);for(let ni=0;ni<nfs.length;ni++)nfs[ni]();navg();shadowCadence(n)}catch(er){frameFault(er)}
-frameStage='render';try{ren.render(scene,cam)}catch(er){frameFault(er)}frameStage='';fc++;ft+=dt;if(ft>.5){const measuredFps=fc/ft;$('#fps').textContent=Math.round(measuredFps)+' fps';updateSmoothPreview(measuredFps,n);fc=ft=0}}
+frameStage='render';try{ren.render(scene,cam)}catch(er){frameFault(er)}frameStage='';fc++;ft+=dt;if(ft>.5){const measuredFps=fc/ft;/* FPS is a 3D-workspace figure, not something the studio paints over its own
+     viewport. The measurement still drives the adaptive governor; the number
+     itself is posted to the shell, which shows it in the settings sheet. */
+reportPerf(measuredFps);updateSmoothPreview(measuredFps,n);fc=ft=0}}
 [()=>{try{if(window.__feRestoreStudioConfig)window.__feRestoreStudioConfig()}catch(e){showErr('Saved settings: '+e.message)}},()=>gen(window.__feStartupSeed),()=>scatter(),()=>updSky(),()=>setTab('terrain'),()=>showPanel(false),()=>{nav=true;setNav()}].forEach(f=>{try{f()}catch(e){showErr('Init: '+e.message)}});loop();

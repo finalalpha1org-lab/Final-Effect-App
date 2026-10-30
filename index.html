@@ -4377,7 +4377,10 @@ function renderWorkspacePerf(stats) {
   put('ws-perf-submit', stats.renderMs ? stats.renderMs.toFixed(1) + ' ms' : '--');
   put('ws-perf-draws', stats.drawCalls ? String(stats.drawCalls) : '--');
   put('ws-perf-tris', stats.triangles ? (stats.triangles >= 1000 ? (stats.triangles / 1000).toFixed(1) + 'k' : String(stats.triangles)) : '--');
-  put('ws-perf-mode', `${stats.taa ? 'Temporal AA' : 'Direct render'} · ${stats.shadowRes || 1024}² shadows`);
+  /* The Landscaping Studio reports its own stats and has no shadow-res figure of
+     its own, so the mode line is only rewritten when a shadow resolution came
+     with the report rather than printing a made-up 0. */
+  if (stats.shadowRes) put('ws-perf-mode', `${stats.taa ? 'Temporal AA' : 'Direct render'} · ${stats.shadowRes}² shadows`);
 }
 function syncWorkspaceSettingsUI() {
   const mirror = (dstId, srcId, prop) => {
@@ -5184,6 +5187,11 @@ window.addEventListener('message', (e) => {
     FE.toast('Returned to Workspace');
   } else if (d.type === 'IMPORT_TERRAIN' || d.type === 'final-effect:import') {
     importLandscapeIntoWorkspace(d.payload,result=>landscapeImportReply(e.source,e.origin,d.requestId,result));
+  } else if (d.type === 'fe-perf') {
+    /* The Landscaping Studio measures its own frame rate but does not print it:
+       the number belongs in the ⚙ 3D-workspace sheet with the rest of the
+       performance readout, even while that studio is the one rendering. */
+    renderWorkspacePerf({fps:d.fps,avgMs:d.ms,dpr:d.dpr,drawCalls:d.draws,triangles:d.tris,tierLabel:'Landscaping · detail '+d.tier});
   }
 });
 
