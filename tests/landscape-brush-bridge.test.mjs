@@ -49,7 +49,10 @@ test('default studio generation and shading route through the C++ kernel with a 
  const fs=await import('node:fs');const src=fs.readFileSync('terrain-main-01.js','utf8');
  assert.ok(src.includes('const native=window.FELandscapeCore.generate({n:N,size:S,heights:H,seed,hs,continental:!!GENC,base:PLC.base,mountain:PLC.mtn});if(!native)for('));
  assert.ok(src.includes('window.FELandscapeCore.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB'));
- assert.ok(src.includes('if(!native)for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j)'),'JS colour fallback remains for WASM failure');
+ /* The fallback now also covers a kernel that reports success but writes
+    nothing: the zeroed colour buffer used to be uploaded as black ground. */
+ assert.ok(src.includes('if(!native||!coloursLookReal(rx0,rx1,rz0,rz1))for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j)'),'JS colour fallback remains for WASM failure, and for an empty kernel reply');
+ assert.ok(src.includes('function coloursLookReal('),'the kernel reply is sampled before it is trusted');
  assert.ok(src.includes('const OW_PAINT_RGB=new Uint8Array(OW_SURFACE_DEFS.flatMap(d=>d.rgb))'));
 });
 test('C++ whole-map thermal erosion conserves material and rejects invalid angles',async()=>{

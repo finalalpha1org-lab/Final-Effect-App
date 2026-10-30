@@ -1194,10 +1194,28 @@ const mx3=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t],sm
 const slopeAt=(i,j)=>{const i0=Math.max(0,i-2),i1=Math.min(N,i+2),j0=Math.max(0,j-2),j1=Math.min(N,j+2);const dx=(H[j*W+i1]-H[j*W+i0])/Math.max(1e-4,(i1-i0)*D),dz=(H[j1*W+i]-H[j0*W+i])/Math.max(1e-4,(j1-j0)*D);return Math.hypot(dx,dz)};
 function mIdx(i,j){const k=j*W+i,h=H[k];if(MI[k]!=255)return MI[k];const n=vn(i*.071+seed*.17,j*.071-seed*.11),cliff=rockT+(.5-n)*.55;if(h<wl+.35+n*.55)return 3;if(h>snowL-1+(n-.5)*2.2)return 4;if(slopeAt(i,j)>cliff)return 2;if(h>9+(n-.5)*4)return 1;return 0}
 function col(i,j){const k=j*W+i,h=H[k],sl=slopeAt(i,j),paintSum=SWA[k*4]+SWA[k*4+1]+SWA[k*4+2]+SWA[k*4+3]+SWB[k*4]+SWB[k*4+1]+SWB[k*4+2]+SWB[k*4+3]+SWC[k*4]+SWC[k*4+1]+SWC[k*4+2]+SWC[k*4+3];let c;if(paintSum>.001){c=[0,0,0];for(let q=0;q<OW_SURFACE_DEFS.length;q++){const w=q<4?SWA[k*4+q]:q<8?SWB[k*4+q-4]:SWC[k*4+q-8],rgb=OW_SURFACE_DEFS[q].rgb;c[0]+=rgb[0]/255*w;c[1]+=rgb[1]/255*w;c[2]+=rgb[2]/255*w}c=c.map(x=>x/paintSum)}else if(MI[k]!=255)c=PAL[MI[k]]||PAL[0];else{const broad=vn(i*.045+seed*.09,j*.045-seed*.12),mid=vn(i*.14+seed*.23,j*.14-seed*.31),fine=vn(i*.36-seed*.17,j*.36+seed*.31),field=broad*.56+mid*.3+fine*.14,ground=sm(.4,.68,field+cl((h-12)*.002,-.03,.03));c=mx3(PAL[0],PAL[1],ground*.34);const rockThreshold=rockT+(broad-.5)*.5+(mid-.5)*.25,cliff=sm(rockThreshold-.25,rockThreshold+1.15,sl),outcrop=sm(.72,.9,field)*.25,rock=cl(cliff*.88+outcrop*(1-cliff*.65),0,1);c=mx3(c,PAL[2],rock);const shore=1-sm(wl-.35+(broad-.5)*.6,wl+1.55+(broad-.5)*1.3,h),dune=biome=='desert'?sm(.46,.69,field)*(1-cliff*.8):0,sand=cl(Math.max(shore,dune)*(1-cliff*.6),0,1);c=mx3(c,PAL[3],sand);const snowNoise=(broad-.5)*6+(mid-.5)*3+(fine-.5)*1.5,snow=sm(snowL-1.2+snowNoise,snowL+3.4+snowNoise,h)*(1-cliff*.25);c=mx3(c,PAL[4],snow);const variation=.9+.18*broad+.08*(mid-.5)+.06*(fine-.5)+.04*(hash(i,j*7)-.5);c=c.map(q=>q*variation)}const v=.94+.12*hash(i*3,j*7);C.setXYZ(k,c[0]*v,c[1]*v,c[2]*v)}
+/* A kernel that reports success but writes nothing is worse than one that
+   fails: the zeroed Float32Array is uploaded to the GPU and the whole island
+   turns black, which reads as a broken renderer rather than as missing colour.
+   Every colour command goes through here, so every colour command is checked:
+   sample up to 48 cells of the band it claims to have written, and treat an
+   all-black or non-finite result as a failure so the palette fallback runs. */
+function coloursLookReal(x0,x1,z0,z1){
+ const a=C.array,stepX=Math.max(1,Math.floor((x1-x0)/6)),stepZ=Math.max(1,Math.floor((z1-z0)/6));
+ let seen=0,brightest=0;
+ for(let j=z0;j<=z1;j+=stepZ)for(let i=x0;i<=x1;i+=stepX){
+  const k=(j*W+i)*3,r=a[k],g=a[k+1],b=a[k+2];
+  if(!(r===r)||!(g===g)||!(b===b))return false;
+  const l=.2126*r+.7152*g+.0722*b;
+  if(l>brightest)brightest=l;
+  seen++;
+ }
+ return seen>0&&brightest>1e-4;
+}
 function upd(x0=0,x1=N,z0=0,z1=N){
  const rx0=Math.max(0,Math.min(N,x0)),rx1=Math.max(0,Math.min(N,x1)),rz0=Math.max(0,Math.min(N,z0)),rz1=Math.max(0,Math.min(N,z1));
  const native=window.FELandscapeCore.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect:[rx0,rx1,rz0,rz1],output:C.array});
- if(!native)for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j);
+ if(!native||!coloursLookReal(rx0,rx1,rz0,rz1))for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)col(i,j);
  for(let j=rz0;j<=rz1;j++)for(let i=rx0;i<=rx1;i++)PA.setY(j*W+i,H[j*W+i]);
  PA.needsUpdate=C.needsUpdate=hmTex.needsUpdate=tg.attributes.surfaceWeightsA.needsUpdate=tg.attributes.surfaceWeightsB.needsUpdate=tg.attributes.surfaceWeightsC.needsUpdate=true;
  if(window.FELandscapeCore.normals({n:N,size:S,heights:H,output:tg.attributes.normal.array}))tg.attributes.normal.needsUpdate=true;else tg.computeVertexNormals();
@@ -1232,7 +1250,7 @@ function updLiveHeight(z0,z1){
 }
 function updLive(x0,x1,z0,z1){
  const core=window.FELandscapeCore,rect=[x0,x1,z0,z1];
- if(!core.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect,output:C.array}))
+ if(!core.colors({n:N,size:S,heights:H,weightsA:SWA,weightsB:SWB,weightsC:SWC,materials:MI,pal:PAL,paint:OW_PAINT_RGB,water:wl,rock:rockT,snow:snowL,desert:biome==='desert',seed,rect,output:C.array})||!coloursLookReal(x0,x1,z0,z1))
   for(let j=z0;j<=z1;j++)for(let i=x0;i<=x1;i++)col(i,j);
  /* Track how high the band reaches while it is being written, so the bounding
     sphere is only rebuilt when the eroded ground actually grew past the one we

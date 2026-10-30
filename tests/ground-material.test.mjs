@@ -112,6 +112,32 @@ test('the ground GLSL parses', () => {
   assert.doesNotThrow(() => parser.parse(assemble({ withDetail: false }), { quiet: true }), 'the layers alone must parse');
 });
 
+test('no material term can take the ground to black', () => {
+  /* Every darkening term used to be able to reach zero on its own: deep water
+     absorption multiplied the surface by exp(-depth), an atlas tile with no
+     paint yet multiplied by its own black, and a painted cell with no colour
+     multiplied by nothing. A ground that multiplies to zero is not shadow, it
+     is a hole, and it is what "the brush turned the terrain black" looked like.
+     Two floors are the contract now. */
+  const absorption = /vec3 ab=max\(exp\(-udep\*vec3\(\.42,\.12,\.075\)\),vec3\(\.02,\.075,\.12\)\);/.exec(TD);
+  assert.ok(absorption, 'deep water absorption needs a floor');
+  const floor = /#ifdef USE_COLOR\s*diffuseColor\.rgb=max\(diffuseColor\.rgb,vColor\.rgb\*\.04\);\s*#endif/.exec(TD);
+  assert.ok(floor, 'the palette colour must be a floor on the final ground colour');
+
+  /* What the floor is worth in numbers: a pitch-black material result over a
+     lawn still renders as 4% of the lawn's linear albedo, not as zero. */
+  const lawn = [0.150, 0.263, 0.112];
+  const floored = lawn.map((c) => Math.max(0, c * 0.04));
+  assert.ok(floored.every((c) => c > 0.004), `floored lawn is ${floored.join(', ')}`);
+  /* And the absorption floor at any depth is a real colour, never black. */
+  const channels = [0.02, 0.075, 0.12];
+  const absorptionAt = (depth) => [-0.42, -0.12, -0.075].map((k, i) =>
+    Math.max(Math.exp(depth * k), channels[i]));
+  for (const depth of [0.5, 5, 50, 500]) {
+    assert.ok(absorptionAt(depth).every((c) => c >= 0.019), `depth ${depth} m went black`);
+  }
+});
+
 test('the ground falls back one pass at a time, never all at once', () => {
   /* A device that refuses the combined program used to lose every injection on
      the first failure, which is the flat "no material" ground. It drops the
