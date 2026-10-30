@@ -480,9 +480,13 @@ test('compliance is a property of the branch path, not of the height', async () 
 
 test('the wind shader bends the skeleton and the JS builders carry the channels', () => {
   assert.match(scene, /attribute float aSway;attribute float aPhase;/, 'the foliage shader has to read the skeletal channels');
-  assert.match(scene, /const SKEL='float skH=max\(position\.y,0\.\);float skA=aSway\*aSway\*clamp\(skH\*\.34,\.12,1\.\);/, 'the bend is driven by compliance and scaled by the plant height, so a bracken does not sway like an oak');
-  assert.match(scene, /transformed\.xz\+=wd\*\(skA\*uW\*/, 'the skeleton moves along the wind direction');
-  assert.match(scene, /aPhase\*1\.6/, 'neighbouring limbs must swing out of phase');
+  /* The bend is quadratic in height and scaled by compliance: a bracken does
+     not sway like an oak, and the collar stays planted. The old law started at
+     12% amplitude and ran the twigs at a different tempo from the trunk, which
+     is what made a tree move like a kite. See tests/tree-sway.test.mjs. */
+  assert.match(scene, /const SKEL='float skH=max\(position\.y,0\.\);float skT=clamp\(skH\/12\.,0\.,1\.25\);float skBend=skT\*skT;/, 'the bend is quadratic in height, so a bracken does not sway like an oak');
+  assert.match(scene, /transformed\.xz\+=skDir\*\(skBend\*aSway\*uW\*/, 'the skeleton moves along its own axis, scaled by compliance');
+  assert.match(scene, /aPhase\*1\.4/, 'neighbouring limbs must swing out of phase');
   assert.match(scene, /float wv=position\.y\*position\.y\*uW;/, 'unskinned foliage keeps the old height law');
   assert.match(models, /g\.SW\.push\(g\.sw===undefined\?0:g\.sw\)/, 'JS geometry carries a compliance channel');
   assert.match(models, /o\.setAttribute\('aSway',new THREE\.Float32BufferAttribute\(g\.SW,1\)\)/);
