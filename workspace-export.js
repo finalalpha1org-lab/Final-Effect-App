@@ -207,6 +207,22 @@
     return eng;
   }
 
+  /* The OBJ/MTL writers live in cpp/src/fe_writer.cpp; this is the engine check
+     they need. */
+  function writerEngine() {
+    const eng = engine();
+    if (!eng || typeof eng.exports.fe_writer_obj_mesh !== 'function') return null;
+    return eng;
+  }
+
+  /* The six-decimal formatter the OBJ writer used. The kernel has the same one
+     in C++; this stays as the fallback and as the parity oracle. */
+  function objFloat(value) {
+    if (!isFinite(value)) return '0';
+    const rounded = Math.round(value * 1e6) / 1e6;
+    return String(rounded === 0 ? 0 : rounded);
+  }
+
   /* Fill a float32 region of engine memory from an attribute, honouring the
      attribute's itemSize: the kernels always read xyz (or uv) packed. */
   function putAttribute(view, attribute, count, components) {
@@ -673,13 +689,40 @@
 
   /* ---- OBJ --------------------------------------------------------------- */
 
-  function objFloat(value) {
-    if (!isFinite(value)) return '0';
-    const rounded = Math.round(value * 1e6) / 1e6;
-    return String(rounded === 0 ? 0 : rounded);
+  function buildMTL(materials) {
+    const list = materials || [];
+    const eng = writerEngine();
+    if (eng && typeof eng.exports.fe_writer_mtl_material === 'function') {
+      const text = buildMTLThroughEngine(eng, list);
+      if (text !== null) return text;
+    }
+    return buildMTLSoftware(list);
   }
 
-  function buildMTL(materials) {
+  function buildMTLThroughEngine(eng, materials) {
+    const ex = eng.exports;
+    const budget = 512 + materials.length * 512;
+    if (ex.fe_writer_begin(budget) < 0) return null;
+    if (ex.fe_writer_mtl_header() !== 0) return null;
+    const emissiveSlot = eng.scratch('mtl-emissive', 3 * 8);
+    for (const material of materials) {
+      const name = putText(eng, 'mtl-name', material.name || 'Material');
+      const base = material.baseColor || [0.8, 0.8, 0.8, 1];
+      const emissive = material.emissive;
+      const emissiveBuffer = eng.memory.buffer;
+      const hasEmissive = !!(emissive && (emissive[0] || emissive[1] || emissive[2]));
+      let emissivePtr = 0;
+      if (hasEmissive) {
+        new Float64Array(emissiveBuffer, emissiveSlot.ptr, 3).set([emissive[0], emissive[1], emissive[2]]);
+        emissivePtr = emissiveSlot.ptr;
+      }
+      if (ex.fe_writer_mtl_material(name.ptr, name.length, base[0], base[1], base[2], base[3],
+        material.roughness, material.metallic, emissivePtr, hasEmissive ? 1 : 0) !== 0) return null;
+    }
+    return new TextDecoder().decode(new Uint8Array(eng.memory.buffer, ex.fe_writer_text_ptr(), ex.fe_writer_text_length()).slice());
+  }
+
+  function buildMTLSoftware(materials) {
     const lines = ['# Final Effect 3D Workspace material library'];
     (materials || []).forEach((material) => {
       const [r, g, b, a] = material.baseColor;
@@ -700,6 +743,105 @@
   }
 
   function buildOBJ(nodes, options) {
+    const opts = options || {};
+    const eng = writerEngine();
+    if (eng) {
+      const text = buildOBJThroughEngine(eng, nodes, opts);
+      if (text !== null) return text;
+    }
+    return buildOBJSoftware(nodes, options);
+  }
+
+  /* One contiguous append buffer for the whole document. The budget is an upper
+     bound on the longest line each mesh can produce; if it is still short the
+     kernel says so (-2) and one retry with double the room is enough. */
+  function objBudget(nodes) {
+    let bytes = 256;
+    nodes.forEach((node) => {
+      const vertices = node.vertexCount || 0;
+      const indices = node.indices ? node.indices.length : 0;
+      /* A `v` line is at most ~43 bytes, a `vt` ~32 and a `vn` ~40; the index
+         writer reuses those vertices, so 72 per vertex plus 16 per index is a
+         deliberate under-estimate - the caller retries with double the room and
+         only falls back to the JavaScript writer if that is still not enough. */
+      bytes += 72 * vertices + 16 * indices + 256;
+    });
+    return bytes;
+  }
+
+  function buildOBJThroughEngine(eng, nodes, opts) {
+    const ex = eng.exports;
+    let budget = objBudget(nodes);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (ex.fe_writer_begin(budget) < 0) return null;
+      const triangles = nodes.reduce((sum, n) => sum + Math.floor(n.indices.length / 3), 0);
+      const mtl = opts.mtlName ? putText(eng, 'obj-mtllib', opts.mtlName) : null;
+      if (ex.fe_writer_obj_header(nodes.length, triangles,
+        mtl ? mtl.ptr : 0, mtl ? mtl.length : 0) !== 0) return null;
+
+      let base = 1;
+      let overflow = false;
+      for (const node of nodes) {
+        const writer = writeObjMesh(eng, node, base);
+        if (writer === null) { overflow = true; break; }
+        if (writer < 0) return null;
+        base += node.vertexCount;
+      }
+      if (!overflow) {
+        return new TextDecoder().decode(new Uint8Array(eng.memory.buffer, ex.fe_writer_text_ptr(), ex.fe_writer_text_length()).slice());
+      }
+      budget *= 2;
+    }
+    return null;
+  }
+
+  /* Copy a UTF-8 string into a named scratch block and hand back its pointer. */
+  function putText(eng, slotName, text) {
+    const bytes = utf8(String(text == null ? '' : text));
+    const slot = eng.scratch(slotName, Math.max(1, bytes.length));
+    if (bytes.length) new Uint8Array(eng.memory.buffer, slot.ptr, bytes.length).set(bytes);
+    return { ptr: slot.ptr, length: bytes.length };
+  }
+
+  /* Returns 0 ok, -2 no room, null for "the engine cannot take this mesh". */
+  function writeObjMesh(eng, node, base) {
+    const ex = eng.exports;
+    const vertices = node.vertexCount || 0;
+    const positions = node.positions;
+    const normals = node.normals;
+    const uvs = node.uvs;
+    const indices = node.indices || new Uint32Array(0);
+    if (!positions) return null;
+
+    const name = sanitize(node.name);
+    const material = node.material ? { name: String(node.material.name) } : null;
+    /* Every scratch block is reserved before any view is created: a reservation
+       can grow linear memory, and growth detaches the views made earlier. */
+    const positionSlot = eng.scratch('obj-positions', Math.max(1, vertices * 3) * 4);
+    const normalSlot = normals ? eng.scratch('obj-normals', Math.max(1, vertices * 3) * 4) : null;
+    const uvSlot = uvs ? eng.scratch('obj-uvs', Math.max(1, vertices * 2) * 4) : null;
+    const indexSlot = eng.scratch('obj-indices', Math.max(1, indices.length) * 4);
+    const nameText = putText(eng, 'obj-name', name);
+    const materialText = material ? putText(eng, 'obj-material', material.name) : null;
+
+    const buffer = eng.memory.buffer;
+    new Float32Array(buffer, positionSlot.ptr, vertices * 3).set(positions.subarray(0, vertices * 3));
+    if (normalSlot) new Float32Array(buffer, normalSlot.ptr, vertices * 3).set(normals.subarray(0, vertices * 3));
+    if (uvSlot) new Float32Array(buffer, uvSlot.ptr, vertices * 2).set(uvs.subarray(0, vertices * 2));
+    new Uint32Array(buffer, indexSlot.ptr, indices.length).set(indices);
+
+    const rc = ex.fe_writer_obj_mesh(nameText.ptr, nameText.length,
+      materialText ? materialText.ptr : 0, materialText ? materialText.length : 0,
+      positionSlot.ptr, positions.length,
+      normalSlot ? normalSlot.ptr : 0, normals ? normals.length : 0,
+      uvSlot ? uvSlot.ptr : 0, uvs ? uvs.length : 0,
+      indexSlot.ptr, indices.length, base);
+    if (rc === -2) return -2;
+    if (rc !== 0) return null;
+    return 0;
+  }
+
+  function buildOBJSoftware(nodes, options) {
     const opts = options || {};
     const lines = ['# Final Effect 3D Workspace'];
     lines.push(`# ${nodes.length} meshes, ${nodes.reduce((sum, n) => sum + Math.floor(n.indices.length / 3), 0)} triangles`);
@@ -968,7 +1110,10 @@
     buildGLB,
     buildGLTF,
     buildOBJ,
+    buildOBJSoftware,
     buildMTL,
+    buildMTLSoftware,
+    objFloat,
     buildFBX,
     materialsOf,
     align4

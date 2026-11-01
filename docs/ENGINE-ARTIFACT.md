@@ -25,10 +25,10 @@ is the contract below.
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
-| `export` | `fe_export_bake`, `fe_export_bake_instanced`, `fe_zip_crc32`, `fe_volatlas_pack`, `fe_volatlas_sample`, `fe_volatlas_parse_library` |
+| `export` | `fe_export_bake`, `fe_export_bake_instanced`, `fe_zip_crc32`, `fe_volatlas_pack`, `fe_volatlas_sample`, `fe_volatlas_parse_library`, `fe_writer_obj_mesh`, `fe_writer_mtl_material` |
 | `render-maths` | `fe_taa_halton`, `fe_taa_jitter`, `fe_taa_project`, `fe_color_blackbody_rgb`, `fe_color_blackbody_lut` |
 
-The shipped build is `1054759` bytes, ABI v1, **284 exports**; every group above
+The shipped build is `1083169` bytes, ABI v1, **292 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all seven benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
@@ -40,6 +40,10 @@ Five more are the temporal anti-aliasing sampling maths and the Planck/CIE
 blackbody colour that bakes the fire ramp (`cpp/src/fe_render_math.cpp`). Those
 have no libm to lean on, so `cpp/include/fe_math64.hpp` carries the double
 `exp`, `log`, `pow` and `mod` the freestanding build does not ship.
+
+Eight are the Wavefront text writers (`cpp/src/fe_writer.cpp`): OBJ and MTL are
+formatted into one append buffer in engine memory, including the six-decimal
+number form the OBJ format uses, and decoded once on the JavaScript side.
 
 Twenty of the exports are the rig (`cpp/src/fe_skin.cpp`): `fe_skin_begin`,
 `fe_skin_solve`, `fe_skin_deform`, `fe_skin_auto_weights`, the pointer getters
@@ -94,7 +98,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1054759 bytes, ABI v1, 284 exports)`.
+that passes `Validated fe_core_engine.wasm (1083169 bytes, ABI v1, 292 exports)`.
 
 ## Verification
 
