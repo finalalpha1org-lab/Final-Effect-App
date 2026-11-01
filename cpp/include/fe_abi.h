@@ -542,6 +542,31 @@ FE_EXPORT int32_t   fe_vol_noise_generate(uint32_t size, uint32_t seed, uint32_t
 FE_EXPORT uint32_t  fe_vol_noise_ptr(void);
 FE_EXPORT uint32_t  fe_vol_noise_size(void);
 
+/* ---- Volume atlas packing (cpp/src/fe_volatlas.cpp) ----
+ * WebGL1 has no 3D textures, so a (density, temperature) lattice is tiled into
+ * one RGBA8 image: R = density, G = temperature, A = 255. The same layout is
+ * used for the baked library, where tile = frame * grid + z. Every buffer is
+ * owned by the caller; nothing in this group allocates.
+ * Return codes: 0 = ok, -3 = invalid argument (grid outside 1..128, null). */
+FE_EXPORT int32_t  fe_volatlas_layout(uint32_t grid, uint32_t* out4 /* tilesX, tilesY, w, h */);
+FE_EXPORT uint32_t fe_volatlas_bytes(uint32_t grid);
+FE_EXPORT int32_t  fe_volatlas_pack(const float* density, const float* temperature,
+                                    uint32_t grid, double density_scale,
+                                    double temperature_scale, uint8_t* out_rgba);
+FE_EXPORT int32_t  fe_volatlas_pack_library(const uint8_t* frames_rg, uint32_t grid,
+                                            uint32_t frame_count, uint8_t* out_rgba,
+                                            uint32_t* out_dims4);
+FE_EXPORT int32_t  fe_volatlas_sample(const uint8_t* frames_rg, uint32_t grid,
+                                      uint32_t frame, double u, double v, double w,
+                                      double* out2);
+FE_EXPORT int32_t  fe_volatlas_frame_at(uint32_t frames, double fps, double seconds,
+                                        double motion, int32_t* out_ab, double* out_blend);
+/* Header walk for the baked library: 7 u32 per variant (name offset, name
+ * length, grid, frames, fps, data offset, data length). Returns the variant
+ * count, or -1 bad magic, -2 truncated, -3 bad argument / table too small. */
+FE_EXPORT int32_t  fe_volatlas_parse_library(const uint8_t* bytes, uint32_t length,
+                                             uint32_t* out_meta, uint32_t meta_capacity);
+
 /* ---- Modifier Kernel Session (C++ geometry modifiers) ----
  * The JS editor writes an indexed triangle mesh into this session and calls a
  * kernel. Every kernel reads the session mesh, writes the result back into the
@@ -610,6 +635,50 @@ FE_EXPORT int32_t  fe_mod_armature(float influence, int32_t preserve_volume, flo
 /* Nearest-surface / above-surface / outside-surface shrinkwrap projection.
  * mode: 0 = On Surface, 1 = Above Surface, 2 = Outside Surface. */
 FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset);
+
+/* ---- World-space mesh baking + packaging CRC (cpp/src/fe_export.cpp) ----
+ * The exporters bake every mesh (and every instanced copy) into world space
+ * before either file writer sees it. That per-vertex loop lives here now; the
+ * bridge copies typed arrays in, calls one kernel and reads the result back.
+ * Matrices are column-major, the layout of THREE.Matrix4.elements.
+ * Return codes: 0 = ok, -1 = no session / allocation refused, -2 = capacity
+ * too small for this request, -3 = invalid argument. */
+FE_EXPORT int32_t   fe_export_begin(uint32_t vertex_capacity, uint32_t index_capacity,
+                                    uint32_t instance_capacity);
+FE_EXPORT int32_t   fe_export_set_counts(uint32_t vertex_count, uint32_t index_count,
+                                         uint32_t has_normals, uint32_t has_uv);
+FE_EXPORT float*    fe_export_src_pos_ptr(void);
+FE_EXPORT float*    fe_export_src_nrm_ptr(void);
+FE_EXPORT float*    fe_export_src_uv_ptr(void);
+FE_EXPORT uint32_t* fe_export_src_idx_ptr(void);
+FE_EXPORT float*    fe_export_out_pos_ptr(void);
+FE_EXPORT float*    fe_export_out_nrm_ptr(void);
+FE_EXPORT float*    fe_export_out_uv_ptr(void);
+FE_EXPORT uint32_t* fe_export_out_idx_ptr(void);
+FE_EXPORT uint32_t  fe_export_out_vertex_count(void);
+FE_EXPORT uint32_t  fe_export_out_index_count(void);
+FE_EXPORT uint32_t  fe_export_instance_count(void);
+FE_EXPORT int32_t   fe_export_bake(const double* matrix16);
+FE_EXPORT int32_t   fe_export_bake_instanced(const double* base16, const float* instances16,
+                                             uint32_t count);
+/* CRC-32 (reflected 0xEDB88320), seeded with the running value: 0 for the
+ * first chunk, the previous return for every chunk after it. */
+FE_EXPORT int32_t   fe_zip_crc32(uint32_t seed, const uint8_t* data, uint32_t length,
+                                 uint32_t* out_crc);
+
+/* ---- Render maths: TAA sampling and blackbody colour (cpp/src/fe_render_math.cpp) ----
+ * Pure, double-precision kernels that used to be inline JavaScript: the two
+ * three-base Halton jitter, the reprojection the TAA shader performs, and the
+ * Planck + CIE 1931 colour science behind the fire temperature ramp. Every
+ * out-parameter is a caller-owned pointer; return 0 on success, -3 on a null
+ * argument or an out-of-range count. */
+FE_EXPORT double  fe_taa_halton(double index, double base);
+FE_EXPORT int32_t fe_taa_jitter(double frame, double width, double height, double* out2);
+FE_EXPORT int32_t fe_taa_project(const double* matrix16, double x, double y, double z,
+                                 double* out3);
+FE_EXPORT int32_t fe_color_blackbody_rgb(double kelvin, double* out3);
+FE_EXPORT int32_t fe_color_blackbody_lut(double min_k, double max_k, uint32_t count,
+                                         uint8_t* out_rgba);
 
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 #ifdef __cplusplus

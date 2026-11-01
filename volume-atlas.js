@@ -12,6 +12,58 @@
 (function (root) {
   'use strict';
 
+  /* The packing loop lives in cpp/src/fe_volatlas.cpp now: a 40^3 lattice is
+     64 000 cells of divide-clamp-round, every frame, in the tab that is also
+     raymarching it. This file keeps the JavaScript loop as `packSoftware` -
+     the fallback when the engine artifact is missing and the oracle the parity
+     suite compares the kernel against. */
+  function engine() {
+    const eng = root.FECppEngine;
+    if (!eng || !eng.ready || !eng.exports || !eng.memory) return null;
+    if (typeof eng.exports.fe_volatlas_pack !== 'function' || typeof eng.scratch !== 'function') return null;
+    return eng;
+  }
+
+  /* Upload a float grid: a view over engine memory needs no copy at all, since
+     the smoke solver already keeps density and temperature here. */
+  function upload(eng, name, values, cells) {
+    const bytes = values.byteOffset;
+    if (values.buffer === eng.memory.buffer) return { ptr: bytes, owned: false };
+    const slot = eng.scratch(name, cells * 4);
+    new Float32Array(eng.memory.buffer, slot.ptr, cells).set(values.subarray(0, cells));
+    return { ptr: slot.ptr, owned: true };
+  }
+
+  function packThroughEngine(eng, density, temperature, grid, densityScale, temperatureScale, out) {
+    const ex = eng.exports;
+    const cells = grid * grid * grid;
+    const layoutSlot = eng.scratch('volatlas-layout', 16);
+    const imageSlot = eng.scratch('volatlas-image', 0);
+    if (ex.fe_volatlas_layout(grid, layoutSlot.ptr) !== 0) return null;
+    const dims = Array.from(new Uint32Array(eng.memory.buffer, layoutSlot.ptr, 4));
+    const need = dims[2] * dims[3] * 4;
+    if (out && out.length < need) return null;
+    const target = out || new Uint8Array(need);
+
+    const d = upload(eng, 'volatlas-density', density, cells);
+    const t = upload(eng, 'volatlas-temperature', temperature, cells);
+    const image = eng.scratch('volatlas-image', need);
+    const rc = ex.fe_volatlas_pack(d.ptr, t.ptr, grid, densityScale, temperatureScale, image.ptr);
+    if (rc !== 0) return null;
+    target.set(new Uint8Array(eng.memory.buffer, image.ptr, need), 0);
+    return {
+      data: target,
+      grid,
+      tilesX: dims[0],
+      tilesY: dims[1],
+      width: dims[2],
+      height: dims[3],
+      densityScale,
+      temperatureScale,
+      written: cells
+    };
+  }
+
   function clamp01(value) {
     const v = Number(value);
     if (!Number.isFinite(v) || v <= 0) return 0;
@@ -43,6 +95,16 @@
     if (out.length < info.width * info.height * 4) throw new Error('Volume atlas target is too small');
     const densityScale = Number(opts.densityScale) > 0 ? Number(opts.densityScale) : 1;
     const temperatureScale = Number(opts.temperatureScale) > 0 ? Number(opts.temperatureScale) : 1;
+
+    const eng = engine();
+    if (eng) {
+      const packed = packThroughEngine(eng, density, temperature, grid, densityScale, temperatureScale, out);
+      if (packed) return packed;
+    }
+    return packSoftware(density, temperature, grid, densityScale, temperatureScale, out, info);
+  }
+
+  function packSoftware(density, temperature, grid, densityScale, temperatureScale, out, info) {
     const width = info.width;
 
     for (let z = 0; z < grid; z++) {
@@ -74,5 +136,5 @@
     };
   }
 
-  root.FEVolumeAtlas = { layout: layout, pack: pack };
+  root.FEVolumeAtlas = { layout: layout, pack: pack, packSoftware: packSoftware };
 })(typeof window !== 'undefined' ? window : globalThis);

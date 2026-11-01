@@ -189,14 +189,145 @@
     return out;
   }
 
+  /* ---- C++ bake bridge ---------------------------------------------------
+     cpp/src/fe_export.cpp bakes a mesh, and every instanced copy of it, into
+     world space: the column-major transform, the inverse-transpose for the
+     normals, the renormalise, the instance concat and the index offset. This
+     file now only copies typed arrays in and out.
+
+     The JavaScript loops are kept as bakeGeometrySoftware /
+     bakeInstancedSoftware. They are the fallback when the engine artifact is
+     missing, and they are the oracle the parity suite compares the C++ path
+     against, byte for byte. */
+
+  function engine() {
+    const eng = typeof globalThis !== 'undefined' ? globalThis.FECppEngine : null;
+    if (!eng || !eng.ready || !eng.exports || !eng.memory) return null;
+    if (typeof eng.exports.fe_export_bake !== 'function' || typeof eng.scratch !== 'function') return null;
+    return eng;
+  }
+
+  /* Fill a float32 region of engine memory from an attribute, honouring the
+     attribute's itemSize: the kernels always read xyz (or uv) packed. */
+  function putAttribute(view, attribute, count, components) {
+    const array = attribute.array;
+    const itemSize = attribute.itemSize || components;
+    if (itemSize === components) {
+      if (array.length >= count * components) view.set(array.subarray(0, count * components));
+      return;
+    }
+    for (let i = 0; i < count; i++) {
+      for (let c = 0; c < components; c++) view[i * components + c] = array[i * itemSize + c] || 0;
+    }
+  }
+
+  /* One mesh through the C++ kernel, or undefined when the engine cannot take
+     it (no artifact, out of range, refused allocation). */
+  function bakeGeometryCpp(eng, geometry, matrix) {
+    const attributes = geometry.attributes || {};
+    const position = attributes.position;
+    if (!position || !position.array || !position.count) return undefined;
+    const count = position.count;
+    const normal = attributes.normal && attributes.normal.array ? attributes.normal : null;
+    const uv = attributes.uv && attributes.uv.array ? attributes.uv : null;
+    const indices = readIndices(geometry, count);
+    const ex = eng.exports;
+
+    if (ex.fe_export_begin(count, indices.length, 1) !== 0) return undefined;
+    if (ex.fe_export_set_counts(count, indices.length, normal ? 1 : 0, uv ? 1 : 0) !== 0) return undefined;
+
+    const matrixSlot = eng.scratch('export-matrix', 16 * 8);
+    const m = matrix && matrix.length >= 16 ? matrix : IDENTITY_MATRIX;
+    const buffer = eng.memory.buffer;
+    new Float64Array(buffer, matrixSlot.ptr, 16).set(m);
+
+    putAttribute(new Float32Array(buffer, ex.fe_export_src_pos_ptr(), count * 3), position, count, 3);
+    if (normal) putAttribute(new Float32Array(buffer, ex.fe_export_src_nrm_ptr(), count * 3), normal, count, 3);
+    if (uv) putAttribute(new Float32Array(buffer, ex.fe_export_src_uv_ptr(), count * 2), uv, count, 2);
+    new Uint32Array(buffer, ex.fe_export_src_idx_ptr(), indices.length).set(indices);
+
+    if (ex.fe_export_bake(matrixSlot.ptr) !== 0) return undefined;
+    return readBaked(ex, eng, !!normal, !!uv);
+  }
+
+  /* N instanced copies through the same kernel: base world matrix x each
+     instance matrix, concatenated exactly as concat() used to. */
+  function bakeInstancedCpp(eng, object, options) {
+    const base = object.matrixWorld ? object.matrixWorld.elements : null;
+    const instanceArray = object.instanceMatrix && object.instanceMatrix.array;
+    if (!base || !instanceArray) return undefined;
+    const geometry = object.geometry;
+    const attributes = geometry && geometry.attributes ? geometry.attributes : {};
+    const position = attributes.position;
+    if (!position || !position.array || !position.count) return undefined;
+
+    const opts = options || {};
+    const total = Math.max(1, object.count | 0);
+    const limit = Number(opts.maxInstances) > 0 ? Math.min(total, Number(opts.maxInstances)) : total;
+    if (!limit || limit > 65536) return undefined;
+    if (instanceArray.length < limit * 16) return undefined;
+
+    const count = position.count;
+    const normal = attributes.normal && attributes.normal.array ? attributes.normal : null;
+    const uv = attributes.uv && attributes.uv.array ? attributes.uv : null;
+    const indices = readIndices(geometry, count);
+    const ex = eng.exports;
+
+    if (ex.fe_export_begin(count, indices.length, limit) !== 0) return undefined;
+    if (ex.fe_export_set_counts(count, indices.length, normal ? 1 : 0, uv ? 1 : 0) !== 0) return undefined;
+
+    const matrixSlot = eng.scratch('export-matrix', 16 * 8);
+    const instanceSlot = eng.scratch('export-instances', limit * 16 * 4);
+    const buffer = eng.memory.buffer;
+    new Float64Array(buffer, matrixSlot.ptr, 16).set(base);
+    new Float32Array(buffer, instanceSlot.ptr, limit * 16).set(instanceArray.subarray(0, limit * 16));
+
+    putAttribute(new Float32Array(buffer, ex.fe_export_src_pos_ptr(), count * 3), position, count, 3);
+    if (normal) putAttribute(new Float32Array(buffer, ex.fe_export_src_nrm_ptr(), count * 3), normal, count, 3);
+    if (uv) putAttribute(new Float32Array(buffer, ex.fe_export_src_uv_ptr(), count * 2), uv, count, 2);
+    new Uint32Array(buffer, ex.fe_export_src_idx_ptr(), indices.length).set(indices);
+
+    if (ex.fe_export_bake_instanced(matrixSlot.ptr, instanceSlot.ptr, limit) !== limit) return undefined;
+    const baked = readBaked(ex, eng, !!normal, !!uv);
+    baked.instanceCount = limit;
+    return baked;
+  }
+
+  /* Copy the kernel's output block out of engine memory. The copies are made
+     here on purpose: the next bake overwrites the block. */
+  function readBaked(ex, eng, hasNormals, hasUv) {
+    const buffer = eng.memory.buffer;
+    const vertexCount = ex.fe_export_out_vertex_count();
+    const indexCount = ex.fe_export_out_index_count();
+    const positions = new Float32Array(buffer, ex.fe_export_out_pos_ptr(), vertexCount * 3).slice();
+    const normals = hasNormals ? new Float32Array(buffer, ex.fe_export_out_nrm_ptr(), vertexCount * 3).slice() : null;
+    const uvs = hasUv ? new Float32Array(buffer, ex.fe_export_out_uv_ptr(), vertexCount * 2).slice() : null;
+    /* Uint16 when the whole primitive fits, which is the width readIndices()
+       and concat() picked before this kernel existed. */
+    const indices = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount);
+    indices.set(new Uint32Array(buffer, ex.fe_export_out_idx_ptr(), indexCount));
+    return { positions, normals, uvs, indices, vertexCount };
+  }
+
+  const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
   /* One mesh, transformed into world space. Returns typed arrays only, so the
      caller decides how to package them (glTF buffers, OBJ text, …). */
   function bakeGeometry(geometry, matrix) {
+    const eng = engine();
+    if (eng) {
+      const baked = bakeGeometryCpp(eng, geometry, matrix);
+      if (baked) return baked;
+    }
+    return bakeGeometrySoftware(geometry, matrix);
+  }
+
+  function bakeGeometrySoftware(geometry, matrix) {
     const attributes = geometry.attributes || {};
     const position = attributes.position;
     if (!position || !position.array) return null;
     const count = position.count;
-    const m = matrix || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const m = matrix || IDENTITY_MATRIX;
     const nm = normalMatrix(m);
     const positions = new Float32Array(count * 3);
     const normals = attributes.normal && attributes.normal.array ? new Float32Array(count * 3) : null;
@@ -229,9 +360,18 @@
   }
 
   /* An InstancedMesh is one geometry plus N matrices. glTF 2.0 has no core
-     instancing, so the copies are baked into a single primitive here — the
-     export looks like the viewport instead of like one plant at the origin. */
+     instancing, so the copies are baked into a single primitive — the export
+     looks like the viewport instead of like one plant at the origin. */
   function bakeInstanced(object, options) {
+    const eng = engine();
+    if (eng) {
+      const baked = bakeInstancedCpp(eng, object, options);
+      if (baked) return baked;
+    }
+    return bakeInstancedSoftware(object, options);
+  }
+
+  function bakeInstancedSoftware(object, options) {
     const opts = options || {};
     const base = object.matrixWorld ? object.matrixWorld.elements : null;
     const instanceArray = object.instanceMatrix && object.instanceMatrix.array;
@@ -242,7 +382,7 @@
     let first = null;
     for (let i = 0; i < limit; i++) {
       const slice = Array.prototype.slice.call(instanceArray, i * 16, i * 16 + 16);
-      const baked = bakeGeometry(object.geometry, multiply(base, slice));
+      const baked = bakeGeometrySoftware(object.geometry, multiply(base, slice));
       if (!baked) return null;
       if (!first) first = baked;
       else first = concat(first, baked);
@@ -251,6 +391,9 @@
     return first;
   }
 
+  /* Append b to a, offsetting b's indices so both copies share one index
+     buffer. Only the fallback needs this now: the C++ kernel writes N copies
+     into one output block directly, and the parity suite pins the two equal. */
   function concat(a, b) {
     const positions = new Float32Array(a.positions.length + b.positions.length);
     positions.set(a.positions, 0);
@@ -815,6 +958,8 @@
     collect,
     bakeGeometry,
     bakeInstanced,
+    bakeGeometrySoftware,
+    bakeInstancedSoftware,
     describeMaterial,
     sanitize,
     multiply,

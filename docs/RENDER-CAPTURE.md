@@ -191,15 +191,23 @@ sat behind it:
   exporter is a different version than the one the call was written for, which
   leaves the dialog on "generating" forever.
 
-So the writers are ours (`workspace-export.js`, plain arrays, no CDN):
+So the writers are ours (`workspace-export.js`, plain arrays, no CDN). The
+per-vertex baking and the sequence CRC are C++ kernels; the file writers stay
+JavaScript because they are string assembly (`objFloat`, `String(number)`,
+`JSON.stringify`), and those are the JavaScript number formatter, not a
+numeric kernel:
 
 | Step | What happens |
 | --- | --- |
 | `collect(scene)` | traverses once; skips gizmos (including anything under `TransformControls`), grids, cursors, onion ghosts, light/camera helpers, hidden objects and empty geometry; enforces a 900k-triangle budget and reports truncation |
-| `bakeGeometry` | world matrix baked into positions, inverse-transpose into normals, index rebuilt with the right width |
-| `bakeInstanced` | every instance matrix multiplied into one primitive, so N plants export as N plants |
+| `bakeGeometry` | world matrix baked into positions, inverse-transpose into normals, index rebuilt with the right width — done by `fe_export_bake` in `cpp/src/fe_export.cpp`; `bakeGeometrySoftware` is the fallback and the parity oracle |
+| `bakeInstanced` | every instance matrix multiplied into one primitive, so N plants export as N plants — `fe_export_bake_instanced` |
 | `buildGLB` / `buildGLTF` | glTF 2.0: one buffer, aligned bufferViews, POSITION/NORMAL/TEXCOORD_0 + indices, PBR materials deduplicated by name, optional animation samplers |
 | `buildOBJ` / `buildMTL` | `o` / `v` / `vt` / `vn` / `f`, indices offset per object, `usemtl` + a `.mtl` with `Kd`, `Ns`, `d`, `Pr`, `Pm`, `Ke` |
+
+The ZIP the PNG sequence is packed into uses `fe_zip_crc32` (standard IEEE
+CRC-32, seeded per entry); the JavaScript table loop is `crc32Software` and stays
+as the fallback.
 
 The animated export now goes through the same collector, so a keyed object is
 matched to its exported node by the name the collector gave it — not by cloning

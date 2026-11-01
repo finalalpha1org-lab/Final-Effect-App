@@ -73,7 +73,30 @@
     const sum = xyz[0] + xyz[1] + xyz[2] || 1;
     return [xyz[0] / sum, xyz[1] / sum];
   }
+  /* Planck + CIE 1931 in double precision is cpp/src/fe_render_math.cpp now:
+     it bakes the fire temperature ramp once and answers every hue query after
+     that. blackbodyRGBSoftware keeps the JavaScript body as the fallback and as
+     the parity oracle. */
+  function colorEngine() {
+    const eng = global.FECppEngine;
+    if (!eng || !eng.ready || !eng.exports || !eng.memory) return null;
+    if (typeof eng.exports.fe_color_blackbody_rgb !== 'function' || typeof eng.scratch !== 'function') return null;
+    return eng;
+  }
+
   function blackbodyRGB(kelvin) {
+    const eng = colorEngine();
+    if (eng) {
+      const slot = eng.scratch('blackbody-rgb', 3 * 8);
+      if (eng.exports.fe_color_blackbody_rgb(kelvin, slot.ptr) === 0) {
+        const rgb = new Float64Array(eng.memory.buffer, slot.ptr, 3);
+        return [rgb[0], rgb[1], rgb[2]];
+      }
+    }
+    return blackbodyRGBSoftware(kelvin);
+  }
+
+  function blackbodyRGBSoftware(kelvin) {
     const xyz = blackbodyXYZ(kelvin);
     let r = 3.2404542 * xyz[0] - 1.5371385 * xyz[1] - 0.4985314 * xyz[2];
     let g = -0.9692660 * xyz[0] + 1.8760108 * xyz[1] + 0.0415560 * xyz[2];
@@ -101,13 +124,24 @@
   function volumeBlackbodyTexture() {
     if (blackbodyTexture) return blackbodyTexture;
     const data = new Uint8Array(BLACKBODY_LUT * 4);
-    for (let i = 0; i < BLACKBODY_LUT; i++) {
-      const k = BLACKBODY_MIN_K + (BLACKBODY_MAX_K - BLACKBODY_MIN_K) * (i / (BLACKBODY_LUT - 1));
-      const rgb = blackbodyRGB(k);
-      data[i * 4] = Math.round(clamp(rgb[0], 0, 1) * 255);
-      data[i * 4 + 1] = Math.round(clamp(rgb[1], 0, 1) * 255);
-      data[i * 4 + 2] = Math.round(clamp(rgb[2], 0, 1) * 255);
-      data[i * 4 + 3] = 255;
+    const eng = colorEngine();
+    let baked = false;
+    if (eng && typeof eng.exports.fe_color_blackbody_lut === 'function') {
+      const slot = eng.scratch('blackbody-lut', data.length);
+      if (eng.exports.fe_color_blackbody_lut(BLACKBODY_MIN_K, BLACKBODY_MAX_K, BLACKBODY_LUT, slot.ptr) === 0) {
+        data.set(new Uint8Array(eng.memory.buffer, slot.ptr, data.length));
+        baked = true;
+      }
+    }
+    if (!baked) {
+      for (let i = 0; i < BLACKBODY_LUT; i++) {
+        const k = BLACKBODY_MIN_K + (BLACKBODY_MAX_K - BLACKBODY_MIN_K) * (i / (BLACKBODY_LUT - 1));
+        const rgb = blackbodyRGBSoftware(k);
+        data[i * 4] = Math.round(clamp(rgb[0], 0, 1) * 255);
+        data[i * 4 + 1] = Math.round(clamp(rgb[1], 0, 1) * 255);
+        data[i * 4 + 2] = Math.round(clamp(rgb[2], 0, 1) * 255);
+        data[i * 4 + 3] = 255;
+      }
     }
     const texture = new THREE.DataTexture(data, BLACKBODY_LUT, 1, THREE.RGBAFormat);
     texture.magFilter = THREE.LinearFilter;
@@ -2535,6 +2569,19 @@ void main(){
   }
 
   UltraSimEngine.blackbodyRGB = blackbodyRGB;
+  UltraSimEngine.blackbodyRGBSoftware = blackbodyRGBSoftware;
+  UltraSimEngine.volumeBlackbodyLutSoftware = function () {
+    const out = new Uint8Array(BLACKBODY_LUT * 4);
+    for (let i = 0; i < BLACKBODY_LUT; i++) {
+      const k = BLACKBODY_MIN_K + (BLACKBODY_MAX_K - BLACKBODY_MIN_K) * (i / (BLACKBODY_LUT - 1));
+      const rgb = blackbodyRGBSoftware(k);
+      out[i * 4] = Math.round(clamp(rgb[0], 0, 1) * 255);
+      out[i * 4 + 1] = Math.round(clamp(rgb[1], 0, 1) * 255);
+      out[i * 4 + 2] = Math.round(clamp(rgb[2], 0, 1) * 255);
+      out[i * 4 + 3] = 255;
+    }
+    return out;
+  };
   UltraSimEngine.planckianXY = planckianXY;
   UltraSimEngine.fireTemperatureRange = fireTemperatureRange;
   global.SimulationEngine = UltraSimEngine;
