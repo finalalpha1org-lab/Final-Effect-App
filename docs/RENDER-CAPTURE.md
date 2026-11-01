@@ -203,7 +203,7 @@ numeric kernel:
 | `bakeGeometry` | world matrix baked into positions, inverse-transpose into normals, index rebuilt with the right width — done by `fe_export_bake` in `cpp/src/fe_export.cpp`; `bakeGeometrySoftware` is the fallback and the parity oracle |
 | `bakeInstanced` | every instance matrix multiplied into one primitive, so N plants export as N plants — `fe_export_bake_instanced` |
 | `buildGLB` / `buildGLTF` | glTF 2.0: one buffer, aligned bufferViews, POSITION/NORMAL/TEXCOORD_0 + indices, PBR materials deduplicated by name, optional animation samplers |
-| `buildOBJ` / `buildMTL` | `o` / `v` / `vt` / `vn` / `f`, indices offset per object, `usemtl` + a `.mtl` with `Kd`, `Ns`, `d`, `Pr`, `Pm`, `Ke` |
+| `buildOBJ` / `buildMTL` | `o` / `v` / `vt` / `vn` / `f`, indices offset per object, `usemtl` + a `.mtl` with `Kd`, `Ns`, `d`, `Pr`, `Pm`, `Ke` — written by `fe_writer_obj_mesh` / `fe_writer_mtl_material`, six-decimal number form included; `buildOBJSoftware` / `buildMTLSoftware` are the fallbacks and the parity oracles |
 
 The ZIP the PNG sequence is packed into uses `fe_zip_crc32` (standard IEEE
 CRC-32, seeded per entry); the JavaScript table loop is `crc32Software` and stays

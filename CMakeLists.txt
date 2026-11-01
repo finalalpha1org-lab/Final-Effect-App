@@ -17,6 +17,7 @@ set(FE_CORE_SOURCES
   cpp/src/fe_volatlas.cpp
   cpp/src/fe_export.cpp
   cpp/src/fe_render_math.cpp
+  cpp/src/fe_writer.cpp
   cpp/src/fe_modifiers.cpp
   # Edit Mode. Keep this list identical to CPP_SOURCES in
   # scripts/build-cpp-wasm.mjs; a source that only exists in one of the two

@@ -469,3 +469,80 @@ test('a real THREE mesh bakes through the kernel into a valid GLB', () => {
   assert.equal(Buffer.from(W.cpp.buildGLB(jsNodes)).toString('hex'), Buffer.from(glb).toString('hex'),
     'the C++ bake and the JavaScript bake export the same GLB');
 });
+
+/* ---- OBJ / MTL text writers ------------------------------------------------- */
+
+function objNodes() {
+  const shakePositions = shake(5, 60);
+  const nodes = [
+    {
+      name: 'Cube',
+      positions: new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]),
+      normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+      indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+      vertexCount: 4,
+      material: { name: 'Slate', baseColor: [0.31, 0.42, 0.53, 1], roughness: 0.62, metallic: 0.18, emissive: [0, 0, 0] }
+    },
+    {
+      /* Awkward numbers: the formatter has to round to six decimals exactly the
+         way Math.round(...) / 1e6 then String() did. */
+      name: 'Rounded Mesh',
+      positions: new Float32Array([0.000001, -0.0000005, 123.4567891, -0.0000012, 1e-7, -0.5,
+        3.14159265358979, 2.71828182845905, -9.87654321, 0.1, 0.2, 0.30000000000000004,
+        7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, shakePositions[0]]),
+      normals: null,
+      uvs: shakePositions.subarray(0, 8),
+      indices: new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 0]),
+      vertexCount: 8,
+      material: { name: 'Emissive Pan', baseColor: [1, 0.5, 0.25, 0.75], roughness: 0.1, metallic: 1, emissive: [0.9, 0.4, 0.1] }
+    },
+    {
+      /* Normals but no uvs: the `f a//a` form. */
+      name: 'Faceted',
+      positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      uvs: null,
+      indices: new Uint16Array([0, 2, 1]),
+      vertexCount: 3,
+      material: { name: 'Slate', baseColor: [0.31, 0.42, 0.53, 1], roughness: 0.62, metallic: 0.18, emissive: [0, 0, 0] }
+    }
+  ];
+  return nodes;
+}
+
+test('C++ OBJ writer produces the same document as the JavaScript one', () => {
+  const nodes = objNodes();
+  const withMtl = W.cpp.buildOBJ(nodes, { mtlName: 'scene.mtl' });
+  const reference = W.js.buildOBJ(nodes, { mtlName: 'scene.mtl' });
+  assert.equal(withMtl, reference, 'the OBJ text differs from the JavaScript writer');
+  assert.match(withMtl, /^# Final Effect 3D Workspace\n/);
+  assert.match(withMtl, /mtllib scene\.mtl/);
+  assert.match(withMtl, /f 1\/1\/1 2\/2\/2 3\/3\/3/, 'uv and normal: v/vt/vn');
+  assert.match(withMtl, /f 5\/5 6\/6 7\/7/, 'uv only: v/vt');
+  assert.match(withMtl, /f 13\/\/13 15\/\/15 14\/\/14/, 'normal only: v//vn');
+
+  /* No mtllib line when the caller does not ask for one. */
+  assert.equal(W.cpp.buildOBJ(nodes), W.js.buildOBJ(nodes), 'the OBJ without an mtllib differs');
+  assert.doesNotMatch(W.cpp.buildOBJ(nodes), /mtllib/);
+});
+
+test('C++ MTL writer produces the same document as the JavaScript one', () => {
+  const materials = objNodes().map((node) => node.material).concat([
+    { name: 'Black Emissive', baseColor: [0.05, 0.05, 0.05, 1], roughness: 0.9, metallic: 0, emissive: [0, 0, 0] },
+    { name: 'Glass', baseColor: [0.9, 0.95, 1, 0.35], roughness: 0.02, metallic: 0, emissive: [0.2, 0, 0.4] }
+  ]);
+  const text = W.cpp.buildMTL(materials);
+  assert.equal(text, W.js.buildMTL(materials), 'the MTL text differs from the JavaScript writer');
+  assert.match(text, /^# Final Effect 3D Workspace material library\n/);
+  assert.match(text, /newmtl Slate\nKa 0\.0 0\.0 0\.0\nKd 0\.31 0\.42 0\.53\nKs 0\.19 0\.19 0\.19\nNs 342\nd 1\nillum 2\nPr 0\.62\nPm 0\.18\n/);
+  assert.equal((text.match(/Ke /g) || []).length, 2, 'only the two emissive materials write a Ke line');
+});
+
+test('the OBJ number format is the JavaScript six-decimal format', () => {
+  const values = [0, -0, 1, -1, 0.5, -0.5, 0.000001, 0.0000004, 1e-7, 123.4567891, -123.4567891,
+    0.1 + 0.2, 1 / 3, 2 / 3, 1e-6, 999999.9999999, -0.0000005, 0.0000005];
+  values.forEach((value) => {
+    assert.equal(W.cpp.objFloat(value), W.js.objFloat(value), `objFloat(${value})`);
+  });
+});

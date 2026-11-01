@@ -666,6 +666,40 @@ FE_EXPORT int32_t   fe_export_bake_instanced(const double* base16, const float* 
 FE_EXPORT int32_t   fe_zip_crc32(uint32_t seed, const uint8_t* data, uint32_t length,
                                  uint32_t* out_crc);
 
+/* ---- Wavefront OBJ / MTL text writers (cpp/src/fe_writer.cpp) ----
+ * The exporters append the document into one buffer in engine memory:
+ *
+ *   fe_writer_begin(bytes)      reserve the document budget and clear it
+ *   fe_writer_obj_header(...)   the two comment lines and the mtllib line
+ *   fe_writer_obj_mesh(...)     one object: v/vt/vn lines and its faces
+ *   fe_writer_mtl_header(...)   the material library comment
+ *   fe_writer_mtl_material(...) one newmtl block
+ *   fe_writer_text_ptr/length   read the bytes back, decode once on the JS side
+ *
+ * Numbers are printed with the six-decimal rounding the OBJ format used
+ * (`Math.round(value * 1e6) / 1e6`). Returns 0 on success, -1 with no buffer,
+ * -2 when a line would overflow the budget, -3 on a bad argument. */
+FE_EXPORT int32_t   fe_writer_begin(uint32_t bytes);
+FE_EXPORT int32_t   fe_writer_reset(void);
+FE_EXPORT uint8_t*  fe_writer_text_ptr(void);
+FE_EXPORT uint32_t  fe_writer_text_length(void);
+FE_EXPORT int32_t   fe_writer_obj_header(uint32_t mesh_count, uint32_t triangle_count,
+                                         const uint8_t* mtl_name, uint32_t mtl_length);
+/* Component counts, not vertex counts: a mesh may carry fewer uv or normal
+ * entries than vertices, and each one is written out in full. */
+FE_EXPORT int32_t   fe_writer_obj_mesh(const uint8_t* name, uint32_t name_length,
+                                       const uint8_t* material, uint32_t material_length,
+                                       const float* positions, uint32_t position_length,
+                                       const float* normals, uint32_t normal_length,
+                                       const float* uvs, uint32_t uv_length,
+                                       const uint32_t* indices, uint32_t index_count,
+                                       uint32_t base);
+FE_EXPORT int32_t   fe_writer_mtl_header(void);
+FE_EXPORT int32_t   fe_writer_mtl_material(const uint8_t* name, uint32_t name_length,
+                                           double r, double g, double b, double a,
+                                           double roughness, double metallic,
+                                           const double* emissive, uint32_t has_emissive);
+
 /* ---- Render maths: TAA sampling and blackbody colour (cpp/src/fe_render_math.cpp) ----
  * Pure, double-precision kernels that used to be inline JavaScript: the two
  * three-base Halton jitter, the reprojection the TAA shader performs, and the
