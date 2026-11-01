@@ -1459,6 +1459,35 @@ s.vertexShader='attribute float aRnd;attribute vec3 aCen;attribute float aSway;a
 s.fragmentShader='varying float vR,vFall,vTree;uniform float uShedF,uBloom;\n'+s.fragmentShader.replace('#include <alphatest_fragment>',fr+'#include <alphatest_fragment>')})};
 const TREE_SIZE_SCALE={pine:1.7,oak:1.75,birch:1.7,palm:1.65,spruce:1.7,krumm:1.4,juniper:1.4,acacia:1.7,joshua:1.65,deadtree:1.65},TREE_SIZE_MIN={palm:1.8,oak:1.2,birch:1.1},TREE_SIZE_MAX={palm:2.8};
 const SHADOW_LOW_DETAIL=new Set(['rock','sandrock','basalt','pine','oak','birch','palm','spruce','house','block','mid','tower']);
+/* The exact species catalogue used to run inside one try/catch: the first
+   species whose geometry threw dropped every species after it, replaced the
+   whole world with flat-colour cones, and left the island with no trees at all.
+   A plant is not allowed to fail that way. Each species now builds behind its
+   own guard and falls back to a simple but correctly shaped stand-in, so one
+   bad species costs one species - never the wood. */
+function basicSpecies(n){
+ const tree=/pine|spruce|krumm|juniper|oak|birch|palm|acacia|joshua|deadtree|treefern|ashbush|shrub|sage/.test(n),
+  rock=/rock|basalt|sandrock/.test(n),flower=/flower|daisy|tulip|lavender/.test(n),
+  cactus=/saguaro|barrel|prickly|agave/.test(n),grass=/grass|fern/.test(n);
+ let g;
+ if(rock)g=new THREE.DodecahedronGeometry(.72,0).translate(0,.5,0);
+ else if(flower)g=new THREE.SphereGeometry(.22,8,6).translate(0,.82,0);
+ else if(grass)g=new THREE.ConeGeometry(.14,1,5).translate(0,.5,0);
+ else if(cactus)g=new THREE.CylinderGeometry(.16,.23,2.8,7).translate(0,1.4,0);
+ else if(/shrub|sage|ashbush/.test(n))g=new THREE.SphereGeometry(.62,8,6).translate(0,.58,0);
+ else if(tree)g=new THREE.ConeGeometry(.78,4.2,7).translate(0,2.1,0);
+ else g=new THREE.BoxGeometry(2,3,2).translate(0,1.5,0);
+ simple(g,[tree?.26:.5,tree?.42:.5,tree?.22:.5]);
+ return [[g,{}]];
+}
+function safeSpecies(n,max,sh,build){
+ if(KIND[n])return KIND[n];
+ let parts=null;
+ try{parts=build()}catch(e){console.warn('Species '+n+' geometry failed:',(e&&e.message)||e)}
+ if(!parts||!parts.length){try{parts=basicSpecies(n)}catch(e){parts=null}}
+ if(!parts||!parts.length)return null;
+ try{return mk(n,max,parts,sh)}catch(e){console.warn('Species '+n+' meshes failed:',(e&&e.message)||e);return null}
+}
 function mk(n,max,parts,sh){const isLow=detail<=0,K=KIND[n]={list:[],max,size:TREE_SIZE_SCALE[n]||1,vr:.35,tint:[1,1,1],meshes:[],shadowMeshes:[],selectionGrid:null,selectionGridDirty:true,selectionBounds:null};const createInst=(g,material)=>{const m=new THREE.InstancedMesh(g,material,max);m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);m.instanceColor=new THREE.BufferAttribute(new Float32Array(max*3).fill(1),3);m.instanceColor.setUsage(THREE.DynamicDrawUsage);m.count=0;m.frustumCulled=false;m.castShadow=isLow?SHADOW_LOW_DETAIL.has(n):!!sh;m.receiveShadow=!NO_SELF_SHADOW_RECEIVE.has(n);m.userData={pal:null,nt:null,vi:null,vn:null,part:null};return m};K.meshes=parts.map(([g,o={}],partIndex)=>{const P={vertexColors:true,side:o.ds?THREE.DoubleSide:THREE.FrontSide};if(o.map)P.map=o.map;if(o.cut){P.alphaTest=o.cut;if(MSAA)P.alphaToCoverage=true}let mt;if(o.ph){mt=new THREE.MeshPhongMaterial({...P,shininess:o.shn||30,specular:o.sp||0x222222});if(o.em){mt.emissive=new THREE.Color(1,1,1);mt.emissiveMap=o.em;mt.emissiveIntensity=0;BMAT.push(mt)}}else if(o.phys){if(o.nm){P.normalMap=o.nm;P.normalScale=new THREE.Vector2(o.ns||.45,o.ns||.45)}if(o.rm)P.roughnessMap=o.rm;if(o.bump){P.bumpMap=o.map;P.bumpScale=o.bump}mt=new THREE.MeshPhysicalMaterial({...P,roughness:o.roughness??.78,metalness:0,clearcoat:o.clearcoat??.1,clearcoatRoughness:o.clearcoatRoughness??.48});mt.envMapIntensity=o.env??.62}else if(o.pbr){mt=new THREE.MeshStandardMaterial({...P,roughness:1,metalness:1,roughnessMap:o.pbr,metalnessMap:o.pbr,bumpMap:o.map,bumpScale:o.bump||.5,emissive:new THREE.Color(1,1,1),emissiveMap:o.em,emissiveIntensity:0});mt.envMapIntensity=1.1;BMAT.push(mt)}else if(o.std){if(o.bump){P.bumpMap=o.map;P.bumpScale=o.bump}if(o.nm){P.normalMap=o.nm;P.normalScale=new THREE.Vector2(o.ns||1,o.ns||1)}if(o.rm)P.roughnessMap=o.rm;mt=new THREE.MeshStandardMaterial({...P,roughness:.93,metalness:0});mt.envMapIntensity=.72;if(o.det)injectDetail(mt,true)}else mt=new THREE.MeshLambertMaterial(P);if(o.w||o.sn)wind(mt,o.w||0,o.wf||0,(o.fx||'')+(o.cut&&o.map?'l':'')+(o.std&&!o.det&&!o.cut&&!o.sn?'w':'')+(o.pbr?'d':''),o.tk||1);const m=createInst(g,mt);m.name=n+' part '+partIndex+' high';m.userData={kind:n,pal:o.pal,nt:o.nt,vi:o.vi,vn:o.vn,part:o.part,lodGeom:o.lodGeom||null,sourceListIndices:[]};if(o.cut&&sh){const depth=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,map:o.map,alphaTest:o.cut,side:THREE.DoubleSide});depthFx(depth,o.fx||'');m.customDepthMaterial=depth}scene.add(m);return m});if(n==='grass'||n==='tallgrass')K.shadowMeshes=K.meshes.map((m,i)=>{const src=m,p=makeBotanicalShadowProxy(src.geometry,src.material,Math.ceil(max/SHADOW_PROXY_STRIDE),n+' shadow caster');scene.add(p);return p});return K}
 const FXU={rain:{value:0},s0:{value:0},t0:{value:0},sr:{value:.006},se:{value:0},clk:{value:0},grow:{value:1},lit:{value:0},treeMap:{value:null},shed:{value:0},shedF:{value:0},aut:{value:0},snowK:{value:0},bloom:{value:0},torS:{value:0},torV:{value:68},torD:{value:new THREE.Vector2()},sunD:U.sd,sunI:{value:1},tor:{value:new THREE.Vector3(0,0,10)},wet:{value:0}};
 const DQ={leaf:1.6,seg:1.3,rock:1.3},DQP=[{leaf:.55,seg:.7,rock:.7},{leaf:1,seg:1,rock:1},{leaf:1.6,seg:1.3,rock:1.3},{leaf:2.4,seg:1.7,rock:1.7}],LZREG={};const LOD_FULL_KEY='final3d.lodFullDistance.v2';
