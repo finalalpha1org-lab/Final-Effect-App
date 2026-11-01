@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Final Effect 3D</title>
-<meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
+<meta name="description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, shaders and VFX.">
 <meta name="theme-color" content="#0d0e12">
 <meta name="fe-build" content="dev">
 <script>
@@ -70,7 +70,7 @@
 <link rel="apple-touch-icon" href="./favicon.svg">
 <link rel="manifest" href="./manifest.webmanifest">
 <meta property="og:title" content="Final Effect 3D">
-<meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, landscapes, shaders, and VFX.">
+<meta property="og:description" content="A comprehensive 3D creation suite with dedicated studios for objects, characters, shaders and VFX.">
 <!-- three.js r128 is served from this origin, not a CDN. Five cross-origin
      requests were the largest fixed cost of a cold start on a phone, and they
      made the app unusable offline. The files are byte-identical to the npm
@@ -173,10 +173,10 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .btn-secondary{background:#1e2230;border:1px solid #333a4e;color:#cbd5e1;padding:6px 14px;border-radius:6px;cursor:pointer}
 .btn-secondary:hover{background:#282f42;color:#fff}
 .viewport{flex:1;min-height:0;position:relative;background:#050508;touch-action:none}
-.viewport > canvas:first-of-type,.viewport iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+.viewport > canvas:first-of-type{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
 .empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:var(--mute);padding:24px;pointer-events:none}
 .empty b{color:var(--ink);font-size:15px;margin-bottom:4px}
-.live .empty,.embed canvas{display:none}
+.live .empty{display:none}
 
 #nav-gizmo-wrapper {
   position: absolute !important;
@@ -234,14 +234,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .layer-action-btn:active{transform:scale(0.95)}
 .layer-action-btn.active-off{color:#ef4444;background:rgba(239, 68, 68, 0.18);border-color:#ef4444}
 .layer-action-btn.active-locked{color:#f59e0b;background:rgba(245, 158, 11, 0.18);border-color:#f59e0b}
-#btn-edit-landscape[hidden]{display:none!important}
 
 /* ---- bottom toolbar ---- */
 .toolbar{flex:none;height:calc(var(--tb) + var(--sb));padding:0 12px var(--sb);display:flex;align-items:center;gap:8px;overflow-x:auto;white-space:nowrap;background:var(--bg);border-top:1px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none;position:relative;z-index:20}
 .toolbar::-webkit-scrollbar{display:none}
 .tool{flex:none;display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid #2a2d37;color:#cbd5e1;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:500}
 .tool.active,.tool:active{background:#282c3c;border-color:var(--ac);color:#fff;box-shadow:0 0 10px color-mix(in srgb,var(--ac) 35%,transparent)}
-.embed .top-bar, .embed .toolbar, .embed .layer-bar, .embed #nav-gizmo-wrapper, .embed .timeline-bar, .embed #studio-timeline-bar, .embed .timeline-container, .embed #camera-view-container, .embed #scene-hierarchy-panel{display:none !important}
 
 /* =========================================================
    CAMERA SETTINGS: STRICT SCROLLABLE BOTTOM SHEET STYLING
@@ -489,200 +487,6 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
 .light-toggle{display:flex;align-items:center;justify-content:space-between;min-height:32px;padding:4px 8px;background:#181b25;border-radius:6px;border:1px solid rgba(255,255,255,0.04)}
 .light-toggle span{font-size:11px;font-weight:500;color:#cbd5e1}
 .light-toggle input{accent-color:#f59e0b;width:18px;height:18px;cursor:pointer}
-
-/* =========================================================
-   LANDSCAPING STUDIO: BOTTOM SHEET STYLING
-   ========================================================= */
-#landscape-sheet, #import-3d-sheet {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 48vh;
-  max-height: 52vh;
-  display: none;
-  flex-direction: column;
-  background: linear-gradient(180deg, #151822 0%, #0f1118 100%);
-  border-top: 1px solid #34394d;
-  box-shadow: 0 -10px 32px rgba(0,0,0,.75);
-  border-radius: 16px 16px 0 0;
-  z-index: 1000;
-  overflow: hidden;
-  touch-action: pan-y;
-}
-#landscape-sheet[hidden], #import-3d-sheet[hidden] { display: none !important; }
-#landscape-sheet:not([hidden]), #import-3d-sheet:not([hidden]) { display: flex; }
-
-.landscape-sheet-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 48px;
-  padding: 8px 14px;
-  background: #171a23;
-  border-bottom: 1px solid #282c3c;
-  flex: none;
-}
-.landscape-sheet-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-.landscape-sheet-title strong { font-size: 13px; color: #eef2ff; font-weight: 700; }
-.landscape-sheet-title small {
-  color: #34d399;
-  font-size: 10px;
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  border-radius: 999px;
-  padding: 2px 8px;
-  white-space: nowrap;
-  background: rgba(52, 211, 153, 0.1);
-}
-
-.ls-tabs {
-  display: flex;
-  background: #131620;
-  border-bottom: 1px solid #282c3c;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 0 8px;
-  flex-shrink: 0;
-  -webkit-overflow-scrolling: touch;
-}
-.ls-tabs::-webkit-scrollbar { display: none; }
-.ls-tab-btn {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: #94a3b8;
-  padding: 9px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  transition: all 0.15s;
-  flex-shrink: 0;
-}
-.ls-tab-btn:hover { color: #f1f5f9; }
-.ls-tab-btn.active { color: #34d399; border-bottom-color: #34d399; background: rgba(52, 211, 153, 0.05); }
-
-#landscape-sheet-body, #import-3d-sheet-body {
-  flex: 1;
-  overflow-y: auto !important;
-  -webkit-overflow-scrolling: touch;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.ls-pane { display: none; flex-direction: column; gap: 10px; }
-.ls-pane.active { display: flex; }
-
-.ls-tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(95px, 1fr)); gap: 6px; }
-.ls-tool-card {
-  background: #161924;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  color: #94a3b8;
-  padding: 8px 4px;
-  border-radius: 7px;
-  font-size: 11px;
-  font-weight: 500;
-  text-align: center;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  transition: all 0.15s ease;
-}
-.ls-tool-card span { font-size: 16px; }
-.ls-tool-card:hover { color: #f1f5f9; border-color: rgba(255, 255, 255, 0.2); background: #1c212e; }
-.ls-tool-card.active { background: rgba(52, 211, 153, 0.2); border-color: #34d399; color: #34d399; font-weight: 600; }
-
-.ls-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ls-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-
-.ls-control-group {
-  background: #141722;
-  border: 1px solid #232736;
-  padding: 8px 10px;
-  border-radius: 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.ls-control-label {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-  color: #94a3b8;
-  font-weight: 500;
-}
-.ls-control-label b { color: #f1f5f9; }
-.ls-control-group input[type="range"] {
-  width: 100%;
-  accent-color: #34d399;
-  background: #252a3b;
-  height: 5px;
-  border-radius: 3px;
-  outline: none;
-  cursor: pointer;
-}
-.ls-control-group select, .ls-control-group input[type="number"], .ls-control-group input[type="text"] {
-  width: 100%;
-  background: #1a1e2b;
-  border: 1px solid #2d3345;
-  color: #f1f5f9;
-  padding: 6px 8px;
-  border-radius: 5px;
-  font-size: 11.5px;
-  outline: none;
-}
-
-.ls-btn {
-  background: #232838;
-  border: 1px solid #343b4f;
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all 0.15s;
-}
-.ls-btn:hover { background: #2e354a; }
-.ls-btn.accent { background: #34d399; color: #07080c; border: none; font-weight: 700; }
-.ls-btn.accent:hover { background: #10b981; }
-.ls-btn.blue { background: #3b82f6; border: none; }
-.ls-btn.blue:hover { background: #2563eb; }
-
-.ls-preset-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.ls-preset-card {
-  background: #171c2c;
-  border: 1px solid #282e3f;
-  border-radius: 7px;
-  padding: 10px 8px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.ls-preset-card .icon { font-size: 20px; }
-.ls-preset-card b { font-size: 11px; color: #fff; }
-.ls-preset-card small { font-size: 9.5px; color: #94a3b8; }
-.ls-preset-card:hover { border-color: #34d399; background: rgba(52, 211, 153, 0.08); }
-.ls-preset-card.active { border-color: #34d399; background: #1a222e; box-shadow: 0 0 0 1px #34d399; }
 
 /* ---- Blender Camera Frame & Passepartout in Viewport ---- */
 #camera-view-container{position:absolute;inset:0;z-index:9;pointer-events:none;display:none;align-items:center;justify-content:center;overflow:hidden}
@@ -2233,8 +2037,8 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 }
 
 /* ============================================================
-   FE-LANDSCAPE-LAYOUT
-   Landscape / wide-short viewports (phones held sideways, tablets
+   FE-WIDE-SHORT-LAYOUT
+   Wide-short viewports (phones held sideways, tablets
    and small desktop windows). The bottom sheets dock to the right
    so the short vertical axis stays free for the 3D viewport, and
    every modal takes the full height instead of a slice of it.
@@ -2298,8 +2102,6 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #light-sheet,
   #modifiers-sheet,
   #animation-sheet,
-  #landscape-sheet,
-  #import-3d-sheet,
   #add-3d-sheet {
     top: 0;
     bottom: 0;
@@ -2320,15 +2122,12 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #camera-sheet-body,
   #light-sheet-body,
   #animation-sheet-body,
-  #landscape-sheet-body,
-  #import-3d-sheet-body,
   #add-3d-body { padding: 10px 12px; }
   #modifiers-sheet-body { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
   #add-3d-body { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
   .camera-sheet-head,
   .animation-sheet-head,
   .modifiers-sheet-head,
-  .landscape-sheet-head,
   .add-3d-head { min-height: 40px; padding: 6px 12px; }
   #anim-dopesheet-wrap { height: 132px; }
   .anim-top-strip { padding: 6px 8px; gap: 5px; }
@@ -2484,7 +2283,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <!-- Studios Grid (Tab 1) -->
     <div id="home-grid">
       <button class="card" style="--c:#6366f1" data-open="core"><i class="card-ico" data-ico="cube"></i><span><b>3D Workspace</b><small>Objects, scene and animation</small></span><span class="tag">Open</span></button>
-      <button class="card" style="--c:#34d399" data-open="landscape"><i class="card-ico" data-ico="landscape"></i><span><b>Landscaping Studio</b><small>Terrain, water and foliage</small></span><span class="tag">Open</span></button>
+      <button class="card locked" style="--c:#34d399" data-locked="Landscaping Studio"><i class="card-ico" data-ico="landscape"></i><span><b>Landscaping Studio</b><small>Being rebuilt from scratch</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
       <button class="card locked" style="--c:#475569" data-locked="Video Editor"><i class="card-ico" data-ico="film"></i><span><b>Video Editor</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
       <button class="card locked" style="--c:#fb923c" data-locked="VFX Studio"><i class="card-ico" data-ico="bolt"></i><span><b>VFX Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
       <button class="card locked" style="--c:#475569" data-locked="Sculpting Studio"><i class="card-ico" data-ico="skull"></i><span><b>Sculpting Studio</b><small>In development / Coming later</small></span><span class="tag"><i class="ico" data-ico="lock"></i> Locked</span></button>
@@ -3954,22 +3753,17 @@ const STUDIOS={
       ['transform','✋','Object Tools'],
       ['mod','🔧','Modification'],
       ['anim','🎬','Animation Studio'],
-      ['landscape','🏞️','Landscaping Studio'],
       ['character','🎭','Character Studio'],
       ['vfx','💥','VFX Studio'],
       ['light','💡','Light',[['Intensity','light_int',0,200,100],['Height','light_h',10,100,50],['Radius','light_r',10,100,40]]],
       ['camera','🎥','Camera'],
       ['render','⚡','Render Engine']
-    ]},
-  landscape:{title:'Landscaping Studio',icon:'🏞️',accent:'#34d399',desc:'Terrain, water and foliage',
-    embed:'Terrain_system_.html',modes:[['sculpt','Sculpt Mode'],['navigate','Navigate / Orbit'],['paint','Paint Biome']],
-    tools:[BACK, ['gen_terrain','⛰️','Generate New Terrain'], ['import_3d_map','🗺️','Import 3D Terrain']]
-  }
+    ]}
 };
 
 const HOME_WORKSPACES = [
   { id: 'core', title: '3D Workspace', icon: '🧊', accent: '#6366f1', desc: 'Objects, scene and animation', locked: false },
-  { id: 'landscape', title: 'Landscaping Studio', icon: '🏞️', accent: '#34d399', desc: 'Terrain, water and foliage', locked: false },
+  { id: 'landscape', title: 'Landscaping Studio', icon: '🏞️', accent: '#34d399', desc: 'Being rebuilt from scratch', locked: true },
   { id: 'video', title: 'Video Editor', icon: '🎬', accent: '#475569', desc: 'Video editing and timeline tools', locked: true },
   { id: 'vfx', title: 'VFX Studio', icon: '💥', accent: '#fb923c', desc: 'Particles, fire and smoke', locked: true },
   { id: 'sculpting', title: 'Sculpting Studio', icon: '🗿', accent: '#475569', desc: 'Detailed sculpting and mesh brushes', locked: true },
@@ -4047,8 +3841,7 @@ HOME_WORKSPACES.forEach((item)=>{
   const vp=$('.viewport',el); vp.id='viewport-'+id; $('canvas',el).id='canvas-'+id;
   $('.layer-bar',el).id='layers-'+id; $('.toolbar',el).id='toolbar-'+id;
 
-  if(s.embed){el.classList.add('embed');vp.innerHTML=`<iframe id="frame-${id}" data-src="${s.embed}" title="${s.title} engine" allow="fullscreen; accelerometer; gyroscope" style="position:absolute;inset:0;width:100%;height:100%;border:none;z-index:100;pointer-events:auto;display:block;"></iframe>`;}
-  else $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
+  $('.empty',vp).innerHTML=`<b>${s.title} engine not connected</b>Mount point: #canvas-${id}`;
   $('.toolbar',el).innerHTML=s.tools.map(([k,i,l])=>`<button class="tool" id="tool-${id}-${k.replace('@','go-')}" data-tool="${k}">${i} ${l}</button>`).join('');
   
   // Wire Viewport Shading Dropdown
@@ -4097,7 +3890,6 @@ HOME_WORKSPACES.forEach((item)=>{
       $$('.hdri-menu').forEach(m => m.classList.remove('open'));
     }
   });
-  if(id==='core'){const edit=document.createElement('button');edit.type='button';edit.className='layer-action-btn';edit.id='btn-edit-landscape';edit.title='Edit the selected landscape in Landscaping Studio';edit.setAttribute('aria-label',edit.title);edit.textContent='✎';edit.hidden=true;edit.onclick=editImportedLandscape;$('.layer-actions',el)?.appendChild(edit)}
   app.append(el);
 });
 
@@ -4109,10 +3901,7 @@ window.addEventListener('click', (e) => {
 
 /* switching */
 function enter(id){
-  const e=FE.engines[id],vp=$('#viewport-'+id),fr=$('iframe',vp);
-  if(fr&&!fr.dataset.feGlobalSettingsBound){fr.dataset.feGlobalSettingsBound='1';fr.addEventListener('load',()=>{syncSettingsToFrame(fr);fr.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:FE.current===id},location.origin);if(FE.current===id)restoreAutosaveForStudio(id)})}
-  if(fr&&!fr.getAttribute('src'))fr.src=fr.dataset.src;
-  if(fr){fr.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:true},location.origin);syncSettingsToFrame(fr);try{if(fr.contentDocument?.readyState==='complete'&&FE.current===id)restoreAutosaveForStudio(id)}catch(error){}}
+  const e=FE.engines[id],vp=$('#viewport-'+id);
   if(!e)return;
   if(!mounted.has(id)){mounted.add(id);e.mount?.({id,canvas:$('#canvas-'+id),viewport:vp});vp.classList.add('live')}
   e.resume?.();
@@ -4122,8 +3911,6 @@ function show(id){
   const prev=FE.current; if(prev===id) return;
   if(prev&&prev!=='home'&&GLOBAL_SETTINGS.autoSave)runGlobalAutosave({silent:true});
   if(prev) FE.engines[prev]?.pause?.();
-  const previousFrame=document.getElementById('frame-'+prev);
-  previousFrame?.contentWindow?.postMessage({type:'FE_STUDIO_ACTIVE',active:false},location.origin);
   FE.current=id; closeDrawer();
   $$('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
   if(id!=='home') {
@@ -4270,8 +4057,6 @@ function persistGlobalSettings(){try{localStorage.setItem(APP_SETTINGS_KEY,JSON.
 function broadcastGlobalSettings(){
   FE.engines?.core?.setHistoryLimit?.(GLOBAL_SETTINGS.undoLimit);
   document.dispatchEvent(new CustomEvent('fe:setting',{detail:{key:'historyLimit',value:GLOBAL_SETTINGS.undoLimit}}));
-  const message={type:'FE_GLOBAL_SETTINGS',settings:{...GLOBAL_SETTINGS}};
-  document.querySelectorAll('iframe').forEach(frame=>{try{frame.contentWindow?.postMessage(message,'*')}catch(error){console.warn('[Settings] Studio settings were not delivered:',error)}});
   startGlobalAutosave();
 }
 function updateGlobalSetting(key,value){
@@ -4284,14 +4069,11 @@ function openAutosaveDb(){if(!('indexedDB'in window))return Promise.reject(new E
 function storeLocalAutosave(studio,payload){return openAutosaveDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(AUTOSAVE_STORE,'readwrite');tx.objectStore(AUTOSAVE_STORE).put({studio,savedAt:Date.now(),payload},studio);tx.oncomplete=()=>resolve(true);tx.onerror=()=>reject(tx.error||new Error('Could not write autosave.'));tx.onabort=()=>reject(tx.error||new Error('Autosave was interrupted.'))}))}
 function loadLocalAutosave(studio){return openAutosaveDb().then(db=>new Promise((resolve,reject)=>{const tx=db.transaction(AUTOSAVE_STORE,'readonly'),req=tx.objectStore(AUTOSAVE_STORE).get(studio);req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error||new Error('Could not read autosave.'))}))}
 function updateAutosaveStatus(text,isError=false){const el=document.getElementById('autosave-status');if(el){el.textContent=text;el.style.color=isError?'#fca5a5':'#86efac'};if(!isError)try{localStorage.setItem('fe_last_autosave_status',text)}catch{}}
-function requestStudioAutosave(studio){const frame=document.getElementById('frame-'+studio);if(!frame?.contentWindow)return Promise.reject(new Error('The active studio is not ready to auto-save.'));const requestId=`as-${studio}-${Date.now()}-${Math.random().toString(36).slice(2)}`;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pendingStudioAutosaves.delete(requestId);reject(new Error('The studio did not return an autosave checkpoint.'))},20000);pendingStudioAutosaves.set(requestId,{studio,resolve,reject,timer});frame.contentWindow.postMessage({type:'FE_AUTOSAVE_REQUEST',requestId},'*')})}
-window.addEventListener('message',async e=>{const d=e.data;if(d?.type!=='FE_AUTOSAVE_DATA'||!d.requestId)return;const pending=pendingStudioAutosaves.get(d.requestId);if(!pending||pending.studio!==d.studio)return;clearTimeout(pending.timer);pendingStudioAutosaves.delete(d.requestId);if(d.error){pending.reject(new Error(d.error));return}try{await storeLocalAutosave(d.studio,d.payload);pending.resolve(true)}catch(error){pending.reject(error)}});
-async function runGlobalAutosave({silent=true,force=false}={}){if(autosaveInProgress||(!force&&!GLOBAL_SETTINGS.autoSave)||!FE.current||FE.current==='home')return false;autosaveInProgress=true;const studio=FE.current;try{if(studio==='core'){const engine=FE.engines?.core;if(!engine?.serializeAutosave)throw new Error('Workspace recovery is not available yet.');await storeLocalAutosave('core',engine.serializeAutosave())}else if(studio==='landscape'){await requestStudioAutosave('landscape')}else return false;const stamp=Date.now();try{localStorage.setItem('fe_last_autosave_'+studio,String(stamp))}catch{}updateAutosaveStatus(`Saved ${studio==='core'?'Workspace':'Landscaping Studio'} locally · ${new Date(stamp).toLocaleTimeString()}`);if(FE.current===studio)saveCurrentProjectAsRecent();if(!silent)FE.toast('Project auto-saved on this device');return true}catch(error){console.warn('[Auto-save]',error);updateAutosaveStatus(`Auto-save failed: ${error?.message||error}`,true);if(!silent)FE.toast('Auto-save failed: '+(error?.message||error));return false}finally{autosaveInProgress=false}}
+async function runGlobalAutosave({silent=true,force=false}={}){if(autosaveInProgress||(!force&&!GLOBAL_SETTINGS.autoSave)||!FE.current||FE.current==='home')return false;autosaveInProgress=true;const studio=FE.current;try{if(studio==='core'){const engine=FE.engines?.core;if(!engine?.serializeAutosave)throw new Error('Workspace recovery is not available yet.');await storeLocalAutosave('core',engine.serializeAutosave())}else if(studio!=='core')return false;const stamp=Date.now();try{localStorage.setItem('fe_last_autosave_'+studio,String(stamp))}catch{}updateAutosaveStatus(`Saved Workspace locally · ${new Date(stamp).toLocaleTimeString()}`);if(FE.current===studio)saveCurrentProjectAsRecent();if(!silent)FE.toast('Project auto-saved on this device');return true}catch(error){console.warn('[Auto-save]',error);updateAutosaveStatus(`Auto-save failed: ${error?.message||error}`,true);if(!silent)FE.toast('Auto-save failed: '+(error?.message||error));return false}finally{autosaveInProgress=false}}
 function startGlobalAutosave(){if(globalAutosaveTimer){clearInterval(globalAutosaveTimer);globalAutosaveTimer=null}if(GLOBAL_SETTINGS.autoSave)globalAutosaveTimer=setInterval(()=>runGlobalAutosave({silent:true}),GLOBAL_SETTINGS.autoSaveMinutes*60000)}
 async function saveProjectNow(){const ok=await runGlobalAutosave({silent:true,force:true});if(ok)FE.toast('Project saved locally on this device');else FE.toast('Open an active studio before saving');}
 window.saveProjectNow=saveProjectNow;
-async function restoreAutosaveForStudio(studio){if(autosaveRestoreAttempted.has(studio))return;autosaveRestoreAttempted.add(studio);try{const saved=await loadLocalAutosave(studio);if(!saved?.payload)return false;if(studio==='core'){const engine=FE.engines?.core;if(engine?.restoreAutosave){await engine.restoreAutosave(saved.payload);FE.toast('Recovered last Workspace auto-save')}}else if(studio==='landscape'){const frame=document.getElementById('frame-landscape');if(frame?.contentWindow)frame.contentWindow.postMessage({type:'FE_AUTOSAVE_RESTORE',payload:saved.payload,savedAt:saved.savedAt},'*')}return true}catch(error){console.warn('[Auto-save recovery]',error);return false}}
-function syncSettingsToFrame(frame){try{frame?.contentWindow?.postMessage({type:'FE_GLOBAL_SETTINGS',settings:{...GLOBAL_SETTINGS}},'*')}catch(error){console.warn('[Settings] Could not sync to studio frame:',error)}}
+async function restoreAutosaveForStudio(studio){if(autosaveRestoreAttempted.has(studio))return;autosaveRestoreAttempted.add(studio);try{const saved=await loadLocalAutosave(studio);if(!saved?.payload)return false;if(studio==='core'){const engine=FE.engines?.core;if(engine?.restoreAutosave){await engine.restoreAutosave(saved.payload);FE.toast('Recovered last Workspace auto-save')}}return true}catch(error){console.warn('[Auto-save recovery]',error);return false}}
 function syncGlobalSettingsUI() {
   const chkGrid = document.getElementById('set-grid');
   if (chkGrid) chkGrid.checked = !!GLOBAL_SETTINGS.grid;
@@ -4377,9 +4159,8 @@ function renderWorkspacePerf(stats) {
   put('ws-perf-submit', stats.renderMs ? stats.renderMs.toFixed(1) + ' ms' : '--');
   put('ws-perf-draws', stats.drawCalls ? String(stats.drawCalls) : '--');
   put('ws-perf-tris', stats.triangles ? (stats.triangles >= 1000 ? (stats.triangles / 1000).toFixed(1) + 'k' : String(stats.triangles)) : '--');
-  /* The Landscaping Studio reports its own stats and has no shadow-res figure of
-     its own, so the mode line is only rewritten when a shadow resolution came
-     with the report rather than printing a made-up 0. */
+  /* The mode line is only rewritten when a shadow resolution came with the
+     report rather than printing a made-up 0. */
   if (stats.shadowRes) put('ws-perf-mode', `${stats.taa ? 'Temporal AA' : 'Direct render'} · ${stats.shadowRes}² shadows`);
 }
 function syncWorkspaceSettingsUI() {
@@ -4791,59 +4572,12 @@ function serializeSceneToFinal3d() {
         intensity: eng.amb.intensity
       } : null
     },
-    terrain: null,
-    water: null,
-    foliage: {},
     animation: window.FECppEngine?.serializeAnimation?.() || null,
     objects: []
   };
 
-  const landscapeGroup = eng.sc.getObjectByName('ImportedLandscape');
-  if (landscapeGroup) {
-    landscapeGroup.traverse(child => {
-      if (child.name === 'Terrain Mesh' && child.geometry) {
-        const geom = child.geometry;
-        const pos = geom.attributes.position;
-        const heightArray = [];
-        if (pos) {
-          for (let i = 0; i < pos.count; i++) {
-            heightArray.push(pos.getY(i));
-          }
-        }
-        payload.terrain = {
-          vertexCount: pos ? pos.count : 0,
-          sampleHeights: heightArray.slice(0, 1000),
-          boundingBox: geom.boundingBox ? { min: geom.boundingBox.min.toArray(), max: geom.boundingBox.max.toArray() } : null
-        };
-      }
-      if (child.name === 'Water Surface') {
-        payload.water = {
-          positionY: child.position.y,
-          color: child.material?.color?.getHexString() || '0ea5e9',
-          roughness: child.material?.roughness || 0.10,
-          metalness: child.material?.metalness || 0.14,
-          opacity: child.material?.opacity || 0.84
-        };
-      }
-      if (child.isInstancedMesh) {
-        const count = child.count;
-        const matrices = [];
-        const m = new THREE.Matrix4();
-        for (let i = 0; i < Math.min(count, 5000); i++) {
-          child.getMatrixAt(i, m);
-          matrices.push(m.toArray());
-        }
-        payload.foliage[child.name] = {
-          count: count,
-          matrices: matrices,
-          color: child.material?.color?.getHexString() || 'ffffff'
-        };
-      }
-    });
-  }
-
   eng.sc.children.forEach(obj => {
-    if (obj.name === 'ImportedLandscape' || obj.isGridHelper || obj.isCamera || obj.isLight || obj.name === 'Cursor3D' || obj.name === 'StudioFloor' || obj.name === 'ShadowFloor' || obj.userData?.feOnionGhost) return;
+    if (obj.isGridHelper || obj.isCamera || obj.isLight || obj.name === 'Cursor3D' || obj.name === 'StudioFloor' || obj.name === 'ShadowFloor' || obj.userData?.feOnionGhost) return;
     if (obj.isMesh || obj.isGroup) {
       payload.objects.push({
         name: obj.name || 'Object',
@@ -5090,30 +4824,12 @@ app.addEventListener('click',e=>{
       openAnimationModal();
       return;
     }
-    if (k === 'landscape') {
-      FE.open('landscape');
-      return;
-    }
     if (k === 'character') {
       FE.toast('Character Studio (In development / Coming later 🔒)');
       return;
     }
     if (k === 'vfx') {
       FE.toast('VFX Studio (In development / Coming later 🔒)');
-      return;
-    }
-    if (k === 'gen_terrain') {
-      const frame = document.getElementById('frame-landscape');
-      if (frame && frame.contentWindow) {
-        frame.contentWindow.postMessage({ type: 'TOGGLE_TERRAIN_PANEL' }, '*');
-      }
-      return;
-    }
-    if (k === 'import_3d_map') {
-      const frame = document.getElementById('frame-landscape');
-      if (frame && frame.contentWindow) {
-        frame.contentWindow.postMessage({ type: 'OPEN_3D_MAP_MODAL' }, '*');
-      }
       return;
     }
     const tool=STUDIOS[sid]?.tools?.find(t=>t[0]===k);
@@ -5131,69 +4847,9 @@ document.addEventListener('fe:action',e=>{
     if(!done)FE.toast(action==='undo'?'Nothing to undo':'Nothing to redo');
     return;
   }
-  const frame=document.getElementById('frame-'+studio);
-  if(frame?.contentWindow)frame.contentWindow.postMessage({type:'FE_HISTORY_ACTION',action},'*');
 });
 function scheduleCoreHistory(event){const screen=event.target?.closest?.('.screen');if(FE.current!=='core'||screen?.dataset.screen!=='core'||event.target?.closest?.('#global-settings-modal'))return;const node=event.target?.closest?.('button,input,select,textarea')||event.target,key=`${event.type}:${node.id||node.dataset?.tool||node.dataset?.subtool||node.tagName||'action'}`;requestAnimationFrame(()=>FE.engines?.core?.commitHistory?.(key))}
 ['click','input','change','pointerup'].forEach(type=>document.addEventListener(type,scheduleCoreHistory));
-
-function editImportedLandscape(){
-  const group=FE.engines?.core?.sc?.getObjectByName('ImportedLandscape');if(!group){FE.toast('Select an imported landscape first.');return}
-  const frame=document.getElementById('frame-landscape');FE.open('landscape');if(frame?.contentWindow)setTimeout(()=>{try{frame.contentWindow.postMessage({type:'final-effect:edit-imported-landscape'},'*')}catch(error){console.warn('[Landscape Editor] Could not notify Studio:',error)}},120);
-  FE.toast('Landscaping Studio opened — edit the saved scene, then press Import to update Workspace.');
-}
-window.editImportedLandscape=editImportedLandscape;
-
-// Landscaping Studio scene bridge: embedded postMessage plus same-origin tab channel.
-function importLandscapeIntoWorkspace(payload, reply) {
-  if (!payload || payload.app !== 'final-effect') { reply?.({ success:false, error:'Invalid landscaping scene payload.' }); return; }
-  FE.open('core');
-  let attempts = 0;
-  const commit = () => {
-    const eng = FE.engines?.core;
-    if (!eng?.sc) {
-      if (attempts++ < 180) { requestAnimationFrame(commit); return; }
-      reply?.({ success:false, error:'3D Workspace scene did not become ready.' });
-      return;
-    }
-    try {
-      const group = buildLandscapeFromPayload(payload, eng.sc, THREE);
-      if (!group) throw new Error('Landscape import produced no scene group.');
-      const summary = { terrain:!!group.getObjectByName('Terrain Mesh'), water:!!group.getObjectByName('Water Surface'), foliage:group.children.filter(o=>o.isInstancedMesh).length, objects:group.userData.importedObjectCount||0 };
-      const label=payload.source==='planet'?'Planet':payload.source==='world'?'Open world':'Landscaping scene';
-      FE.toast(label+' imported into Workspace');
-      reply?.({ success:true, summary:Object.assign({source:payload.source||'terrain'},summary) });
-    } catch (error) {
-      console.error('[Landscape Import] Failed:',error);
-      FE.toast('Landscape import failed: '+(error?.message||error));
-      reply?.({ success:false, error:error?.message||String(error) });
-    }
-  };
-  requestAnimationFrame(commit);
-}
-function landscapeImportReply(source, origin, requestId, result) {
-  try { source?.postMessage?.({ type:'final-effect:import:ack', requestId, ...result }, origin && origin !== 'null' ? origin : '*'); } catch(error) { console.warn('[Landscape Import] Could not acknowledge import:',error); }
-}
-const landscapeImportChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('final-effect-landscape-import') : null;
-if (landscapeImportChannel) landscapeImportChannel.onmessage = (event) => {
-  const d=event.data;if(d?.type!=='final-effect:import')return;
-  importLandscapeIntoWorkspace(d.payload,result=>landscapeImportChannel.postMessage({type:'final-effect:import:ack',requestId:d.requestId,...result}));
-};
-window.addEventListener('message', (e) => {
-  if (!e.data) return;
-  const d = e.data;
-  if (d.type === 'CLOSE_LANDSCAPE' || d.type === 'final-effect:close-studio' || d.type === 'final-effect:workspace') {
-    FE.open('core');
-    FE.toast('Returned to Workspace');
-  } else if (d.type === 'IMPORT_TERRAIN' || d.type === 'final-effect:import') {
-    importLandscapeIntoWorkspace(d.payload,result=>landscapeImportReply(e.source,e.origin,d.requestId,result));
-  } else if (d.type === 'fe-perf') {
-    /* The Landscaping Studio measures its own frame rate but does not print it:
-       the number belongs in the ⚙ 3D-workspace sheet with the rest of the
-       performance readout, even while that studio is the one rendering. */
-    renderWorkspacePerf({fps:d.fps,avgMs:d.ms,dpr:d.dpr,drawCalls:d.draws,triangles:d.tris,tierLabel:'Landscaping · detail '+d.tier});
-  }
-});
 
 function createProceduralNoiseTextureHost(T, type = 'rock') {
   try {
@@ -5307,398 +4963,6 @@ function createProceduralTerrainTexturesHost(T) {
   } catch(e) {
     return { map: null, bump: null };
   }
-}
-
-const LANDSCAPE_ARRAY_TYPES={Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array};
-function decodeLandscapeArray(data,Type=Float32Array){if(ArrayBuffer.isView(data))return new Type(data);if(Array.isArray(data))return new Type(data);if(typeof data!=='string')throw new Error('Landscape buffer is missing.');const binary=atob(data),bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);if(bytes.byteLength%Type.BYTES_PER_ELEMENT)throw new Error('Landscape buffer has an invalid byte length.');return new Type(bytes.buffer)}
-function buildLandscapeGeometry(spec,T){const geometry=new T.BufferGeometry();if(!spec?.attributes)throw new Error('Imported mesh geometry is missing attributes.');for(const name of Object.keys(spec.attributes)){const a=spec.attributes[name],Type=LANDSCAPE_ARRAY_TYPES[a.type]||Float32Array,array=decodeLandscapeArray(a.data,Type);geometry.setAttribute(name,new T.BufferAttribute(array,a.itemSize,!!a.normalized))}for(const g of spec.groups||[])geometry.addGroup(g.start,g.count,g.materialIndex||0);if(!geometry.attributes.normal&&geometry.attributes.position)geometry.computeVertexNormals();geometry.computeBoundingBox();geometry.computeBoundingSphere();return geometry}
-function buildLandscapeTexture(spec,T){if(!spec?.data||!spec.width||!spec.height)return null;const Type=LANDSCAPE_ARRAY_TYPES[spec.type]||Uint8Array,data=decodeLandscapeArray(spec.data,Type),glType=Type===Float32Array?T.FloatType:Type===Uint16Array?T.UnsignedShortType:T.UnsignedByteType,texture=new T.DataTexture(data,spec.width,spec.height,T.RGBAFormat,glType);texture.wrapS=spec.wrapS??T.RepeatWrapping;texture.wrapT=spec.wrapT??T.RepeatWrapping;texture.repeat.fromArray(spec.repeat||[1,1]);texture.flipY=spec.flipY!==false;texture.encoding=spec.encoding??T.LinearEncoding;texture.magFilter=T.LinearFilter;texture.minFilter=T.LinearMipmapLinearFilter;texture.generateMipmaps=true;texture.needsUpdate=true;return texture}
-function buildLandscapeMaterial(spec,T){if(Array.isArray(spec))return spec.map(m=>buildLandscapeMaterial(m,T));const d=spec||{},Ctor=({MeshPhongMaterial:T.MeshPhongMaterial,MeshLambertMaterial:T.MeshLambertMaterial,MeshBasicMaterial:T.MeshBasicMaterial,MeshPhysicalMaterial:T.MeshPhysicalMaterial,MeshStandardMaterial:T.MeshStandardMaterial})[d.type]||T.MeshStandardMaterial,p={color:d.color?new T.Color('#'+String(d.color).replace(/^#/,'').trim()):0xffffff,side:d.side??T.DoubleSide,vertexColors:!!d.vertexColors,transparent:!!d.transparent,opacity:Number.isFinite(d.opacity)?d.opacity:1,alphaTest:d.alphaTest||0,wireframe:!!d.wireframe};if(Number.isFinite(d.roughness))p.roughness=d.roughness;if(Number.isFinite(d.metalness))p.metalness=d.metalness;if(Number.isFinite(d.shininess))p.shininess=d.shininess;if(d.specular)p.specular=new T.Color('#'+String(d.specular).replace(/^#/,'').trim());if(d.emissive)p.emissive=new T.Color('#'+String(d.emissive).replace(/^#/,'').trim());if(Number.isFinite(d.emissiveIntensity))p.emissiveIntensity=d.emissiveIntensity;if(Number.isFinite(d.bumpScale))p.bumpScale=d.bumpScale;if(d.normalScale)p.normalScale=new T.Vector2().fromArray(d.normalScale);for(const key of ['map','normalMap','bumpMap','roughnessMap','metalnessMap','alphaMap','emissiveMap']){const texture=buildLandscapeTexture(d.textures?.[key],T);if(texture)p[key]=texture}const material=new Ctor(p);if(Number.isFinite(d.envMapIntensity))material.envMapIntensity=d.envMapIntensity;return material}
-function buildLandscapeNode(spec,T){if(!spec)return null;const geometry=spec.geometry?buildLandscapeGeometry(spec.geometry,T):null,material=spec.material?buildLandscapeMaterial(spec.material,T):null;let object;if(geometry&&spec.instances){object=new T.InstancedMesh(geometry,material,spec.instances.count||0);const matrices=decodeLandscapeArray(spec.instances.matrices||'',Float32Array),matrix=new T.Matrix4();for(let i=0;i<(spec.instances.count||0);i++){matrix.fromArray(matrices,i*16);object.setMatrixAt(i,matrix)}if(spec.instances.colors){const colors=decodeLandscapeArray(spec.instances.colors,Float32Array);object.instanceColor=new T.InstancedBufferAttribute(colors,3);object.instanceColor.needsUpdate=true}object.instanceMatrix.needsUpdate=true}else if(geometry)object=new T.Mesh(geometry,material);else object=new T.Group();object.name=spec.name||'Imported Object';if(spec.position)object.position.fromArray(spec.position);if(spec.quaternion)object.quaternion.fromArray(spec.quaternion);if(spec.scale)object.scale.fromArray(spec.scale);object.visible=spec.visible!==false;object.userData.isLandscape=true;object.castShadow=object.receiveShadow=true;for(const child of spec.children||[]){const built=buildLandscapeNode(child,T);if(built)object.add(built)}return object}
-
-function landscapeMixRgb(a,b,t){return a.map((v,i)=>v+(b[i]-v)*t)}
-function buildLandscapeEnvironment(payload,T){
-  const sky=payload.sky||{},studio=sky.studio||{},weather=payload.weather||{},suns=studio.suns||[],sun=suns[0]||{},tod=((Number(sky.timeOfDay)||12)%24+24)%24,lat=(Number(studio.atmo?.lat)||35)*Math.PI/180,inc=Math.max(-60,Math.min(60,Number(sun.el)||0))*Math.PI/180,hour=(tod-6)/12*Math.PI,sunY=sun.mode==='orbit'?Math.sin(hour)*Math.cos(inc):Math.sin((Number(sun.el)||25)*Math.PI/180),az=((sun.mode==='orbit'?(Number(sky.sunAngle)||0)+(Number(sun.az)||0):(Number(sun.az)||Number(sky.sunAngle)||0))*Math.PI/180),sunDir=new T.Vector3(Math.cos(az)*Math.sqrt(Math.max(0,1-sunY*sunY)),sunY,Math.sin(az)*Math.sqrt(Math.max(0,1-sunY*sunY))).normalize(),day=Math.max(0,Math.min(1,(sunY+.08)/.62)),cloudValues=(studio.clouds||[]).map(c=>Number(c.cov)||0),cloud=Math.max(0,Math.min(1,Math.max(Number(weather.overcast)||0,Number(sky.clouds)||0,...cloudValues)*.8+(Number(weather.storm)||0)*.2));
-  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=256;const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Could not create the imported sky environment texture.');const image=ctx.createImageData(canvas.width,canvas.height),nightTop=[7,12,31],dayTop=[48,126,218],nightHor=[21,32,55],dayHor=[188,218,240],nightLow=[6,9,19],dayLow=[91,123,153],top=landscapeMixRgb(nightTop,dayTop,day),horizon=landscapeMixRgb(nightHor,dayHor,day),low=landscapeMixRgb(nightLow,dayLow,day),overcast=Math.max(0,Math.min(.82,cloud*.75)),cloudColor=landscapeMixRgb([177,187,199],[240,245,249],day);
-  for(let y=0;y<canvas.height;y++){const v=y/(canvas.height-1),base=v<.54?landscapeMixRgb(top,horizon,v/.54):landscapeMixRgb(horizon,low,(v-.54)/.46);for(let x=0;x<canvas.width;x++){const u=x/canvas.width,n=.5+.19*Math.sin(u*31+Math.sin(v*17)*2.1)+.13*Math.sin(u*73-v*29)+.1*Math.cos(u*17+v*47),c=Math.max(0,Math.min(.88,(n-(1-overcast))*3.2)),o=(y*canvas.width+x)*4;for(let k=0;k<3;k++)image.data[o+k]=Math.round(base[k]*(1-c)+cloudColor[k]*c);image.data[o+3]=255}}ctx.putImageData(image,0,0);
-  const sunPx=((az/(Math.PI*2)+.5)%1+1)%1*canvas.width,sunPy=(.5-Math.asin(Math.max(-1,Math.min(1,sunY)))/Math.PI)*canvas.height;if(sunY>-.05){const glow=ctx.createRadialGradient(sunPx,sunPy,1,sunPx,sunPy,62);glow.addColorStop(0,'rgba(255,251,226,.98)');glow.addColorStop(.08,'rgba(255,234,187,.88)');glow.addColorStop(.36,'rgba(255,198,127,.34)');glow.addColorStop(1,'rgba(255,188,126,0)');ctx.fillStyle=glow;ctx.fillRect(sunPx-62,sunPy-62,124,124)}
-  const env=new T.CanvasTexture(canvas);env.mapping=T.EquirectangularReflectionMapping;env.encoding=T.sRGBEncoding??T.LinearEncoding;env.generateMipmaps=true;env.minFilter=T.LinearMipmapLinearFilter;env.magFilter=T.LinearFilter;env.needsUpdate=true;
-  return{texture:env,sunDir,day,cloud,weather,az};
-}
-function addLandscapeWind(mesh,weather,water,T){
-  if(!mesh?.material||/rock|stone/i.test(mesh.name||''))return;const mats=Array.isArray(mesh.material)?mesh.material:[mesh.material],strength=Math.max(0,Math.min(.55,(Number(weather?.wind)||0)*(1+(Number(weather?.storm)||0)*.5)*.2));if(strength<.005)return;const angle=(Number(water?.windDirection)||35)*Math.PI/180,windDir=new T.Vector2(Math.cos(angle),Math.sin(angle));
-  for(const material of mats){if(!material||material.userData?.landscapeWindInstalled)continue;material.userData.landscapeWindInstalled=true;const prior=material.onBeforeCompile,priorKey=material.customProgramCacheKey?.bind(material);material.customProgramCacheKey=()=>`${priorKey?.()||''}|landscape-weather-wind-v1`;material.onBeforeCompile=shader=>{prior?.(shader);shader.uniforms.uLandscapeWindTime={value:0};shader.uniforms.uLandscapeWindStrength={value:strength};shader.uniforms.uLandscapeWindDirection={value:windDir};shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nuniform float uLandscapeWindTime,uLandscapeWindStrength;uniform vec2 uLandscapeWindDirection;').replace('#include <begin_vertex>','#include <begin_vertex>\nfloat landscapeWindHeight=clamp(max(position.y,0.)*.18,0.,1.);float landscapeWindSway=sin(uLandscapeWindTime*1.35+position.x*.13+position.z*.11+position.y*.21);transformed.xz+=uLandscapeWindDirection*landscapeWindSway*uLandscapeWindStrength*landscapeWindHeight;transformed.y+=abs(landscapeWindSway)*uLandscapeWindStrength*.035*landscapeWindHeight;');material.userData.landscapeWindShader=shader};material.needsUpdate=true;}
-  mesh.onBeforeRender=()=>{const t=(performance.now?.()||Date.now())*.001;for(const material of mats){const shader=material?.userData?.landscapeWindShader;if(shader)shader.uniforms.uLandscapeWindTime.value=t}};
-}
-function addLandscapeWeather(payload,group,T,center,size){
-  const weather=payload.weather||{},water=payload.water||{},rain=Math.max(0,Math.min(1,Number(weather.rain)||0)),snow=Math.max(0,Math.min(1,Number(weather.snowfall)||0));if(rain<.015&&snow<.015)return;const root=new T.Group();root.name='Imported Weather';root.userData.isLandscape=true;root.userData.weather={...weather};group.add(root);const span=Math.max(size.x,size.z,60)*.65,top=center.y+size.y*.5+28,height=Math.max(size.y+42,55),angle=(Number(water.windDirection)||35)*Math.PI/180,wind=(Number(weather.wind)||0)*(1+(Number(weather.storm)||0)*.5),wx=Math.cos(angle)*wind,wz=Math.sin(angle)*wind;
-  const create=(kind,amount)=>{if(amount<.015)return;const count=Math.max(60,Math.min(900,Math.round((kind==='rain'?760:360)*amount))),coords=new Float32Array(count*3),seeds=new Float32Array(count*3);for(let i=0;i<count;i++){const x=Math.sin((i+1)*12.9898)*43758.5453,y=Math.sin((i+1)*78.233)*15731.743,z=Math.sin((i+1)*39.425)*24634.634;seeds[i*3]=x-Math.floor(x);seeds[i*3+1]=y-Math.floor(y);seeds[i*3+2]=z-Math.floor(z);coords[i*3]=center.x+(seeds[i*3]-.5)*span;coords[i*3+1]=top-seeds[i*3+1]*height;coords[i*3+2]=center.z+(seeds[i*3+2]-.5)*span}const geom=new T.BufferGeometry();geom.setAttribute('position',new T.BufferAttribute(coords,3));const points=new T.Points(geom,new T.PointsMaterial({color:kind==='rain'?0xc9e6ff:0xf4f8ff,size:kind==='rain'?1.8:3.1,sizeAttenuation:true,transparent:true,opacity:kind==='rain'?.62:.88,depthWrite:false}));points.name=kind==='rain'?'Rainfall':'Snowfall';points.userData.isLandscape=true;points.frustumCulled=false;points.renderOrder=4;points.onBeforeRender=()=>{const t=(performance.now?.()||Date.now())*.001,fall=kind==='rain'?26:3.2,drift=kind==='rain'?2.1:1.1;for(let i=0;i<count;i++){const phase=(seeds[i*3+1]+t*fall/height)%1;coords[i*3]=center.x+(seeds[i*3]-.5)*span+wx*t*drift;coords[i*3+1]=top-phase*height;coords[i*3+2]=center.z+(seeds[i*3+2]-.5)*span+wz*t*drift; }geom.attributes.position.needsUpdate=true};root.add(points)};
-  create('rain',rain);create('snow',snow);
-}
-function applyLandscapeWorld(payload,targetScene,T,group,center,size){
-  const details=buildLandscapeEnvironment(payload,T),weather=payload.weather||{},studio=payload.sky?.studio||{},sunCfg=studio.suns?.[0]||{},weatherRoot=new T.Group();weatherRoot.name='Imported Sky / World Lighting';weatherRoot.userData.isLandscape=true;group.add(weatherRoot);const hemi=new T.HemisphereLight(new T.Color().setRGB(.42+.28*details.day,.53+.24*details.day,.68+.18*details.day),new T.Color().setRGB(.18,.20,.17),.16+.30*details.day*(1-details.cloud*.35));hemi.name='Imported Sky World Light';weatherRoot.add(hemi);const sun=new T.DirectionalLight(new T.Color().setRGB(1,.78+.2*details.day,.58+.4*details.day),.10+details.day*(1-details.cloud*.55)*(Number(sunCfg.inten)||1)*1.25);sun.name='Imported Sun Light';sun.position.copy(center).addScaledVector(details.sunDir,Math.max(size.x,size.z,100)*2.5);sun.target.position.copy(center);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.bias=-.00035;weatherRoot.add(sun,sun.target);targetScene.environment=details.texture;targetScene.background=details.texture;const fogDistance=Number(payload.sky?.fog)||0,fogDensity=Math.max(0,Math.min(.0012,(fogDistance>0?.65/fogDistance:0)+details.cloud*.00012+(Number(weather.storm)||0)*.00018));targetScene.fog=fogDensity>.000015?new T.FogExp2(new T.Color().setRGB(.47,.57,.67),fogDensity):null;Object.defineProperty(group,'_landscapeEnvironmentTexture',{value:details.texture,writable:true,configurable:true});group.traverse(object=>{if(!object.isMesh)return;const materials=Array.isArray(object.material)?object.material:[object.material];for(const material of materials){if(!material||!('envMap'in material))continue;material.envMap=details.texture;if(object.userData?.landscapeWater)material.envMapIntensity=Number(payload.water?.reflectivity)||.8;material.needsUpdate=true}});addLandscapeWeather(payload,group,T,center,size);group.userData.landscapeState={sky:payload.sky||null,weather:payload.weather||null,water:payload.water||null,worldLighting:'procedural HDRI-style CanvasTexture + imported hemisphere/sun lights'};return details;
-}
-
-function buildLandscapeWater(settings,terrain,T,weather={}){
-  const p=settings||{},quality=Math.min(2,Math.max(0,Math.round(p.quality||0))),cfg=[{theta:320,inner:160,far:64,transmission:.28},{theta:448,inner:192,far:80,transmission:.62},{theta:640,inner:256,far:96,transmission:1}][quality],innerRadius=p.innerRadius||190,outerRadius=p.farRadius||1400,level=Number.isFinite(p.level)?p.level:0,weatherWind=(Number.isFinite(Number(weather.wind))?Math.max(0,Number(weather.wind)):1)*(1+(Number(weather.storm)||0)*.5);
-  const waterMaterial=new T.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:p.roughness??.12,clearcoat:.92,clearcoatRoughness:.06,transmission:Math.max(.001,(p.refraction??.45)*(p.transparency??1)*cfg.transmission),transparent:false,opacity:1,depthWrite:true,side:T.DoubleSide});
-  waterMaterial.envMapIntensity=p.reflectivity??.9;waterMaterial.userData.landscapeWater=true;
-  const common=`uniform float uLWTime,uLWHeight,uLWChop,uLWScale,uLWPeriod,uLWWindSpeed,uLWTurbidity,uLWClarity,uLWFoam,uLWThreshold,uLWShore;uniform vec2 uLWWind;uniform vec3 uLWDeep,uLWShallow;varying vec3 vLandscapeWaterWorld;varying float vLandscapeWaterDepth,vLandscapeWaterSlope;float landscapeHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}float landscapeNoise(vec2 p,out vec2 grad){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f),du=6.*f*(1.-f);float a=landscapeHash(i),b=landscapeHash(i+vec2(1.,0.)),c=landscapeHash(i+vec2(0.,1.)),d=landscapeHash(i+vec2(1.,1.));float x0=mix(a,b,u.x),x1=mix(c,d,u.x);grad=vec2(mix((b-a)*du.x,(d-c)*du.x,u.y),(x1-x0)*du.y);return mix(x0,x1,u.y);}float landscapeWave(vec2 p,out vec2 g,out vec2 horizontal){float footprint=max(1.5,length(p)*.085),s=0.;g=vec2(0.);horizontal=vec2(0.);float waveCount=9.;float windAngle=atan(uLWWind.y,uLWWind.x);for(int i=0;i<3;i++){float fi=float(i),wl=mix(260.,95.,fi/2.)/max(uLWScale,.08),k=6.2831853/wl,a=windAngle+(fi-1.)*.28+.13*sin(uLWTime*.035+fi*2.3);vec2 d=vec2(cos(a),sin(a));float ph=dot(d,p)*k-uLWTime*sqrt(9.81*k)*(6./max(uLWPeriod,.5))+landscapeHash(vec2(fi*17.13+2.7,fi*9.31+5.2))*6.2831853,lod=1.-smoothstep(wl*.45,wl*1.25,footprint),amp=mix(.44,.22,fi/2.)*mix(.35,1.,clamp(uLWWindSpeed/16.,0.,1.))*lod;s+=sin(ph)*amp;g+=d*cos(ph)*amp*k;float qG=min(.85,.82/max(k*max(amp,.01)*waveCount,.01));horizontal+=d*qG*amp*cos(ph);}for(int i=0;i<6;i++){float fi=float(i),wl=mix(52.,4.,fi/5.)/max(uLWScale,.08),k=6.2831853/wl,a=windAngle+(fi-2.5)*(.035+min(uLWWindSpeed,25.)*.002)+.11*sin(fi*5.31+uLWTime*.11);vec2 d=vec2(cos(a),sin(a));float ph=dot(d,p)*k-uLWTime*sqrt(9.81*k)*(6./max(uLWPeriod,.5))+landscapeHash(vec2(fi*13.71+5.1,fi*7.93+11.2))*6.2831853,lod=1.-smoothstep(wl*.45,wl*1.35,footprint),amp=.14*exp(-fi*.25)*mix(.22,1.,clamp(uLWWindSpeed/18.,0.,1.))*lod;s+=sin(ph)*amp;g+=d*cos(ph)*amp*k;float qG=min(.85,.82/max(k*max(amp,.01)*waveCount,.01));horizontal+=d*qG*amp*cos(ph);}vec2 n1g,n2g;float n1=landscapeNoise(p*.024*uLWScale+uLWWind*uLWTime*.02,n1g),n2=landscapeNoise(p*.075*uLWScale-uLWWind*uLWTime*.09+vec2(-uLWWind.y,uLWWind.x)*uLWTime*.03,n2g),l1=1.-smoothstep(15.,75.,footprint),l2=1.-smoothstep(5.,28.,footprint);s+=(n1-.5)*.1*l1+(n2-.5)*.02*l2;g+=n1g*(.0024*uLWScale*l1)+n2g*(.0015*uLWScale*l2);return s;}`;
-  const refs=['uLWTime','uLWHeight','uLWChop','uLWScale','uLWPeriod','uLWWindSpeed','uLWTurbidity','uLWClarity','uLWFoam','uLWThreshold','uLWShore','uLWWind','uLWDeep','uLWShallow'];
-  const deep=new T.Color(),shallow=new T.Color();if(Array.isArray(p.deep))deep.setRGB(...p.deep);else deep.set('#06384c');if(Array.isArray(p.shallow))shallow.setRGB(...p.shallow);else shallow.set('#42b9a0');
-  waterMaterial.onBeforeCompile=shader=>{shader.uniforms.uLWTime={value:0};shader.uniforms.uLWHeight={value:p.waveHeight??1};shader.uniforms.uLWChop={value:p.waveChop??.2};shader.uniforms.uLWScale={value:p.waveScale??1};shader.uniforms.uLWPeriod={value:p.wavePeriod??6};shader.uniforms.uLWWindSpeed={value:(p.windSpeed??12)*weatherWind};shader.uniforms.uLWWind={value:new T.Vector2(Math.cos((p.windDirection??35)*Math.PI/180),Math.sin((p.windDirection??35)*Math.PI/180))};shader.uniforms.uLWTurbidity={value:p.turbidity??.08};shader.uniforms.uLWClarity={value:p.clarity??1};shader.uniforms.uLWFoam={value:p.foam??.5};shader.uniforms.uLWThreshold={value:p.foamThreshold??.78};shader.uniforms.uLWShore={value:p.shoreFoam??1};shader.uniforms.uLWDeep={value:deep};shader.uniforms.uLWShallow={value:shallow};const shared='\n'+common+'\n';shader.vertexShader=shader.vertexShader.replace('#include <common>','#include <common>\nattribute float aLandscapeDepth;'+shared).replace('#include <beginnormal_vertex>','#include <beginnormal_vertex>\nvec4 importWaterBase=modelMatrix*vec4(position,1.);vec2 importWaterGrad,importWaterHorizontal;float importWaterHeight=landscapeWave(importWaterBase.xz,importWaterGrad,importWaterHorizontal);float importWaterFade=smoothstep(.15,2.3,aLandscapeDepth);objectNormal=normalize(vec3(-importWaterGrad.x*uLWHeight*importWaterFade,1.,-importWaterGrad.y*uLWHeight*importWaterFade));').replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.xz+=importWaterHorizontal*uLWHeight*uLWChop*importWaterFade;transformed.y+=importWaterHeight*uLWHeight*importWaterFade;vLandscapeWaterWorld=(modelMatrix*vec4(transformed,1.)).xyz;vLandscapeWaterDepth=aLandscapeDepth;vLandscapeWaterSlope=length(importWaterGrad*uLWHeight);');shader.fragmentShader=shader.fragmentShader.replace('#include <common>','#include <common>'+shared).replace('#include <color_fragment>','#include <color_fragment>\nfloat importedAtten=1.-exp(-max(vLandscapeWaterDepth,0.)*(.12+uLWTurbidity*.9)/max(uLWClarity,.1));vec3 importedTint=mix(uLWShallow,uLWDeep,clamp(importedAtten,0.,1.));float importedCrest=smoothstep(uLWThreshold,uLWThreshold+.6,vLandscapeWaterSlope*(.35+uLWWindSpeed*.045));float importedShore=(1.-smoothstep(0.,max(uLWShore,.05),vLandscapeWaterDepth))*.42;float importedFoam=clamp((importedCrest+importedShore)*uLWFoam,0.,.88);diffuseColor.rgb=mix(importedTint,vec3(.88,.94,.96),importedFoam);diffuseColor.a=1.;');waterMaterial.userData.landscapeShader=shader};waterMaterial.customProgramCacheKey=()=>'imported-landscape-water-v1';
-  const importedHeights=terrain?.heights?decodeLandscapeArray(terrain.heights,Float32Array):null;
-  const sampleHeight=(x,z)=>{if(!importedHeights)return 0;const S=terrain.size||100,N=terrain.segments||128,W=N+1,u=Math.min(N-.001,Math.max(0,(x+S/2)/S*N)),v=Math.min(N-.001,Math.max(0,(z+S/2)/S*N)),i=Math.floor(u),j=Math.floor(v),a=u-i,b=v-j,k=j*W+i;return importedHeights[k]*(1-a)*(1-b)+importedHeights[k+1]*a*(1-b)+importedHeights[k+W]*(1-a)*b+importedHeights[k+W+1]*a*b};
-  const addDepth=(geometry)=>{const pos=geometry.attributes.position,values=new Float32Array(pos.count);for(let i=0;i<pos.count;i++)values[i]=Math.max(level-sampleHeight(pos.getX(i),pos.getZ(i)),0);geometry.setAttribute('aLandscapeDepth',new T.BufferAttribute(values,1));return geometry};
-  const waterRoot=new T.Group();waterRoot.name='Water Surface';waterRoot.userData.isLandscape=true;waterRoot.userData.profile=p.profile||'Ocean';waterRoot.position.y=level;waterRoot.visible=p.visible!==false;
-  const near=new T.Mesh(addDepth(new T.RingGeometry(.001,innerRadius,cfg.theta,cfg.inner).rotateX(-Math.PI/2)),waterMaterial);near.name='Water Near Field';near.userData.isLandscape=true;near.userData.landscapeWater=true;near.frustumCulled=false;near.renderOrder=2;waterRoot.add(near);
-  const far=new T.Mesh(addDepth(new T.RingGeometry(innerRadius,outerRadius,cfg.theta,cfg.far).rotateX(-Math.PI/2)),waterMaterial);far.name='Water Far Field';far.userData.isLandscape=true;far.userData.landscapeWater=true;far.frustumCulled=false;far.renderOrder=2;waterRoot.add(far);
-  const update=()=>{const shader=waterMaterial.userData.landscapeShader;if(shader)shader.uniforms.uLWTime.value=(performance.now?.()||Date.now())*.001*(p.waveSpeed??1.8)};near.onBeforeRender=update;far.onBeforeRender=update;return waterRoot;
-}
-
-function buildLandscapeFromPayload(payload, targetScene, T) {
-  if (!payload || !targetScene) return;
-  const oldGroup = targetScene.getObjectByName('ImportedLandscape');
-  /* Three kinds of scene can arrive now: the root grid, a generated open
-     world (already merged into one heightfield by the studio) and a procedural
-     planet (radii per sphere vertex). Each is a `Terrain Mesh` in the group, so
-     framing, water, sky and the object chips stay identical for all three. */
-  const planetImport = payload.planet && payload.planet.radii ? payload.planet : null;
-  if (!payload.terrain?.heights && !planetImport) throw new Error('Landscaping payload is missing terrain height data.');
-  const worldRestore=oldGroup?._landscapeWorldRestore||{background:targetScene.background,environment:targetScene.environment,fog:targetScene.fog};
-
-  const group = new T.Group();
-  Object.defineProperty(group,'_landscapeWorldRestore',{value:worldRestore,writable:true,configurable:true});
-  group.name = 'ImportedLandscape';
-  group.userData.isLandscape = true;
-  group.userData.objectId = 'ImportedLandscape';
-  const importedObjectEntries = [];
-
-  // 1. BASE TERRAIN MESH (Ground geometry with its exact heightmap & material)
-  if (planetImport) {
-    try {
-      const radius=Number(planetImport.radius)||60,segments=Math.max(8,Math.round(Number(planetImport.segments)||192)),rings=Math.max(4,Math.round(Number(planetImport.rings)||96));
-      const globeGeom=new T.SphereGeometry(radius,segments,rings),globePos=globeGeom.attributes.position,radii=decodeLandscapeArray(planetImport.radii,Float32Array);
-      if(radii.length<globePos.count)throw new Error('The imported planet is missing its elevation data.');
-      for(let k=0;k<globePos.count;k++){
-        const x=globePos.getX(k),y=globePos.getY(k),z=globePos.getZ(k),length=Math.hypot(x,y,z)||1,r=Number.isFinite(radii[k])?radii[k]:radius;
-        globePos.setXYZ(k,x/length*r,y/length*r,z/length*r);
-      }
-      globePos.needsUpdate=true;
-      if(planetImport.normals){const packed=decodeLandscapeArray(planetImport.normals,Int8Array);if(packed.length>=globePos.count*3)globeGeom.setAttribute('normal',new T.BufferAttribute(packed,3,true))}
-      else globeGeom.computeVertexNormals();
-      const globeColors=planetImport.colors?decodeLandscapeArray(planetImport.colors,Uint8Array):null;
-      if(globeColors&&globeColors.length>=globePos.count*3)globeGeom.setAttribute('color',new T.BufferAttribute(globeColors,3,true));
-      globeGeom.computeBoundingSphere();globeGeom.computeBoundingBox();
-      const globeMat=new T.MeshStandardMaterial({color:0xffffff,vertexColors:!!globeColors,roughness:.86,metalness:.03,side:T.FrontSide});
-      const globeMesh=new T.Mesh(globeGeom,globeMat);
-      globeMesh.name='Terrain Mesh';
-      globeMesh.userData.isLandscape=true;
-      globeMesh.userData.planetImport=true;
-      globeMesh.castShadow=globeMesh.receiveShadow=true;
-      group.add(globeMesh);
-    } catch (e) {
-      console.warn('Failed to build the imported planet:', e);
-    }
-  } else if (payload.terrain && payload.terrain.heights) {
-    try {
-      let heights;
-      if (typeof payload.terrain.heights === 'string') {
-        const bstr = atob(payload.terrain.heights);
-        const buf = new ArrayBuffer(bstr.length);
-        const view = new Uint8Array(buf);
-        for (let i = 0; i < bstr.length; i++) view[i] = bstr.charCodeAt(i);
-        heights = new Float32Array(buf);
-      } else if (Array.isArray(payload.terrain.heights) || payload.terrain.heights instanceof Float32Array) {
-        heights = new Float32Array(payload.terrain.heights);
-      }
-
-      const S = payload.terrain.size || 100;
-      const N = payload.terrain.segments || 128;
-      const W = N + 1;
-
-      const terGeom = new T.PlaneGeometry(S, S, N, N).rotateX(-Math.PI / 2);
-      const posAttr = terGeom.attributes.position;
-      let sourceColors=null;
-      if(payload.terrain.colors)try{sourceColors=decodeLandscapeArray(payload.terrain.colors,Float32Array)}catch(error){console.warn('Terrain color transfer unavailable; using terrain palette fallback.',error)}
-      const colors=sourceColors&&sourceColors.length>=W*W*3?sourceColors.slice(0,W*W*3):new Float32Array(W*W*3);
-      for(let j=0;j<W;j++)for(let i=0;i<W;i++){const idx=j*W+i,h=heights&&heights[idx]!==undefined?heights[idx]:0;posAttr.setY(idx,h);if(!sourceColors||sourceColors.length<W*W*3){const v=Math.min(1,Math.max(.45,.78+h/28)),palette=payload.terrain.palette?.[0]||[.26,.52,.24];colors.set([palette[0]*v,palette[1]*v,palette[2]*v],idx*3)}}
-      const snowCover=Math.max(0,Math.min(1,Number(payload.weather?.snowCover)||0)),snowLine=Number(payload.terrain.snowLine)||18;if(snowCover>.005)for(let idx=0;idx<W*W;idx++){const h=heights?.[idx]??0,x=Math.max(0,Math.min(1,(h-(snowLine-snowCover*24))/6)),t=x*x*(3-2*x)*snowCover;for(let c=0;c<3;c++){const target=[.78,.86,.96][c],at=idx*3+c;colors[at]=colors[at]*(1-t)+target*t}}
-      terGeom.setAttribute('color',new T.BufferAttribute(colors,3));terGeom.computeVertexNormals();const finalTerGeom=terGeom.toNonIndexed();
-      const normalMap=buildLandscapeTexture(payload.terrain.normalMap?{width:payload.terrain.normalMapSize?.[0]||128,height:payload.terrain.normalMapSize?.[1]||128,type:'Uint8Array',data:payload.terrain.normalMap,repeat:[40,40],wrapS:T.RepeatWrapping,wrapT:T.RepeatWrapping,flipY:true}:null,T);
-      const fallbackTex=normalMap?null:createProceduralTerrainTexturesHost(T);
-      const terMat=new T.MeshStandardMaterial({color:0xffffff,vertexColors:true,roughness:Number(payload.terrain.roughness)||.84,metalness:Math.min(.25,Number(payload.terrain.metalness)||0),normalMap:normalMap||fallbackTex?.bump,normalScale:new T.Vector2(payload.terrain.normalStrength||.34,payload.terrain.normalStrength||.34),side:T.DoubleSide});terMat.envMapIntensity=.7;terMat.color.setScalar(.9);      const terMesh = new T.Mesh(finalTerGeom, terMat);
-      terMesh.name = 'Terrain Mesh';
-      terMesh.userData.isLandscape = true;
-      terMesh.castShadow = terMesh.receiveShadow = true;
-      terMesh.frustumCulled = false;
-      terMesh.visible = true;
-      group.add(terMesh);
-    } catch (e) {
-      console.warn('Failed to build terrain from payload:', e);
-    }
-  }
-
-  // Imported water keeps the source level, optical controls and two-scale wave surface.
-  if (payload.water && payload.water.visible !== false) group.add(buildLandscapeWater(payload.water,payload.terrain,T,payload.weather||{}));
-
-  // 3. ALL INSTANCED FOLIAGE (Trees, grass, plants, flowers, and rock meshes)
-  if (payload.foliage) {
-    try {
-      if (Array.isArray(payload.foliage)) {
-        // Group by type
-        const grouped = {};
-        payload.foliage.forEach(f => {
-          if (!grouped[f.type]) grouped[f.type] = [];
-          grouped[f.type].push(f);
-        });
-
-        for (const k in grouped) {
-          const items = grouped[k];
-          const count = items.length;
-          if (count === 0) continue;
-
-          let geom;
-          let matColor = 0x22c55e;
-          if (k === 'pine') {
-            const parts = [];
-            const trunk = new T.CylinderGeometry(0.12, 0.28, 5.2, 8).translate(0, 2.6, 0);
-            parts.push(trunk);
-            for(let tIdx=0; tIdx<7; tIdx++){
-              const rad = Math.max(0.4, 2.2 - tIdx * 0.25);
-              const cone = new T.ConeGeometry(rad, 0.9, 7, 1).translate(0, 1.8 + tIdx * 0.52, 0);
-              parts.push(cone);
-            }
-            geom = THREE.BufferGeometryUtils ? THREE.BufferGeometryUtils.mergeBufferGeometries(parts) : parts[0];
-            if(!geom) geom = new T.ConeGeometry(1.8, 5.0, 8).translate(0, 2.5, 0);
-            matColor = 0x14401e;
-          } else if (k === 'oak') {
-            geom = new T.DodecahedronGeometry(2.2, 2).translate(0, 3.8, 0);
-            matColor = 0x1e682e;
-          } else if (k === 'palm') {
-            geom = new T.CylinderGeometry(0.18, 0.32, 5.4, 8).translate(0, 2.7, 0);
-            matColor = 0x2d7a36;
-          } else if (k === 'shrub') {
-            geom = new T.DodecahedronGeometry(0.95, 2).translate(0, 0.7, 0);
-            matColor = 0x1b5e20;
-          } else if (k === 'rock') {
-            geom = new T.DodecahedronGeometry(1.2, 2).translate(0, 0.6, 0);
-            matColor = 0x788596;
-          } else {
-            geom = new T.ConeGeometry(0.025, 0.85, 4, 1).translate(0, 0.42, 0);
-            matColor = 0x388e3c;
-          }
-
-          const mat = new T.MeshStandardMaterial({
-            color: new T.Color(matColor),
-            roughness: k === 'rock' ? 0.92 : 0.76,
-            metalness: 0.02,
-            side: T.DoubleSide
-          });
-
-          const instMesh = new T.InstancedMesh(geom, mat, count);
-          instMesh.name = `${k}_foliage`;
-          instMesh.userData.isLandscape = true;
-          instMesh.castShadow = true;
-          instMesh.receiveShadow = true;
-
-          const dummy = new T.Object3D();
-          items.forEach((item, i) => {
-            dummy.position.set(item.x, item.y || 0, item.z);
-            dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
-            const s = item.scale || 1.0;
-            dummy.scale.set(s, s, s);
-            dummy.updateMatrix();
-            instMesh.setMatrixAt(i, dummy.matrix);
-          });
-          instMesh.instanceMatrix.needsUpdate = true;
-          group.add(instMesh);
-        }
-      } else if (payload.foliage.kinds) {
-        const kinds = payload.foliage.kinds;
-        for (const k in kinds) {
-          const item = kinds[k];
-          if (!item) continue;
-          if (Array.isArray(item.parts) && item.parts.length) {
-            for (const part of item.parts) {
-              if (!part.count || !part.geometry || (!part.matrices && !part.transforms)) continue;
-              const geom=buildLandscapeGeometry(part.geometry,T),mat=buildLandscapeMaterial(part.material,T),instMesh=new T.InstancedMesh(geom,mat,part.count),matrix=new T.Matrix4();
-              instMesh.name=`${k}_${part.name||part.part||'foliage'}`;instMesh.userData.isLandscape=true;instMesh.frustumCulled=false;instMesh.castShadow=true;instMesh.receiveShadow=true;
-              if(part.transforms){
-                /* An open world sends position + quaternion + scale; recomposing
-                   it here is the same transform without the 6 matrix slots that
-                   were always 0,0,0,1. */
-                const transforms=decodeLandscapeArray(part.transforms,Float32Array),placed=new T.Object3D();
-                for(let i=0;i<part.count;i++){const o=i*10;placed.position.set(transforms[o],transforms[o+1],transforms[o+2]);placed.quaternion.set(transforms[o+3],transforms[o+4],transforms[o+5],transforms[o+6]);placed.scale.set(transforms[o+7],transforms[o+8],transforms[o+9]);placed.updateMatrix();instMesh.setMatrixAt(i,placed.matrix)}
-              } else {
-                const matrices=decodeLandscapeArray(part.matrices,Float32Array);
-                for(let i=0;i<part.count;i++){matrix.fromArray(matrices,i*16);instMesh.setMatrixAt(i,matrix)}
-              }
-              if(part.colors){const colors=decodeLandscapeArray(part.colors,Float32Array);instMesh.instanceColor=new T.InstancedBufferAttribute(colors,3);instMesh.instanceColor.needsUpdate=true}
-              addLandscapeWind(instMesh,payload.weather,payload.water,T);instMesh.instanceMatrix.needsUpdate=true;group.add(instMesh);
-            }
-            continue;
-          }
-          if (!item.data || item.count <= 0) continue;
-          const bstr = atob(item.data);
-          const buf = new ArrayBuffer(bstr.length);
-          const view = new Uint8Array(buf);
-          for (let i = 0; i < bstr.length; i++) view[i] = bstr.charCodeAt(i);
-          const floats = new Float32Array(buf);
-          const count = item.count;
-
-          let geom;
-          let matColor = 0x22c55e;
-          if (k === 'pine') {
-            const parts = [];
-            const trunk = new T.CylinderGeometry(0.12, 0.28, 5.2, 8).translate(0, 2.6, 0);
-            parts.push(trunk);
-            for(let tIdx=0; tIdx<7; tIdx++){
-              const rad = Math.max(0.4, 2.2 - tIdx * 0.25);
-              const cone = new T.ConeGeometry(rad, 0.9, 7, 1).translate(0, 1.8 + tIdx * 0.52, 0);
-              parts.push(cone);
-            }
-            geom = THREE.BufferGeometryUtils ? THREE.BufferGeometryUtils.mergeBufferGeometries(parts) : parts[0];
-            if(!geom) geom = new T.ConeGeometry(1.8, 5.0, 8).translate(0, 2.5, 0);
-            matColor = 0x14401e;
-          } else if (k === 'oak') {
-            geom = new T.DodecahedronGeometry(2.2, 2).translate(0, 3.8, 0);
-            matColor = 0x1e682e;
-          } else if (k === 'birch') {
-            geom = new T.DodecahedronGeometry(1.8, 2).translate(0, 4.2, 0);
-            matColor = 0x529e34;
-          } else if (k === 'palm') {
-            geom = new T.CylinderGeometry(0.18, 0.32, 5.4, 8).translate(0, 2.7, 0);
-            matColor = 0x2d7a36;
-          } else if (k === 'shrub') {
-            geom = new T.DodecahedronGeometry(0.95, 2).translate(0, 0.7, 0);
-            matColor = 0x1b5e20;
-          } else if (k === 'rock') {
-            geom = new T.DodecahedronGeometry(1.2, 2).translate(0, 0.6, 0);
-            const pos = geom.attributes.position;
-            for(let pIdx=0; pIdx<pos.count; pIdx++){
-              const x = pos.getX(pIdx), y = pos.getY(pIdx), z = pos.getZ(pIdx);
-              const n = Math.sin(x*3.2 + y*2.4)*Math.cos(z*2.8)*0.22;
-              pos.setXYZ(pIdx, x*(1+n)*1.15, y*(1+n)*0.85, z*(1+n)*1.05);
-            }
-            geom.computeVertexNormals();
-            matColor = 0x788596;
-          } else if (k === 'flower') {
-            geom = new T.DodecahedronGeometry(0.38, 1).translate(0, 0.45, 0);
-            matColor = 0xf43f5e;
-          } else if (k === 'grass') {
-            geom = new T.ConeGeometry(0.025, 0.85, 4, 1).translate(0, 0.42, 0);
-            matColor = 0x388e3c;
-          } else {
-            geom = new T.BoxGeometry(2, 3, 2).translate(0, 1.5, 0);
-            matColor = 0xcbd5e1;
-          }
-
-          const isRock = k === 'rock';
-          const isPlant = k === 'grass' || k === 'flower' || k === 'shrub';
-          const isTree = k === 'pine' || k === 'oak' || k === 'birch' || k === 'palm';
-          const bumpTex = isRock ? createProceduralNoiseTextureHost(T, 'rock') : (isTree ? createProceduralNoiseTextureHost(T, 'bark') : (isPlant ? createProceduralNoiseTextureHost(T, 'leaf') : null));
-          const bumpScale = isRock ? 0.15 : (isTree ? 0.08 : (isPlant ? 0.05 : 0.0));
-
-          const mat = new T.MeshStandardMaterial({
-            color: new T.Color(matColor),
-            roughness: isRock ? 0.92 : (isTree ? 0.82 : (isPlant ? 0.76 : 0.6)),
-            metalness: isRock ? 0.04 : 0.01,
-            bumpMap: bumpTex,
-            bumpScale: bumpScale,
-            side: T.DoubleSide
-          });
-
-          const instMesh = new T.InstancedMesh(geom, mat, count);
-          instMesh.name = `${k}_foliage`;
-          instMesh.userData.isLandscape = true;
-          instMesh.frustumCulled = false;
-          instMesh.castShadow = true;
-          instMesh.receiveShadow = true;
-
-          const dummy = new T.Object3D();
-          const baseSize = item.size || 1;
-          for (let i = 0; i < count; i++) {
-            const off = i * 7;
-            const x = floats[off];
-            const y = floats[off + 1];
-            const z = floats[off + 2];
-            const s = floats[off + 3] * baseSize;
-            const r = floats[off + 4];
-            const a = floats[off + 5] || 1;
-            dummy.position.set(x, y, z);
-            dummy.rotation.set(0, r, 0);
-            dummy.scale.set(s * a, s, s * a);
-            dummy.updateMatrix();
-            instMesh.setMatrixAt(i, dummy.matrix);
-          }
-          instMesh.instanceMatrix.needsUpdate = true;
-          group.add(instMesh);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to rebuild foliage from payload:', e);
-    }
-  }
-
-  // 4. Placed Objects
-  if (payload.objects && Array.isArray(payload.objects)) {
-    payload.objects.forEach(o => {
-      const mesh=(o.geometry||o.children?.length)?buildLandscapeNode(o,T):new T.Mesh(new T.BoxGeometry(1.5,1.5,1.5),new T.MeshStandardMaterial({color:0x818cf8,side:T.DoubleSide}));
-      mesh.name=o.name||'Object';
-      if(o.position)mesh.position.fromArray(o.position);
-      if(o.quaternion)mesh.quaternion.fromArray(o.quaternion);
-      if(o.scale)mesh.scale.fromArray(o.scale);
-      mesh.userData.isLandscape=true;mesh.userData.objectId=mesh.uuid;mesh.userData.modStack=[];mesh.castShadow=mesh.receiveShadow=true;
-      group.add(mesh);importedObjectEntries.push({id:mesh.userData.objectId,mesh});
-    });
-  }
-  if(payload.map?.node){const mapNode=buildLandscapeNode(payload.map.node,T);mapNode.name=payload.map.name||mapNode.name||'Imported Map';mapNode.userData.isLandscape=true;mapNode.userData.objectId=mapNode.uuid;mapNode.userData.modStack=[];group.add(mapNode);importedObjectEntries.push({id:mapNode.uuid,mesh:mapNode})}
-
-  if(!group.getObjectByName('Terrain Mesh'))throw new Error('The terrain mesh could not be reconstructed from the import data.');
-  const eng=FE.engines?.core;
-  if(oldGroup){
-    targetScene.background=worldRestore.background;targetScene.environment=worldRestore.environment;targetScene.fog=worldRestore.fog;oldGroup._landscapeEnvironmentTexture?.dispose?.();
-    const ids=oldGroup.userData.importedObjectIds||[];
-    ids.forEach(id=>{if(eng?.customObjects)delete eng.customObjects[id];document.getElementById('chip-'+id)?.remove()});
-    targetScene.remove(oldGroup);
-    oldGroup.traverse(object=>{object.geometry?.dispose?.();const materials=Array.isArray(object.material)?object.material:[object.material];materials.filter(Boolean).forEach(material=>{for(const key of ['map','normalMap','bumpMap','roughnessMap','metalnessMap','alphaMap','emissiveMap'])material[key]?.dispose?.();material.dispose?.()})});
-  }
-  group.userData.importedObjectIds=importedObjectEntries.map(entry=>entry.id);group.userData.importedObjectCount=importedObjectEntries.length;
-  targetScene.add(group);
-  const terrainMesh=group.getObjectByName('Terrain Mesh'),bounds=new T.Box3().setFromObject(terrainMesh||group),center=bounds.getCenter(new T.Vector3()),size=bounds.getSize(new T.Vector3());
-  applyLandscapeWorld(payload,targetScene,T,group,center,size);
-  if (eng) {
-    if (!eng.customObjects) eng.customObjects = {};
-    eng.customObjects['ImportedLandscape'] = group;
-    eng.customObjects['landscape_scene'] = group;
-    const chipContainer = document.querySelector('#studio-core .object-chips')||document.querySelector('.object-chips');
-    let landscapeChip=document.getElementById('chip-ImportedLandscape');if(!landscapeChip&&chipContainer){landscapeChip=document.createElement('button');landscapeChip.type='button';landscapeChip.className='chip';landscapeChip.id='chip-ImportedLandscape';landscapeChip.textContent='Landscape';landscapeChip.title='Select imported landscape';landscapeChip.onclick=()=>selectObject('ImportedLandscape','landscape-chip');chipContainer.appendChild(landscapeChip)}
-    importedObjectEntries.forEach(({ id, mesh }) => {
-      eng.customObjects[id] = mesh;
-      if (!chipContainer || document.getElementById('chip-' + id)) return;
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip';
-      chip.id = 'chip-' + id;
-      chip.textContent = mesh.name;
-      chip.title = 'Select this imported object independently';
-      chip.onclick = () => selectObject(id, 'imported-object');
-      chipContainer.appendChild(chip);
-    });
-
-    // Hide default cube & floor and center camera on landscape
-    if (eng.cube) eng.cube.visible = false;
-    if (eng.studioFloor) eng.studioFloor.visible = false;
-    if (eng.oc) {
-      const camera=eng.oc.object||eng.viewportCamera,distance=Math.max(size.x,size.y,size.z,30)*1.35,far=Math.max(camera?.far||1000,size.x*12,size.z*12,(payload.water?.farRadius||1400)*3);
-      if(camera){camera.far=far;camera.near=Math.min(camera.near||.1,.1);camera.updateProjectionMatrix();camera.position.copy(center).add(new T.Vector3(distance*.78,distance*.58,distance*.92));camera.lookAt(center)}
-      eng.oc.target.copy(center);eng.oc.update();
-    }
-    selectObject('ImportedLandscape','landscape-import');
-  }
-  if(typeof window!=='undefined')window.__lastLandscapeImportPayload=payload;
-  return group;
 }
 
 /* =========================================================
@@ -5991,8 +5255,6 @@ function updateLayerBarActionIcons() {
   const target = getActiveSceneTarget();
   const eyeBtn = document.getElementById('btn-toggle-visibility');
   const lockBtn = document.getElementById('btn-toggle-lock');
-  const editLandscapeBtn=document.getElementById('btn-edit-landscape'),landscapeGroup=FE.engines?.core?.sc?.getObjectByName('ImportedLandscape');
-  if(editLandscapeBtn){let node=target;while(node&&node!==landscapeGroup)node=node.parent;editLandscapeBtn.hidden=!(landscapeGroup&&node===landscapeGroup)}
 
   if (eyeBtn) {
     const isVisible = isLayerTargetVisible(target);
@@ -6199,7 +5461,7 @@ window.deleteActiveObject = deleteActiveObject;
 window.addEventListener('keydown', (e) => {
   const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
   if (activeTag === 'input' || activeTag === 'select' || activeTag === 'textarea' || document.activeElement?.isContentEditable) return;
-  if((e.ctrlKey||e.metaKey)&&(e.key.toLowerCase()==='z'||e.key.toLowerCase()==='y')){const action=e.key.toLowerCase()==='y'||e.shiftKey?'redo':'undo';e.preventDefault();e.stopPropagation();if(FE.current==='core'){const done=FE.engines?.core?.[action]?.();if(!done)FE.toast(action==='undo'?'Nothing to undo':'Nothing to redo')}else if(FE.current==='landscape'){document.getElementById('frame-landscape')?.contentWindow?.postMessage({type:'FE_HISTORY_ACTION',action},'*')}return}
+  if((e.ctrlKey||e.metaKey)&&(e.key.toLowerCase()==='z'||e.key.toLowerCase()==='y')){const action=e.key.toLowerCase()==='y'||e.shiftKey?'redo':'undo';e.preventDefault();e.stopPropagation();if(FE.current==='core'){const done=FE.engines?.core?.[action]?.();if(!done)FE.toast(action==='undo'?'Nothing to undo':'Nothing to redo')}return}
   if (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'x' || e.key === 'X') requestDeleteActiveObject();
 });
 
@@ -7147,8 +6409,8 @@ window.addEventListener('DOMContentLoaded', () => {
    one sheet in the app without one. */
 (function installSheetGrips() {
   const SHEET_IDS = [
-    'camera-sheet', 'light-sheet', 'add-3d-sheet', 'landscape-sheet',
-    'import-3d-sheet', 'modifiers-sheet', 'animation-sheet', 'edit-sheet'
+    'camera-sheet', 'light-sheet', 'add-3d-sheet',
+    'modifiers-sheet', 'animation-sheet', 'edit-sheet'
   ];
   const MAX_FRACTION = 0.92;
   const naturals = new WeakMap();
@@ -8598,8 +7860,8 @@ FE.register('core',{
     history.commitPending=key=>{const pending=history.pending;history.pending=null;return pending?commitHistory(key||pending.key,pending.state):false};
     this.history=history;this.commitHistory=commitHistory;this.undo=undoHistory;this.redo=redoHistory;this.setHistoryLimit=v=>{const n=Number(v);if(Number.isFinite(n)){history.limit=Math.min(1000,Math.max(1,Math.round(n)));trimHistoryStack(history.undo);trimHistoryStack(history.redo)}};
     const transformJSON=o=>({position:o.position.toArray(),quaternion:o.quaternion.toArray(),scale:o.scale.toArray(),visible:o.visible});
-    this.serializeAutosave=()=>{const seen=new Set(),custom=[];for(const[key,obj]of Object.entries(this.customObjects||{})){if(!obj||seen.has(obj)||obj.userData?.isLandscape)continue;seen.add(obj);try{custom.push({key,json:obj.toJSON()})}catch(error){console.warn('[Auto-save] Skipping unsupported object:',obj.name,error)}}return{version:1,studio:'core',savedAt:Date.now(),cube:this.cube?.parent===sc?this.cube.toJSON():null,custom,landscape:window.__lastLandscapeImportPayload||null,camera:{viewport:transformJSON(viewportCamera),scene:transformJSON(sceneCamera),sceneTarget:sceneCameraTarget.toArray(),orbitTarget:oc.target.toArray(),isCameraView,activeObject,shading:currentShadingMode,exposure:r.toneMappingExposure,light:this.blenderLight?{position:this.blenderLight.position.toArray(),quaternion:this.blenderLight.quaternion.toArray(),scale:this.blenderLight.scale.toArray(),visible:this.blenderLight.visible,intensity:this.blenderLight.light.intensity,color:this.blenderLight.light.color.getHex()}:null,cameraHelper:this.blenderCam?{position:this.blenderCam.position.toArray(),quaternion:this.blenderCam.quaternion.toArray(),scale:this.blenderCam.scale.toArray(),visible:this.blenderCam.visible}:null}}};
-    this.restoreAutosave=async data=>{if(!data||data.version!==1)return false;const loader=new THREE.ObjectLoader();try{if(data.cube){const restored=loader.parse(data.cube);if(restored.geometry&&restored.geometry!==cube.geometry)restored.geometry.dispose();cube.material=restored.material;cube.position.copy(restored.position);cube.quaternion.copy(restored.quaternion);cube.scale.copy(restored.scale);cube.visible=restored.visible;cube.userData=cloneHistoryData(restored.userData||{});if(cube.parent!==sc)sc.add(cube);this.cube=cube}else{sc.remove(cube);this.cube=null}for(const obj of new Set(Object.values(this.customObjects||{})))if(obj?.parent===sc&&(!obj.userData?.isLandscape||!data.landscape))sc.remove(obj);this.customObjects={};for(const item of data.custom||[]){if(!item?.json||!item.key)continue;const obj=loader.parse(item.json);sc.add(obj);this.customObjects[item.key]=obj}if(data.landscape)buildLandscapeFromPayload(data.landscape,sc,THREE);const camData=data.camera||{},applyPose=(camera,state)=>{if(!camera||!state)return;if(state.position)camera.position.fromArray(state.position);if(state.quaternion)camera.quaternion.fromArray(state.quaternion);if(state.scale)camera.scale.fromArray(state.scale);if(state.visible!==undefined)camera.visible=state.visible;camera.updateProjectionMatrix?.();camera.updateMatrixWorld(true)};applyPose(viewportCamera,camData.viewport);applyPose(sceneCamera,camData.scene);if(camData.sceneTarget)sceneCameraTarget.fromArray(camData.sceneTarget);if(camData.orbitTarget)oc.target.fromArray(camData.orbitTarget);if(camData.light){if(blenderLight.parent!==sc)sc.add(blenderLight);this.blenderLight=blenderLight;this.light=blenderLight.light;blenderLight.position.fromArray(camData.light.position||[0,0,0]);blenderLight.quaternion.fromArray(camData.light.quaternion||[0,0,0,1]);blenderLight.scale.fromArray(camData.light.scale||[1,1,1]);blenderLight.visible=camData.light.visible!==false;blenderLight.light.intensity=Number(camData.light.intensity)||0;blenderLight.light.color.setHex(camData.light.color||0xffffff)}else{sc.remove(blenderLight);this.blenderLight=null;this.light=null}if(camData.cameraHelper){if(blenderCam.parent!==sc)sc.add(blenderCam);this.blenderCam=blenderCam;blenderCam.position.fromArray(camData.cameraHelper.position||[0,0,0]);blenderCam.quaternion.fromArray(camData.cameraHelper.quaternion||[0,0,0,1]);blenderCam.scale.fromArray(camData.cameraHelper.scale||[1,1,1]);blenderCam.visible=camData.cameraHelper.visible!==false}else{sc.remove(blenderCam);this.blenderCam=null}isCameraView=!!camData.isCameraView;currentShadingMode=camData.shading||'solid';if(Number.isFinite(camData.exposure))r.toneMappingExposure=camData.exposure;const recoveredDefaultMesh=this.cube?.parent===sc?'cube':Object.keys(this.customObjects||{}).find(id=>{const obj=this.customObjects[id];return !!obj&&obj.parent===sc&&(obj.isMesh||typeof obj.getObjectByProperty==='function')})||Object.keys(this.customObjects||{})[0]||'none';activeObject=recoveredDefaultMesh;window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(activeObject,'autosave-recovery');oc.update();history.undo.length=history.redo.length=0;history.current=captureCoreState();FE.toast('Recovered last Workspace auto-save');return true}catch(error){console.error('[Auto-save recovery] Workspace restore failed:',error);FE.toast('Could not recover the last Workspace auto-save');return false}};
+    this.serializeAutosave=()=>{const seen=new Set(),custom=[];for(const[key,obj]of Object.entries(this.customObjects||{})){if(!obj||seen.has(obj))continue;seen.add(obj);try{custom.push({key,json:obj.toJSON()})}catch(error){console.warn('[Auto-save] Skipping unsupported object:',obj.name,error)}}return{version:1,studio:'core',savedAt:Date.now(),cube:this.cube?.parent===sc?this.cube.toJSON():null,custom,camera:{viewport:transformJSON(viewportCamera),scene:transformJSON(sceneCamera),sceneTarget:sceneCameraTarget.toArray(),orbitTarget:oc.target.toArray(),isCameraView,activeObject,shading:currentShadingMode,exposure:r.toneMappingExposure,light:this.blenderLight?{position:this.blenderLight.position.toArray(),quaternion:this.blenderLight.quaternion.toArray(),scale:this.blenderLight.scale.toArray(),visible:this.blenderLight.visible,intensity:this.blenderLight.light.intensity,color:this.blenderLight.light.color.getHex()}:null,cameraHelper:this.blenderCam?{position:this.blenderCam.position.toArray(),quaternion:this.blenderCam.quaternion.toArray(),scale:this.blenderCam.scale.toArray(),visible:this.blenderCam.visible}:null}}};
+    this.restoreAutosave=async data=>{if(!data||data.version!==1)return false;const loader=new THREE.ObjectLoader();try{if(data.cube){const restored=loader.parse(data.cube);if(restored.geometry&&restored.geometry!==cube.geometry)restored.geometry.dispose();cube.material=restored.material;cube.position.copy(restored.position);cube.quaternion.copy(restored.quaternion);cube.scale.copy(restored.scale);cube.visible=restored.visible;cube.userData=cloneHistoryData(restored.userData||{});if(cube.parent!==sc)sc.add(cube);this.cube=cube}else{sc.remove(cube);this.cube=null}for(const obj of new Set(Object.values(this.customObjects||{})))if(obj?.parent===sc)sc.remove(obj);this.customObjects={};for(const item of data.custom||[]){if(!item?.json||!item.key)continue;const obj=loader.parse(item.json);sc.add(obj);this.customObjects[item.key]=obj}const camData=data.camera||{},applyPose=(camera,state)=>{if(!camera||!state)return;if(state.position)camera.position.fromArray(state.position);if(state.quaternion)camera.quaternion.fromArray(state.quaternion);if(state.scale)camera.scale.fromArray(state.scale);if(state.visible!==undefined)camera.visible=state.visible;camera.updateProjectionMatrix?.();camera.updateMatrixWorld(true)};applyPose(viewportCamera,camData.viewport);applyPose(sceneCamera,camData.scene);if(camData.sceneTarget)sceneCameraTarget.fromArray(camData.sceneTarget);if(camData.orbitTarget)oc.target.fromArray(camData.orbitTarget);if(camData.light){if(blenderLight.parent!==sc)sc.add(blenderLight);this.blenderLight=blenderLight;this.light=blenderLight.light;blenderLight.position.fromArray(camData.light.position||[0,0,0]);blenderLight.quaternion.fromArray(camData.light.quaternion||[0,0,0,1]);blenderLight.scale.fromArray(camData.light.scale||[1,1,1]);blenderLight.visible=camData.light.visible!==false;blenderLight.light.intensity=Number(camData.light.intensity)||0;blenderLight.light.color.setHex(camData.light.color||0xffffff)}else{sc.remove(blenderLight);this.blenderLight=null;this.light=null}if(camData.cameraHelper){if(blenderCam.parent!==sc)sc.add(blenderCam);this.blenderCam=blenderCam;blenderCam.position.fromArray(camData.cameraHelper.position||[0,0,0]);blenderCam.quaternion.fromArray(camData.cameraHelper.quaternion||[0,0,0,1]);blenderCam.scale.fromArray(camData.cameraHelper.scale||[1,1,1]);blenderCam.visible=camData.cameraHelper.visible!==false}else{sc.remove(blenderCam);this.blenderCam=null}isCameraView=!!camData.isCameraView;currentShadingMode=camData.shading||'solid';if(Number.isFinite(camData.exposure))r.toneMappingExposure=camData.exposure;const recoveredDefaultMesh=this.cube?.parent===sc?'cube':Object.keys(this.customObjects||{}).find(id=>{const obj=this.customObjects[id];return !!obj&&obj.parent===sc&&(obj.isMesh||typeof obj.getObjectByProperty==='function')})||Object.keys(this.customObjects||{})[0]||'none';activeObject=recoveredDefaultMesh;window.sceneCube=this.cube||null;window.activeLight=this.blenderLight?.light||null;selectObject(activeObject,'autosave-recovery');oc.update();history.undo.length=history.redo.length=0;history.current=captureCoreState();FE.toast('Recovered last Workspace auto-save');return true}catch(error){console.error('[Auto-save recovery] Workspace restore failed:',error);FE.toast('Could not recover the last Workspace auto-save');return false}};
     historyCtl=history;
 
     window.sceneCube = cube;
@@ -9923,11 +9185,9 @@ function rememberSkyTexture(eng,texture){
   eng.skyTexture=texture;
   scene.userData.feSkyTexture=texture;
 }
-function applyLandscapeAwareShadingWorld(eng,fallbackColor){
+function applyShadingWorldEnvironment(eng,fallbackColor){
   const scene=eng?.sc;
   if(!scene)return;
-  const imported=scene.getObjectByName('ImportedLandscape')?._landscapeEnvironmentTexture;
-  if(imported&&(!scene.environment||scene.environment===imported)){scene.environment=imported;scene.background=imported;return}
   scene.environment=null;
   const sky=scene.userData?.feSkyTexture||eng?.skyTexture;
   scene.background=(sky&&sky.isTexture)?sky:new THREE.Color(fallbackColor);
@@ -9965,13 +9225,13 @@ function applyShadingMode(shading) {
     if (eng.d) eng.d.visible = false;
     if (eng.fillLight) eng.fillLight.visible = false;
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xffffff); eng.amb.intensity = 1.0; }
-    applyLandscapeAwareShadingWorld(eng,0x0a0b0e);
+    applyShadingWorldEnvironment(eng,0x0a0b0e);
   } else if (shading === 'solid') {
     // 2. SOLID (Blender Workbench): Clean diffuse / matcap preview for ALL models in scene
     allMeshes.forEach(mesh => {
       if(!mesh?.material)return;
       const isUltraSim=!!(mesh.userData?.solverSurface||mesh.userData?.ultraSimShader||mesh.material?.userData?.ultraSimShader||mesh.userData?.clothSim||mesh.userData?.softBodySim);
-      const preservesSurfaceColor=!!(isUltraSim||mesh.userData?.landscapeWater||mesh.userData?.isLandscape||mesh.parent?.name==='ImportedLandscape'||mesh.geometry?.attributes?.color||mesh.isInstancedMesh||mesh.userData?.isModifierHelperMesh);
+      const preservesSurfaceColor=!!(isUltraSim||mesh.geometry?.attributes?.color||mesh.isInstancedMesh||mesh.userData?.isModifierHelperMesh);
       if (isUltraSim) {
         applyShadingMaterialToMesh(mesh,{wireframe:false,side:THREE.DoubleSide});
         return;
@@ -9989,7 +9249,7 @@ function applyShadingMode(shading) {
     if (eng.d) { eng.d.visible = true; eng.d.position.set(4, 7, 5); eng.d.color.set(0xf8fafc); eng.d.intensity = 0.7; eng.d.castShadow = false; }
     if (eng.fillLight) { eng.fillLight.visible = true; eng.fillLight.intensity = 0.45; }
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xd5dbe5); eng.amb.intensity = 0.45; }
-    applyLandscapeAwareShadingWorld(eng,0x0a0b0e);
+    applyShadingWorldEnvironment(eng,0x0a0b0e);
   } else if (shading === 'material') {
     // 3. MATERIAL PREVIEW: Uses HDRI environment map / Studio lighting reflections for ALL models with cast shadows
     allMeshes.forEach(mesh => {
@@ -10040,7 +9300,7 @@ function applyShadingMode(shading) {
     if (eng.d) eng.d.visible = false;
     if (eng.fillLight) eng.fillLight.visible = false;
     if (eng.amb) { eng.amb.visible = true; eng.amb.color.set(0xffffff); eng.amb.intensity = 0.08; }
-    applyLandscapeAwareShadingWorld(eng,0x07080b);
+    applyShadingWorldEnvironment(eng,0x07080b);
   }
 
   if (activeLight?.isSpotLight) updateSpotHelper();

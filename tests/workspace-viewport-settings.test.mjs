@@ -72,5 +72,6 @@ test('the sheet offers a hard refresh so a stale installed build can update',()=
  const sw=readFileSync('sw.js','utf8');
  assert.match(sw,/const CACHE_NAME = 'final-effect-cpp-v\d+';/,'bump the cache name whenever the shipped shell changes');
  assert.ok(!sw.includes("'final-effect-cpp-v29'"),'the previous cache name must be retired, not kept alongside');
- for(const file of ['fe_core_engine.wasm','terrain-main-01.js','terrain-main-09.js','landscape-flora.js','landscape-weather.js','open-world-generator.js','open-world.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
+ for(const file of ['fe_core_engine.wasm','workspace-app.js','fe-cpp-engine.js','simulation_solver.wasm','vendor/three/three.min.js'])assert.ok(sw.includes(`'./${file}'`),`the service worker must cache ${file}`);
+ assert.ok(!sw.includes('terrain-main-')&&!sw.includes('landscape-'),'the precache list must not name the removed studio');
 });

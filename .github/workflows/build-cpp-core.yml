@@ -30,7 +30,7 @@ jobs:
         run: |
           # Build through the canonical script: it compiles *every* source file
           # and validates the required export list, so a partial source list can
-          # never ship an engine that is missing the modifier/ocean/volume ABI.
+          # never ship an engine that is missing the modifier/volume ABI.
           pip install ziglang
           python3 -m ziglang version
           node scripts/build-cpp-wasm.mjs

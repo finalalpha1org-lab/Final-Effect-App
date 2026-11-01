@@ -44,10 +44,7 @@ export function newestExisting(candidates) {
 function resolveAsset(urlPath) {
   let clean = decodeURIComponent(urlPath.split("?")[0] || "/");
   let forceDownloadName = null;
-  if (clean === "/download/Terrain-System-Standalone.html") {
-    clean = "/Terrain-System-Standalone.html";
-    forceDownloadName = "Terrain-System-Standalone.html";
-  } else if (clean === "/download/Final-Effect-3D-Standalone.html") {
+  if (clean === "/download/Final-Effect-3D-Standalone.html") {
     clean = "/Final-Effect-3D-Standalone.html";
     forceDownloadName = "Final-Effect-3D-Standalone.html";
   }

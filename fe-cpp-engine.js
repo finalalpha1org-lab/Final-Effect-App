@@ -41,12 +41,7 @@
      "unavailable". */
   const REQUIRED_KERNELS = Object.freeze({
     animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
-    ocean: ['fe_ocean_configure', 'fe_ocean_update', 'fe_ocean_resolution'],
     render: ['fe_render_trace_samples', 'fe_render_resolve_rgba8', 'fe_render_denoise', 'fe_render_update_convergence'],
-    terrain: ['fe_terrain_erode_brush', 'fe_terrain_erode_hydraulic', 'fe_erosion_begin', 'fe_erosion_step', 'fe_erosion_dirty_ptr', 'fe_lod_visible', 'fe_lod_visible_index_ptr', 'fe_lod_visible_tier_ptr'],
-    surface: ['fe_surface_pbr', 'fe_surface_detail', 'fe_water_optical'],
-    flora: ['fe_flora_tree', 'fe_flora_rock', 'fe_flora_leaf_ptr', 'fe_flora_sway_ptr', 'fe_flora_phase_ptr', 'fe_flora_lsystem', 'fe_flora_lsystem_plant'],
-    climate: ['fe_climate_at', 'fe_climate_weather', 'fe_climate_biome'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
     modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
     simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']
@@ -3131,23 +3126,6 @@
       });
     }
 
-    /* 7b. Upgrade #frame-landscape in Standalone Portable HTML mode */
-    if (typeof window.__FE_TERRAIN_STANDALONE_HTML__ === 'string' && window.__FE_TERRAIN_STANDALONE_HTML__.length > 100) {
-      const mountStandaloneTerrain = () => {
-        const frame = document.getElementById('frame-landscape');
-        if (!frame) { setTimeout(mountStandaloneTerrain, 250); return; }
-        if (frame.dataset.standaloneMounted) return;
-        frame.dataset.standaloneMounted = '1';
-        try {
-          const blob = new Blob([window.__FE_TERRAIN_STANDALONE_HTML__], { type: 'text/html' });
-          frame.src = URL.createObjectURL(blob);
-        } catch (_) {
-          frame.srcdoc = window.__FE_TERRAIN_STANDALONE_HTML__;
-        }
-      };
-      mountStandaloneTerrain();
-    }
-
     /* 8. Register PWA Service Worker cleanly (only on http/https production-compatible origins) */
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -3326,42 +3304,7 @@
       activeExp = this.exports;
     }
 
-    /* 7. Landscape bridge + ocean kernel: reports every degraded subsystem
-       instead of only the engine-side checks. */
-    t0 = performance.now();
-    try {
-      const land = typeof window !== 'undefined' ? window.FELandscapeCore : null;
-      const present = !!land;
-      const bound = !!(land && land.ready);
-      let oceanOk = false;
-      if (typeof activeExp.fe_ocean_configure === 'function' && typeof activeExp.fe_ocean_update === 'function') {
-        oceanOk = activeExp.fe_ocean_configure(32, 256, 1024, 4096, 12, 30, 7) === 0 &&
-          activeExp.fe_ocean_update(1.5, 1, 1, 3, 2) > 0 && activeExp.fe_ocean_resolution() === 32;
-      }
-      const degraded = bound && land.missing ? land.missing.length : 0;
-      /* "Where is the terrain bridge" is not a health signal: the bridge lives in
-         the Landscaping Studio frame, so on the home screen / workspace it is
-         legitimately absent and the ocean + terrain kernels below are the check. */
-      const bridgeNote = !present
-        ? 'terrain bridge runs in the Landscaping Studio frame'
-        : bound
-          ? (degraded ? `${degraded} kernel${degraded===1?'':'s'} on JS fallback: ${land.missing.join(', ')}` : 'Every terrain, Open World and ocean kernel bound')
-          : 'Terrain bridge did not bind — JS fallback active';
-      const artifactNote = this.artifact && !this.artifact.complete
-        ? `Engine artifact is stale: ${this.artifactBytes ? Math.round(this.artifactBytes / 1024) + ' KB · ' : ''}${activeExp && Object.keys(activeExp).length} exports · missing ${this.artifact.missing.slice(0, 4).join(', ')}${this.artifact.missing.length > 4 ? '…' : ''} — reload or redeploy fe_core_engine.wasm`
-        : '';
-      results.push({
-        name: 'Landscape & Ocean Kernels',
-        ok: oceanOk && (present ? bound && degraded === 0 : true),
-        detail: (oceanOk
-          ? `Wave field 32² · ${(performance.now() - t0).toFixed(2)} ms · `
-          : (artifactNote ? '' : 'Ocean kernel unavailable · ')) + (artifactNote || bridgeNote)
-      });
-    } catch (error) {
-      results.push({ name: 'Landscape & Ocean Kernels', ok: false, detail: String(error.message || error) });
-    }
-
-    /* 8. Eulerian smoke & fire core: MAC-grid transport + pressure projection
+    /* 7. Eulerian smoke & fire core: MAC-grid transport + pressure projection
        + the dual isosurface, exercised at a small grid so this row is cheap
        enough to run on a phone. There is no volume renderer yet - this row
        proves the solver runs, not that fire is visible in the viewport. */

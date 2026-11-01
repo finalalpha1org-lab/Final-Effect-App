@@ -23,12 +23,6 @@
       "short_name": "Workspace",
       "description": "Open 3D Modeling, Keyframe Animation & C++ Render Engine",
       "url": "./#/core"
-    },
-    {
-      "name": "Landscaping Studio",
-      "short_name": "Landscape",
-      "description": "Open Terrain, Ocean & Biome Studio",
-      "url": "./#/landscape"
     }
   ]
 }

@@ -18,15 +18,4 @@ await build({
   target: 'es2018',
   plugins: [globalThree],
 });
-await build({
-  entryPoints: ['src/tessendorf-ocean.mjs'],
-  outfile: 'tessendorf-ocean.js',
-  bundle: true,
-  minify: true,
-  legalComments: 'none',
-  format: 'iife',
-  globalName: 'TessendorfOceanBundle',
-  target: 'es2018',
-});
-
-console.log('Generated the modifier/ocean runtime bundles.');
+console.log('Generated the modifier runtime bundle.');

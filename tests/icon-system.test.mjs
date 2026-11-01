@@ -8,10 +8,10 @@ import vm from 'node:vm';
    a real SVG path, the renderer must be well formed, and hydration must turn a
    text node into an icon without touching code. */
 const sources = [
-  'index.html','Terrain_system_.html','simulationCore.js','fe-cpp-engine.js','worker.js',
-  'volume-atlas.js','volume-library.js','tessendorf-ocean.js','scatter-spacing.js',
-  'open-world.js','open-world-generator.js',
-  ...Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).padStart(2,'0')}.js`)
+  'index.html','simulationCore.js','fe-cpp-engine.js','worker.js',
+  'volume-atlas.js','volume-library.js','fe-icons.js','edit-mode.js','fe-taa.js',
+  'render-capture.js','render-preview.js','render-export.js','workspace-export.js',
+  'modifier-engine.js','sw.js'
 ].filter(existsSync);
 
 const ctx = {};
@@ -106,18 +106,44 @@ test('hydration swaps text emoji for icons, leaves code alone and strips <option
   assert.equal(optionText.nodeValue,'Locked','select options keep plain text');
 });
 
-test('both pages load the icon system before the app scripts',()=>{
-  for(const file of ['index.html','Terrain_system_.html']){
-    const html=readFileSync(file,'utf8');
-    const tag=/<script src="\.?\/?fe-icons\.js"><\/script>/;
-    assert.equal(html.split(tag).length-1,1,`${file} loads the icon renderer once`);
-    const iconAt=html.search(tag);
-    const firstApp=Math.min(
-      ...['simulationCore.js','terrain-main-01.js','volume-atlas.js']
-        .map(name=>html.indexOf(name)).filter(index=>index>=0)
-    );
-    assert.ok(iconAt<firstApp,`${file} loads icons before the app`);
+test('a glyph carrying the emoji variation selector still names its icon',()=>{
+  /* '🏞️' is U+1F3DE + U+FE0F. The map is keyed by the bare code point, so a
+     lookup that does not normalise silently returned null and every studio card
+     built from a table glyph fell back to the sparkle. */
+  assert.equal(FEIcons.glyphIcon('🏞️'),'landscape');
+  assert.equal(FEIcons.glyphIcon('🖼️'),'image');
+  assert.equal(FEIcons.glyphIcon(' 🏞️ '),'landscape','surrounding space is trimmed');
+  assert.equal(FEIcons.glyphIcon('nope'),null);
+  assert.equal(FEIcons.glyphIcon(''),null);
+  assert.equal(FEIcons.glyphIcon(null),null);
+
+  const html=readFileSync('index.html','utf8');
+  const sequence=/[\u{1F000}-\u{1FAFF}\u2600-\u27BF]\uFE0F/gu;
+  const seen=new Set(html.match(sequence)||[]);
+  assert.ok(seen.size>0,`the shell still ships glyph+selector pairs (${seen.size})`);
+  const missing=[...seen].filter(glyph=>!FEIcons.glyphIcon(glyph));
+  assert.deepEqual(missing,[],'no glyph with a selector is left unmapped');
+
+  /* Every studio card on the home screen is built from one of these glyphs. */
+  const table=html.slice(html.indexOf('const HOME_WORKSPACES'),html.indexOf('];',html.indexOf('const HOME_WORKSPACES')));
+  const glyphs=[...table.matchAll(/icon: '([^']+)'/g)].map(match=>match[1]);
+  assert.equal(glyphs.length,8,'the home grid lists eight workspaces');
+  for(const glyph of glyphs){
+    const name=FEIcons.glyphIcon(glyph);
+    assert.ok(name&&FEIcons.names.includes(name),`${glyph} must draw a real icon`);
   }
+});
+
+test('the shell loads the icon system before the app scripts',()=>{
+  const html=readFileSync('index.html','utf8');
+  const tag=/<script src="\.?\/?fe-icons\.js"><\/script>/;
+  assert.equal(html.split(tag).length-1,1,'index.html loads the icon renderer once');
+  const iconAt=html.search(tag);
+  const firstApp=Math.min(
+    ...['simulationCore.js','volume-atlas.js','modifier-engine.js','fe-cpp-engine.js']
+      .map(name=>html.indexOf(name)).filter(index=>index>=0)
+  );
+  assert.ok(iconAt<firstApp,'index.html loads icons before the app');
 });
 
 test('the home screen ships SVG tiles, the lock badge and the 3D Workspace name',()=>{

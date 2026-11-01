@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
 /* Solid shading used to throw the sky away. Switching to Solid (or Wireframe)
-   ran applyLandscapeAwareShadingWorld(), which set scene.environment = null —
+   ran applyShadingWorldEnvironment(), which set scene.environment = null —
    correct, Workbench has no image-based light — and then painted
    scene.background a flat dark colour, which is not correct: Blender's
    viewport keeps the world background in every shading mode. This pins the
@@ -80,7 +80,7 @@ function harness(shadingMode = 'solid') {
 test('with no sky chosen, Solid still falls back to a flat colour', () => {
   const { ctx, eng, scene } = harness('solid');
   ctx.currentShadingMode = 'solid';
-  ctx.applyLandscapeAwareShadingWorld(eng, 0x0a0b0e);
+  ctx.applyShadingWorldEnvironment(eng, 0x0a0b0e);
   assert.equal(scene.environment, null, 'Workbench has no image-based lighting');
   assert.equal(scene.background instanceof ctx.THREE.Color, true);
   assert.equal(scene.background.value, 0x0a0b0e);
@@ -92,7 +92,7 @@ test('a chosen sky is the Solid backdrop but never the Solid light', () => {
   const texture = makeTexture(ctx);
   ctx.rememberSkyTexture(eng, texture);
 
-  ctx.applyLandscapeAwareShadingWorld(eng, 0x0a0b0e);
+  ctx.applyShadingWorldEnvironment(eng, 0x0a0b0e);
   assert.equal(scene.background, texture, 'the skybox is visible in Solid');
   assert.equal(scene.environment, null, 'and it does not light the model');
   assert.equal(eng.skyTexture, texture);
@@ -104,7 +104,7 @@ test('Wireframe keeps the same backdrop rule', () => {
   ctx.currentShadingMode = 'wireframe';
   const texture = makeTexture(ctx);
   ctx.rememberSkyTexture(eng, texture);
-  ctx.applyLandscapeAwareShadingWorld(eng, 0x0a0b0e);
+  ctx.applyShadingWorldEnvironment(eng, 0x0a0b0e);
   assert.equal(scene.background, texture);
   assert.equal(scene.environment, null);
 });
@@ -122,7 +122,7 @@ test('picking an HDRI preset in Solid changes the backdrop only', () => {
   ctx.currentShadingMode = 'material';
   ctx.applyShadingMode;
   const remembered = scene.userData.feSkyTexture;
-  ctx.applyLandscapeAwareShadingWorld(eng, 0x0a0b0e);
+  ctx.applyShadingWorldEnvironment(eng, 0x0a0b0e);
   assert.equal(scene.userData.feSkyTexture, remembered);
 });
 
@@ -133,14 +133,4 @@ test('Material Preview seeds a studio sky when none was ever chosen', () => {
   ctx.applyHdriPreset('studio', true);
   assert.equal(scene.environment.isTexture, true, 'Material Preview lights from the sky');
   assert.equal(scene.background.isTexture, true);
-});
-
-test('the imported-landscape world still wins over the studio sky', () => {
-  const { ctx, eng, scene } = harness('solid');
-  const imported = makeTexture(ctx);
-  ctx.rememberSkyTexture(eng, makeTexture(ctx));
-  scene.getObjectByName = () => ({ _landscapeEnvironmentTexture: imported });
-  ctx.applyLandscapeAwareShadingWorld(eng, 0x0a0b0e);
-  assert.equal(scene.background, imported);
-  assert.equal(scene.environment, imported, 'the landscape world keeps lighting the scene');
 });

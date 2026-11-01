@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 
 const html = readFileSync('index.html', 'utf8');
 const block = /\/\* ---- FE-SHEET-GRIP ---- \*\/[\s\S]*?\/\* ---- \/FE-SHEET-GRIP ---- \*\//.exec(html)?.[0];
-const SHEET_IDS = ['camera-sheet', 'light-sheet', 'add-3d-sheet', 'landscape-sheet', 'import-3d-sheet', 'modifiers-sheet', 'animation-sheet', 'edit-sheet'];
+const SHEET_IDS = ['camera-sheet', 'light-sheet', 'add-3d-sheet', 'modifiers-sheet', 'animation-sheet', 'edit-sheet'];
 
 function makeDom(height = 480) {
   class ClassList {

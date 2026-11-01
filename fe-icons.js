@@ -346,7 +346,27 @@
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   }
 
-  const glyphIcon = (glyph) => EMOJI[glyph] || null;
+  /* A glyph in the wild is not always the bare code point the map is keyed by:
+     '🏞️' is U+1F3DE followed by the emoji variation selector (U+FE0F), and a
+     joined sequence carries U+200D / U+20E3 as well. Callers pass whatever a
+     designer typed into a table, so normalise here instead of at every call
+     site — otherwise a studio card silently falls back to a sparkle. */
+  const VARIATION_SELECTORS = /[\uFE0E\uFE0F\u200D\u20E3]/g;
+  const FIRST_EMOJI = /[\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF]|[\u{1F000}-\u{1FAFF}]/u;
+  const glyphIcon = (glyph) => {
+    if (typeof glyph !== 'string') return null;
+    const raw = glyph.trim();
+    if (!raw) return null;
+    if (EMOJI[raw]) return EMOJI[raw];
+    const base = raw.replace(VARIATION_SELECTORS, '');
+    if (EMOJI[base]) return EMOJI[base];
+    /* Last resort for a joined sequence (eye + ZWJ + speech bubble): the first
+       character that is an emoji on its own still names the intent better than
+       falling back to a sparkle. */
+    const first = base.match(FIRST_EMOJI);
+    if (first && EMOJI[first[0]]) return EMOJI[first[0]];
+    return null;
+  };
   const api = { svg, hydrate, start, glyphIcon, emoji: EMOJI, names: Object.keys(PATHS) };
   global.FEIcons = api;
   if (typeof document !== 'undefined') {
