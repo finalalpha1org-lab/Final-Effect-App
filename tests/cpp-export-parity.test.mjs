@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
+import * as THREE from 'three';
 
 /* The export path moved into C++ (cpp/src/fe_export.cpp, cpp/src/fe_volatlas.cpp).
    A kernel that disagrees with the loop it replaced is a silent export bug: the
@@ -429,4 +430,42 @@ test('the C++ library header walk reads the same variants as the JavaScript one'
   assert.throws(() => L.js.parse(broken), /bad magic/);
   assert.throws(() => L.cpp.parse(file.subarray(0, file.length - 4)), /truncated/);
   assert.throws(() => L.js.parse(file.subarray(0, file.length - 4)), /truncated/);
+});
+
+/* ---- end to end: a real geometry through the kernel into a GLB ------------- */
+
+test('a real THREE mesh bakes through the kernel into a valid GLB', () => {
+  const geometry = new THREE.SphereGeometry(1, 12, 8);
+  const matrix = new THREE.Matrix4().makeRotationY(0.6);
+  matrix.setPosition(2, -1, 0.5);
+
+  const cpp = W.cpp.bakeGeometry(geometry, matrix.elements);
+  const js = W.js.bakeGeometry(geometry, matrix.elements);
+  assertSameBaked(cpp, js, 'sphere');
+
+  const nodes = [{
+    name: 'Sphere',
+    positions: cpp.positions,
+    normals: cpp.normals,
+    uvs: cpp.uvs,
+    indices: cpp.indices,
+    vertexCount: cpp.vertexCount,
+    material: W.cpp.describeMaterial(null, 0)
+  }];
+  const glb = W.cpp.buildGLB(nodes);
+  const view = new DataView(glb.buffer, glb.byteOffset, glb.byteLength);
+  assert.equal(view.getUint32(0, true), 0x46546C67, 'glTF magic');
+  assert.equal(view.getUint32(4, true), 2, 'glTF 2.0');
+  assert.equal(view.getUint32(8, true), glb.byteLength, 'the declared length is the file length');
+
+  const jsonLength = view.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(glb.buffer, glb.byteOffset + 20, jsonLength)).trim());
+  assert.equal(json.meshes[0].primitives[0].indices !== undefined, true, 'the primitive has an index accessor');
+  assert.equal(json.accessors[0].count, cpp.vertexCount, 'the accessor counts the baked vertices');
+  assert.equal(json.meshes[0].primitives[0].mode || 4, 4, 'the primitive is triangles');
+
+  /* The same scene through the JavaScript fallback produces the same file. */
+  const jsNodes = [{ ...nodes[0], positions: js.positions, normals: js.normals, uvs: js.uvs, indices: js.indices }];
+  assert.equal(Buffer.from(W.cpp.buildGLB(jsNodes)).toString('hex'), Buffer.from(glb).toString('hex'),
+    'the C++ bake and the JavaScript bake export the same GLB');
 });
