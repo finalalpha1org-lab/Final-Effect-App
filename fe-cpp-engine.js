@@ -134,6 +134,8 @@
         this.memory = exp.memory;
         this.ready = true;
         this.loadError = null;
+        /* Cached scratch blocks belong to the instance that allocated them. */
+        this._scratch = null;
         this.artifactBytes = typeof buf === 'object' && buf ? (buf.byteLength || buf.length || 0) : 0;
         this.artifact = describeArtifact(exp, this.artifactBytes);
         if (!this.artifact.complete) {
@@ -222,6 +224,9 @@
         this.memory = inst.exports.memory;
         this.ready = true;
         this.loadError = null;
+        /* A different instance is different linear memory: every cached
+           scratch pointer now points at nothing. */
+        this._scratch = null;
         this.artifact = next;
         this.artifactSource = 'cache-busted refetch';
         inst.exports.fe_anim_reset?.();
@@ -269,6 +274,24 @@
     allocU8(length) {
       const ptr = this.exports.fe_malloc(length);
       return { ptr, view: new Uint8Array(this.memory.buffer, ptr, length) };
+    },
+
+    /* A named block of engine memory that survives between calls. The heap is a
+       bump allocator that never gives a byte back, so a kernel that is called
+       once per frame must reuse its buffer instead of asking again: the slot
+       keeps its pointer and only asks for more when the request outgrows it.
+       Never cache a view - memory growth detaches it; make views from `ptr`
+       when you need one. */
+    scratch(name, bytes) {
+      if (!this.ready || !this.exports) return { ptr: 0, length: 0 };
+      if (!this._scratch) this._scratch = new Map();
+      const wanted = Math.max(1, bytes | 0);
+      const slot = this._scratch.get(name);
+      if (slot && slot.length >= wanted) return slot;
+      const ptr = this.exports.fe_malloc(wanted);
+      const next = { ptr, length: wanted };
+      this._scratch.set(name, next);
+      return next;
     },
 
     getSlotForObjectId(objId) {

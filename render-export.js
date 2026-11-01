@@ -185,7 +185,30 @@
     return table;
   })();
 
+  /* The CRC runs over every byte of every frame in a PNG sequence, which is the
+     one part of a sequence export that is pure loop. cpp/src/fe_export.cpp owns
+     it now; crc32Software stays as the fallback and as the parity oracle. */
   function crc32(bytes) {
+    const eng = typeof globalThis !== 'undefined' ? globalThis.FECppEngine : null;
+    if (eng && eng.ready && eng.exports && eng.memory &&
+        typeof eng.exports.fe_zip_crc32 === 'function' && typeof eng.scratch === 'function') {
+      const ex = eng.exports;
+      let ptr = 0;
+      if (bytes.buffer === eng.memory.buffer) ptr = bytes.byteOffset;
+      else {
+        const slot = eng.scratch('zip-crc', bytes.length);
+        new Uint8Array(eng.memory.buffer, slot.ptr, bytes.length).set(bytes);
+        ptr = slot.ptr;
+      }
+      const out = eng.scratch('zip-crc-out', 8);
+      if (ex.fe_zip_crc32(0, ptr, bytes.length, out.ptr) === 0) {
+        return new Uint32Array(eng.memory.buffer, out.ptr, 1)[0];
+      }
+    }
+    return crc32Software(bytes);
+  }
+
+  function crc32Software(bytes) {
     let c = 0xFFFFFFFF;
     for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
     return (c ^ 0xFFFFFFFF) >>> 0;
@@ -433,6 +456,7 @@
     rangeLabel,
     createZip,
     crc32,
+    crc32Software,
     beginRecording
   };
 

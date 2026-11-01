@@ -19,7 +19,24 @@
 
   const HALTON_CACHE = new Map();
 
+  /* The sampling maths is in cpp/src/fe_render_math.cpp: the Halton sequence,
+     the per-frame jitter and the reprojection the shader performs. Each one
+     keeps its JavaScript body (*Software) as the fallback and as the oracle the
+     parity suite compares the kernel against. */
+  function engine() {
+    const eng = global.FECppEngine;
+    if (!eng || !eng.ready || !eng.exports || !eng.memory) return null;
+    if (typeof eng.exports.fe_taa_halton !== 'function' || typeof eng.scratch !== 'function') return null;
+    return eng;
+  }
+
   function halton(index, base) {
+    const eng = engine();
+    if (eng) return eng.exports.fe_taa_halton(index, base);
+    return haltonSoftware(index, base);
+  }
+
+  function haltonSoftware(index, base) {
     let i = Math.max(0, Math.floor(index));
     let f = 1, result = 0;
     while (i > 0) {
@@ -44,6 +61,18 @@
   /* Sub-pixel offset in clip-space units. The 1-based Halton index keeps the
      first frame off-centre; the amplitude is one pixel. */
   function jitter(frame, width, height) {
+    const eng = engine();
+    if (eng) {
+      const slot = eng.scratch('taa-jitter', 16);
+      if (eng.exports.fe_taa_jitter(frame, width, height, slot.ptr) === 0) {
+        const pair = new Float64Array(eng.memory.buffer, slot.ptr, 2);
+        return { x: pair[0], y: pair[1] };
+      }
+    }
+    return jitterSoftware(frame, width, height);
+  }
+
+  function jitterSoftware(frame, width, height) {
     const w = Math.max(1, width), h = Math.max(1, height);
     const index = (Math.max(0, Math.floor(frame)) % 64) + 1;
     return {
@@ -54,6 +83,25 @@
 
   /* Pure reprojection used by the shader and by the tests. */
   function projectToUv(prevViewProjection, world, out) {
+    const eng = engine();
+    if (eng) {
+      const e = prevViewProjection.elements || prevViewProjection;
+      const target = out || { x: 0, y: 0, valid: false };
+      const matrixSlot = eng.scratch('taa-matrix', 16 * 8);
+      const outSlot = eng.scratch('taa-project', 3 * 8);
+      new Float64Array(eng.memory.buffer, matrixSlot.ptr, 16).set(e);
+      if (eng.exports.fe_taa_project(matrixSlot.ptr, world.x, world.y, world.z, outSlot.ptr) === 0) {
+        const result = new Float64Array(eng.memory.buffer, outSlot.ptr, 3);
+        target.x = result[0];
+        target.y = result[1];
+        target.valid = result[2] === 1;
+        return target;
+      }
+    }
+    return projectToUvSoftware(prevViewProjection, world, out);
+  }
+
+  function projectToUvSoftware(prevViewProjection, world, out) {
     const e = prevViewProjection.elements || prevViewProjection;
     const x = world.x, y = world.y, z = world.z;
     const cx = e[0] * x + e[4] * y + e[8] * z + e[12];
@@ -309,5 +357,8 @@ void main(){
     };
   }
 
-  global.FE_TAA = { create, halton, jitter, projectToUv, shader: COMPOSITE_FRAGMENT };
+  global.FE_TAA = {
+    create, halton, jitter, projectToUv, shader: COMPOSITE_FRAGMENT,
+    haltonSoftware, jitterSoftware, projectToUvSoftware
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

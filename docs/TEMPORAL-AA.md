@@ -12,7 +12,11 @@ failure falls back to a plain `renderer.render()`.
 ## Frame
 
 1. `jitter(frame, w, h)` - Halton(2,3), 64-frame cycle, one-pixel amplitude,
-   applied to `projectionMatrix.elements[8]/[9]` (clip-space x/y).
+   applied to `projectionMatrix.elements[8]/[9]` (clip-space x/y). The sequence
+   and the reprojection below are `fe_taa_halton` / `fe_taa_jitter` /
+   `fe_taa_project` in `cpp/src/fe_render_math.cpp`; `fe-taa.js` keeps the
+   JavaScript bodies as fallbacks and `tests/cpp-export-parity.test.mjs` pins
+   the two equal.
 2. Render `scene` into `sceneTarget` (`RGBA8` + `DepthTexture`).
 3. Restore the unjittered projection immediately (`tests/taa-pass.test.mjs`
    pins this).
