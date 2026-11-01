@@ -50,7 +50,8 @@
        JavaScript fallback still runs, but the benchmark says so by name. */
     packaging: ['fe_export_bake', 'fe_export_bake_instanced', 'fe_zip_crc32',
       'fe_volatlas_pack', 'fe_volatlas_pack_library', 'fe_volatlas_sample',
-      'fe_volatlas_frame_at', 'fe_volatlas_parse_library'],
+      'fe_volatlas_frame_at', 'fe_volatlas_parse_library',
+      'fe_writer_obj_mesh', 'fe_writer_mtl_material'],
     renderMaths: ['fe_taa_halton', 'fe_taa_jitter', 'fe_taa_project',
       'fe_color_blackbody_rgb', 'fe_color_blackbody_lut']
   });
