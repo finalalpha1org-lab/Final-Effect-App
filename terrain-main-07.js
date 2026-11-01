@@ -39,10 +39,10 @@ chips([['hills','🌿 Hills'],['alpine','🏔 Alpine'],['desert','🏜 Desert'],
 G(sl('Height scale',10,80,1,hs,v=>{const f=v/hs;hs=v;for(let k=0;k<W*W;k++)H[k]*=f;upd();resnap()}),sl('Rock slope',.5,3,.1,rockT,v=>{rockT=v;upd()}),sl('Snow line',2,16,.5,snowL,v=>{snowL=v;upd()})),
 btn('🎲 Generate new terrain',()=>{water.visible=true;waterReflectionReady=false;push();gen();scatter()})],
 plants:()=>[chips([['paint','🖌 Paint mode'],['select','👆 Tap model to edit']],foliageSelectMode?'select':'paint',v=>setFoliageSelectMode(v==='select')),...foliageSelectionControls(),chips([...Object.keys(LBL).map(k=>[k,LBL[k]]),['erase','🧽 Erase']],br.kind,v=>br.kind=v),
-el(`<div class="hint">Foliage and trees keep the selected geometry at all viewing distances. ${OW.active?'Open World keeps plants chunk-local and enforces a 12,000-instance-per-species safety cap per active chunk.':'Manual placement has no fixed instance-count cap; device memory is the practical limit.'} Paint mode adds foliage without removing earlier plants. Painting only adds; use Erase to remove earlier plants. Select & edit mode edits or replaces only the tapped plant.</div>`),
+
 G(sl('Brush radius',2,20,1,br.r,v=>br.r=v),sl('Brush density',1,30,1,br.den,v=>br.den=v),sl('Shallow-water grass depth (m)',.5,3,.1,shallowBrushDepth,v=>{shallowBrushDepth=v;try{localStorage.setItem('final3d.coastalGrassDepth.v1',String(v))}catch{}}),sl('Min tree spacing (auto-scatter)',0,4,.1,br.minGap,v=>br.minGap=v)),
 G(sl('Auto-scatter density ×',1,2.5,.05,scatterDensity,v=>scatterDensity=v),sl('Grove clustering',0,1,.05,scatterClustering,v=>scatterClustering=v)),
-el(`<div class="hint">Foliage bases follow terrain; brush painting adds without removing prior plants. Manual foliage can be painted across dry terrain, including beach sand and steep slopes; grass/tall grass also paints shallow seabed up to ${shallowBrushDepth.toFixed(1)} m. Deep water stays excluded; auto-scatter stays on land. Min tree spacing applies only to auto-scatter.</div>`),...floraGrowthControls(),...plantCtl(),chips([['spring','🌱 Spring'],['summer','☀️ Summer'],['autumn','🍂 Autumn'],['winter','❄️ Winter']],season,setSeason),
+...floraGrowthControls(),...plantCtl(),chips([['spring','🌱 Spring'],['summer','☀️ Summer'],['autumn','🍂 Autumn'],['winter','❄️ Winter']],season,setSeason),
 btn(OW.active?'🌱 Add natural scatter to loaded chunks':'🌱 Auto-scatter (natural)',()=>{push();if(OW.active)OW.scatterActive();else scatter(1)}),
 btn('Clear all foliage',()=>{push();selectedFoliage=null;foliageSelectMode=false;ring.visible=false;updateFoliageGlow();if(OW.active)OW.clearAllFoliage();else for(const k in KIND){KIND[k].list=[];sync(k)}setNav();build()})],
 sky:()=>[el('<div class="hint">Day/night cycle · orbiting suns, moons and planets share this clock</div>'),chips([['cycle',SKY.cycle.on?'Auto day/night: on':'Auto day/night: off']],0,()=>{SKY.cycle.on=!SKY.cycle.on;SKY.cycle.lastUpdate=0;updSky()}),G(sl('Day length (hours)',1,168,1,SKY.cycle.length/3600,v=>{SKY.cycle.length=v*3600}),sl('Cycle speed ×',.1,5,.1,SKY.cycle.speed,v=>{SKY.cycle.speed=v}),sl('Time of day',0,24,.1,tod,v=>{tod=v;updSky()}),sl('Sun angle',0,360,5,az,v=>{az=v;updSky()}),sl('Fog',0,20,.5,fogD*1000,v=>{fogD=v/1e3;updSky()})),...lightingCtl()],
@@ -536,39 +536,12 @@ function loadGrammar(text,regrow){
   if(regrow!==false&&typeof window.__feRegrowFlora==='function')window.__feRegrowFlora(['fern','treefern']);
   return {rules:accepted,symbols:word?word.symbols:0};
 }
+/* Only the two shape sliders. The rule editor that used to sit here let one
+   rewrite the frond grammar by hand - a developer tool, not a foliage control -
+   so it is gone and the built-in grammar is the only one. */
 function floraGrowthControls(){
   const shape=floraShapeState();
-  const ta=el('<textarea class="grammar" spellcheck="false" aria-label="Fern grammar"></textarea>');
-  ta.value=floraRuleText||FLORA_DEFAULT_GRAMMAR;
-  ta.oninput=()=>{floraRuleText=ta.value};
-  const msg=el('<div class="hint" id="fe-grammar-status">One production per line · the rewrite runs in the core</div>');
-  const apply=btn('Apply grammar',()=>{
-    try{
-      const r=loadGrammar(ta.value);
-      floraRuleText=ta.value;
-      window.__feFloraRuleText=floraRuleText;
-      msg.textContent='Grammar applied · '+r.rules+' production'+(r.rules===1?'':'s')+' · '+r.symbols+' symbols after three passes';
-    }catch(error){msg.textContent=String((error&&error.message)||error)}
-    queueStudioConfigSave();
-  });
-  const reset=btn('Restore built-in grammar',()=>{
-    floraRuleText=FLORA_DEFAULT_GRAMMAR;
-    ta.value=FLORA_DEFAULT_GRAMMAR;
-    window.__feFloraRuleText=floraRuleText;
-    const f=window.FELandscapeFlora;
-    if(f&&typeof f.resetRules==='function')f.resetRules();
-    if(typeof window.__feRegrowFlora==='function')window.__feRegrowFlora(['fern','treefern']);
-    msg.textContent='Built-in frond grammar restored';
-    queueStudioConfigSave();
-  });
-  const row=el('<div class="row"></div>');
-  row.append(apply,reset);
-  return[
-    el('<div class="hint">Grown geometry · tree height and branch density rebuild the grown species; the grammar below rewrites the ferns. Foliage never repaints the ground.</div>'),
-    G(sl('Tree height ×',.5,1.8,.05,shape.height,v=>setFloraShape(v,null)),sl('Branch density ×',.4,1.6,.05,shape.density,v=>setFloraShape(null,v))),
-    el('<div class="hint">Fern grammar · symbols F X + - &amp; ^ / [ ]</div>'),
-    ta,row,msg
-  ];
+  return[G(sl('Tree height ×',.5,1.8,.05,shape.height,v=>setFloraShape(v,null)),sl('Branch density ×',.4,1.6,.05,shape.density,v=>setFloraShape(null,v)))];
 }
 window.__feLoadGrammar=loadGrammar;
 window.__feFloraDefaultGrammar=FLORA_DEFAULT_GRAMMAR;

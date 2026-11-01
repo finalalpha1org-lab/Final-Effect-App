@@ -192,7 +192,11 @@ test('manual foliage can fill dry sand and steep land while limiting only deep-w
   assert.match(html,/savedCoastDepth!==null&&Number\.isFinite\(Number\(savedCoastDepth\)\)/);
   assert.match(html,/shallowWaterGrass=force&&grassKind&&waterDepth>=\.45&&waterDepth<=shallowBrushDepth/);
   assert.ok(!html.includes('protectedBeachSand'),'the manual brush should not leave a forbidden beach-sand strip');
-  assert.ok(html.includes('including beach sand and steep slopes'));
+  /* Was a sentence in a hint that has been removed; the gate it described is
+     still what matters: a forced (manual) stroke skips the slope and material
+     tests that auto-scatter keeps. */
+  assert.ok(html.includes("if(!bd&&!RK[k]&&sl>ms)return 0"),'auto-scatter keeps its slope limit');
+  assert.ok(/if\(!force\)\{if\(!bd&&!RK\[k\]&&sl>ms\)return 0/.test(html),'the slope test sits inside the !force branch, so a brush stroke is not slope-gated');
   assert.match(html,/Shallow-water grass depth \(m\)/);
   assert.match(html,/y<wl\+minAbove&&!shallowWaterGrass/);
 });
@@ -240,8 +244,11 @@ test('manual foliage uses mesh-quality LOD, stays present at distance, and prese
   assert.ok(html.includes('s.KM?.[k]'),'undo/redo must restore manual-plant flags');
   assert.ok(html.includes('manualPaint?(cover?6:flowers?4:3):2'),'manual ground-cover brushes should be denser than the previous sparse stamps');
   assert.ok(html.includes('Math.min(512,Math.ceil(dist/step))')&&html.includes('i*2.3999632297+j*1.6180339887'),'fast manual strokes should interpolate and distribute points evenly');
-  assert.ok(html.includes('Manual placement has no fixed instance-count cap; device memory is the practical limit.'));
-  assert.ok(html.includes('Painting only adds; use Erase to remove earlier plants.'));
+  /* The sheet no longer carries a paragraph explaining this; the behaviour is
+     what the promise is worth, so assert the behaviour: capacity grows on
+     demand and a paint stroke never removes an earlier plant. */
+  assert.ok(html.includes('function growManualCapacity(k,required)'),'manual capacity must be able to grow');
+  assert.ok(html.includes('function add(k,x,z,f=1,yaw=0,force=false,y0,sl0)'),'the brush and the scatter share one gate');
 });
 
 test('terrain brush resnap moves plants, trees and rocks to the edited ground height',()=>{

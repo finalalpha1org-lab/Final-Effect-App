@@ -47,6 +47,9 @@ Object.assign(SM,{spruce:1,krumm:1,juniper:.9,saguaro:1,barrel:1,prickly:1,acaci
 Object.assign(RATE,{spruce:.12,krumm:.12,juniper:.2,saguaro:.05,barrel:.12,prickly:.1,acacia:.05,joshua:.06,agave:.12,sage:.25,sandrock:.12,basalt:.14,deadtree:.08,ashbush:.2,treefern:.1,fern:.3});
 const FP={pine:2.4,oak:4.4,birch:2.4,palm:3.5,shrub:1,rock:1.1,spruce:1.9,krumm:1.5,juniper:1.8,saguaro:2.2,barrel:.6,prickly:1.2,acacia:5.4,joshua:2.4,agave:1.2,sage:.9,sandrock:1.1,basalt:1.1,deadtree:1.8,ashbush:.9,treefern:1.9};
 const SPACING_KINDS=new Set(['pine','oak','birch','palm','shrub','spruce','krumm','juniper','saguaro','barrel','prickly','acacia','joshua','agave','sage','deadtree','ashbush','treefern','fern']);
+/* Species that are trees: they carry the wood, and a biome's table is what
+   decides which of them grow there. */
+const TREE_SET=new Set(['pine','oak','birch','palm','spruce','krumm','juniper','acacia','joshua','deadtree','treefern']);
 /* Kinds that hold a real crown above the ground. They compete canopy-to-canopy;
    everything else (shrub, fern, boulder, cactus) competes trunk-to-trunk and can
    therefore grow in the shade of a tree, which is where it belongs. */
@@ -62,8 +65,8 @@ function occAdd(x,z,crown,type,trunk){const k=ockey(Math.floor(x/OCS),Math.floor
 function occRebuild(){OCC=new Map();for(const k in FP){const K=KIND[k];if(K)K.list.forEach(o=>occAdd(o.x,o.z,FP[k]*o.s*K.size,k,TRUNK[k]||FP[k]*K.size*.35))}for(const q in BLD){const K=KIND[q];if(K)K.list.forEach(o=>occAdd(o.x,o.z,BLD[q],q,BLD[q]*.8))}}
 function occBlocked(x,z,crown,k,gap=0,trunk=0){const cx=Math.floor(x/OCS),cz=Math.floor(z/OCS),m=Math.ceil((crown+6+gap)/OCS),tree=CANOPY.has(k);for(let i=-m;i<=m;i++)for(let j=-m;j<=m;j++){const a=OCC.get(ockey(cx+i,cz+j));if(a)for(let t=0;t<a.length;t+=5){const dx=a[t]-x,dz=a[t+1]-z,treePair=tree&&CANOPY.has(a[t+3]);if(ScatterSpacing.plantClash(dx,dz,crown,trunk,a[t+2],a[t+4],treePair,gap))return true}}return false}
 const RK={rock:1,sandrock:1,basalt:1},NT={saguaro:1,barrel:1,prickly:1},PATCH={pine:1,oak:1,birch:1,spruce:1,deadtree:1},TL={spruce:-1,krumm:.5,juniper:1.5};
-const BSP={hills:['grass','tallgrass','flower','daisy','tulip','lavender','pine','oak','birch','palm','shrub','rock'],alpine:['grass','tallgrass','flower','daisy','lavender','spruce','krumm','juniper','rock'],desert:['grass','tallgrass','daisy','tulip','lavender','sage','saguaro','barrel','prickly','acacia','joshua','agave','palm','flower','sandrock','rock'],volc:['grass','tallgrass','flower','daisy','tulip','lavender','fern','treefern','deadtree','ashbush','basalt','rock']};
-const BTAB={hills:[['grass',.60],['flower',.09],['tallgrass',.09],['daisy',.035],['tulip',.02],['lavender',.025],['pine',.03],['oak',.05],['birch',.025],['palm',.05],['shrub',.16],['rock',.008]],alpine:[['grass',.48],['flower',.07],['tallgrass',.08],['daisy',.02],['lavender',.025],['spruce',.11],['krumm',.05],['juniper',.12],['rock',.035]],desert:[['grass',.30],['tallgrass',.05],['daisy',.015],['tulip',.01],['lavender',.01],['sage',.2],['saguaro',.02],['barrel',.03],['prickly',.05],['acacia',.02],['joshua',.02],['agave',.06],['palm',.03],['flower',.02],['sandrock',.04],['rock',.02]],volc:[['grass',.12],['tallgrass',.06],['flower',.01],['daisy',.01],['tulip',.01],['lavender',.02],['fern',.1],['treefern',.04],['deadtree',.05],['ashbush',.1],['basalt',.12],['rock',.025]]};
+const BSP={hills:['grass','tallgrass','flower','daisy','tulip','lavender','pine','oak','birch','palm','shrub','rock'],alpine:['grass','tallgrass','flower','daisy','lavender','spruce','krumm','juniper','rock'],desert:['grass','tallgrass','daisy','tulip','lavender','sage','saguaro','barrel','prickly','acacia','joshua','agave','palm','flower','sandrock','rock'],volc:['grass','tallgrass','flower','daisy','tulip','lavender','fern','treefern','deadtree','pine','juniper','ashbush','basalt','rock']};
+const BTAB={hills:[['grass',.60],['flower',.09],['tallgrass',.09],['daisy',.035],['tulip',.02],['lavender',.025],['pine',.03],['oak',.05],['birch',.025],['palm',.05],['shrub',.16],['rock',.008]],alpine:[['grass',.48],['flower',.07],['tallgrass',.08],['daisy',.02],['lavender',.025],['spruce',.11],['krumm',.05],['juniper',.12],['rock',.035]],desert:[['grass',.30],['tallgrass',.05],['daisy',.015],['tulip',.01],['lavender',.01],['sage',.2],['saguaro',.02],['barrel',.03],['prickly',.05],['acacia',.02],['joshua',.02],['agave',.06],['palm',.03],['flower',.02],['sandrock',.04],['rock',.02]],volc:[['grass',.12],['tallgrass',.06],['flower',.01],['daisy',.01],['tulip',.01],['lavender',.02],['fern',.1],['treefern',.04],['deadtree',.05],['pine',.03],['juniper',.02],['ashbush',.1],['basalt',.12],['rock',.025]]};
 const LBL={grass:'🌿 Grass',tallgrass:'🌾 Tall Grass',flower:'🌼 Flowers',daisy:'🌼 Daisy',tulip:'🌷 Tulip',lavender:'💜 Lavender',pine:'🌲 Pine',oak:'🌳 Oak',birch:'🌿 Birch',palm:'🌴 Palm',shrub:'🪴 Shrubs',rock:'🪨 Rocks',spruce:'🌲 Spruce',krumm:'🌲 Mountain pine',juniper:'🪴 Juniper',saguaro:'🌵 Saguaro',barrel:'🌵 Barrel cactus',prickly:'🌵 Prickly pear',acacia:'🌳 Acacia',joshua:'🌴 Joshua tree',agave:'🪴 Agave',sage:'🪴 Sage',sandrock:'🪨 Sandstone',deadtree:'🪵 Burnt tree',treefern:'🌴 Tree fern',fern:'🌿 Fern',ashbush:'🪴 Ash shrub',basalt:'🪨 Basalt'};
 const GT0={hills:[1,1,1],alpine:[.88,1,.95],desert:[1.55,1.25,.6],volc:[.75,.8,.7]};
 Object.assign(BIO,{jungle:{p:[[.12,.34,.1],[.2,.2,.12],[.34,.34,.34],[.55,.5,.36],[.92,.94,.98]],s:60,v:1},taiga:{p:[[.13,.26,.11],[.26,.22,.15],[.3,.3,.32],[.5,.49,.45],[.92,.95,1]],s:36,v:.85},tundra:{p:[[.36,.4,.28],[.32,.28,.22],[.4,.4,.42],[.6,.56,.48],[.95,.96,1]],s:20,v:.4}});
@@ -302,7 +305,13 @@ function plantAt(p,from=null){if(br.kind=='erase'){const dx=from?p.x-from.x:0,dz
 const k=br.kind,manualPaint=bt=='plants',cover=['grass','tallgrass'].includes(k),flowers=['flower','daisy','tulip','lavender'].includes(k),n=Math.max(1,Math.round(br.den*RATE[k]))*(manualPaint?(cover?6:flowers?4:3):2);if(!manualPaint)occRebuild();const dx=from?p.x-from.x:0,dz=from?p.z-from.z:0,dist=Math.hypot(dx,dz),step=manualPaint?Math.max(.12,Math.min(.55,br.r*.14)):Math.max(.25,Math.min(1,br.r*.18)),samples=manualPaint&&from?Math.max(1,Math.min(512,Math.ceil(dist/step))):1;
 for(let j=0;j<samples;j++){const u=from?(j+.5)/samples:1,cx=from?from.x+dx*u:p.x,cz=from?from.z+dz*u:p.z;for(let i=0;i<n;i++){const a=manualPaint?i*2.3999632297+j*1.6180339887+(R()-.5)*.12:R()*6.283,d=manualPaint?br.r*Math.sqrt((i+.5)/n)*(.96+R()*.08):Math.sqrt(R())*br.r;add(k,cl(cx+Math.cos(a)*d,-S/2+.05,S/2-.05),cl(cz+Math.sin(a)*d,-S/2+.05,S/2-.05),1.7,cityAng,manualPaint)}}if(BLD[k])for(const q in KIND)if(!BLD[q]){const Q=KIND[q],n0=Q.list.length;Q.list=Q.list.filter(o=>Math.hypot(o.x-p.x,o.z-p.z)>br.r);if(Q.list.length!=n0)sync(q)}sync(k)}
 
-function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debClear();occRebuild();const density=cl(scatterDensity,1,2.5),big=BTAB[biome].filter(([n])=>FP[n]>=1.8),bw=big.reduce((a,[,w])=>a+w,0),ph=n=>RK[n]?0:FP[n]>=.9?1:2,smallBudget=36000*density,grassMixBonus=Math.round(36000*density),tallGrassMixBonus=Math.round(42000*density),wildflowerMixBonus=Math.round(7000*density),flowers=new Set(['flower','daisy','tulip','lavender']),coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1,tab=BTAB[biome].filter(([n])=>!(FP[n]>=1.8)).map(([n,w])=>[n,Math.round(smallBudget*w*coverBoost(n))+(n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0)]).sort((a,b)=>ph(a[0])-ph(b[0]));
+function scatter(kb){for(const k in KIND)if(!(kb&&BLD[k]))KIND[k].list=[];debClear();occRebuild();const density=cl(scatterDensity,1,2.5),
+ /* The tree budget belongs to the trees of this biome, not to whatever happens
+    to clear a footprint threshold: alpine holds only a spruce that way, and the
+    mountain pine and the juniper - the two species that make an alpine slope
+    read as alpine - were being paid for out of the shrub budget. Whatever the
+    biome table lists under TREE_SET gets a tree's share of the budget. */
+ big=BTAB[biome].filter(([n])=>TREE_SET.has(n)),bw=big.reduce((a,[,w])=>a+w,0),ph=n=>RK[n]?0:FP[n]>=.9?1:2,smallBudget=36000*density,grassMixBonus=Math.round(36000*density),tallGrassMixBonus=Math.round(42000*density),wildflowerMixBonus=Math.round(7000*density),flowers=new Set(['flower','daisy','tulip','lavender']),coverBoost=n=>n==='grass'?3.1:n==='tallgrass'?3.2:flowers.has(n)?4:1,tab=BTAB[biome].filter(([n])=>!TREE_SET.has(n)).map(([n,w])=>[n,Math.round(smallBudget*w*coverBoost(n))+(n==='grass'?grassMixBonus:n==='tallgrass'?tallGrassMixBonus:flowers.has(n)?wildflowerMixBonus:0)]).sort((a,b)=>ph(a[0])-ph(b[0]));
 const bigCount=Math.round(36000*bw*5*density),SCBUF=new Float32Array(SCATTER_BATCH*4);
 let uploaded=false;const pickBig=()=>{let r=R()*bw,k=big[0][0];for(const[n,w]of big){if(r<w){k=n;break}r-=w}return k};
 const COVER_KINDS=new Set(['grass','tallgrass','flower','daisy','tulip','lavender']);
@@ -686,7 +695,12 @@ function sync(k,allInstances=false){
    if(visOrder===null&&lodTiers&&lodTiers[sourceIndex]<0)continue;
    const o=K.list[sourceIndex];
    const nv=m.userData.vn;
-   if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)return;
+   /* A species has three geometry variants and every instance belongs to one of
+      them. This used to `return`, which leaves the whole forEach callback: the
+      mesh drew the leading run of instances that happened to match its variant
+      and then stopped, so a wood of 32 trees put four of them on screen. It has
+      to skip this instance and keep walking the list. */
+   if(nv&&((hh(o.x*1.7,o.z*2.3)*997)|0)%nv!=m.userData.vi)continue;
    let h2,h3,s,bw,rootSink;
    if(lay){const l=sourceIndex*5;h2=lay[l+3];h3=lay[l+4];s=lay[l];bw=lay[l+1];rootSink=lay[l+2]}
    else{

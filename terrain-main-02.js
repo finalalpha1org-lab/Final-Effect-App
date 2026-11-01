@@ -624,22 +624,25 @@ function applyGrownPlants(only) {
 }
 window.__feGrownPlants = applyGrownPlants;
 
-function buildEager(){mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:grassLowG}]],false);
-mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false);
-mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:tallGrassLowG}]],false);
-mk('daisy',14000,flowerParts('daisy'),false);
-mk('tulip',12000,flowerParts('tulip'),false);
-mk('lavender',12000,flowerParts('lavender'),false);
-mk('pine',2000,TV(pineTree,{map:BT.pine,w:.0016,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.pine,ns:.55,rm:BR.pine},{map:NDT,cut:.35,ds:1,phys:1,nm:LEAF_PBR.needle.nm,ns:.3,rm:LEAF_PBR.needle.rm,roughness:.76,w:.0016,wf:.02}),true);
-mk('oak',1500,TV3(treeBuilder('oak',oakTreeJs,3),{map:BT.oak,w:.0015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak},{map:OAKL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.oak.nm,ns:.28,rm:LEAF_PBR.oak.rm,roughness:.78,w:.0015,wf:.03,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0015,wf:.03,fx:'b',nt:1}),true);
-mk('birch',1500,TV3(treeBuilder('birch',birchTreeJs,3),{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true);
-mk('palm',1000,TV(palmTree,{map:BT.palm,w:.002,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.palm,ns:.55,rm:BR.palm},{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.0025,wf:.03}),true);
-mk('shrub',4000,TV3(treeBuilder('shrub',shrubTreeJs,3),{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true);
-mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),Object.assign(ROCKMAT('granite'),{vi:v,vn:3})]),true);KIND.rock.vr=.7;
-mk('house',1500,[...[0,1,2].flatMap(v=>[[houseW,{pbr:HTV[v][2],map:HTV[v][0],em:HTV[v][1],bump:.5,vi:v,vn:3,sn:1,part:'wall'}],[houseR,{std:1,map:RFV[v],ds:1,bump:.8,vi:v,vn:3,sn:1,part:'roof'}]]),[houseB,{nt:1,sn:1,part:'base'}]],true);
-mk('block',500,[[blockW,{pbr:AT[2],map:AT[0],em:AT[1],bump:.5,sn:1,part:'shell'}],[blockB,{nt:1,sn:1,part:'base'}]],true);
-mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[midB,{nt:1,sn:1,part:'base'}]],true);
-mk('tower',250,[[towerW,{pbr:GT[2],map:GT[0],em:GT[1],bump:.4,sn:1,part:'shell'}],[towerB,{nt:1,sn:1,part:'base'}]],true);
+/* Each eager species builds in its own guard (safeSpecies, terrain-main-01.js):
+   one bad geometry can no longer empty the catalogue. */
+function safe(n,max,build){return safeSpecies(n,max,/^(pine|oak|birch|palm|shrub|rock|house|block|mid|tower)$/.test(n),build)}
+function buildEager(){safe('grass',105000,()=>mk('grass',105000,[[grassG,{std:1,ds:1,w:.11,fx:'gl',tk:25,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:grassLowG}]],false));
+safe('flower',24000,()=>mk('flower',24000,[[stemG,{phys:1,roughness:.8,w:.09,nt:1,fx:'S',tk:25}],[fleafG,{map:LFT,cut:.3,ds:1,phys:1,nm:LEAF_PBR.generic.nm,ns:.32,rm:LEAF_PBR.generic.rm,roughness:.78,w:.09,fx:'S',tk:25}],[petG,{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.18,rm:LEAF_PBR.petal.rm,roughness:.74,clearcoat:.07,w:.09,pal:PALF,fx:'S',tk:25}],[centG,{phys:1,roughness:.72,w:.09,nt:1,fx:'S',tk:25}]],false));
+safe('tallgrass',80000,()=>mk('tallgrass',80000,[[tallGrassG,{std:1,ds:1,w:.14,fx:'gl',tk:22,map:BLADE.albedo,nm:BLADE.normal,ns:.55,lodGeom:tallGrassLowG}]],false));
+safe('daisy',14000,()=>mk('daisy',14000,flowerParts('daisy'),false));
+safe('tulip',12000,()=>mk('tulip',12000,flowerParts('tulip'),false));
+safe('lavender',12000,()=>mk('lavender',12000,flowerParts('lavender'),false));
+safe('pine',2000,()=>mk('pine',2000,TV(pineTree,{map:BT.pine,w:.0016,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.pine,ns:.55,rm:BR.pine},{map:NDT,cut:.35,ds:1,phys:1,nm:LEAF_PBR.needle.nm,ns:.3,rm:LEAF_PBR.needle.rm,roughness:.76,w:.0016,wf:.02}),true));
+safe('oak',1500,()=>mk('oak',1500,TV3(treeBuilder('oak',oakTreeJs,3),{map:BT.oak,w:.0015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak},{map:OAKL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.oak.nm,ns:.28,rm:LEAF_PBR.oak.rm,roughness:.78,w:.0015,wf:.03,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0015,wf:.03,fx:'b',nt:1}),true));
+safe('birch',1500,()=>mk('birch',1500,TV3(treeBuilder('birch',birchTreeJs,3),{map:BT.birch,w:.0022,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.birch,ns:.55,rm:BR.birch},{map:BIRL,cut:.38,ds:1,phys:1,nm:LEAF_PBR.birch.nm,ns:.26,rm:LEAF_PBR.birch.rm,roughness:.78,w:.0022,wf:.04,fx:'sa'},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.0022,wf:.04,fx:'b',nt:1}),true));
+safe('palm',1000,()=>mk('palm',1000,TV(palmTree,{map:BT.palm,w:.002,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.palm,ns:.55,rm:BR.palm},{map:LLT,cut:.32,ds:1,phys:1,nm:LEAF_PBR.palm.nm,ns:.25,rm:LEAF_PBR.palm.rm,roughness:.76,w:.0025,wf:.03}),true));
+safe('shrub',4000,()=>mk('shrub',4000,TV3(treeBuilder('shrub',shrubTreeJs,3),{map:BT.oak,w:.015,nt:1,phys:1,roughness:.9,clearcoat:.035,nm:BN.oak,ns:.55,rm:BR.oak,tk:8},{map:SHRL,cut:.35,ds:1,phys:1,nm:LEAF_PBR.shrub.nm,ns:.28,rm:LEAF_PBR.shrub.rm,roughness:.8,w:.015,wf:.025,fx:'sa',tk:8},{map:PTT,cut:.14,ds:1,phys:1,nm:LEAF_PBR.petal.nm,ns:.2,rm:LEAF_PBR.petal.rm,roughness:.67,clearcoat:.15,w:.015,wf:.025,fx:'b',nt:1,tk:8}),true));
+safe('rock',1000,()=>mk('rock',1000,[0,1,2].map(v=>[rockBuilder(),Object.assign(ROCKMAT('granite'),{vi:v,vn:3})]),true));KIND.rock.vr=.7;
+safe('house',1500,()=>mk('house',1500,[...[0,1,2].flatMap(v=>[[houseW,{pbr:HTV[v][2],map:HTV[v][0],em:HTV[v][1],bump:.5,vi:v,vn:3,sn:1,part:'wall'}],[houseR,{std:1,map:RFV[v],ds:1,bump:.8,vi:v,vn:3,sn:1,part:'roof'}]]),[houseB,{nt:1,sn:1,part:'base'}]],true));
+safe('block',500,()=>mk('block',500,[[blockW,{pbr:AT[2],map:AT[0],em:AT[1],bump:.5,sn:1,part:'shell'}],[blockB,{nt:1,sn:1,part:'base'}]],true));
+safe('mid',400,()=>mk('mid',400,[[midW,{pbr:OT[2],map:OT[0],em:OT[1],bump:.5,sn:1,part:'shell'}],[midB,{nt:1,sn:1,part:'base'}]],true));
+safe('tower',250,()=>mk('tower',250,[[towerW,{pbr:GT[2],map:GT[0],em:GT[1],bump:.4,sn:1,part:'shell'}],[towerB,{nt:1,sn:1,part:'base'}]],true));
 ['house','block','mid','tower'].forEach(k=>KIND[k].vr=.08);}
 buildEager();
 /* The kernel may already be up (embedded base64); if not, the load callback
@@ -648,7 +651,11 @@ try{applyGrownPlants()}catch(e){showErr('Grown plants: '+e.message)}
 try{applyGrownBuildings()}catch(e){showErr('Grown buildings: '+e.message)}
 const SX=(fn,o)=>[0,1,2].map(v=>[fn(),{...o,vi:v,vn:3}]);
 const LZTK={sage:8,ashbush:8,juniper:8,krumm:3,agave:8,fern:12,treefern:2.5};
-function lazyBuild(k){const[max,fn]=LZREG[k],parts=fn();parts.forEach(p=>{p[1].tk=LZTK[k]||1});mk(k,max,parts,true);KIND[k].vr=.35;KIND[k].tint=kt(k);if(mode=='wire')shade();
+function lazyBuild(k){const[max,fn]=LZREG[k];let parts=null;
+ try{parts=fn()}catch(e){console.warn('Species '+k+' geometry failed:',(e&&e.message)||e)}
+ if(!parts||!parts.length){try{parts=basicSpecies(k)}catch(e){parts=null}}
+ if(!parts||!parts.length)return null;
+ try{parts.forEach(p=>{p[1].tk=LZTK[k]||1});mk(k,max,parts,true)}catch(e){console.warn('Species '+k+' meshes failed:',(e&&e.message)||e);return null}KIND[k].vr=.35;KIND[k].tint=kt(k);if(mode=='wire')shade();
  /* Palm, saguaro and barrel are lazy species: their instanced meshes only
     exist once the studio asks for them, so the grown mesh is swapped in here
     rather than at boot. */

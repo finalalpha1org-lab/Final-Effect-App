@@ -646,13 +646,15 @@ test('the sheet validates grammar text before anything reaches the kernel', () =
   for (const bad of ['', 'X F F', 'G -> FF', 'X -> FG', 'XY -> FF', 'X -> ']) {
     assert.throws(() => parse(bad), /./, `"${bad}" must be refused`);
   }
-  /* The panel ships the editor, both actions and the two shape sliders. */
-  assert.match(panel, /textarea class="grammar"/, 'the sheet has a rule editor');
-  assert.match(panel, /Apply grammar/, 'and an explicit apply action');
-  assert.match(panel, /Restore built-in grammar/, 'and a way back');
+  /* The rule editor was a developer tool and has been taken out of the sheet -
+     the parser below stays, because the stored rules and the kernel still speak
+     this format. The sheet keeps the two shape sliders a user actually asked
+     for, and changing one still rebuilds the grown species. */
+  assert.ok(!panel.includes('textarea class="grammar"'), 'the rule editor is gone from the sheet');
+  assert.ok(!panel.includes('Apply grammar'), 'and so are its actions');
   assert.match(panel, /sl\('Tree height ×'/, 'tree height is a runtime control');
   assert.match(panel, /sl\('Branch density ×'/, 'so is branch density');
-  assert.match(panel, /__feRegrowFlora/, 'applying a control rebuilds the grown species');
+  assert.match(panel, /__feRegrowFlora/, 'changing a control rebuilds the grown species');
 });
 
 test('a shape change rebuilds the grown species a few at a time, never all at once', () => {
