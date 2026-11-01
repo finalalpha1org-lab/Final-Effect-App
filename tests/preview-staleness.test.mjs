@@ -49,8 +49,8 @@ test('a file that only exists in one place is still served', () => {
 test('the server resolves a real page from the repository', () => {
   /* The shipped page and the artifact both have to resolve, whichever copy is
      newest, and an import of the module must not take a port. */
-  const html = newestExisting(['build/client/Terrain_system_.html', 'Terrain_system_.html']);
+  const html = newestExisting(['build/client/index.html', 'index.html']);
   const wasm = newestExisting(['build/client/fe_core_engine.wasm', 'fe_core_engine.wasm']);
-  assert.ok(html && html.endsWith('Terrain_system_.html'));
+  assert.ok(html && html.endsWith('index.html'));
   assert.ok(wasm && wasm.endsWith('fe_core_engine.wasm'));
 });

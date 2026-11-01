@@ -22,40 +22,22 @@ is the contract below.
 | Group | Exports checked |
 | --- | --- |
 | `animation` | `fe_anim_insert_keyframe`, `fe_anim_evaluate_channel`, `fe_anim_bake_samples` |
-| `ocean` | `fe_ocean_configure`, `fe_ocean_update`, `fe_ocean_resolution` |
-| `terrain` | `fe_terrain_erode_brush`, `fe_terrain_erode_hydraulic`, `fe_erosion_begin`, `fe_erosion_step`, `fe_erosion_dirty_ptr`, `fe_lod_visible`, `fe_lod_visible_index_ptr`, `fe_lod_visible_tier_ptr` |
-| `lod` | `fe_lod_tree_build`, `fe_lod_tree_cull`, `fe_lod_tree_index_ptr`, `fe_lod_tree_tier_ptr`, `fe_lod_tree_stats_ptr`, `fe_lod_tree_pool_ptr` |
-| `impostor` | `fe_impostor_build`, `fe_impostor_pixels_ptr`, `fe_impostor_bounds_ptr`, `fe_impostor_column` |
-| `surface` | `fe_surface_pbr`, `fe_surface_detail`, `fe_water_optical` |
-| `flora` | `fe_flora_tree`, `fe_flora_rock`, `fe_flora_card_pos_ptr`, `fe_flora_card_idx_ptr`, `fe_flora_part_ptr`, `fe_flora_leaf_ptr`, `fe_flora_sway_ptr`, `fe_flora_phase_ptr`, `fe_flora_lsystem`, `fe_flora_lsystem_load`, `fe_flora_lsystem_run`, `fe_flora_lsystem_reset`, `fe_flora_lsystem_plant`, `fe_flora_set_shape`, `fe_build`, `fe_build_kind_count` |
-| `climate` | `fe_climate_at`, `fe_climate_weather`, `fe_climate_biome`, `fe_climate_biome_grid` |
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 
-The shipped build is `1936862` bytes, ABI v1, **423 exports**; every group above
-is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
+The shipped build is `1000920` bytes, ABI v1, **256 exports**; every group above
+is satisfied, so `artifact.complete` is `true` and all seven benchmark rows pass.
 
 Twenty of the exports are the rig (`cpp/src/fe_skin.cpp`): `fe_skin_begin`,
 `fe_skin_solve`, `fe_skin_deform`, `fe_skin_auto_weights`, the pointer getters
 and `fe_skin_bind_from_pose`. They are documented in `docs/SKELETON.md`.
 
-Three more are the chunk-normal helper (`fe_grid_normals`, `fe_grid_height_ptr`,
-`fe_grid_normal_ptr`, in `cpp/src/fe_landscape.cpp`): a streamed open-world tile
-recomputes its shading normals on every brush stroke, and the kernel runs the
-same central difference the root terrain uses so the two shade alike.
-
-Five of the exports are not a kernel group: `fe_scatter_begin`,
-`fe_scatter_matrices`, `fe_scatter_order_ptr`, `fe_scatter_aux_ptr` and
-`fe_scatter_terrain` are the instance-transform block the studio fills every
-time a camera pan settles. They are documented in `docs/PERFORMANCE.md`.
-
 ## Memory: you pay for the studios you open
 
-The artifact boots in **86.6 MiB** of linear memory. It used to boot in 169.4,
+The artifact boots in **52.9 MiB** of linear memory. It used to boot in 169.4,
 because every kernel kept its working set in BSS whether or not anything used
-it — and the kernel worker, whose only job is baking a 64x128 impostor atlas,
-reserved a second copy of all of it.
+it.
 
 Those buffers now come from `fe::heap` (`cpp/include/fe_heap.hpp`,
 `cpp/src/fe_heap.cpp`): a bump allocator that starts at `__heap_base` and grows
@@ -68,9 +50,7 @@ filled, so an allocation never has to be cleared, and a pointer never moves.
 | Surface-reconstruction grid (97³ × 4) | 14.6 MiB | on the first liquid mesh |
 | Smoke solver (40³ lattice) | 9.5 MiB | on `fe_vol_init` |
 | Edit Mode undo pool | 6.0 MiB | on the first Edit Mode snapshot |
-| Surface detail map (512²) | 4.0 MiB | on the requested size |
-| Ocean FFT cascades (3 × 256²) | 10.8 MiB | on `fe_ocean_configure` |
-| **Boot** | **169.4 MiB** | **86.6 MiB** |
+| **Boot** | **169.4 MiB** | **52.9 MiB** |
 
 `fe_heap_lazy_used()` reports what has been handed out and
 `fe_heap_lazy_capacity()` the room left before the next grow, so the working set
@@ -79,20 +59,18 @@ of that region: the simulation core's JavaScript arena used to be a second bump
 allocator starting at the end of memory, which after this change would have
 handed out the same address twice, so it now asks the kernel.
 
-What is deliberately still static is the working set both studios share: the
-terrain grid is 22 MiB of it and the JavaScript marshalling arena 24 MiB — the
-arena is a ring that callers keep long-lived pointers into, so splitting it or
-regrowing it is a redesign, not a one-line change, and it is the next largest
-block after the terrain. `tests/engine-memory.test.mjs` pins the boot
-reservation at under 100 MiB and asserts that a kernel nobody opened has
-allocated nothing.
+What is deliberately still static is the JavaScript marshalling arena (24 MiB)
+and the Edit Mode and renderer working sets. The arena is a ring that callers
+keep long-lived pointers into, so splitting it or regrowing it is a redesign,
+not a one-line change. `tests/engine-memory.test.mjs` pins the boot reservation
+at under 100 MiB and asserts that a kernel nobody opened has allocated
+nothing.
 
 ## When a row is red
 
-`Landscape & Ocean Kernels` fails only when the **ocean kernel** is missing or
-returns a bad wave field. The terrain bridge (`window.FELandscapeCore`) lives in
-the Landscaping Studio frame, so its absence on the home screen is *not* a
-failure - the row says `terrain bridge runs in the Landscaping Studio frame`.
+The benchmark has no row for a subsystem the build does not ship. The
+Landscaping Studio was removed from this build, so its terrain, ocean, flora,
+climate, LoD, impostor and surface kernels are gone with it.
 
 `Smoke & Fire Volume Solver` fails only when `fe_vol_*` is absent or the 16³ MAC
 grid does not project its divergence down.
@@ -104,18 +82,13 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1936862 bytes, ABI v1, 423 exports)`.
+that passes `Validated fe_core_engine.wasm (1000920 bytes, ABI v1, 256 exports)`.
 
 ## Verification
 
 ```bash
-node --test tests/cpp-live-diagnostics.test.mjs   # 6 tests
-node --test tests/landscape-realism.test.mjs      # 14 tests
-node --test tests/landscape-flora.test.mjs        # 24 tests
-node --test tests/buildings.test.mjs               # 7 tests
-node --test tests/landscape-climate.test.mjs      # 15 tests
-node --test tests/landscape-settings-persistence.test.mjs  # 7 tests
+node --test tests/cpp-live-diagnostics.test.mjs   # 4 tests
 node --test tests/engine-memory.test.mjs           # 7 tests
-npm test                                          # 539 tests
+npm test                                          # the whole suite
 npm run build                                     # revalidates + copies the artifact
 ```

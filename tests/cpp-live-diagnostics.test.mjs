@@ -11,9 +11,8 @@ const helpersEnd=engineSource.indexOf('const FECppEngine = {',helpersStart);
 const helpers=engineSource.slice(helpersStart,helpersEnd);
 const wasm=fs.readFileSync('wasm/fe_core_engine.wasm');
 
-/* Runs the shipped self-test slice against the shipped wasm. `landscape` is an
-   optional FELandscapeCore stub, matching the page where the bridge is present. */
-async function runSelfTest(landscape,{stale=[]}={}){
+/* Runs the shipped self-test slice against the shipped wasm. */
+async function runSelfTest({stale=[]}={}){
   const {instance}=await WebAssembly.instantiate(wasm,{});
   /* WebAssembly export objects are frozen, so the harness copies them into a
      plain object before removing kernels to model an older binary. */
@@ -26,7 +25,6 @@ async function runSelfTest(landscape,{stale=[]}={}){
     allocF32(n){const ptr=e.fe_malloc(n*4);return{ptr,view:new Float32Array(e.memory.buffer,ptr,n)}},
     allocU32(n){const ptr=e.fe_malloc(n*4);return{ptr,view:new Uint32Array(e.memory.buffer,ptr,n)}}};
   const ctx={FECppEngine:engine,performance,Uint8ClampedArray,Math};
-  if(landscape!==undefined)ctx.window={FELandscapeCore:landscape};
   vm.runInNewContext(helpers+'\n'+engineSource.slice(start,end),ctx);
   engine.describe=()=>ctx.describeArtifact(e,wasm.byteLength);
   engine.artifactSummary=()=>{
@@ -43,11 +41,7 @@ async function runSelfTest(landscape,{stale=[]}={}){
 test('actual on-device self-test passes against current WASM artifact',async()=>{
   const report=await runSelfTest();
   assert.equal(report.ok,true,JSON.stringify(report.results));
-  assert.equal(report.results.length,8);
-  const landscape=report.results.find(r=>r.name==='Landscape & Ocean Kernels');
-  assert.ok(landscape,'the landscape/ocean check must run');
-  assert.ok(landscape.ok,'the ocean kernel must run inside the engine');
-  assert.match(landscape.detail,/Wave field 32²/);
+  assert.equal(report.results.length,7);
   const smoke=report.results.find(r=>r.name==='Smoke & Fire Volume Solver');
   assert.ok(smoke,'the volumetric solver must be exercised in the same report');
   assert.equal(smoke.ok,true,smoke.detail);
@@ -56,30 +50,9 @@ test('actual on-device self-test passes against current WASM artifact',async()=>
   assert.match(smoke.detail,/div \d+\.\d+→\d+\.\d+/);
 });
 
-test('a fully bound landscape bridge keeps every check green',async()=>{
-  const report=await runSelfTest({ready:true,missing:[]});
-  assert.equal(report.ok,true,JSON.stringify(report.results));
-  const landscape=report.results.find(r=>r.name==='Landscape & Ocean Kernels');
-  assert.match(landscape.detail,/Every terrain, Open World and ocean kernel bound/);
-});
-
-test('a stale artifact names the kernels that fell back to JS instead of failing silently',async()=>{
-  const report=await runSelfTest({ready:true,missing:['fe_terrain_scatter_natural']});
-  assert.equal(report.ok,false,'a degraded subsystem must be reported as a failure');
-  const landscape=report.results.find(r=>r.name==='Landscape & Ocean Kernels');
-  assert.equal(landscape.ok,false);
-  assert.match(landscape.detail,/1 kernel on JS fallback: fe_terrain_scatter_natural/);
-  const two=await runSelfTest({ready:true,missing:['fe_ocean_update','fe_lod_classify']});
-  assert.match(two.results.find(r=>r.name==='Landscape & Ocean Kernels').detail,/2 kernels on JS fallback: fe_ocean_update, fe_lod_classify/);
-});
-
 test('a stale artifact names the missing kernels instead of a vague failure',async()=>{
-  const report=await runSelfTest(undefined,{stale:['fe_vol_init','fe_vol_step','fe_vol_surface','fe_ocean_configure','fe_ocean_update']});
+  const report=await runSelfTest({stale:['fe_vol_init','fe_vol_step','fe_vol_surface']});
   assert.equal(report.ok,false,'a stale artifact must fail loudly');
-  const ocean=report.results.find(r=>r.name==='Landscape & Ocean Kernels');
-  assert.equal(ocean.ok,false);
-  assert.match(ocean.detail,/artifact is stale|Engine artifact/i);
-  assert.match(ocean.detail,/fe_ocean_configure/);
   const smoke=report.results.find(r=>r.name==='Smoke & Fire Volume Solver');
   assert.equal(smoke.ok,false);
   assert.match(smoke.detail,/artifact is stale|no volume kernel/i);

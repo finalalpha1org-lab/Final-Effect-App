@@ -5,47 +5,7 @@ import vm from 'node:vm';
 import { appPath } from './app-paths.mjs';
 
 const app = readFileSync(appPath('index.html'), 'utf8');
-const terrain = readFileSync(appPath('Terrain_system_.html'), 'utf8');
 const simulation = readFileSync(appPath('simulationCore.js'), 'utf8');
-
-test('Explore has first-person jump and model-free free-flight altitude step controls', () => {
-  for (const id of ['exJumpButton','exHeliAltitudeDown','exHeliAltitudeUp','exHeliAltitudeStepDown','exHeliAltitudeStepUp']) assert.ok(terrain.includes(`id="${id}"`), `${id} should exist`);
-  assert.ok(terrain.includes('function jumpExplore()'));
-  assert.ok(/walkVelocityY=Math\.sqrt\(2\*jumpGravity\*\.65\)/.test(terrain));
-  assert.ok(terrain.includes("getElementById('exJumpButton').onclick=jumpExplore"));
-  assert.ok(terrain.includes('if(exploreMode!==\'first\'||!walkRig)return false'));
-  assert.ok(terrain.includes('gravityEnabled||walkJumping'),'jump should continue against configurable gravity');
-  assert.ok(terrain.includes('function adjustExploreAltitude(delta)'));
-  assert.ok(/setExploreAltitude\(heliAltitude\+Math\.sign\(delta\)\*5\)/.test(terrain));
-  assert.ok(terrain.includes("getElementById('exHeliAltitudeDown').onclick=()=>adjustExploreAltitude(-5)"));
-  assert.ok(terrain.includes("getElementById('exHeliAltitudeUp').onclick=()=>adjustExploreAltitude(5)"));
-  assert.ok(terrain.includes('No aircraft model is shown'));
-});
-
-test('First-person jump has a grounded launch and a short gravity-driven arc', () => {
-  const start=terrain.indexOf('function setExploreAltitude'),end=terrain.indexOf('function setExploreSpeed',start);
-  assert.ok(start>=0&&end>start);
-  const context={exploreMode:'first',walkRig:{position:{x:0,y:0,z:0}},hgt:()=>0,water:{visible:false,position:{y:0}},gravityEnabled:true,gravityStrength:9.8,walkVelocityY:0,walkJumping:false,exClamp:(v,a,b)=>Math.max(a,Math.min(b,v))};
-  vm.runInNewContext(terrain.slice(start,end)+';this.jumpExplore=jumpExplore;',context);
-  assert.equal(context.jumpExplore(),true);
-  assert.ok(Math.abs(context.walkVelocityY-Math.sqrt(2*9.8*.65))<1e-8);
-  assert.equal(context.walkJumping,true);
-  const s=terrain.indexOf('function stepExploreVertical'),e=terrain.indexOf('function updateExplore',s),physics={exClamp:(v,a,b)=>Math.max(a,Math.min(b,v))};
-  vm.runInNewContext(terrain.slice(s,e)+';this.stepExploreVertical=stepExploreVertical;',physics);
-  let y=0,v=context.walkVelocityY,peak=0,time=0;
-  for(let i=0;i<480;i++){[y,v]=physics.stepExploreVertical(y,v,0,0,false,1/240,true,9.8);peak=Math.max(peak,y);time+=1/240;if(i>0&&y===0&&v===0)break}
-  assert.ok(Math.abs(peak-.65)<.04,`expected a ~0.65 m hop, got ${peak}`);
-  assert.ok(time<.9,'the jump should not hang in the air');
-  assert.equal(y,0,'gravity should return the camera rig to the ground');
-});
-
-test('OrbitControls stay locked during Explore pointer-look and restore with the saved camera', () => {
-  assert.ok(terrain.includes('if(exploreMode||e.target!==cv)return;'));
-  assert.ok(terrain.includes('if(exploreMode){ptD.clear();return}'));
-  assert.ok(terrain.includes('oc.enabled=false;lookPointerId=e.pointerId'));
-  assert.ok(terrain.includes('oc.enabled=false;const dx=e.clientX-lastLookX'));
-  assert.ok(terrain.includes('Object.assign(oc,exploreSaved.controls)'));
-});
 
 test('Object tools wait for an explicit choice instead of opening Move automatically', () => {
   const start=app.indexOf('function renderObjectTools()'),end=app.indexOf('window.renderObjectTools',start);
@@ -102,7 +62,7 @@ test('workspace shading modes are reversible, preserve original materials, and w
 });
 
 test('shading-mode material and shadow overrides restore authored state exactly',()=>{
-  const start=app.indexOf('const shadingMaterialOverrides=new Map()'),end=app.indexOf('function applyLandscapeAwareShadingWorld',start);
+  const start=app.indexOf('const shadingMaterialOverrides=new Map()'),end=app.indexOf('function applyShadingWorldEnvironment',start);
   assert.ok(start>=0&&end>start);
   class Color{constructor(value){this.value=value}clone(){return new Color(this.value)}copy(other){this.value=other.value;return this}set(value){this.value=value;return this}setHex(value){this.value=value;return this}}
   const context={};

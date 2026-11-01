@@ -1,10 +1,9 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v44';
+const CACHE_NAME = 'final-effect-cpp-v45';
 const CORE_ASSETS = [
   './',
   './index.html',
-  './Terrain_system_.html',
   './fe-cpp-engine.js',
   './fe_core_engine.wasm',
   './fe-icons.js',
@@ -20,31 +19,11 @@ const CORE_ASSETS = [
   './simulationCore.js',
   './simulation_solver.wasm',
   './modifier-engine.js',
-  './tessendorf-ocean.js',
-  './celestial-math.js',
-  './scatter-spacing.js',
-  './open-world-generator.js',
-  './landscape-export-pack.js',
-  './open-world.js',
-  './terrain-main-01.js',
-  './terrain-main-02.js',
-  './terrain-main-03.js',
-  './terrain-main-04.js',
-  './terrain-main-05.js',
-  './terrain-main-06.js',
-  './terrain-main-07.js',
-  './terrain-main-08.js',
-  './terrain-main-09.js',
-  './kernel-worker.js',
-  './landscape-realism.js',
-  './landscape-flora.js',
-  './landscape-weather.js',
   './favicon.svg',
   './manifest.webmanifest',
-  /* The two pages load one bundle each instead of thirty separate scripts, and
-     three.js is served from this origin instead of a CDN, so the install has to
-     carry them or an offline client boots without a renderer. */
-  './landscape-app.js',
+  /* The shell loads one bundle instead of a dozen separate scripts, and three.js
+     is served from this origin instead of a CDN, so the install has to carry
+     them or an offline client boots without a renderer. */
   './workspace-app.js',
   './vendor/three/three.min.js',
   './vendor/three/OrbitControls.js',

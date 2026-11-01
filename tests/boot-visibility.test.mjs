@@ -130,7 +130,7 @@ test('the build stamps the page it writes, so a device can name its build', () =
   assert.match(build, /function buildStamp\(\)/, 'the build has no stamp function');
   assert.match(build, /git rev-parse --short HEAD/, 'the stamp should name the commit');
   assert.match(build, /writeFileSync\("build\/client\/index\.html", stampBuild\(bundlableIndexHtml\)\)/);
-  assert.match(build, /bundlableTerrainHtml = stampBuild\(bundlableTerrainHtml\)/);
+  assert.match(build, /writeFileSync\("build\/client\/Final-Effect-3D-Standalone\.html", stampBuild\(standaloneAppHtml\)\)/);
   assert.match(build, /stampBuild\(standaloneAppHtml\)/);
   assert.match(html, /<meta name="fe-build" content="dev">/, 'the source needs the placeholder the build replaces');
 });

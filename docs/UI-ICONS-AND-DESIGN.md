@@ -12,6 +12,7 @@ icons (Feather-style geometry) and renders them inline, so every icon inherits
 ```js
 FEIcons.svg('cube')                    // -> '<svg class="ico" ...>'
 FEIcons.glyphIcon('🧊')                // -> 'cube'
+FEIcons.glyphIcon('🏞️')                // -> 'landscape' (U+FE0F is stripped)
 FEIcons.hydrate(rootElement)           // fill <i data-ico>, swap text emoji
 ```
 
@@ -21,9 +22,8 @@ Two integration paths:
    `<i class="ico" data-ico="cube" data-size="20"></i>`; `hydrate()` replaces
    it with the SVG. The home cards, tabs, lock badge, settings dialog and
    benchmark button already use this.
-2. **Runtime sweep** - any emoji that still arrives through a template string,
-   a toast or the terrain page is replaced by the matching icon during
-   hydration. A `MutationObserver` keeps doing this for dynamically rendered
+2. **Runtime sweep** - any emoji that still arrives through a template string
+   or a toast is replaced by the matching icon during hydration. A `MutationObserver` keeps doing this for dynamically rendered
    panels, so new UI cannot reintroduce emoji.
 
 Emoji inside `<script>`, `<style>` and `<noscript>` is never touched (that text
@@ -34,7 +34,12 @@ back to `sparkle` rather than showing an emoji.
 ### Adding an icon
 
 1. Add a `name: '<path .../>'` entry to `PATHS` in `fe-icons.js`.
-2. If it replaces an emoji, add the glyph to `EMOJI`.
+2. If it replaces an emoji, add the glyph to `EMOJI`. Key the bare code point:
+   `glyphIcon()` strips the emoji variation selector (U+FE0F), the zero width
+   joiner and the keycap mark before the lookup, so `'🏞️'` and `'🏞'` both
+   resolve to one entry. A table glyph that only differs by U+FE0F used to fall
+   through to the sparkle fallback, which is how the home grid lost its studio
+   icons.
 3. `npm test` - `tests/icon-system.test.mjs` fails if any glyph in any shipped
    source has no mapping, if an icon renders malformed markup, or if a page
    stops loading the renderer before the app scripts.

@@ -1,10 +1,10 @@
 # Final Effect 3D — C++20 Core Engine + Cross-Platform Mobile & Desktop Creation Suite
 
-**Final Effect 3D** is an all-in-one 3D, Animation, Sculpting, Landscape, Simulation, and Rendering suite designed for **mobile editors first** (Android & iOS touch workflows, 9:16 Reels/Shorts & 16:9 Cinema) while scaling cleanly to **Desktop & Web**.
+**Final Effect 3D** is an all-in-one 3D, Animation, Sculpting, Simulation and Rendering suite designed for **mobile editors first** (Android & iOS touch workflows, 9:16 Reels/Shorts & 16:9 Cinema) while scaling cleanly to **Desktop & Web**.
 
 ## Architecture: C++20 Core Engine + Thin HTML/JS UI
 
-All heavy numerical, animation, rendering, sculpting, and performance systems live in a **zero-dependency, freestanding C++20 Core Engine (`cpp/`)**, compiled to standalone WebAssembly (`wasm/fe_core_engine.wasm`, 0 imports, 363 C ABI exports) for Web/PWA/Capacitor and buildable natively via **CMake (`CMakeLists.txt`)** for Android NDK, iOS, Windows, macOS, and Linux:
+All heavy numerical, animation, rendering, sculpting, and performance systems live in a **zero-dependency, freestanding C++20 Core Engine (`cpp/`)**, compiled to standalone WebAssembly (`wasm/fe_core_engine.wasm`, 0 imports, 256 C ABI exports) for Web/PWA/Capacitor and buildable natively via **CMake (`CMakeLists.txt`)** for Android NDK, iOS, Windows, macOS, and Linux:
 
 - **C++20 Keyframe Animation & Curve Engine (`cpp/src/fe_animation.cpp`)**:
   - 9-channel TRS tracks (`Loc X/Y/Z`, `Rot X/Y/Z`, `Scale X/Y/Z`) per scene object.
@@ -18,14 +18,14 @@ All heavy numerical, animation, rendering, sculpting, and performance systems li
   - 6 real-time 3D sculpt brushes (`Draw/Clay`, `Smooth`, `Inflate`, `Pinch`, `Flatten`, `Grab`) with Mirror-X symmetry, vertex painting, and C++ area-weighted smooth normal recomputation.
   - C++ multi-touch gesture filter + adaptive frame-time governor (`Auto`, `Low`, `Medium`, `High` GPU tiers) that dynamically adjusts pixel ratio and shadow map budgets on mobile GPUs.
 - **C++20 Edit Mode Kernel (`cpp/src/fe_editmesh.cpp`, `cpp/src/fe_editmesh_tools.cpp`)**: real vertex / edge / face editing — extrude, inset, subdivide, bevel, poke, duplicate, split, fill, bridge, merge, weld, collapse, bisect, symmetrize, loop select, proportional editing, snap, and a 48-step undo pool, all in C++ with a triangle-soup topology core. See `docs/EDIT-MODE.md`.
-- **Thin HTML/JS Presentation Layer (`index.html`, `fe-cpp-engine.js`, `edit-mode.js`, `Terrain_system_.html`)**:
-  - **Import carries the scene you built**, not the default grid: the root terrain, every resident open-world chunk merged into one heightfield (with its plants as world-space instance transforms), or the procedural planet as a displaced globe. See `docs/SCENE-IMPORT.md`.
+- **Thin HTML/JS Presentation Layer (`index.html`, `fe-cpp-engine.js`, `edit-mode.js`)**:
+  - The Landscaping Studio was removed in this build and its home card is locked. Its C++ kernels (terrain, ocean, flora, climate, LoD, impostors, surface) and its JavaScript page are gone from the tree rather than left unreachable; the studio is being rebuilt from zero.
   - Responsive Portrait & Landscape touch UI, installable offline-capable **PWA (`manifest.webmanifest`, `sw.js`)**, and **Capacitor (`capacitor.config.json`)** configuration for native Android/iOS packaging.
 
 ## Build & Test Commands
 
 ```bash
-# Compile/validate C++20 WASM + run all 599 automated tests + build production bundle
+# Compile/validate C++20 WASM + run the whole test suite + build production bundle
 npm run build
 
 # Run C++20 WASM + JS/Three.js test suite

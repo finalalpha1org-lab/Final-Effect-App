@@ -1,31 +1,3 @@
-export function createStandaloneTerrainHtml(html,{feIcons,celestialMath,scatterSpacing,tessendorf,openWorld,landscapeExportPack,landscapeRealism,landscapeFlora,landscapeWeather,terrainMainParts=[],openWorldAddon,cppWasmBase64=''}={}){
-  if(typeof html!=='string')throw new TypeError('Terrain source must be text');
-  const helpers=[['fe-icons.js',feIcons],['celestial-math.js',celestialMath],['scatter-spacing.js',scatterSpacing],['tessendorf-ocean.js',tessendorf],['open-world-generator.js',openWorld],['landscape-export-pack.js',landscapeExportPack],['landscape-realism.js',landscapeRealism],['landscape-flora.js',landscapeFlora],['landscape-weather.js',landscapeWeather],...terrainMainParts,['open-world.js',openWorldAddon]];
-  let out=html;
-  for(const [name,source] of helpers){
-    const tag=`<script src="./${name}"></script>`;
-    const count=out.split(tag).length-1;
-    const provided=typeof source==='string'&&source.length>0;
-    if(count===0){
-      if(provided)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
-      continue; /* optional helper the page never asks for */
-    }
-    if(!provided)throw new Error(`Missing standalone helper: ${name}`);
-    if(source.toLowerCase().includes('</script'))throw new Error(`Unsafe closing script marker in ${name}`);
-    if(count!==1)throw new Error(`Expected exactly one ${name} reference, found ${count}`);
-    /* A function replacement, not a string: minified sources can contain `$&`,
-       `$'` or `` $` `` and String.replace would expand those as match patterns,
-       splicing a script tag into the middle of the inlined code. */
-    out=out.replace(tag,()=>`<script>\n${source}\n</script>`);
-  }
-  if(cppWasmBase64){
-    if(String(cppWasmBase64).toLowerCase().includes('</script'))throw new Error('Unsafe closing script marker in embedded terrain WASM');
-    const bootstrap=`<script>window.__FE_CPP_WASM_BASE64__=${JSON.stringify(String(cppWasmBase64).replace(/<\/script/gi,'<\\/script'))};</script>`;
-    out=out.includes('<head>')?out.replace('<head>',()=>'<head>\n'+bootstrap):bootstrap+out;
-  }
-  return out;
-}
-
 export function createStandaloneAppHtml(html, {
   volumeAtlas,
   feIcons,
@@ -42,7 +14,6 @@ export function createStandaloneAppHtml(html, {
   feCppEngine,
   cppWasmBase64,
   simWasmBase64,
-  terrainStandaloneHtml = ''
 } = {}) {
   if (typeof html !== 'string') throw new TypeError('App HTML source must be text');
 
@@ -68,7 +39,6 @@ export function createStandaloneAppHtml(html, {
   window.__FE_CPP_WASM_BASE64__ = ${safeJson(cppWasmBase64 || '')};
   window.__FE_SIM_WASM_BASE64__ = ${safeJson(simWasmBase64 || '')};
   window.__FE_VOLUME_LIBRARY_B64__ = ${safeJson(volumeLibraryBase64 || '')};
-  window.__FE_TERRAIN_STANDALONE_HTML__ = ${safeJson(terrainStandaloneHtml || '')};
 
   function b64ToBytes(b64) {
     var bin = atob(b64);

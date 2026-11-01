@@ -169,64 +169,6 @@ dialog prints the same numbers back as `Frames 0–250 · 251 frames · 30 fps �
 8.4 s`. There is no second, private default range for animation.
 
 
-## The viewport grid in the landscaping studio
-
-The studio drew a 200 × 200 `GridHelper` and two ground axes and had no switch
-at all — no setting, no chip, nothing. It now has both:
-
-* **Terrain sheet → `Floor grid`** toggles the grid and the two axes together and
-  remembers the choice in `fe_terrain_grid`;
-* the workspace's **⚙ → Floor Grid** setting arrives over
-  `FE_GLOBAL_SETTINGS` and drives it, because the studio is an iframe and
-  otherwise a global preference stops at the frame boundary.
-
-## Where the result goes: the Render Result window
-
-A render is judged at full size, on a neutral background, and it is judged
-*while* the editor is still open next to it. So Render Frame opens the result in
-its own tab (`render-preview.js`), the way Blender gives a render its own window,
-instead of only shrinking it into the dialog's preview pane.
-
-The browser rules that shape it:
-
-- **A window can only be opened from a user gesture.** The Render button opens
-  it synchronously, before the first `await`, and every later sample pass or
-  animation frame is posted into the window that already exists. Changing a
-  dropdown re-renders into the open window; it never opens another one.
-- **A blocked popup is not an error.** `ensure()` returns `null`, the dialog
-  keeps its inline preview, and the user is told once. Nothing throws.
-- **The window is written with `document.write`,** so it stays same-origin and
-  frames travel as data URLs over `postMessage`. No blob lifecycle has to be
-  managed across two documents.
-- **The runtime is stringified into the document** (`attachPreviewRuntime`), so
-  it shares no scope with the editor and cannot reach engine state even by
-  accident. It only obeys messages whose `source` is its own opener.
-
-Inside the window: fit / actual size, a checkerboard for transparency, Save,
-frame thumbnails for animations, and F / 1 / S / Esc. `reset()` clears the
-previous result at the start of each run, so a new still never leaves the last
-one's filmstrip behind. The site never opens a second preview tab; the window
-name is fixed, so a reload of the editor reuses it.
-
-## Tests
-
-`tests/render-capture.test.mjs` builds a small studio scene with real three.js
-objects and asserts, without a GPU:
-
-* the artwork survives a capture and every helper does not;
-* a helper that was already off is not switched on by the restore;
-* a throwing capture still restores the scene;
-* the shadow catcher survives when the dialog asks for it;
-* `prepareRenderCamera`/`restoreRenderCamera` round-trip a cropped camera's
-  projection matrix bit for bit;
-* `renderCamera()` defers to the shared rule, and the two meanings of the menu
-  are pinned: the rig is the rig, the viewport is whatever it is drawing;
-* both engines call the same helpers, and the helper ships in the page, the
-  service worker cache, the build and the single-file app.
-
-`tests/landscape-grid-toggle.test.mjs` runs the studio's grid switch in a vm and
-checks the axes, the remembered choice and the parent-app message.
-
 ## Exporting the workspace: glTF and OBJ
 
 Both buttons used to fail before writing a byte. The cause was not the format:
@@ -241,8 +183,8 @@ TypeError: null is not an object (evaluating 'this.domElement.ownerDocument.addE
 `null`. The same line existed in the animated glTF path. Three further problems
 sat behind it:
 
-- r128's `GLTFExporter` has no `InstancedMesh` support, so landscape foliage
-  would have exported as one plant at the origin;
+- r128's `GLTFExporter` has no `InstancedMesh` support, so an instanced mesh
+  would have exported as one copy at the origin;
 - those exporters only exist if the CDN answered, and a CDN dependency cannot be
   proven by an offline test;
 - `parse(input, onDone, options)` silently never calls back if the loaded

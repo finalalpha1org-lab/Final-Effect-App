@@ -41,7 +41,6 @@ test('native C++20 unit test suite compiles and passes under g++ when present', 
     '-std=c++20', '-O2', '-Wall', '-Wextra', '-Werror',
     'cpp/src/fe_wasm_exports.cpp',
     'cpp/src/fe_heap.cpp',
-    'cpp/src/fe_scatter.cpp',
   'cpp/src/fe_skin.cpp',
     'cpp/src/fe_animation.cpp',
     'cpp/src/fe_renderer.cpp',
@@ -194,8 +193,7 @@ test('standalone 1-file portable build embeds C++20 WASM and passes the live sel
     modifierEngine: 'window.__modStub = true;',
     feCppEngine: bridge,
     cppWasmBase64: b64,
-    simWasmBase64: 'AA==',
-    terrainStandaloneHtml: '<!doctype html><html><body>terrain</body></html>'
+    simWasmBase64: 'AA=='
   });
   assert.ok(!standalone.includes('<script src="fe-cpp-engine.js"></script>'));
   assert.ok(standalone.includes('window.__FE_CPP_WASM_BASE64__'));
@@ -234,7 +232,7 @@ test('standalone 1-file portable build embeds C++20 WASM and passes the live sel
   };
   const report = await ctx.FECppEngine.runLiveSelfTest(fakeCanvas);
   assert.equal(report.ok, true, 'All on-device self-test checks must pass offline');
-  assert.equal(report.results.length, 8);
+  assert.equal(report.results.length, 7);
   assert.ok(report.results.some(r=>r.name==='Smoke & Fire Volume Solver' && r.ok),'the volumetric solver runs inside the offline standalone build');
   assert.ok(putPixels && putPixels.width === 240 && putPixels.height === 135);
 });

@@ -99,26 +99,6 @@ test('a kernel that has not been opened has allocated nothing', async () => {
   const grid = new Float32Array(exp.memory.buffer, density, 40 * 40 * 40);
   assert.ok(grid.every((value) => value === 0), 'the lazily allocated grid arrives zeroed');
 
-  /* Ocean cascades: nothing until configure, 10.8 MiB once, then reused. */
-  const beforeOcean = exp.fe_heap_lazy_used();
-  assert.equal(exp.fe_ocean_configure(128, 256, 1024, 4096, 14, 45, 7), 0);
-  const afterOcean = exp.fe_heap_lazy_used();
-  assert.ok(mb(afterOcean - beforeOcean) > 10 && mb(afterOcean - beforeOcean) < 11, 'the three cascades are 10.8 MiB');
-  assert.ok(exp.fe_ocean_update(1.5, 1, 1, 3, 2) > 0, 'the cascade transforms run on the allocated block');
-  assert.equal(exp.fe_ocean_resolution(), 128);
-  assert.ok(exp.fe_ocean_get_cascade_rgba8_ptr(0) > 0, 'the upload pixels come from the same block');
-  assert.equal(exp.fe_ocean_configure(64, 256, 1024, 4096, 12, 0, 7), 0);
-  assert.equal(exp.fe_heap_lazy_used(), afterOcean, 'a smaller ocean must not allocate again');
-
-  /* Surface detail: allocated for the size that was asked for, reused after. */
-  const before = exp.fe_heap_lazy_used();
-  assert.equal(exp.fe_surface_detail(0, 256, 256, 7, 1), 1);
-  const detail = exp.fe_surface_detail_ptr();
-  assert.ok(detail > 0);
-  const afterFirst = exp.fe_heap_lazy_used();
-  assert.ok(afterFirst - before >= 1024 * 1024, '256x256 RGBA floats is 1 MiB');
-  assert.equal(exp.fe_surface_detail(0, 128, 128, 7, 1), 1);
-  assert.equal(exp.fe_surface_detail_ptr(), detail, 'a smaller request keeps the existing block');
 });
 
 test('fe_heap_alloc is aligned, zeroed, disjoint and refuses the absurd', async () => {
@@ -180,7 +160,6 @@ test('the allocator is built by every build that links a kernel which uses it', 
     'cpp/src/fe_simulation.cpp',
     'cpp/src/fe_volumetrics.cpp',
     'cpp/src/fe_editmesh.cpp',
-    'cpp/src/fe_surface.cpp',
     'cpp/src/fe_wasm_exports.cpp'
   ]) {
     assert.match(readFileSync(file, 'utf8'), /#include "\.\.\/include\/fe_heap\.hpp"/, `${file} must include fe_heap.hpp`);

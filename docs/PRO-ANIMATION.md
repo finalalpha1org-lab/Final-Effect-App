@@ -23,8 +23,8 @@ polygon count.
 
 **1. Generate, do not store.** A gigabyte of assets is a PC habit. The core
 already grows 26 species, rocks, buildings, a 50 km terrain, an ocean cascade and
-a climate grid from a seed and a few kilobytes of code — `fe_flora`,
-`fe_terrain`, `fe_ocean`, `fe_climate`. Nothing is downloaded, nothing is
+a shape from a seed and a few kilobytes of code — `fe_mod`, `fe_anim`,
+`fe_sim`. Nothing is downloaded, nothing is
 decoded, and the same seed is the same world on every device.
 
 **2. Simulate once, play back.** The single biggest lever for animation. A
@@ -97,9 +97,8 @@ professional would look for them; a pose-to-pose workflow, mirroring, and a
 motion-path preview are the next layer above the rig.
 
 **5. Viewport performance.** The ⚙ sheet should report the *pass* breakdown
-(shadow map, TAA, scene) instead of only the frame total, and the workspace
-shadow pass should be event-driven like the landscaping studio's. Without those
-numbers every further cut is a guess.
+(shadow map, TAA, scene) instead of only the frame total. Without those numbers
+every further cut is a guess.
 
 ## The part that is genuinely hard
 

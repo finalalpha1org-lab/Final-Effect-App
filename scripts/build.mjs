@@ -2,7 +2,7 @@ import { build as esbuildBundle, transform } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
-import { createStandaloneAppHtml, createStandaloneTerrainHtml } from "./standalone-html.mjs";
+import { createStandaloneAppHtml } from "./standalone-html.mjs";
 import "./build-cpp-wasm.mjs";
 
 if (existsSync("src/modifier-entry.mjs")) {
@@ -34,13 +34,6 @@ if (hasPublicDir) {
     "render-export.js",
     "workspace-export.js",
     "edit-mode.js",
-    "Terrain_system_.html",
-    "celestial-math.js",
-    "scatter-spacing.js",
-    "tessendorf-ocean.js",
-    "open-world-generator.js",
-    "landscape-export-pack.js",
-    "open-world.js",
     "modifier-engine.js",
     "volume-atlas.js",
     "volume-library.js",
@@ -48,19 +41,12 @@ if (hasPublicDir) {
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
-    "kernel-worker.js",
-    "landscape-realism.js",
-    "landscape-flora.js",
-    "landscape-weather.js",
     "fe_core_engine.wasm",
     "manifest.webmanifest",
     "sw.js",
     "vendor",
     "assets"
   ];
-  for (let i = 1; i <= 9; i++) {
-    staticAssets.push(`terrain-main-${String(i).padStart(2, "0")}.js`);
-  }
   for (const item of staticAssets) {
     const p = resolve(item);
     if (existsSync(p)) {
@@ -69,9 +55,7 @@ if (hasPublicDir) {
   }
 }
 
-const terrainMainFiles=Array.from({length:9},(_,i)=>`terrain-main-${String(i+1).padStart(2,"0")}.js`);
 const minifiableJs = [
-  "celestial-math.js",
   "fe-icons.js",
   "fe-taa.js",
   "render-capture.js",
@@ -79,21 +63,11 @@ const minifiableJs = [
   "render-export.js",
   "workspace-export.js",
   "edit-mode.js",
-  "scatter-spacing.js",
-  "tessendorf-ocean.js",
-  "open-world-generator.js",
-  "landscape-export-pack.js",
-  ...terrainMainFiles,
-  "open-world.js",
   "modifier-engine.js",
   "volume-atlas.js",
   "volume-library.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
-  "kernel-worker.js",
-  "landscape-realism.js",
-  "landscape-flora.js",
-  "landscape-weather.js",
 ];
 
 async function minifyInlineScripts(html, label) {
@@ -125,7 +99,6 @@ for (const file of minifiableJs) {
 }
 
 const optimizedIndexHtml = await minifyInlineScripts(readFileSync(srcPath("index.html"), "utf8"), "index.html");
-const optimizedTerrainHtml = await minifyInlineScripts(readFileSync(srcPath("Terrain_system_.html"), "utf8"), "Terrain_system_.html");
 /* ---- request count -------------------------------------------------------
  * Each of these files is one HTTP request on the way to the first frame, and a
  * phone pays for every one of them in DNS, TLS-less connect and header
@@ -137,18 +110,6 @@ const optimizedTerrainHtml = await minifyInlineScripts(readFileSync(srcPath("Ter
  * three.js is deliberately *not* in these bundles: it never changes, so it
  * should stay in the browser cache across deploys while the app bundle does
  * not. */
-const STUDIO_SCRIPTS = [
-  "tessendorf-ocean.js",
-  "open-world-generator.js",
-  "landscape-export-pack.js",
-  "terrain-main-01.js",
-  "kernel-worker.js",
-  "landscape-flora.js",
-  ...terrainMainFiles.slice(1),
-  "landscape-realism.js",
-  "landscape-weather.js",
-  "open-world.js",
-];
 
 const WORKSPACE_SCRIPTS = [
   "fe-icons.js",
@@ -206,10 +167,8 @@ async function bundleScripts(files, outName, html) {
   return parts.join("");
 }
 
-let bundlableTerrainHtml = optimizedTerrainHtml;
 let bundlableIndexHtml = optimizedIndexHtml;
 try {
-  bundlableTerrainHtml = await bundleScripts(STUDIO_SCRIPTS, "landscape-app.js", optimizedTerrainHtml);
   bundlableIndexHtml = await bundleScripts(WORKSPACE_SCRIPTS, "workspace-app.js", optimizedIndexHtml);
 } catch (error) {
   console.warn("Script bundling skipped:", error && error.message);
@@ -238,44 +197,11 @@ function stampBuild(html) {
 }
 
 writeFileSync("build/client/index.html", stampBuild(bundlableIndexHtml));
-writeFileSync("build/client/Terrain_system_.html", bundlableTerrainHtml);
 
 const cppWasmBase64 = readFileSync("build/client/fe_core_engine.wasm").toString("base64");
 const simWasmBase64 = existsSync("build/client/simulation_solver.wasm")
   ? readFileSync("build/client/simulation_solver.wasm").toString("base64")
   : "";
-
-/* The wasm is *not* inlined into the studio page any more. Base64 turns 1.83 MB
-   into 2.44 MB of HTML that must be downloaded, parsed and decoded before the
-   module can even start compiling, and it makes the shell uncacheable
-   independently of the binary. The studio streams the real artifact instead
-   (WebAssembly.instantiateStreaming, see terrain-main-01.js); only the
-   single-file artifact, which is a download and not the app, still embeds it. */
-bundlableTerrainHtml = stampBuild(bundlableTerrainHtml);
-
-if (!bundlableTerrainHtml.includes('__FE_CPP_WASM_BASE64__')) {
-  const preload = '<link rel="preload" href="./fe_core_engine.wasm" as="fetch" crossorigin="anonymous">';
-  writeFileSync(
-    "build/client/Terrain_system_.html",
-    bundlableTerrainHtml.replace('<head>', `<head>\n${preload}`),
-  );
-}
-
-const standaloneTerrainHtml = createStandaloneTerrainHtml(optimizedTerrainHtml, {
-  feIcons: readFileSync("build/client/fe-icons.js", "utf8"),
-  celestialMath: readFileSync("build/client/celestial-math.js", "utf8"),
-  scatterSpacing: readFileSync("build/client/scatter-spacing.js", "utf8"),
-  tessendorf: readFileSync("build/client/tessendorf-ocean.js", "utf8"),
-  openWorld: readFileSync("build/client/open-world-generator.js", "utf8"),
-  landscapeExportPack: readFileSync("build/client/landscape-export-pack.js", "utf8"),
-  landscapeRealism: readFileSync("build/client/landscape-realism.js", "utf8"),
-  landscapeFlora: readFileSync("build/client/landscape-flora.js", "utf8"),
-  landscapeWeather: readFileSync("build/client/landscape-weather.js", "utf8"),
-  terrainMainParts: terrainMainFiles.map(file => [file, readFileSync(`build/client/${file}`, "utf8")]),
-  openWorldAddon: readFileSync("build/client/open-world.js", "utf8"),
-  cppWasmBase64,
-});
-writeFileSync("build/client/Terrain-System-Standalone.html", standaloneTerrainHtml);
 
 const standaloneAppHtml = createStandaloneAppHtml(
   readFileSync(srcPath("index.html"), "utf8"),
@@ -295,7 +221,6 @@ const standaloneAppHtml = createStandaloneAppHtml(
     cppWasmBase64,
     simWasmBase64,
     volumeLibraryBase64: readFileSync(srcPath("volume-library.bin")).toString("base64"),
-    terrainStandaloneHtml: standaloneTerrainHtml,
   }
 );
 writeFileSync("build/client/Final-Effect-3D-Standalone.html", stampBuild(standaloneAppHtml));
