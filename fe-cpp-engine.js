@@ -44,7 +44,15 @@
     render: ['fe_render_trace_samples', 'fe_render_resolve_rgba8', 'fe_render_denoise', 'fe_render_update_convergence'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
     modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
-    simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step']
+    simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step'],
+    /* What the exporters, the sequence packer, the volume atlas and the TAA /
+       fire-colour maths call through the bridge. If one of these is missing the
+       JavaScript fallback still runs, but the benchmark says so by name. */
+    packaging: ['fe_export_bake', 'fe_export_bake_instanced', 'fe_zip_crc32',
+      'fe_volatlas_pack', 'fe_volatlas_pack_library', 'fe_volatlas_sample',
+      'fe_volatlas_frame_at', 'fe_volatlas_parse_library'],
+    renderMaths: ['fe_taa_halton', 'fe_taa_jitter', 'fe_taa_project',
+      'fe_color_blackbody_rgb', 'fe_color_blackbody_lut']
   });
 
   function describeArtifact(exportsObject, byteLength = 0) {
