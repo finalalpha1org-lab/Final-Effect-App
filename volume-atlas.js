@@ -38,7 +38,6 @@
     const ex = eng.exports;
     const cells = grid * grid * grid;
     const layoutSlot = eng.scratch('volatlas-layout', 16);
-    const imageSlot = eng.scratch('volatlas-image', 0);
     if (ex.fe_volatlas_layout(grid, layoutSlot.ptr) !== 0) return null;
     const dims = Array.from(new Uint32Array(eng.memory.buffer, layoutSlot.ptr, 4));
     const need = dims[2] * dims[3] * 4;
