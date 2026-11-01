@@ -97,9 +97,10 @@ mass.
 
 `volume-library.bin` is baked by `scripts/bake-volume-library.mjs` from the same
 wasm solver: three loops (Fire / Smoke / Steam), 20³, 12 frames, two bytes per
-cell (density, temperature), 576 KB. `volume-library.js` parses it, packs every
-frame x slice into one RGBA atlas and exposes a ping-pong clock, so a short clip
-never snaps from the last frame to the first. In `Baked Library` mode the solver
+cell (density, temperature), 576 KB. `fe_volatlas_parse_library` walks the
+header, `fe_volatlas_pack_library` packs every frame x slice into one RGBA atlas
+and `fe_volatlas_frame_at` runs the ping-pong clock, so a short clip never snaps
+from the last frame to the first. In `Baked Library` mode the solver
 is not stepped at all - the shader blends two frames.
 
 ## Image-space TAA
