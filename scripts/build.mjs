@@ -1,5 +1,5 @@
 import { build as esbuildBundle, transform } from "esbuild";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { createStandaloneAppHtml } from "./standalone-html.mjs";
@@ -54,6 +54,50 @@ if (hasPublicDir) {
     }
   }
 }
+
+/* ---- local deployment adaptations -------------------------------------
+   Upstream builds from the repository root, where the engine, the solver and
+   the vendored three.js all sit beside the HTML. This project keeps the
+   browser assets under public/, so those artifacts are staged into the client
+   directory here instead. */
+copyFileSync("wasm/fe_core_engine.wasm", "build/client/fe_core_engine.wasm");
+if (existsSync("wasm/simulation_solver.wasm")) {
+  copyFileSync("wasm/simulation_solver.wasm", "build/client/simulation_solver.wasm");
+} else if (existsSync(srcPath("simulation_solver.wasm"))) {
+  copyFileSync(srcPath("simulation_solver.wasm"), "build/client/simulation_solver.wasm");
+} else {
+  throw new Error("Rust solver artifact is missing (expected wasm/simulation_solver.wasm).");
+}
+const solverBytes = readFileSync("build/client/simulation_solver.wasm");
+if (solverBytes.length < 8 || solverBytes.subarray(0, 4).toString("hex") !== "0061736d") {
+  throw new Error("Rust solver artifact failed its WebAssembly magic check.");
+}
+
+/* three.js arrives through npm, so the vendored copies the HTML asks for are
+   taken from the checked-in vendor/three when they exist there and from the
+   installed package otherwise (three.min.js is only in the package). */
+const THREE_VENDOR = [
+  ["three.min.js", "node_modules/three/build/three.min.js"],
+  ["OrbitControls.js", "node_modules/three/examples/js/controls/OrbitControls.js"],
+  ["TransformControls.js", "node_modules/three/examples/js/controls/TransformControls.js"],
+  ["GLTFLoader.js", "node_modules/three/examples/js/loaders/GLTFLoader.js"],
+  ["OBJLoader.js", "node_modules/three/examples/js/loaders/OBJLoader.js"],
+  ["RGBELoader.js", "node_modules/three/examples/js/loaders/RGBELoader.js"],
+  ["LICENSE", "node_modules/three/LICENSE"],
+];
+function threeSource(name, from) {
+  const vendored = `vendor/three/${name}`;
+  return existsSync(vendored) ? vendored : from;
+}
+mkdirSync("build/client/vendor/three", { recursive: true });
+for (const [name, from] of THREE_VENDOR) {
+  const source = threeSource(name, from);
+  if (!existsSync(source)) throw new Error(`Vendored three.js source is missing: ${source}`);
+  copyFileSync(source, `build/client/vendor/three/${name}`);
+}
+const threeVendorSources = new Map(
+  THREE_VENDOR.filter(([name]) => name.endsWith(".js")).map(([name, from]) => [name, readFileSync(threeSource(name, from), "utf8")])
+);
 
 const minifiableJs = [
   "fe-icons.js",
@@ -223,5 +267,37 @@ const standaloneAppHtml = createStandaloneAppHtml(
     volumeLibraryBase64: readFileSync(srcPath("volume-library.bin")).toString("base64"),
   }
 );
-writeFileSync("build/client/Final-Effect-3D-Standalone.html", stampBuild(standaloneAppHtml));
-writeFileSync("Final-Effect-3D-Standalone.html", standaloneAppHtml);
+/* A single-file download has no sibling files, so the vendored three.js is
+   inlined there even though the served app keeps it as a cacheable request. */
+function inlineVendoredThree(html) {
+  let out = html;
+  for (const [name, source] of threeVendorSources) {
+    const escaped = name.replace(".", "\\.");
+    const tag = new RegExp(`<script[^>]*src=["']\\.?/?vendor/three/${escaped}["'][^>]*>\\s*</script>`);
+    if (!tag.test(out)) continue;
+    out = out.replace(tag, () => `<script>\n${source}\n</script>`);
+  }
+  return out;
+}
+writeFileSync("build/client/Final-Effect-3D-Standalone.html", inlineVendoredThree(stampBuild(standaloneAppHtml)));
+writeFileSync("Final-Effect-3D-Standalone.html", inlineVendoredThree(standaloneAppHtml));
+
+/* Keep the worker/asset manifest contract used by the camelAI deploy path. */
+mkdirSync("build/server", { recursive: true });
+cpSync("worker.js", "build/server/worker.js");
+const config = JSON.parse(readFileSync("wrangler.jsonc", "utf8"));
+const manifest = {
+  main: "worker.js",
+  no_bundle: true,
+  rules: [{ type: "ESModule", globs: ["**/*.js", "**/*.mjs"] }],
+  compatibility_date: config.compatibility_date,
+  compatibility_flags: config.compatibility_flags ?? [],
+  assets: { directory: "../client", binding: "ASSETS" },
+  ...(config.vars ? { vars: config.vars } : {}),
+  ...(config.durable_objects ? { durable_objects: config.durable_objects } : {}),
+  ...(config.migrations ? { migrations: config.migrations } : {}),
+  ...(config.kv_namespaces ? { kv_namespaces: config.kv_namespaces } : {}),
+  ...(config.r2_buckets ? { r2_buckets: config.r2_buckets } : {}),
+  ...(config.bindings ? { bindings: config.bindings } : {}),
+};
+writeFileSync("build/server/wrangler.json", JSON.stringify(manifest, null, 2) + "\n");

@@ -216,8 +216,15 @@ void main(){
 
     const setSize = (width, height) => {
       const w = Math.max(1, Math.round(width)), h = Math.max(1, Math.round(height));
-      if (w === state.width && h === state.height) return;
-      state.width = w; state.height = h;
+      /* Compare against the targets that exist, not against a remembered size:
+         if those two ever drift apart the pass keeps drawing into the old,
+         smaller target and every frame is stretched to fit the screen, which is
+         what a "warped viewport" is. */
+      const currentW = sceneTarget ? sceneTarget.width : 0;
+      const currentH = sceneTarget ? sceneTarget.height : 0;
+      state.width = w;
+      state.height = h;
+      if (w === currentW && h === currentH) return;
       [sceneTarget, history, write].forEach(target => target && target.dispose && target.dispose());
       sceneTarget = makeTarget(true);
       history = makeTarget(false);
@@ -292,7 +299,9 @@ void main(){
       try {
         if (renderer.getDrawingBufferSize) {
           renderer.getDrawingBufferSize(scratch);
-          if (scratch.x && (scratch.x !== state.width || scratch.y !== state.height)) setSize(scratch.x, scratch.y);
+          const targetW = sceneTarget ? sceneTarget.width : 0;
+          const targetH = sceneTarget ? sceneTarget.height : 0;
+          if (scratch.x && (Math.round(scratch.x) !== targetW || Math.round(scratch.y) !== targetH)) setSize(scratch.x, scratch.y);
         }
         const offset = jitter(state.frame, state.width, state.height);
         savedProjection.copy(camera.projectionMatrix);
@@ -344,7 +353,14 @@ void main(){
       get ok() { return state.ok; },
       get frame() { return state.frame; },
       get targets() { return { sceneTarget, history, write }; },
-      setEnabled(value) { state.enabled = !!value; },
+      setEnabled(value) {
+        const next = !!value;
+        /* Coming back from a pause, the history buffer holds a frame from before
+           it - a different camera, a different scene - and blending that in is
+           a smear, not an anti-aliasing pass. Start the accumulation again. */
+        if (next && !state.enabled) state.historyReady = false;
+        state.enabled = next;
+      },
       setBlend(value) { opts.blend = Math.max(0.02, Math.min(1, Number(value) || 0.12)); },
       reset, setSize, render,
       dispose() {
