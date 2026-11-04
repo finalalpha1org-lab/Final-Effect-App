@@ -172,7 +172,9 @@ static void testSelection(void) {
   CHECK(fe_edit_sel_count() == 18);
   fe_edit_set_mode(2); /* face */
   fe_edit_select_all();
-  CHECK(fe_edit_sel_count() == 12);
+  /* A face is a quad here, not a triangle: a cube's twelve triangles are the
+     six sides it was drawn with, and select-all reports the six faces. */
+  CHECK_MSG(fe_edit_sel_count() == 6, "a cube has six quad faces, not twelve triangles");
   fe_edit_set_mode(0);
 }
 
@@ -225,7 +227,7 @@ static void testExtrude(void) {
      original vertices here as "not copied" used to deselected nothing at all,
      because the loop ran over the vertex count the operation had just grown. */
   fe_edit_set_mode(2);
-  CHECK_MSG(fe_edit_sel_count() == 12, "the extruded shell must stay selected");
+  CHECK_MSG(fe_edit_sel_count() == 6, "the extruded shell must stay selected (twelve triangles, six faces)");
   fe_edit_set_mode(0);
   CHECK_MSG(fe_edit_sel_count() == 8, "only the eight new corners are selected");
   checkIntegrity("extrude shell");
@@ -509,8 +511,10 @@ static void testWeldAndDisplay(void) {
     CHECK_MSG(drawn == 4, "the diagonal of a flat quad must not be drawn as an edge");
   }
 
-  /* The same four corners folded along the diagonal are two faces that meet
-     at an angle: now the shared edge is real and must be drawn. */
+  /* A quad that has been *bent* is still one face: the pairing is decided when
+     the topology is built and then kept, which is what stops a quad exploding
+     into two triangles the moment a tool drags one of its corners. 37 degrees
+     is inside the 60 degree crease limit, so the shared edge stays hidden. */
   static const float folded[12] = {
     -1, -1, 0,   1, -1, 0,   1, 1, 1,  -1, 1, 0
   };
@@ -519,14 +523,37 @@ static void testWeldAndDisplay(void) {
     const unsigned char* shown = fe_edit_edge_display_ptr();
     int drawn = 0;
     for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
-    CHECK_MSG(drawn == 5, "a folded quad keeps its shared edge");
-    /* The threshold is a setting: at a shallow angle the diagonal goes away
-       again without touching the topology. */
-    fe_edit_set_display_angle(45.0f);
+    CHECK_MSG(drawn == 4, "a bent quad is still one face, so its diagonal stays hidden");
+    fe_edit_set_mode(2);
+    fe_edit_select_all();
+    CHECK_MSG(fe_edit_sel_count() == 1, "a bent quad is one face");
+    fe_edit_set_mode(0);
+  }
+
+  /* Past the crease limit the two triangles are a real fold - a sphere's or a
+     cone's - and the shared edge is drawn again. The same triangle table is
+     re-uploaded here, which also pins the reset: a stale pairing from the flat
+     quad above must not survive into this mesh. */
+  static const float sharp[12] = {
+    -1, -1, 0,   1, -1, 0,   1, 1, 2.5f,  -1, 1, 0
+  };
+  uploadSplitQuad(sharp, flatNormals);
+  {
+    const unsigned char* shown = fe_edit_edge_display_ptr();
+    int drawn = 0;
+    for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
+    CHECK_MSG(drawn == 5, "a fold past the crease limit draws its shared edge");
+    fe_edit_set_mode(2);
+    fe_edit_select_all();
+    CHECK_MSG(fe_edit_sel_count() == 2, "a fold past the crease limit is two faces");
+    fe_edit_set_mode(0);
+    /* The display threshold is still a setting of its own: push it past the
+       fold and the crease disappears again without touching the topology. */
+    fe_edit_set_display_angle(80.0f);
     drawn = 0;
     shown = fe_edit_edge_display_ptr();
     for (unsigned int e = 0; e < fe_edit_edge_count(); ++e) drawn += shown[e] ? 1 : 0;
-    CHECK_MSG(drawn == 4, "a shallow fold is below the display threshold");
+    CHECK_MSG(drawn == 4, "the display angle hides a crease shallower than the threshold");
     fe_edit_set_display_angle(0.6f);
     CHECK(fe_edit_edge_count() == 5);
   }

@@ -785,7 +785,10 @@
     dots.material.depthTest = state.mode === 'vertex' ? !state.xray : true;
     /* Dots are the only thing to aim at in point mode, so they get a couple of
        pixels more on a phone-sized viewport. */
-    const fingerSized = Math.min(window.innerWidth || 1024, window.innerHeight || 768) < 900;
+    /* The module is loaded in a vm without a window (the tests), in the single
+       file build and in the browser; ask whichever one exists. */
+    const view = typeof window !== 'undefined' ? window : global;
+    const fingerSized = Math.min(view.innerWidth || 1024, view.innerHeight || 768) < 900;
     dots.material.size = vertexCount > 2000 ? (fingerSized ? 6 : 4) : vertexCount > 400 ? (fingerSized ? 7 : 5) : (fingerSized ? 9 : 6);
 
     /* Selected faces are only painted in face mode. In point mode every

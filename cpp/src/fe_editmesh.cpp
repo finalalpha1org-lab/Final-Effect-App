@@ -1781,6 +1781,15 @@ FE_EXPORT void fe_edit_reset(void) {
   clipClear();
   undoClear();
   g_weldMerged = 0;
+  /* The quad pairing is derived from the shape at build time and then kept by
+     topology signature, so a tool that only moves vertices does not have to
+     re-pair the mesh. A reset is a different mesh: its signature can collide
+     with the old one (same triangle table), and then the stale pairing would
+     hide a diagonal the new shape does not have. Throw it away here. */
+  g_quadBuilt = false;
+  g_quadCount = 0;
+  g_quadPairCount = 0;
+  g_quadSignature = 0u;
   GZ.active = false;
   GZ.handle = -1;
   g_outVerts = 0;

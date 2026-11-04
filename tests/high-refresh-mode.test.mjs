@@ -34,17 +34,32 @@ function loadApplyHighRefreshMode() {
 }
 
 test('high refresh mode trades temporal AA and shadow resolution for frame rate', () => {
-  const { run, shadow, state, renderer } = loadApplyHighRefreshMode();
-  assert.equal(renderer._pr, 2, 'the default is a sharp 2× cap');
+  const { ctx, run, shadow, state, renderer } = loadApplyHighRefreshMode();
+  const source = html.slice(html.indexOf('function applyHighRefreshMode'), html.indexOf('window.applyHighRefreshMode = applyHighRefreshMode;'));
+
+  /* The performance governor is the one writer of the pixel ratio, and this
+     toggle is a ceiling it reads: `window.__feHighRefresh` in fe-cpp-engine.js
+     says 1.5x instead of 2x. It used to set the ratio here as well, while the
+     governor set it from the kernel's frame times, so the two resized the
+     drawing buffer against each other. */
+  assert.ok(!source.includes('setPixelRatio'), 'the toggle must not resize the viewport itself');
+  const ceilings = bridge.slice(bridge.indexOf('const ceilings = window.__feHighRefresh'), bridge.indexOf('const floors = window.__feHighRefresh'));
+  assert.match(ceilings, /\[1\.5, 1, 1\.25, 1\.5\]/, 'high refresh caps the render scale at 1.5x');
+  assert.match(ceilings, /Math\.min\(native, 2\)/, 'and full quality may reach the device ratio up to 2x');
+
   run(true);
-  assert.equal(renderer._pr, 1.5, 'high refresh renders at a sharp 1.5×, never sub-native');
+  assert.equal(ctx.window.__feHighRefresh, true, 'the governor is asked for the high-refresh ceiling');
   assert.equal(shadow.mapSize.x, 1024, 'shadow map drops to 1024²');
   assert.equal(shadow.mapSize.y, 1024);
   assert.equal(state.disposed, 1, 'the stale shadow map is released so three.js rebuilds it');
+  assert.equal(renderer.shadowMap.type, 'PCFShadowMap', 'and the cheaper filter is used');
   assert.deepEqual(state.enabled, [false], 'temporal AA is paused');
+  assert.equal(state.resets, 1, 'the history is thrown away with the pass');
+
   run(false);
+  assert.equal(ctx.window.__feHighRefresh, false);
   assert.equal(shadow.mapSize.x, 2048);
-  assert.equal(renderer._pr, 2, 'full quality restores the 2× cap');
+  assert.equal(renderer.shadowMap.type, 'PCFSoftShadowMap', 'full quality restores the soft filter');
   assert.equal(state.enabled.at(-1), true, 'temporal AA is restored');
 });
 
@@ -58,7 +73,11 @@ test('the flag is a user setting, persisted with the other workspace settings', 
 test('the governor keeps a single TAA decision and publishes real per-frame costs', () => {
   assert.ok(bridge.includes('eng._autoTaa = true') && bridge.includes('eng._autoTaa = false'),
     'auto quality decides TAA in one place');
-  assert.ok(bridge.includes('eng._autoTaaGood >= 4'), 're-enabling TAA needs sustained good frames (no ping-pong)');
+  const hysteresis = bridge.match(/eng\._autoTaaGood\s*>=\s*(\d+)/);
+  assert.ok(hysteresis, 're-enabling TAA needs sustained good frames (no ping-pong)');
+  assert.ok(Number(hysteresis[1]) >= 4,
+    `TAA may only come back after a run of good frames, not one, and this asks for ${hysteresis[1]}`);
+  assert.match(bridge, /eng\._autoTaaGood = 0/, 'a slow frame resets the run');
   assert.ok(!bridge.includes('eng.taa.setEnabled(wantTaa)'), 'the governor must not toggle TAA on its own timer');
   for (const key of ['cpuMs', 'renderMs', 'drawCalls', 'triangles']) {
     assert.ok(bridge.includes(`${key}:`), `perfStats must include ${key}`);

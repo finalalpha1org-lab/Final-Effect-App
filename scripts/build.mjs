@@ -38,6 +38,8 @@ if (hasPublicDir) {
     "volume-atlas.js",
     "volume-library.js",
     "volume-library.bin",
+    "fe-poly.js",
+    "fe-project.js",
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
@@ -110,6 +112,8 @@ const minifiableJs = [
   "modifier-engine.js",
   "volume-atlas.js",
   "volume-library.js",
+  "fe-poly.js",
+  "fe-project.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
 ];
@@ -167,6 +171,8 @@ const WORKSPACE_SCRIPTS = [
   "volume-library.js",
   "simulationCore.js",
   "modifier-engine.js",
+  "fe-poly.js",
+  "fe-project.js",
   "fe-cpp-engine.js",
 ];
 
@@ -254,6 +260,8 @@ const standaloneAppHtml = createStandaloneAppHtml(
     feIcons: readFileSync(srcPath("fe-icons.js"), "utf8"),
     feTaa: readFileSync(srcPath("fe-taa.js"), "utf8"),
     volumeLibrary: readFileSync(srcPath("volume-library.js"), "utf8"),
+    fePoly: readFileSync(srcPath("fe-poly.js"), "utf8"),
+    feProject: readFileSync(srcPath("fe-project.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),
     feCppEngine: readFileSync(srcPath("fe-cpp-engine.js"), "utf8"),

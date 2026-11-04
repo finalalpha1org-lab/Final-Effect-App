@@ -8,6 +8,8 @@ export function createStandaloneAppHtml(html, {
   editMode = '',
   feTaa,
   volumeLibrary,
+  fePoly = '',
+  feProject = '',
   volumeLibraryBase64 = '',
   simulationCore,
   modifierEngine,
@@ -80,6 +82,8 @@ export function createStandaloneAppHtml(html, {
     ['volume-library.js', volumeLibrary],
     ['simulationCore.js', simulationCore],
     ['modifier-engine.js', modifierEngine],
+    ['fe-poly.js', fePoly],
+    ['fe-project.js', feProject],
     ['fe-cpp-engine.js', feCppEngine]
   ];
   let injectedBootstrap = false;

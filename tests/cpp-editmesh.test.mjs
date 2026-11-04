@@ -206,7 +206,9 @@ test('selection is shared by the three modes and the tap ray respects depth', ()
   exp.fe_edit_set_mode(1);
   assert.equal(exp.fe_edit_sel_count(), 18);
   exp.fe_edit_set_mode(2);
-  assert.equal(exp.fe_edit_sel_count(), 12);
+  /* Faces are quads: a cube's twelve triangles are the six sides it has, and a
+     face is selected only when all of its corners are. */
+  assert.equal(exp.fe_edit_sel_count(), 6);
 
   exp.fe_edit_select_none();
   exp.fe_edit_set_mode(0);
@@ -214,16 +216,63 @@ test('selection is shared by the three modes and the tap ray respects depth', ()
   exp.fe_edit_select_invert();
   assert.equal(exp.fe_edit_sel_count(), 8);
 
-  /* A tap in the middle of the screen has to hit the front of the cube: with a
-     depth buffer the pick returns one of the near corners, never the far one. */
+  /* A tap in the middle of the screen has to hit the front of the cube. The
+     front and the back of an axis-aligned cube land on the same pixels, so the
+     only thing that separates them is the depth buffer: the answer has to be
+     one of the front face's two triangles (2 and 3), never the back (0 and 1). */
   const clip = new Float32Array(16);
   clip[0] = 0.5; clip[5] = 0.5; clip[10] = -0.5; clip[15] = 1;
-  exp.fe_arena_reset();
-  const clipPtr = exp.fe_malloc(64);
-  new Float32Array(exp.memory.buffer, clipPtr, 16).set(clip);
-  const hit = exp.fe_edit_pick(clipPtr, 0.5, 0.5);
-  exp.fe_arena_reset();
-  assert.ok(hit >= 0 && hit < 8, `tap at the centre of the cube returned ${hit}`);
+  const pickWith = (matrix, x, y) => {
+    exp.fe_arena_reset();
+    const ptr = exp.fe_malloc(64);
+    new Float32Array(exp.memory.buffer, ptr, 16).set(matrix);
+    const value = exp.fe_edit_pick(ptr, x, y);
+    exp.fe_arena_reset();
+    return value;
+  };
+  exp.fe_edit_set_mode(2);
+  const faceHit = pickWith(clip, 0.5, 0.5);
+  assert.ok(faceHit === 2 || faceHit === 3, `tap at the centre of the cube returned triangle ${faceHit}`);
+
+  /* In vertex mode the middle of a face is nowhere near a corner, and the pick
+     says so instead of taking the nearest stray point - the old kernel ran the
+     vertex pass in every mode and a tap on empty space selected the closest
+     corner of the mesh. */
+  exp.fe_edit_set_mode(0);
+  assert.equal(pickWith(clip, 0.5, 0.5), -1, 'a tap in the middle of a face is not a tap on a point');
+
+  /* Turn the camera and every corner gets its own pixel, so the tap has to come
+     back with the corner it is actually on. The far corner 1 is hidden behind
+     the body and has to be refused; the four front corners (4-7) are always in
+     front and must all answer for themselves. */
+  const turned = new Float32Array(16);
+  {
+    const ay = 0.44, ax = 0.31;
+    const cyv = Math.cos(ay), syv = Math.sin(ay), cxv = Math.cos(ax), sxv = Math.sin(ax);
+    const R = [
+      [cyv, 0, syv],
+      [sxv * syv, cxv, -sxv * cyv],
+      [-cxv * syv, sxv, cxv * cyv]
+    ];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) turned[col * 4 + row] = 0.5 * R[row][col];
+    }
+    turned[10] = -0.6; turned[15] = 1;
+  }
+  const projectBy = (matrix, v) => {
+    const x = CUBE_VERTS[v * 3], y = CUBE_VERTS[v * 3 + 1], z = CUBE_VERTS[v * 3 + 2];
+    const px = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+    const py = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+    return [px * 0.5 + 0.5, 1 - (py * 0.5 + 0.5)];
+  };
+  for (let v = 0; v < 8; v++) {
+    const [px, py] = projectBy(turned, v);
+    const picked = pickWith(turned, px, py);
+    if (v === 1) assert.equal(picked, -1, 'the corner hidden behind the body was picked');
+    else if (v >= 4) assert.equal(picked, v, `a tap on visible corner ${v} answered with ${picked}`);
+    else assert.ok(picked === v || picked === -1, `a tap on corner ${v} answered with ${picked}`);
+  }
+  exp.fe_edit_set_mode(0);
 
   /* Box select over the whole screen grabs every vertex. */
   exp.fe_edit_select_none();
@@ -325,7 +374,8 @@ test('a selection takes only the kind of element the mode asks for', () => {
   uploadCube(exp);
   exp.fe_edit_set_mode(2);
   box(0, 0, 1, 1);
-  assert.equal(exp.fe_edit_sel_count(), 12, 'face mode must take the twelve faces');
+  /* Six faces, not twelve triangles: a cube's quads are paired by the kernel. */
+  assert.equal(exp.fe_edit_sel_count(), 6, 'face mode must take the six faces');
 
   /* A tap answers the same way: one point, or the two ends of one edge, or the
      three corners of one face. It is aimed at a corner, because a tap in the
@@ -347,8 +397,11 @@ test('a selection takes only the kind of element the mode asks for', () => {
   exp.fe_edit_set_mode(2);
   const picked = tap(cx0, cy0);
   assert.ok(picked >= 0 && picked < 12, `a tap on a corner found no face, got ${picked}`);
-  assert.equal(flagged(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()), 1, 'face mode taps one face');
-  assert.equal(flagged(exp.fe_edit_vert_sel_ptr(), exp.fe_edit_vert_count()), 3, 'and takes exactly its three corners');
+  /* A face is a quad here, so taking it flags both of its triangles and all
+     four of its corners, and still counts as one face. */
+  assert.equal(flagged(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()), 2, 'face mode taps one face');
+  assert.equal(exp.fe_edit_sel_count(), 1, 'the pair of triangles is one face');
+  assert.equal(flagged(exp.fe_edit_vert_sel_ptr(), exp.fe_edit_vert_count()), 4, 'and takes exactly its four corners');
 });
 
 /* Smooth shading is geometry, not a flag the renderer may or may not honour:
