@@ -564,6 +564,8 @@
 			}
 
 			function handleTouchStartRotate( event ) {
+					if ( event.touches.length === 0 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( event.touches.length == 1 ) {
 
@@ -580,6 +582,8 @@
 			}
 
 			function handleTouchStartPan( event ) {
+					if ( event.touches.length === 0 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( event.touches.length == 1 ) {
 
@@ -596,6 +600,8 @@
 			}
 
 			function handleTouchStartDolly( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				const dx = event.touches[ 0 ].pageX - event.touches[ 1 ].pageX;
 				const dy = event.touches[ 0 ].pageY - event.touches[ 1 ].pageY;
@@ -605,6 +611,8 @@
 			}
 
 			function handleTouchStartDollyPan( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( scope.enableZoom ) handleTouchStartDolly( event );
 				if ( scope.enablePan ) handleTouchStartPan( event );
@@ -612,6 +620,8 @@
 			}
 
 			function handleTouchStartDollyRotate( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( scope.enableZoom ) handleTouchStartDolly( event );
 				if ( scope.enableRotate ) handleTouchStartRotate( event );
@@ -619,6 +629,8 @@
 			}
 
 			function handleTouchMoveRotate( event ) {
+					if ( event.touches.length === 0 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( event.touches.length == 1 ) {
 
@@ -642,6 +654,8 @@
 			}
 
 			function handleTouchMovePan( event ) {
+					if ( event.touches.length === 0 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( event.touches.length == 1 ) {
 
@@ -662,6 +676,8 @@
 			}
 
 			function handleTouchMoveDolly( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				const dx = event.touches[ 0 ].pageX - event.touches[ 1 ].pageX;
 				const dy = event.touches[ 0 ].pageY - event.touches[ 1 ].pageY;
@@ -674,6 +690,8 @@
 			}
 
 			function handleTouchMoveDollyPan( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( scope.enableZoom ) handleTouchMoveDolly( event );
 				if ( scope.enablePan ) handleTouchMovePan( event );
@@ -681,6 +699,8 @@
 			}
 
 			function handleTouchMoveDollyRotate( event ) {
+					if ( event.touches.length < 2 ) return; /* local fix: three r128 touch handlers read touches[ 1 ] unconditionally */
+
 
 				if ( scope.enableZoom ) handleTouchMoveDolly( event );
 				if ( scope.enableRotate ) handleTouchMoveRotate( event );
@@ -946,6 +966,28 @@
 
 				if ( scope.enabled === false ) return;
 				event.preventDefault(); // prevent scrolling
+
+				/* Local fix: while a pinch is in progress one of the two fingers can
+				   lift, and the state machine used to keep calling the dolly handler
+				   with a single touch ("undefined is not an object (evaluating
+				   'event.touches[1].pageX')"). Fall back to pan / rotate so the
+				   remaining finger keeps working. */
+				if ( event.touches.length === 0 ) { state = STATE.NONE; return; }
+
+				if ( event.touches.length === 1 && ( state === STATE.TOUCH_DOLLY_PAN || state === STATE.TOUCH_DOLLY_ROTATE ) ) {
+
+					if ( scope.enablePan ) {
+						state = STATE.TOUCH_PAN;
+						handleTouchStartPan( event );
+					} else if ( scope.enableRotate ) {
+						state = STATE.TOUCH_ROTATE;
+						handleTouchStartRotate( event );
+					} else {
+						state = STATE.NONE;
+						return;
+					}
+
+				}
 
 				switch ( state ) {
 

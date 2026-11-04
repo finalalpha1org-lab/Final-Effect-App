@@ -379,7 +379,9 @@
       this.exports.fe_anim_ensure_object(slot, restBuf.ptr);
 
       let channelsToKey = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-      if (group === 'loc') channelsToKey = [0, 1, 2];
+      /* An explicit channel list is also accepted, so a single axis can be keyed. */
+      if (Array.isArray(group)) channelsToKey = group.filter((c) => Number.isInteger(c) && c >= 0 && c <= 10);
+      else if (group === 'loc') channelsToKey = [0, 1, 2];
       else if (group === 'rot') channelsToKey = [3, 4, 5];
       else if (group === 'scale') channelsToKey = [6, 7, 8];
       else if (group === 'extra') channelsToKey = [9, 10];
@@ -402,6 +404,111 @@
         window.FE?.toast?.(`◆ Keyframed ${name} at frame ${frame}`);
       }
       return channelsToKey.length;
+    },
+
+    /* Key one axis on its own, the way Blender/Maya key a single channel:
+       location X is channel 0, rotation Y is channel 4, scale Z is channel 8.
+       The other two axes keep whatever they had at other frames. */
+    insertAxisKeyframeForActive(prop, axis, silent = false) {
+      const base = prop === 'loc' ? 0 : prop === 'rot' ? 3 : prop === 'scale' ? 6 : null;
+      const index = axis === 'x' ? 0 : axis === 'y' ? 1 : axis === 'z' ? 2 : null;
+      if (base === null || index === null) return 0;
+      const channel = base + index;
+      const keyed = this.insertKeyframeForActive([channel], true);
+      if (keyed && !silent) {
+        const name = window.getActiveObjectDisplayName?.() || window.FE?.getActiveObjectId?.() || 'object';
+        const label = prop === 'loc' ? 'Location' : prop === 'rot' ? 'Rotation' : 'Scale';
+        const frame = Number(window.timelineConfig?.currentFrame || 0);
+        window.FE?.toast?.('\u25c6 ' + label + ' ' + String(axis).toUpperCase() + ' keyed on ' + name + ' at frame ' + frame);
+      }
+      return keyed;
+    },
+
+    /* Does this channel have a key on this frame, and how many keys does it have
+       at all? Plain numbers, no views: the ◆ buttons ask this on every timeline
+       redraw, and asking the heap for a fresh block that often is what grew the
+       wasm memory under the rest of the engine and detached views it had cached
+       - "Underlying ArrayBuffer has been detached from the view". Keep to the
+       documented rule instead: a named scratch block that survives between
+       calls, and a view made from its pointer when it is needed, never stored. */
+    channelKeyState(slot, channel, frame) {
+      const exp = this.exports;
+      if (!exp || !this.ready) return { count: 0, here: false };
+      const cap = 128;
+      let count = 0;
+      try {
+        const block = this.scratch('animKeyQuery', cap * 3 * 4);
+        if (!block.ptr) return { count: 0, here: false };
+        count = exp.fe_anim_list_object_keyframes(slot, channel, block.ptr, cap) | 0;
+        if (count <= 0) return { count: 0, here: false };
+        /* After the call, so a growth during it cannot leave us holding a view
+           of the old buffer. */
+        const n = Math.min(count, cap);
+        const view = new Float32Array(this.memory.buffer, block.ptr, n * 3);
+        for (let i = 0; i < n; i++) {
+          if (Math.abs(view[i * 3] - frame) < 0.5) return { count, here: true };
+        }
+      } catch (_) {
+        /* A status query must never break a redraw. */
+      }
+      return { count, here: false };
+    },
+
+    hasKeyOnChannelAtFrame(slot, channel, frame) {
+      return this.channelKeyState(slot, channel, frame).here;
+    },
+
+    /* The Key button for one axis, as a toggle: a channel that already has a key
+       on this frame loses it, a channel without one gets it. That is what the lit
+       ◆ promises - "there is a key here" - so pressing it again is the way to
+       take that key back, instead of it only ever adding. Only this channel is
+       touched: the other two axes keep whatever they have at other frames. */
+    toggleAxisKeyframeForActive(prop, axis, silent = false) {
+      const base = prop === 'loc' ? 0 : prop === 'rot' ? 3 : prop === 'scale' ? 6 : null;
+      const index = axis === 'x' ? 0 : axis === 'y' ? 1 : axis === 'z' ? 2 : null;
+      if (base === null || index === null) return 0;
+      const channel = base + index;
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const slot = this.getSlotForObjectId(objId);
+      const frame = Number(window.timelineConfig?.currentFrame || 0);
+      const label = (prop === 'loc' ? 'Location' : prop === 'rot' ? 'Rotation' : 'Scale') + ' ' + String(axis).toUpperCase();
+      const name = window.getActiveObjectDisplayName?.() || objId;
+
+      if (this.hasKeyOnChannelAtFrame(slot, channel, frame)) {
+        /* The kernel takes one channel index here (not a bitmask - the mask form
+           belongs to the range calls), and 0xFFFFFFFF means every channel. */
+        const removed = this.exports.fe_anim_remove_keyframe_at(slot, channel, frame, 0.5);
+        refreshAnimationStudioUI();
+        if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+        if (!silent) window.FE?.toast?.(removed > 0 ? ('\u25c7 removed ' + label + ' key on ' + name + ' at frame ' + frame) : ('No ' + label + ' key on frame ' + frame));
+        return removed > 0 ? -1 : 0;
+      }
+      return this.insertAxisKeyframeForActive(prop, axis, silent);
+    },
+
+    /* The same toggle for a whole group (the ◆ Key X·Y·Z button): if all of the
+       group's channels have a key on this frame, take them all off, otherwise
+       put them all on. */
+    toggleKeyframeForActive(group = 'locrotscale', silent = false) {
+      const channels = group === 'loc' ? [0, 1, 2]
+        : group === 'rot' ? [3, 4, 5]
+        : group === 'scale' ? [6, 7, 8]
+        : [0, 1, 2, 3, 4, 5, 6, 7, 8];
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const slot = this.getSlotForObjectId(objId);
+      const frame = Number(window.timelineConfig?.currentFrame || 0);
+      if (!channels.every((c) => this.hasKeyOnChannelAtFrame(slot, c, frame))) {
+        return this.insertKeyframeForActive(group, silent);
+      }
+      let removed = 0;
+      for (const c of channels) removed += this.exports.fe_anim_remove_keyframe_at(slot, c, frame, 0.5);
+      refreshAnimationStudioUI();
+      if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+      if (!silent) {
+        const name = window.getActiveObjectDisplayName?.() || objId;
+        window.FE?.toast?.(removed > 0 ? ('\u25c7 removed the key on ' + name + ' at frame ' + frame) : ('No key on frame ' + frame));
+      }
+      return removed > 0 ? -channels.length : 0;
     },
 
     deleteKeyframeAtCurrentFrame() {
@@ -1357,146 +1464,14 @@
       if (barEl) barEl.style.width = '100%';
     },
 
-    /* ---------------------------------------------------------------------
-     * 3. C++ Real-Time Mesh Sculpt & Vertex/Weight Paint Kernel
-     * --------------------------------------------------------------------- */
-    applySculptOrPaintAtPointer(clientX, clientY) {
-      if (!this.ready || typeof THREE === 'undefined') return false;
-      const mode = this.sculptState.activeMode;
-      if (mode !== 'sculpt' && mode !== 'vpaint' && mode !== 'wpaint' && mode !== 'tpaint') return false;
-
-      const eng = window.FE?.engines?.core;
-      const mesh = window.getActiveObjectMesh?.();
-      if (!eng || !mesh || !mesh.isMesh || !mesh.geometry?.attributes?.position) return false;
-
-      const canvas = eng.r?.domElement;
-      if (!canvas) return false;
-      const rect = canvas.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((clientX - rect.left) / rect.width) * 2 - 1,
-        -((clientY - rect.top) / rect.height) * 2 + 1
-      );
-
-      const cam = eng.getActiveCamera ? eng.getActiveCamera() : eng.viewportCamera;
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(ndc, cam);
-      const hits = raycaster.intersectObject(mesh, false);
-      if (!hits.length) return false;
-
-      const hit = hits[0];
-      const invMat = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
-      const localPt = hit.point.clone().applyMatrix4(invMat);
-      const localNormal = (hit.face?.normal ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
-
-      const geom = mesh.geometry;
-      const posAttr = geom.attributes.position;
-      const vCount = posAttr.count;
-      const symMask = this.sculptState.symmetryX ? 1 : 0;
-      const avgScale = Math.max(0.05, (mesh.scale.x + mesh.scale.y + mesh.scale.z) / 3);
-      const localRadius = this.sculptState.radius / avgScale;
-
-      this.exports.fe_arena_reset();
-
-      if (mode === 'sculpt') {
-        let nrmAttr = geom.attributes.normal;
-        if (!nrmAttr) {
-          geom.computeVertexNormals();
-          nrmAttr = geom.attributes.normal;
-        }
-        const posBuf = this.allocF32(vCount * 3);
-        const nrmBuf = this.allocF32(vCount * 3);
-        posBuf.view.set(posAttr.array);
-        nrmBuf.view.set(nrmAttr.array);
-
-        const grabDelta = new THREE.Vector3();
-        if (this.sculptState.lastLocalHit) {
-          grabDelta.subVectors(localPt, this.sculptState.lastLocalHit);
-        }
-        this.sculptState.lastLocalHit = localPt.clone();
-
-        const signedStrength = this.sculptState.invert ? -this.sculptState.strength : this.sculptState.strength;
-        const moved = this.exports.fe_sculpt_apply_brush(
-          posBuf.ptr,
-          nrmBuf.ptr,
-          vCount,
-          this.sculptState.brush,
-          localPt.x, localPt.y, localPt.z,
-          localNormal.x, localNormal.y, localNormal.z,
-          grabDelta.x, grabDelta.y, grabDelta.z,
-          localRadius,
-          signedStrength,
-          symMask
-        );
-
-        if (moved > 0) {
-          const idxAttr = geom.index;
-          const triCount = idxAttr ? Math.floor(idxAttr.count / 3) : Math.floor(vCount / 3);
-          let idxPtr = 0;
-          if (idxAttr) {
-            const idxBuf = this.allocU32(triCount * 3);
-            idxBuf.view.set(idxAttr.array.subarray(0, triCount * 3));
-            idxPtr = idxBuf.ptr;
-          }
-          this.exports.fe_mesh_recompute_vertex_normals(posBuf.ptr, idxPtr, vCount, triCount, nrmBuf.ptr);
-
-          posAttr.array.set(posBuf.view);
-          posAttr.needsUpdate = true;
-          nrmAttr.array.set(nrmBuf.view);
-          nrmAttr.needsUpdate = true;
-          geom.computeBoundingBox();
-          geom.computeBoundingSphere();
-
-          const outline = mesh.getObjectByName('SelectionOutlineHelper');
-          if (outline) outline.visible = false;
-        }
-        return moved > 0;
-      }
-
-      /* Vertex / Weight / Texture Paint Mode via C++ fe_vertex_paint_apply */
-      let colAttr = geom.attributes.color;
-      if (!colAttr) {
-        const initCols = new Float32Array(vCount * 3);
-        const baseC = mesh.material?.color || { r: 0.75, g: 0.78, b: 0.86 };
-        for (let i = 0; i < vCount; i++) {
-          initCols[i * 3 + 0] = mode === 'wpaint' ? 0.05 : baseC.r;
-          initCols[i * 3 + 1] = mode === 'wpaint' ? 0.15 : baseC.g;
-          initCols[i * 3 + 2] = mode === 'wpaint' ? 0.75 : baseC.b;
-        }
-        colAttr = new THREE.BufferAttribute(initCols, 3);
-        geom.setAttribute('color', colAttr);
-        if (mesh.material) {
-          mesh.material.vertexColors = true;
-          if (mesh.material.color && mode !== 'wpaint') mesh.material.color.setHex(0xffffff);
-          mesh.material.needsUpdate = true;
-        }
-      }
-
-      const posBuf = this.allocF32(vCount * 3);
-      const colBuf = this.allocF32(vCount * 3);
-      posBuf.view.set(posAttr.array);
-      colBuf.view.set(colAttr.array);
-
-      const cObj = new THREE.Color(mode === 'wpaint'
-        ? (this.sculptState.invert ? '#1d4ed8' : '#ef4444')
-        : this.sculptState.paintColor);
-
-      const painted = this.exports.fe_vertex_paint_apply(
-        posBuf.ptr,
-        colBuf.ptr,
-        vCount,
-        localPt.x, localPt.y, localPt.z,
-        localRadius,
-        this.sculptState.strength,
-        cObj.r, cObj.g, cObj.b,
-        symMask
-      );
-
-      if (painted > 0) {
-        colAttr.array.set(colBuf.view);
-        colAttr.needsUpdate = true;
-      }
-      return painted > 0;
-    },
+    /* The C++ sculpt / vertex / weight / texture paint brush pipeline that used
+       to sit here was reachable only from the four paint modes, which are no
+       longer part of the build: nothing can select them, so the stroke handler,
+       its state machine and the paint toolbar markup are gone with them. The
+       kernel primitives stay compiled (fe_sculpt_apply_brush,
+       fe_vertex_paint_apply) and are still exercised by the benchmark, so a
+       future sculpt implementation starts from a working core instead of from
+       the half-finished brush layer that kept corrupting meshes. */
 
     subdivideActiveMeshForSculpt() {
       const mesh = window.getActiveObjectMesh?.();
@@ -1541,20 +1516,99 @@
 
       const eng = window.FE?.engines?.core;
       if (eng?.r && !this.renderState.isRendering && !this.renderState.isSequenceRendering) {
-        // Keep a stable, sharp viewport. High Refresh Mode deliberately trades
-        // some super-sampling for frame rate, never sub-native resolution.
-        const sharpCap = window.__feHighRefresh ? 1.5 : 2;
-        const sharpDpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), sharpCap);
+        /* The tier is a *ceiling*, and the kernel's own recommendation (`recDpr`,
+           from the frame times it has been fed) is the level under it. It used
+           to be a floor: `clamp(devicePixelRatio, 1, 2)`. A phone reports three
+           device pixels per CSS pixel, so that asked for 2x of 3 - nine device
+           pixels per CSS pixel - and the "viewport bugs out" report is that
+           frame time arriving: ~15 fps with temporal AA switched on, every line
+           smearing while a finger drags the camera. Auto takes the kernel's
+           recommendation as it comes; a fixed tier only narrows it, so High on
+           a slow phone is still allowed to be fast. High Refresh Mode keeps its
+           1.5x ceiling for 90-120 Hz panels. */
+        const tier = this.gpuModeOverride | 0;
+        const native = window.devicePixelRatio || 1;
+        /* Sharp first, then give ground only while the frames are slow. The tier
+           sets how much super-sampling is allowed (Low 1x, Medium 1.25x, High
+           1.5x, Auto up to 2x or the device's own ratio) and the viewport starts
+           at that ceiling, so a change of setting or a fresh load is sharp
+           immediately rather than climbing there over half a minute.
+
+           What it must not do is aim below the CSS resolution: `1x` is one
+           drawing-buffer pixel per CSS pixel, and on a phone that reports three
+           device pixels per CSS pixel the old rule - taking the kernel's
+           recommendation of 0.85 - put a third of the detail on screen, which
+           reads as "the viewport resolution is low". Below 1x is reserved for a
+           device that is genuinely dropping frames. */
+        const ceilings = window.__feHighRefresh
+          ? [1.5, 1, 1.25, 1.5]
+          : [Math.min(native, 2), 1, 1.5, Math.min(native, 3)];
+        /* Where a tier stops giving ground. A phone that reports three device
+           pixels per CSS pixel is drawing a third of the detail a 1x scale
+           carries per device pixel (index 1 in the space of scales, i.e. one
+           drawing-buffer pixel per CSS pixel, is a ninth of the screen's
+           pixels), so a viewport that settles at 1x on such a display reads as
+           "the resolution is low". High and Auto hold 1.5x before the frame
+           times are allowed to touch the scale, and High may go up to the
+           device's own ratio, which is the sharpest a screen shows. Low keeps
+           1x: that is the tier that trades sharpness for speed. */
+        const floors = window.__feHighRefresh
+          ? [1, 1, 1, 1]
+          : [Math.min(native, 1.5), 1, 1.25, Math.min(native, 2)];
+        const ceiling = Math.max(0.75, ceilings[tier] ?? Math.min(native, 2));
+        const floor = Math.min(ceiling, Math.max(0.75, floors[tier] ?? 1));
         const curPr = eng.r.getPixelRatio();
-        if (Math.abs(curPr - sharpDpr) > 0.01) {
-          eng.r.setPixelRatio(sharpDpr);
+        const nowMs = performance.now();
+        const settledFor = nowMs - (this._dprSettledAt || 0);
+        let goal = curPr;
+        if (!this._dprStarted) {
+          this._dprStarted = true;
+          goal = ceiling;
+        } else if (avgMs > 40 && settledFor > (this._dprFalls ? 4000 : 1500) && curPr > floor) {
+          /* Clearly dropping frames: give up a step, but not the sharpness the
+             tier promises. 40 ms is 25 fps, and the wait is four seconds, so a
+             single slow frame cannot start a visible pulse of resizes - each
+             one reallocates the drawing buffer and its temporal AA targets,
+             which is what flickering on a phone usually is. The first fall
+             after a load or a tier change is allowed to happen sooner, because
+             a device that cannot hold the scale at all should not spend half a
+             minute flashing its way down; if it cannot hold it at *all* (60 ms,
+             under 17 fps) the first fall goes straight to the floor. */
+          this._dprFalls = (this._dprFalls || 0) + 1;
+          goal = this._dprFalls === 1 && avgMs > 60 ? floor : Math.max(floor, curPr - (avgMs > 60 ? 0.5 : 0.25));
+        } else if (avgMs > 55 && settledFor > 4000) {
+          goal = Math.max(0.75, curPr - 0.25);      /* unusable: go past the floor */
+        } else if (avgMs > 0 && avgMs < 24 && settledFor > 3000) {
+          goal = Math.min(native, ceiling, curPr + 0.25);   /* headroom: climb */
+        }
+        if (goal !== curPr && Math.abs(goal - curPr) >= 0.05) {
+          this._dprSettledAt = nowMs;
+          eng.r.setPixelRatio(goal);
           const vp = document.getElementById('viewport-core');
           if (vp && vp.clientWidth && vp.clientHeight) {
             eng.r.setSize(vp.clientWidth, vp.clientHeight, false);
           }
+          /* A new drawing buffer means new temporal AA targets. The pass resizes
+             itself on the next frame, so one frame used to be drawn into the old
+             target and then stretched to the new one - what a resized viewport
+             looks like is a warped image, and a phone changes its viewport size
+             every time the browser chrome slides away. Do it here instead. */
+          if (eng.taa?.setSize) {
+            const db = this._drawingBufferSize || (this._drawingBufferSize = new THREE.Vector2());
+            eng.r.getDrawingBufferSize(db);
+            eng.taa.setSize(db.x, db.y);
+            eng.taa.reset?.();
+          }
         }
         const shadowTarget = window.__feHighRefresh ? Math.min(shadowRes, 1024) : shadowRes;
-        if (eng.d?.shadow?.mapSize && eng.d.shadow.mapSize.x !== shadowTarget) {
+        const shadowNow = (eng.d && eng.d.shadow && eng.d.shadow.mapSize) ? eng.d.shadow.mapSize.x : 0;
+        const shadowWait = (nowMs - (this._shadowSettledAt || 0)) > 6000;
+        const shadowJump = shadowNow ? shadowTarget / shadowNow : 1;
+        /* Re-allocating a shadow map is a visible pop (the map is disposed and
+           rebuilt), so it only happens on a clear difference and at most once
+           every six seconds. */
+        if (eng.d?.shadow?.mapSize && shadowNow !== shadowTarget && shadowWait && (shadowJump > 1.25 || shadowJump < 0.8)) {
+          this._shadowSettledAt = nowMs;
           eng.d.shadow.mapSize.set(shadowTarget, shadowTarget);
           if (eng.d.shadow.map) {
             eng.d.shadow.map.dispose();
@@ -1563,33 +1617,51 @@
         }
       }
 
-      /* Auto quality may drop temporal AA when the device is already GPU-bound;
-         the resolution stays sharp so the viewport never turns blurry. */
+      /* Auto quality may drop temporal AA when the device is already GPU-bound,
+         and so may a fixed tier: the tier states a preference, the frame times
+         have the last word. Asking for "High" used to force TAA on regardless
+         of cost, which is the opposite of what the setting promises ("adapts
+         resolution and shadow quality to keep the viewport smooth"). Hysteresis
+         prevents the classic auto-quality ping-pong: TAA off raises the frame
+         rate, the higher tier would switch it back on, the frame rate drops
+         again. */
       if (eng?.taa && GLOBAL_SETTINGS.taa !== false && !GLOBAL_SETTINGS.highRefresh) {
+        const tierSel = document.getElementById('set-gpu-tier');
         const qualitySel = document.getElementById('ws-quality');
-        const isAuto = !qualitySel || qualitySel.value === '0';
-        /* Single source of truth for the RAF loop. Hysteresis prevents the
-           classic auto-quality ping-pong: TAA off raises the frame rate, the
-           higher tier would switch it back on, the frame rate drops again. */
-        if (!isAuto) {
-          eng._autoTaa = true;
-          eng._autoTaaGood = 0;
-        } else if (tier === 0) {
+        const tierValue = (tierSel && tierSel.value) || (qualitySel && qualitySel.value) || '0';
+        /* Low opts out of TAA; Auto, Medium and High opt in as far as the
+           device allows - which means there has to be real headroom, not merely
+           "not slow yet". TAA costs a full extra pass (measured near 1.6x the
+           frame time at 1.5x scale), so switching it on at 22 ms turns 22 into
+           35 and switches it straight back off: that ping-pong is a flicker you
+           can see. On (under 16 ms) is now a separate, tighter condition, and
+           re-enabling waits for eight consecutive ticks - about ten seconds - of
+           it. */
+        const prefers = tierValue !== '1' && avgMs > 0 && avgMs < 16;
+        if (avgMs > 24) {
           eng._autoTaa = false;
           eng._autoTaaGood = 0;
-        } else if (eng._autoTaa === false) {
+        } else if (eng._autoTaa === undefined) {
+          eng._autoTaa = prefers;
+        } else if (eng._autoTaa === false && prefers) {
           eng._autoTaaGood = (eng._autoTaaGood || 0) + 1;
-          if (eng._autoTaaGood >= 4) { eng._autoTaa = true; eng._autoTaaGood = 0; }
+          if (eng._autoTaaGood >= 8) { eng._autoTaa = true; eng._autoTaaGood = 0; }
         }
       }
 
       const vm = eng?.viewportMetrics || {};
+      /* The render scale that is actually in use, not the one the kernel
+         recommends: the readout next to the tier selector is what the user can
+         check against what they see, and reporting a value the renderer is not
+         using is how "0.85x" ended up printed under a tier that was drawing at
+         1.5x. */
+      const appliedDpr = eng?.r?.getPixelRatio ? eng.r.getPixelRatio() : recDpr;
       const perfStats = {
         fps: Math.min(120, Math.round(fps)),
         avgMs,
         tier,
         tierLabel: tier === 0 ? 'Low' : tier === 1 ? 'Medium' : 'High',
-        dpr: recDpr,
+        dpr: appliedDpr,
         shadowRes,
         cpuMs: Number(vm.cpuMs || 0),
         renderMs: Number(vm.renderSubmitMs || 0),
@@ -1613,7 +1685,7 @@
       const settingsPerfLabel = document.getElementById('cpp-perf-live-readout');
       if (settingsPerfLabel) {
         const tierNames = ['Low (Mobile 60fps)', 'Medium (Balanced)', 'High (Pro Quality)'];
-        settingsPerfLabel.textContent = `${avgMs.toFixed(1)} ms · ${Math.round(fps)} FPS · ${tierNames[tier] || 'High'} quality · ${recDpr.toFixed(2)}x`;
+        settingsPerfLabel.textContent = `${avgMs.toFixed(1)} ms · ${Math.round(fps)} FPS · ${tierNames[tier] || 'High'} quality · ${appliedDpr.toFixed(2)}x`;
       }
     }
   };
@@ -1774,14 +1846,13 @@
           }
         }
       } else {
-        const groups = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10]];
-        const rowH = m.plotH / groups.length;
-        groups.forEach((chs, idx) => {
+        /* The same rows the sheet draws: one per channel. */
+        const rows = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        const rowH = m.plotH / rows.length;
+        rows.forEach((c, idx) => {
           const yMid = m.padT + idx * rowH + rowH * 0.5;
-          for (const c of chs) {
-            for (const key of readAllKeys(slot, c)) {
-              consider(c, key.frame, key.value, m.frameToX(key.frame), yMid, 9);
-            }
+          for (const key of readAllKeys(slot, c)) {
+            consider(c, key.frame, key.value, m.frameToX(key.frame), yMid, 7);
           }
         });
       }
@@ -2552,15 +2623,22 @@
         }
       }
     } else {
-      const groups = [
-        { label: 'Location XYZ', chs: [0, 1, 2] },
-        { label: 'Rotation XYZ', chs: [3, 4, 5] },
-        { label: 'Scale XYZ',    chs: [6, 7, 8] },
-        { label: 'Lens / Light', chs: [9, 10] }
+      /* One row per channel, the way a dope sheet stacks them. Four summary rows
+         put every channel's keys on the same line, so a key on Location X at
+         frame 10 and one on Location Y at frame 20 sat side by side on one row
+         and the second read as if it had replaced the first - while in the
+         kernel they are two channels and both keys are there. A row each also
+         says which channel a key belongs to without asking, and a row dims
+         while its channel has no keys at all. */
+      const rows = [
+        { c: 0, label: 'Location X' }, { c: 1, label: 'Location Y' }, { c: 2, label: 'Location Z' },
+        { c: 3, label: 'Rotation X' }, { c: 4, label: 'Rotation Y' }, { c: 5, label: 'Rotation Z' },
+        { c: 6, label: 'Scale X' },    { c: 7, label: 'Scale Y' },    { c: 8, label: 'Scale Z' },
+        { c: 9, label: 'Lens' },       { c: 10, label: 'Light' }
       ];
-      const rowH = m.plotH / groups.length;
+      const rowH = m.plotH / rows.length;
 
-      groups.forEach((g, idx) => {
+      rows.forEach((row, idx) => {
         const yMid = m.padT + idx * rowH + rowH * 0.5;
         ctx.strokeStyle = '#171b29';
         ctx.beginPath();
@@ -2568,59 +2646,70 @@
         ctx.lineTo(w, m.padT + (idx + 1) * rowH);
         ctx.stroke();
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(g.label, 8, yMid + 4);
-
         if (!anyKeys) return;
         FECppEngine.exports.fe_arena_reset();
         const kBuf = FECppEngine.allocF32(128 * 3);
 
-        for (const c of g.chs) {
-          const n = FECppEngine.exports.fe_anim_list_object_keyframes(slot, c, kBuf.ptr, 128);
-          if (n === 0) continue;
+        const c = row.c;
+        const n = FECppEngine.exports.fe_anim_list_object_keyframes(slot, c, kBuf.ptr, 128);
 
-          const samples = 48;
-          const vals = new Float32Array(samples + 1);
-          let minV = Infinity, maxV = -Infinity;
-          for (let s = 0; s <= samples; s++) {
-            const sf = startF + ((endF - startF) * s) / samples;
-            const v = FECppEngine.exports.fe_anim_evaluate_channel(slot, c, sf, startF, endF);
-            vals[s] = v;
-            if (v < minV) minV = v;
-            if (v > maxV) maxV = v;
-          }
-          const spanV = Math.max(0.01, maxV - minV);
-          ctx.strokeStyle = CHANNEL_COLORS[c] + '88';
-          ctx.lineWidth = 1.25;
+        ctx.fillStyle = n > 0 ? CHANNEL_COLORS[c] : '#64748b';
+        ctx.globalAlpha = n > 0 ? 1 : 0.6;
+        ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(row.label, 10, yMid + 3.5);
+        ctx.globalAlpha = 1;
+        if (n === 0) return;
+
+        /* The channel's curve, faint, behind its keys: the sheet still shows
+           the shape of the motion, and the Graph editor remains the place to
+           edit it. */
+        const samples = 48;
+        const vals = new Float32Array(samples + 1);
+        let minV = Infinity, maxV = -Infinity;
+        for (let s = 0; s <= samples; s++) {
+          const sf = startF + ((endF - startF) * s) / samples;
+          const v = FECppEngine.exports.fe_anim_evaluate_channel(slot, c, sf, startF, endF);
+          vals[s] = v;
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+        const spanV = Math.max(0.01, maxV - minV);
+        ctx.strokeStyle = CHANNEL_COLORS[c] + '55';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let s = 0; s <= samples; s++) {
+          const x = m.padL + (s / samples) * m.plotW;
+          const norm = (vals[s] - minV) / spanV;
+          const y = (m.padT + idx * rowH + rowH - 3) - norm * (rowH - 7);
+          if (s === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        for (let k = 0; k < n; k++) {
+          const kf = kBuf.view[k * 3];
+          const x = m.frameToX(kf);
+          if (x < m.padL - 4 || x > w - m.padR + 4) continue;
+          const here = Math.abs(kf - curF) < 0.5;
+          const size = Math.min(4.5, Math.max(3, rowH * 0.32));
+          ctx.fillStyle = here ? '#fbbf24' : CHANNEL_COLORS[c];
           ctx.beginPath();
-          for (let s = 0; s <= samples; s++) {
-            const x = m.padL + (s / samples) * m.plotW;
-            const norm = (vals[s] - minV) / spanV;
-            const y = (m.padT + idx * rowH + rowH - 5) - norm * (rowH - 10);
-            if (s === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+          ctx.moveTo(x, yMid - size);
+          ctx.lineTo(x + size, yMid);
+          ctx.lineTo(x, yMid + size);
+          ctx.lineTo(x - size, yMid);
+          ctx.closePath();
+          ctx.fill();
+          if (here) {
+            ctx.strokeStyle = '#0b0d14';
+            ctx.lineWidth = 1;
+            ctx.stroke();
           }
-          ctx.stroke();
-
-          for (let k = 0; k < n; k++) {
-            const kf = kBuf.view[k * 3];
-            const x = m.frameToX(kf);
-            if (x < m.padL - 4 || x > w - m.padR + 4) continue;
-            ctx.fillStyle = Math.abs(kf - curF) < 0.5 ? '#fbbf24' : CHANNEL_COLORS[c];
-            ctx.beginPath();
-            ctx.moveTo(x, yMid - 5);
-            ctx.lineTo(x + 5, yMid);
-            ctx.lineTo(x, yMid + 5);
-            ctx.lineTo(x - 5, yMid);
-            ctx.closePath();
-            ctx.fill();
-            if (sel && sel.channel === c && Math.abs(sel.frame - kf) < 0.01) {
-              ctx.strokeStyle = '#fde047';
-              ctx.lineWidth = 2;
-              ctx.strokeRect(x - 8, yMid - 8, 16, 16);
-            }
+          if (sel && sel.channel === c && Math.abs(sel.frame - kf) < 0.01) {
+            ctx.strokeStyle = '#fde047';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x - 7, yMid - 7, 14, 14);
           }
         }
       });
@@ -2800,6 +2889,10 @@
     const origRenderRuler = window.renderTimelineRulerCanvas;
     if (typeof origRenderRuler === 'function' && !origRenderRuler._cppWrapped) {
       const wrappedRuler = function () {
+        /* The ◆ buttons in the transform panels answer "is there a key on this
+           frame" for their own channel, so they follow every timeline redraw -
+           which is every scrub, every key and every selection change. */
+        try { window.syncKeyButtonStates?.(); } catch (_) {}
         origRenderRuler();
         if (!FECppEngine.ready) return;
         const canvas = document.getElementById('timeline-ruler-canvas');
@@ -2868,25 +2961,11 @@
 
     document.addEventListener('fe:mode', e => {
       if (e.detail?.studio !== 'core') return;
-      const mode = e.detail.mode || 'object';
-      FECppEngine.sculptState.activeMode = mode;
-      const bar = document.getElementById('cpp-sculpt-paint-bar');
-      const isBrushMode = (mode === 'sculpt' || mode === 'vpaint' || mode === 'wpaint' || mode === 'tpaint');
-      if (bar) {
-        bar.hidden = !isBrushMode;
-        const paintWrap = document.getElementById('cpp-paint-color-wrap');
-        const brushSelWrap = document.getElementById('cpp-sculpt-brush-wrap');
-        if (paintWrap) paintWrap.style.display = (mode === 'vpaint' || mode === 'tpaint') ? 'inline-flex' : 'none';
-        if (brushSelWrap) brushSelWrap.style.display = mode === 'sculpt' ? 'inline-flex' : 'none';
-      }
-      if (isBrushMode) {
-        const labels = { sculpt: '🗿 Sculpt Brush Ready', vpaint: '🎨 Vertex Paint Ready', wpaint: '⚖️ Weight Paint Ready', tpaint: '🖌️ Surface Paint Ready' };
-        window.FE?.toast?.(labels[mode] || 'Brush Mode Active');
-      } else {
-        const mesh = window.getActiveObjectMesh?.();
-        const outline = mesh?.getObjectByName?.('SelectionOutlineHelper');
-        if (outline) outline.visible = true;
-      }
+      /* Object Mode and Edit Mode are the modes that exist; leaving a mode has
+         one job left here, which is to put the object outline back. */
+      const mesh = window.getActiveObjectMesh?.();
+      const outline = mesh?.getObjectByName?.('SelectionOutlineHelper');
+      if (outline) outline.visible = true;
     });
 
     /* 5. Dope sheet / graph editor: scrub, drag keys, delete and duplicate */
@@ -3060,20 +3139,6 @@
       canvas.addEventListener('pointerdown', ev => {
         activePointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, downX: ev.clientX, downY: ev.clientY, t: performance.now() });
 
-        const mode = FECppEngine.sculptState.activeMode;
-        const isBrush = (mode === 'sculpt' || mode === 'vpaint' || mode === 'wpaint' || mode === 'tpaint');
-        if (isBrush && activePointers.size === 1) {
-          FECppEngine.sculptState.lastLocalHit = null;
-          if (FECppEngine.applySculptOrPaintAtPointer(ev.clientX, ev.clientY)) {
-            FECppEngine.sculptState.strokeActive = true;
-            eng.history?.begin?.('cpp-brush');
-            if (eng.oc) eng.oc.enabled = false;
-          }
-        } else if (FECppEngine.sculptState.strokeActive && activePointers.size >= 2) {
-          /* Allow 2-finger orbit/zoom even inside Sculpt Mode on mobile! */
-          FECppEngine.sculptState.strokeActive = false;
-          if (eng.oc) eng.oc.enabled = true;
-        }
       }, { passive: true });
 
       canvas.addEventListener('pointermove', ev => {
@@ -3094,26 +3159,11 @@
           );
         }
 
-        if (FECppEngine.sculptState.strokeActive && activePointers.size === 1) {
-          FECppEngine.applySculptOrPaintAtPointer(ev.clientX, ev.clientY);
-        }
       }, { passive: true });
 
       const finishPointer = ev => {
         const rec = activePointers.get(ev.pointerId);
         activePointers.delete(ev.pointerId);
-
-        if (FECppEngine.sculptState.strokeActive && activePointers.size === 0) {
-          FECppEngine.sculptState.strokeActive = false;
-          FECppEngine.sculptState.lastLocalHit = null;
-          if (eng.oc) eng.oc.enabled = true;
-          const mesh = window.getActiveObjectMesh?.();
-          if (mesh && typeof window.applyMeshSelectionOutline === 'function') {
-            window.applyMeshSelectionOutline(window.FE?.getActiveObjectId?.() || 'cube');
-          }
-          eng.history?.commitPending?.('cpp-brush');
-          return;
-        }
 
         /* Touch Double-Tap on Viewport -> Smooth Focus Active Object */
         if (rec && ev.pointerType === 'touch' && activePointers.size === 0) {
@@ -3152,7 +3202,19 @@
         const v = parseInt(e.target.value, 10) || 0;
         FECppEngine.gpuModeOverride = v;
         try { localStorage.setItem('fe_cpp_gpu_tier', String(v)); } catch (_) {}
+        /* The workspace's own Quality tier shows the same setting, and it was
+           showing a stale value after a change here - which is also what the
+           governor used to read. Keep them one value. */
+        const mirrorSel = document.getElementById('ws-quality');
+        if (mirrorSel && mirrorSel.value !== String(v)) mirrorSel.value = String(v);
         FECppEngine.lastPerfUpdate = 0;
+        /* Let the new ceiling take effect immediately - jumping to it is the
+           point of choosing a tier - and do not wait out the cooldown meant for
+           frame-time noise. */
+        FECppEngine._dprSettledAt = 0;
+        FECppEngine._dprStarted = false;
+        FECppEngine._dprFalls = 0;
+        FECppEngine._shadowSettledAt = 0;
         const names = ['Auto (Adaptive)', 'Low (High battery life)', 'Medium (Balanced)', 'High (Best quality)'];
         window.FE?.toast?.(`GPU Performance: ${names[v] || 'Auto'}`);
       });

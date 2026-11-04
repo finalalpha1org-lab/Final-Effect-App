@@ -91,6 +91,16 @@ extern float g_snapIncrement;
 
 /* scratch, reused by every operation */
 extern uint8_t g_triMark[kMaxTris];
+
+/* Quad faces: two triangles the wireframe joins into one face (see
+   buildQuadGroups). g_quadOf maps a triangle to its group, g_quadFirst holds
+   the group's first triangle and g_quadNext walks to its partner. */
+extern uint32_t g_quadOf[kMaxTris];
+extern uint32_t g_quadFirst[kMaxTris];
+extern uint32_t g_quadNext[kMaxTris];
+extern uint32_t g_quadCount;
+extern uint32_t g_diagEdge[kMaxTris];
+extern float g_quadAngle;
 extern uint32_t g_vertMap[kMaxVerts];
 extern uint32_t g_vertStamp[kMaxVerts];
 extern uint8_t g_vertMark[kMaxVerts];
@@ -110,8 +120,10 @@ void rebuildEdges();
 uint32_t findEdge(uint32_t a, uint32_t b);
 bool edgeSelected(uint32_t e);
 bool faceSelected(uint32_t t);
+bool quadFaceSelected(uint32_t t);
 void selectFaceVerts(uint32_t t);
 void deselectFaceVerts(uint32_t t);
+void buildQuadGroups();
 uint32_t selectedVertCount();
 uint32_t selectedEdgeCount();
 uint32_t selectedFaceCount();
@@ -160,6 +172,8 @@ void clipClear();
 /* ---- CSR vertex adjacency, rebuilt by the tools that need it ---- */
 extern uint32_t g_adjStart[kMaxVerts + 1];
 extern uint32_t g_adjList[kMaxEdges * 2];
+extern float g_pickTolerance;
+
 extern uint32_t g_adjCount;
 void buildVertexAdjacency();
 
