@@ -839,8 +839,14 @@
       right.crossVectors(fwd, cam.up).normalize();
       up.crossVectors(right, fwd).normalize();
 
-      const dofCheck = document.getElementById('cam-dof-enable');
-      const fStopEl = document.getElementById('cam-fstop');
+      /* These are the camera panel's own controls (index.html, "4. Depth of
+         Field"): the DoF switch and the F-Stop slider. They used to be read as
+         `cam-dof-enable` / `cam-fstop`, ids from a panel that no longer exists,
+         so `dofCheck` was always null and every still render came out with
+         aperture 0 - depth of field could be switched on in the panel and the
+         path tracer never heard about it. */
+      const dofCheck = document.getElementById('cam-dof');
+      const fStopEl = document.getElementById('cam-aperture');
       const focusDistEl = document.getElementById('cam-focus-distance');
       const aperture = (dofCheck && dofCheck.checked)
         ? Math.max(0.0, Math.min(0.45, 0.28 / Math.max(0.8, Number(fStopEl?.value) || 2.8)))
