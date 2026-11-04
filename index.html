@@ -1314,6 +1314,54 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   color: #cbd5e1;
   font-size: 11px;
 }
+/* Per-axis slider and per-axis keyframe button (local addition: the
+   Move/Rotate/Scale panels take a slider beside the number box, and every
+   axis gets its own Blender-style key button). */
+.panel-field-row.axis-row {
+  grid-template-columns: 44px 1fr 62px 30px;
+  gap: 6px;
+}
+.axis-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.axis-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #2b3145; }
+.axis-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: #818cf8;
+  border: 2px solid #1b1f2c;
+  box-shadow: 0 0 0 1px #4c5580;
+}
+.axis-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #2b3145; }
+.axis-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #818cf8; border: 2px solid #1b1f2c; }
+.axis-slider:disabled { opacity: 0.5; }
+.axis-key-btn {
+  height: 28px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: #ddd6fe;
+  background: #221c3a;
+  border: 1px solid #4c3a86;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.axis-key-btn.keyed, .axis-key-btn:active { color: #fff; background: #4c1d95; border-color: #a78bfa; }
+.axis-key-btn:disabled { opacity: 0.45; }
+.axis-key-btn.keyed { box-shadow: 0 0 10px rgba(167, 139, 250, 0.8); }
+/* Animated somewhere else in time: a channel with keys that are not on this
+   frame. Dimmer than "keyed here", so the two states stay apart at a glance. */
+.axis-key-btn.animated { color: #fcd34d; background: #2a2110; border-color: rgba(251, 191, 36, 0.55); }
 .panel-notice {
   padding: 8px;
   background: rgba(245, 158, 11, 0.12);
@@ -1764,8 +1812,6 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 .render-actions-bar{flex:none;padding:8px 12px calc(8px + env(safe-area-inset-bottom,0px))}
 #cpp-diagnostics-modal .diagnostics-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y}
 #cpp-diag-list>div{flex-wrap:wrap}
-#cpp-sculpt-paint-bar{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:128;display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(16,19,28,0.92);border:1px solid #353d58;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.65);backdrop-filter:blur(8px);max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none}
-#cpp-sculpt-paint-bar[hidden]{display:none !important}
 #mobile-quick-hud{position:absolute;right:10px;bottom:10px;z-index:124;display:flex;flex-direction:column;gap:6px;pointer-events:auto}
 .mob-hud-btn{min-width:38px;height:38px;padding:0 10px;border-radius:11px;background:rgba(18,21,32,0.88);border:1px solid rgba(129,140,248,0.32);color:#e2e8f0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 4px 14px rgba(0,0,0,0.55);backdrop-filter:blur(6px)}
 .mob-hud-btn:active{transform:scale(0.94);border-color:#6366f1;background:#232942}
@@ -1834,6 +1880,12 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 }
 #edit-sheet.open { display: flex; }
 #edit-sheet[hidden] { display: none; }
+/* A ceiling in pixels as well as in viewport units: the sheet is a strip of tools
+   at the bottom of the screen, and on a tall phone 42vh is most of the screen
+   with a hand's width of empty space under the last row. */
+#edit-sheet { max-height: min(40dvh, 330px); }
+#edit-sheet-tools { max-height: min(26dvh, 210px); overflow-y: auto; }
+#edit-sheet-head { flex: none; }
 
 .edit-sheet-head {
   display: flex;
@@ -2074,7 +2126,6 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
   #nav-gizmo-wrapper { transform: scale(0.72); transform-origin: top left; }
   #mobile-quick-hud { right: calc(env(safe-area-inset-right, 0px) + 8px); bottom: 8px; gap: 5px; }
   .mob-hud-btn { min-width: 34px; height: 34px; border-radius: 10px; }
-  #cpp-sculpt-paint-bar { top: 6px; max-width: calc(100% - 12px); }
   #toast { bottom: calc(var(--tb) + var(--sb) + 8px); max-width: 72vw; }
 
   /* --- studio sheets become right-hand side panels --- */
@@ -2085,7 +2136,7 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
     left: 6px;
     right: 6px;
     bottom: calc(var(--tb) + var(--sb) + 6px);
-    max-height: 46vh;
+    max-height: min(38dvh, 300px);
     padding: 6px 8px 6px;
     gap: 4px;
   }
@@ -3223,17 +3274,42 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     </div>
 
     <div class="export-modal-body">
-      <!-- Option 1: .final3d Proprietary Binary -->
-      <div class="export-card primary" onclick="exportFinal3dBinary()" style="cursor: pointer;">
+      <!-- Project files: .fe3d and .fe3a — either one carries the whole project -->
+      <div class="export-card primary">
         <div class="export-card-icon">🟢</div>
         <div class="export-card-content">
           <div class="export-card-header">
-            <strong>Project Binary (.final3d)</strong>
+            <strong>Project (.fe3d)</strong>
             <span class="export-badge recommended">Recommended</span>
           </div>
-          <p>Native proprietary binary format. Preserves full terrain heightmaps, water shaders, instanced foliage, materials, lights, and camera transforms.</p>
+          <p>Native project file. Carries the scene as it stands — every object with its mesh, materials and modifiers, the cameras and lights, the timeline and every keyframe — and opens back into this app with nothing lost.</p>
         </div>
-        <button class="export-action-btn" type="button">Download .final3d</button>
+        <button class="export-action-btn" type="button" onclick="exportFe3dProject()">Download .fe3d</button>
+      </div>
+
+      <div class="export-card">
+        <div class="export-card-icon">🟩</div>
+        <div class="export-card-content">
+          <div class="export-card-header">
+            <strong>Project (.fe3a)</strong>
+            <span class="export-badge">Same project</span>
+          </div>
+          <p>The same complete project written with the companion tag, for builds and tools that look for .fe3a. This app opens either one.</p>
+        </div>
+        <button class="export-action-btn" type="button" onclick="exportFe3aProject()">Download .fe3a</button>
+      </div>
+
+      <div class="export-card">
+        <div class="export-card-icon">📂</div>
+        <div class="export-card-content">
+          <div class="export-card-header">
+            <strong>Open project (.fe3d, .fe3a)</strong>
+            <span class="export-badge">Import</span>
+          </div>
+          <p>Open a project file back into the workspace. Older .final3d files open too — they carry the camera, lighting and animation, but no meshes.</p>
+        </div>
+        <button class="export-action-btn" type="button" onclick="openProjectImport()">Choose file…</button>
+        <input type="file" id="fe-project-file" accept=".fe3d,.fe3a,.final3d" style="display:none" onchange="handleProjectFileInput(this)">
       </div>
 
       <!-- Option 2: GLTF / GLB Real-time 3D -->
@@ -3371,11 +3447,12 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
                 <option value="z">Z Axis Only</option>
               </select>
             </div>
-            <div class="panel-field-row"><label>X:</label><input type="number" id="num-move-x" step="0.1" oninput="applyTransformChange('move', 'x')" onchange="applyTransformChange('move', 'x')" /></div>
-            <div class="panel-field-row"><label>Y:</label><input type="number" id="num-move-y" step="0.1" oninput="applyTransformChange('move', 'y')" onchange="applyTransformChange('move', 'y')" /></div>
-            <div class="panel-field-row"><label>Z:</label><input type="number" id="num-move-z" step="0.1" oninput="applyTransformChange('move', 'z')" onchange="applyTransformChange('move', 'z')" /></div>
+            <div class="panel-field-row axis-row"><label>X:</label><input type="range" class="axis-slider" id="slider-move-x" min="-20" max="20" step="0.1" value="0" aria-label="Location X slider" oninput="applyAxisSlider('move','x',this.value)" /><input type="number" id="num-move-x" step="0.1" oninput="applyTransformChange('move', 'x')" onchange="applyTransformChange('move', 'x')" /><button class="axis-key-btn" type="button" id="key-move-x" title="Keyframe Location X at the current frame" onclick="keyAxisChannel('move','x',this)">◆</button></div>
+            <div class="panel-field-row axis-row"><label>Y:</label><input type="range" class="axis-slider" id="slider-move-y" min="-20" max="20" step="0.1" value="0" aria-label="Location Y slider" oninput="applyAxisSlider('move','y',this.value)" /><input type="number" id="num-move-y" step="0.1" oninput="applyTransformChange('move', 'y')" onchange="applyTransformChange('move', 'y')" /><button class="axis-key-btn" type="button" id="key-move-y" title="Keyframe Location Y at the current frame" onclick="keyAxisChannel('move','y',this)">◆</button></div>
+            <div class="panel-field-row axis-row"><label>Z:</label><input type="range" class="axis-slider" id="slider-move-z" min="-20" max="20" step="0.1" value="0" aria-label="Location Z slider" oninput="applyAxisSlider('move','z',this.value)" /><input type="number" id="num-move-z" step="0.1" oninput="applyTransformChange('move', 'z')" onchange="applyTransformChange('move', 'z')" /><button class="axis-key-btn" type="button" id="key-move-z" title="Keyframe Location Z at the current frame" onclick="keyAxisChannel('move','z',this)">◆</button></div>
             <div style="display:flex;gap:4px;margin-top:6px;">
               <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;" onclick="resetPositionToZero()">Origin [0,0,0]</button>
+              <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;color:#ddd6fe;border-color:#4c3a86;" onclick="keyAxisGroup('move')" title="Keyframe Location X, Y, Z at the current frame">◆ Key X·Y·Z</button>
             </div>
           </div>
         </div>
@@ -3396,11 +3473,12 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
                 <option value="z">Z Axis Only</option>
               </select>
             </div>
-            <div class="panel-field-row"><label>X (°):</label><input type="number" id="num-rot-x" step="1" oninput="applyTransformChange('rotate', 'x')" onchange="applyTransformChange('rotate', 'x')" /></div>
-            <div class="panel-field-row"><label>Y (°):</label><input type="number" id="num-rot-y" step="1" oninput="applyTransformChange('rotate', 'y')" onchange="applyTransformChange('rotate', 'y')" /></div>
-            <div class="panel-field-row"><label>Z (°):</label><input type="number" id="num-rot-z" step="1" oninput="applyTransformChange('rotate', 'z')" onchange="applyTransformChange('rotate', 'z')" /></div>
+            <div class="panel-field-row axis-row"><label>X (°):</label><input type="range" class="axis-slider" id="slider-rot-x" min="-180" max="180" step="1" value="0" aria-label="Rotation X slider" oninput="applyAxisSlider('rotate','x',this.value)" /><input type="number" id="num-rot-x" step="1" oninput="applyTransformChange('rotate', 'x')" onchange="applyTransformChange('rotate', 'x')" /><button class="axis-key-btn" type="button" id="key-rot-x" title="Keyframe Rotation X at the current frame" onclick="keyAxisChannel('rotate','x',this)">◆</button></div>
+            <div class="panel-field-row axis-row"><label>Y (°):</label><input type="range" class="axis-slider" id="slider-rot-y" min="-180" max="180" step="1" value="0" aria-label="Rotation Y slider" oninput="applyAxisSlider('rotate','y',this.value)" /><input type="number" id="num-rot-y" step="1" oninput="applyTransformChange('rotate', 'y')" onchange="applyTransformChange('rotate', 'y')" /><button class="axis-key-btn" type="button" id="key-rot-y" title="Keyframe Rotation Y at the current frame" onclick="keyAxisChannel('rotate','y',this)">◆</button></div>
+            <div class="panel-field-row axis-row"><label>Z (°):</label><input type="range" class="axis-slider" id="slider-rot-z" min="-180" max="180" step="1" value="0" aria-label="Rotation Z slider" oninput="applyAxisSlider('rotate','z',this.value)" /><input type="number" id="num-rot-z" step="1" oninput="applyTransformChange('rotate', 'z')" onchange="applyTransformChange('rotate', 'z')" /><button class="axis-key-btn" type="button" id="key-rot-z" title="Keyframe Rotation Z at the current frame" onclick="keyAxisChannel('rotate','z',this)">◆</button></div>
             <div style="display:flex;gap:4px;margin-top:6px;">
               <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;" onclick="resetRotationToZero()">Reset 0°</button>
+              <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;color:#ddd6fe;border-color:#4c3a86;" onclick="keyAxisGroup('rotate')" title="Keyframe Rotation X, Y, Z at the current frame">◆ Key X·Y·Z</button>
             </div>
           </div>
         </div>
@@ -3423,14 +3501,17 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
                   <option value="z">Z Axis Only</option>
                 </select>
               </div>
-              <div class="panel-field-row"><label>X:</label><input type="number" id="num-scale-x" step="0.1" min="0.01" value="1.0" oninput="applyTransformChange('scale', 'x')" onchange="applyTransformChange('scale', 'x')" /></div>
-              <div class="panel-field-row"><label>Y:</label><input type="number" id="num-scale-y" step="0.1" min="0.01" value="1.0" oninput="applyTransformChange('scale', 'y')" onchange="applyTransformChange('scale', 'y')" /></div>
-              <div class="panel-field-row"><label>Z:</label><input type="number" id="num-scale-z" step="0.1" min="0.01" value="1.0" oninput="applyTransformChange('scale', 'z')" onchange="applyTransformChange('scale', 'z')" /></div>
-              <div class="panel-field-row" style="margin-top:6px;border-top:1px solid #232733;padding-top:6px;"><label>Uniform:</label><input type="number" id="num-scale-uniform" step="0.1" min="0.01" value="1.0" oninput="applyUniformScale(this.value)" onchange="applyUniformScale(this.value)" /></div>
+              <div class="panel-field-row axis-row"><label>X:</label><input type="range" class="axis-slider" id="slider-scale-x" min="0.05" max="5" step="0.05" value="1" aria-label="Scale X slider" oninput="applyAxisSlider('scale','x',this.value)" /><input type="number" id="num-scale-x" min="0.01" value="1.0" step="0.05" oninput="applyTransformChange('scale', 'x')" onchange="applyTransformChange('scale', 'x')" /><button class="axis-key-btn" type="button" id="key-scale-x" title="Keyframe Scale X at the current frame" onclick="keyAxisChannel('scale','x',this)">◆</button></div>
+              <div class="panel-field-row axis-row"><label>Y:</label><input type="range" class="axis-slider" id="slider-scale-y" min="0.05" max="5" step="0.05" value="1" aria-label="Scale Y slider" oninput="applyAxisSlider('scale','y',this.value)" /><input type="number" id="num-scale-y" min="0.01" value="1.0" step="0.05" oninput="applyTransformChange('scale', 'y')" onchange="applyTransformChange('scale', 'y')" /><button class="axis-key-btn" type="button" id="key-scale-y" title="Keyframe Scale Y at the current frame" onclick="keyAxisChannel('scale','y',this)">◆</button></div>
+              <div class="panel-field-row axis-row"><label>Z:</label><input type="range" class="axis-slider" id="slider-scale-z" min="0.05" max="5" step="0.05" value="1" aria-label="Scale Z slider" oninput="applyAxisSlider('scale','z',this.value)" /><input type="number" id="num-scale-z" min="0.01" value="1.0" step="0.05" oninput="applyTransformChange('scale', 'z')" onchange="applyTransformChange('scale', 'z')" /><button class="axis-key-btn" type="button" id="key-scale-z" title="Keyframe Scale Z at the current frame" onclick="keyAxisChannel('scale','z',this)">◆</button></div>
+              <div class="panel-field-row axis-row"><label>Uniform:</label><input type="range" class="axis-slider" id="slider-scale-uniform" min="0.05" max="5" step="0.05" value="1" aria-label="Uniform scale slider" oninput="applyAxisSlider('scale','uniform',this.value)" /><input type="number" id="num-scale-uniform" step="0.1" min="0.01" value="1.0" oninput="applyUniformScale(this.value)" onchange="applyUniformScale(this.value)" /><button class="axis-key-btn" type="button" id="key-scale-uniform" title="Keyframe Scale X, Y, Z at the current frame" onclick="keyAxisGroup('scale')">◆</button></div>
               <div style="display:flex;gap:4px;margin-top:6px;">
                 <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;" onclick="applyUniformScale(0.5)">0.5x</button>
                 <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;" onclick="applyUniformScale(1.0)">1.0x (Reset)</button>
                 <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;" onclick="applyUniformScale(2.0)">2.0x</button>
+              </div>
+              <div style="display:flex;gap:4px;margin-top:4px;">
+                <button class="btn btn-sm" style="flex:1;padding:3px 4px;font-size:11px;color:#ddd6fe;border-color:#4c3a86;" onclick="keyAxisGroup('scale')" title="Keyframe Scale X, Y, Z at the current frame">◆ Key X·Y·Z</button>
               </div>
             </div>
           </div>
@@ -3533,28 +3614,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Sculpt & Vertex/Weight Paint Brush Toolbar -->
-      <div id="cpp-sculpt-paint-bar" hidden>
-        <span id="cpp-sculpt-brush-wrap" style="display:inline-flex;align-items:center;gap:4px;">
-          <select class="anim-select" onchange="FECppEngine.sculptState.brush=parseInt(this.value)||0" title="Sculpt brush">
-            <option value="0">🗿 Draw / Clay</option>
-            <option value="1">🌊 Smooth</option>
-            <option value="2">🎈 Inflate</option>
-            <option value="3">🤏 Pinch</option>
-            <option value="4">📐 Flatten</option>
-            <option value="5">✊ Grab</option>
-          </select>
-          <button class="anim-btn" type="button" onclick="FECppEngine.subdivideActiveMeshForSculpt()" title="Subdivide mesh for finer sculpting">+ Subdiv</button>
-        </span>
-        <span id="cpp-paint-color-wrap" style="display:none;align-items:center;gap:4px;">
-          <input type="color" value="#6366f1" oninput="FECppEngine.sculptState.paintColor=this.value" style="width:30px;height:30px;border:0;background:none;cursor:pointer;">
-        </span>
-        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#cbd5e1;">R <input type="range" min="0.12" max="1.6" step="0.04" value="0.48" oninput="FECppEngine.sculptState.radius=+this.value" style="width:62px;"></label>
-        <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#cbd5e1;">Str <input type="range" min="0.08" max="1.2" step="0.04" value="0.55" oninput="FECppEngine.sculptState.strength=+this.value" style="width:62px;"></label>
-        <button class="anim-btn" type="button" onclick="FECppEngine.sculptState.invert=!FECppEngine.sculptState.invert;this.classList.toggle('primary',FECppEngine.sculptState.invert)">± Inv</button>
-        <button class="anim-btn primary" type="button" onclick="FECppEngine.sculptState.symmetryX=!FECppEngine.sculptState.symmetryX;this.classList.toggle('primary',FECppEngine.sculptState.symmetryX)">Mir X</button>
       </div>
 
       <!-- Pro Mobile Touch Quick Action Pill -->
@@ -3737,6 +3796,8 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 <script src="volume-library.js"></script>
 <script src="simulationCore.js"></script>
 <script src="modifier-engine.js"></script>
+<script src="fe-poly.js"></script>
+<script src="fe-project.js"></script>
 <script src="fe-cpp-engine.js"></script>
 
 <script>
@@ -3746,10 +3807,12 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 const BACK=['@core','🧊','Return to Workspace'];
 const STUDIOS={
   core:{title:'3D Workspace',icon:'🧊',accent:'#6366f1',desc:'Objects, scene and animation',
-    modes:[['object','Object Mode'],['edit','Edit Mode'],['sculpt','Sculpt Mode'],['vpaint','Vertex Paint'],['wpaint','Weight Paint'],['tpaint','Texture Paint']],
+    /* Two modes only. Sculpt, vertex paint, weight paint and texture paint were
+       reachable from this dropdown but their brush pipeline was never finished,
+       so they are gone from the build rather than left half-alive. */
+    modes:[['object','Object Mode'],['edit','Edit Mode']],
     tools:[
       ['add','➕','Add 3D'],
-      ['edit','✏️','Edit'],
       ['transform','✋','Object Tools'],
       ['mod','🔧','Modification'],
       ['anim','🎬','Animation Studio'],
@@ -4242,6 +4305,14 @@ function openWorkspaceSettings() {
   if (!sheet) return;
   /* Opening the sheet must never depend on any other panel being healthy. */
   sheet.hidden = false;
+  /* Every forwarded row below (Exposure, Orbit Speed, Floor Grid, Shadows,
+     Temporal AA, Navigation Gizmo, Quality tier) mirrors itself onto the legacy
+     #set-* controls and dispatches their event. Those controls only got their
+     behaviours from initGlobalSettingsEvents(), which used to run when the old
+     Global Settings modal was opened - so on a fresh session the whole sheet
+     looked alive and did nothing. Bind them here as well; the call is guarded
+     and idempotent. */
+  try { initGlobalSettingsEvents(); } catch (_) {}
   try { syncGlobalSettingsUI(); } catch (_) {}
   try { syncWorkspaceSettingsUI(); } catch (_) {}
   try { renderAppBuildStamp(); } catch (_) {}
@@ -4260,17 +4331,16 @@ window.fepdateWorkspacePerf = function (stats) {
 function applyHighRefreshMode(on) {
   const eng = FE.engines?.core;
   if (!eng) return;
-  /* Resolution changes only here, and only between two sharp scales. */
-  if (eng.r && typeof eng.r.getPixelRatio === 'function' && typeof eng.r.setPixelRatio === 'function') {
-    const cap = on ? 1.5 : 2;
-    const pr = Math.min(Math.max(window.devicePixelRatio || 1, 1), cap);
-    if (Math.abs(eng.r.getPixelRatio() - pr) > 0.01) {
-      eng.r.setPixelRatio(pr);
-      const vp = document.getElementById('viewport-core');
-      if (vp && vp.clientWidth && vp.clientHeight) eng.r.setSize(vp.clientWidth, vp.clientHeight, false);
-      if (eng.taa?.reset) eng.taa.reset();
-    }
-  }
+  /* High Refresh Mode is a *ceiling* on the render scale (1.5x instead of 2x),
+     not a second owner of the pixel ratio. It used to set the renderer's pixel
+     ratio itself - `clamp(devicePixelRatio, 1, cap)` - while the performance
+     governor set it from the kernel's frame-time recommendation, so the two
+     wrote different numbers and each change reallocated the drawing buffer:
+     a viewport that visibly jumps while nothing asked it to. The governor is
+     the one writer; this only asks it to re-decide now. */
+  window.__feHighRefresh = !!on;
+  if (typeof FECppEngine !== 'undefined' && FECppEngine) FECppEngine.lastPerfUpdate = 0;
+  if (eng.taa?.reset) eng.taa.reset();
   const light = eng.d || eng.blenderLight?.light;
   if (light?.shadow) {
     const size = on ? 1024 : 2048;
@@ -4540,103 +4610,66 @@ function downloadBlob(blob, filename) {
   }, 1000);
 }
 
-function serializeSceneToFinal3d() {
-  const eng = FE.engines?.core;
-  if (!eng || !eng.sc) {
-    throw new Error('Core 3D engine is not initialized');
-  }
-
-  const payload = {
-    format: 'FINAL3D_BINARY',
-    version: '1.0',
-    generator: 'Final Effect 3D Suite',
-    timestamp: new Date().toISOString(),
-    projectName: 'MyProject',
-    camera: {
-      position: eng.cam ? eng.cam.position.toArray() : [7, 6, 9],
-      target: eng.oc ? eng.oc.target.toArray() : [0, 0, 0],
-      fov: eng.cam ? eng.cam.fov : 60,
-      near: eng.cam ? eng.cam.near : 0.1,
-      far: eng.cam ? eng.cam.far : 1000
-    },
-    lighting: {
-      exposure: eng.r ? eng.r.toneMappingExposure : 1.25,
-      sun: eng.d ? {
-        color: eng.d.color.getHexString(),
-        intensity: eng.d.intensity,
-        position: eng.d.position.toArray(),
-        castShadow: eng.d.castShadow
-      } : null,
-      ambient: eng.amb ? {
-        color: eng.amb.color.getHexString(),
-        intensity: eng.amb.intensity
-      } : null
-    },
-    animation: window.FECppEngine?.serializeAnimation?.() || null,
-    objects: []
-  };
-
-  eng.sc.children.forEach(obj => {
-    if (obj.isGridHelper || obj.isCamera || obj.isLight || obj.name === 'Cursor3D' || obj.name === 'StudioFloor' || obj.name === 'ShadowFloor' || obj.userData?.feOnionGhost) return;
-    if (obj.isMesh || obj.isGroup) {
-      payload.objects.push({
-        name: obj.name || 'Object',
-        type: obj.geometry?.type || obj.type,
-        position: obj.position.toArray(),
-        quaternion: obj.quaternion.toArray(),
-        scale: obj.scale.toArray(),
-        material: obj.material ? {
-          color: obj.material.color?.getHexString() || 'ffffff',
-          roughness: obj.material.roughness,
-          metalness: obj.material.metalness,
-          wireframe: obj.material.wireframe
-        } : null,
-        modifiers: (obj.userData?.modStack || []).map(({ id, category, name, values, enabled }) => ({ id, category, name, values, enabled }))
-      });
-    }
-  });
-
-  return payload;
-}
-
-function exportFinal3dBinary() {
+/* Project files: .fe3d and .fe3a both carry the whole project and both open back
+   into this app. The container, the writer and the reader live in fe-project.js;
+   this is the sheet's side of it: write the file, hand it to the browser, and
+   open one back up. The .final3d writer this replaces described objects by name
+   and transform with no meshes behind them, so it is gone rather than kept. */
+function exportProjectFile(kind) {
   try {
-    setExportStatus('Serializing project scene hierarchy...');
-    const payload = serializeSceneToFinal3d();
-    const jsonStr = JSON.stringify(payload, null, 2);
-
-    const enc = new TextEncoder();
-    const jsonBytes = enc.encode(jsonStr);
-
-    const totalLength = 8 + jsonBytes.length;
-    const buffer = new ArrayBuffer(totalLength);
-    const view = new DataView(buffer);
-
-    // Magic Header: 'F3D\x01'
-    view.setUint8(0, 0x46);
-    view.setUint8(1, 0x33);
-    view.setUint8(2, 0x44);
-    view.setUint8(3, 0x01);
-
-    // Payload size
-    view.setUint32(4, jsonBytes.length, true);
-
-    // Copy bytes
-    const u8 = new Uint8Array(buffer);
-    u8.set(jsonBytes, 8);
-
-    const blob = new Blob([buffer], { type: 'application/octet-stream' });
-    downloadBlob(blob, 'MyProject.final3d');
-    setExportStatus('Successfully exported MyProject.final3d! 🟢');
-    FE.toast('Exported MyProject.final3d successfully! 🟢');
+    if (!window.FEProject) throw new Error('The project module (fe-project.js) did not load.');
+    const label = kind === 'fe3a' ? '.fe3a' : '.fe3d';
+    setExportStatus('Writing the project file (' + label + ')...');
+    const result = window.FEProject.exportProject(kind);
+    const size = result.bytes > 1048576
+      ? (result.bytes / 1048576).toFixed(2) + ' MB'
+      : Math.max(1, Math.round(result.bytes / 1024)) + ' KB';
+    const text = 'Exported ' + result.name + ' (' + size + ') 🟢';
+    setExportStatus(text);
+    FE.toast(text);
     setTimeout(closeExportModal, 1400);
   } catch (err) {
-    console.error('Final3d export failed:', err);
+    console.error('Project export failed:', err);
     setExportStatus('Export error: ' + err.message);
     FE.toast('Export error: ' + err.message);
   }
 }
-window.exportFinal3dBinary = exportFinal3dBinary;
+window.exportFe3dProject = () => exportProjectFile('fe3d');
+window.exportFe3aProject = () => exportProjectFile('fe3a');
+
+function openProjectImport() {
+  const input = document.getElementById('fe-project-file');
+  if (!input) { FE.toast('Opening a project file is not available in this build.'); return; }
+  input.value = '';
+  input.click();
+}
+window.openProjectImport = openProjectImport;
+
+async function importProjectFile(file) {
+  if (!file) return;
+  try {
+    if (!window.FEProject) throw new Error('The project module (fe-project.js) did not load.');
+    setExportStatus('Opening ' + file.name + '...');
+    const summary = await window.FEProject.importFile(file);
+    const text = 'Opened ' + file.name + ' — ' + window.FEProject.describe(summary) + ' 🔵';
+    setExportStatus(text);
+    FE.toast(text);
+    (summary.warnings || []).forEach((warning) => FE.toast(warning));
+    setTimeout(closeExportModal, 2400);
+  } catch (err) {
+    console.error('Project import failed:', err);
+    setExportStatus('Import error: ' + err.message);
+    FE.toast('Import error: ' + err.message);
+  }
+}
+window.importProjectFile = importProjectFile;
+
+function handleProjectFileInput(input) {
+  const file = input && input.files && input.files[0];
+  if (file) importProjectFile(file);
+  if (input) input.value = '';
+}
+window.handleProjectFileInput = handleProjectFileInput;
 
 /* ---- Workspace geometry export ------------------------------------------
    Blender exports the depsgraph, not the interface: no gizmo, no grid, no
@@ -4801,14 +4834,12 @@ app.addEventListener('click',e=>{
       return;
     }
     if (k === 'transform') {
-      renderObjectTools();
-      return;
-    }
-    if (k === 'edit') {
-      /* The Edit tool keeps its own object bar (Move, Rotate, Scale, Transform,
-         Annotate, Measure, 3D Cursor, Delete) and never switches the mode. It is
-         not Edit Mode: that lives on the mode dropdown, brings its own main
-         toolbar and edits vertices, edges and faces in the C++ kernel. */
+      /* The one entry for object-level transforms (Move, Rotate, Scale,
+         Transform, Annotate, Measure, 3D Cursor, Delete). There used to be a
+         second one, a ✏️ Edit tool, which opened this very same bar - and since
+         it read as "Edit", it was forever being taken for Edit Mode, which is
+         the dropdown's job and edits vertices, edges and faces in the C++
+         kernel. Two entries, one panel, and the duplicate had to go. */
       renderObjectTools();
       return;
     }
@@ -5057,6 +5088,15 @@ function applyMeshSelectionOutline(type) {
   clearMeshSelectionOutline();
   const eng = FE.engines?.core;
   if (!eng || !eng.sc) return;
+
+  /* Edit Mode draws its own wireframe, from the cage the user is editing, and
+     that cage moves with every drag. An outline is an EdgesGeometry snapshot of
+     the geometry as it was when the object was selected, so during the session
+     it sits at the old silhouette, detached from the model under the finger.
+     Draw none while the mode runs; the mode re-applies the outline when it
+     exits, from the cage that was committed. */
+  const editMode = typeof window !== 'undefined' ? window.FEEditMode : null;
+  if (editMode && typeof editMode.isActive === 'function' && editMode.isActive()) return;
 
   let targetMesh = null;
   if (type === 'cube') targetMesh = eng.cube;
@@ -5674,6 +5714,14 @@ document.addEventListener('fe:mode', e => {
      is put back where it was if the mode could not be entered. */
   const select = document.getElementById(studio + '-mode');
   const bridge = window.FEEditMode;
+  /* The dropdown only offers the two modes that exist, but a cached page or a
+     stale handler could still ask for another one; refuse it and put the
+     dropdown back rather than half-entering a mode that has no tools. */
+  if (mode !== 'object' && mode !== 'edit') {
+    if (select) select.value = bridge?.isActive?.() ? 'edit' : 'object';
+    FE.toast('This build has Object Mode and Edit Mode only.');
+    return;
+  }
   if (mode === 'edit') {
     closeAllFloatingPanels();
     if (!bridge || typeof bridge.enter !== 'function') {
@@ -5810,17 +5858,26 @@ function updateAxisRestrictionUI(type, value) {
   if (inputX) {
     inputX.disabled = !showX;
     const row = inputX.closest('.panel-field-row');
-    if (row) row.style.opacity = showX ? '1.0' : '0.45';
+    if (row) {
+      row.style.opacity = showX ? '1.0' : '0.45';
+      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showX; });
+    }
   }
   if (inputY) {
     inputY.disabled = !showY;
     const row = inputY.closest('.panel-field-row');
-    if (row) row.style.opacity = showY ? '1.0' : '0.45';
+    if (row) {
+      row.style.opacity = showY ? '1.0' : '0.45';
+      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showY; });
+    }
   }
   if (inputZ) {
     inputZ.disabled = !showZ;
     const row = inputZ.closest('.panel-field-row');
-    if (row) row.style.opacity = showZ ? '1.0' : '0.45';
+    if (row) {
+      row.style.opacity = showZ ? '1.0' : '0.45';
+      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showZ; });
+    }
   }
 }
 
@@ -5883,6 +5940,7 @@ window.updateTransformAxisRestrictions = updateTransformAxisRestrictions;
 function syncFloatingPanelValues(name) {
   const eng = FE.engines?.core;
   if (!eng) return;
+  if (typeof syncAxisSliders === 'function') syncAxisSliders(name);
 
   let targetObj = getActiveObjectMesh();
   if (!targetObj) return;
@@ -6170,6 +6228,148 @@ function applyUniformScale(val) {
   updateMeasurePanel();
 }
 window.applyUniformScale = applyUniformScale;
+
+/* ---- Per-axis sliders and per-axis keyframes (local addition) ----------
+   The Move / Rotate / Scale panels drive the same object the number boxes do;
+   a slider only writes its value into the matching box first, so one code path
+   applies both. Every axis also carries its own key button: Blender inserts a
+   key on the channel you changed, not on the whole object, and the engine
+   stores the channels separately (0-2 location, 3-5 rotation, 6-8 scale), so
+   one axis can be animated while the other two stay where they are. */
+function axisNumId(kind, axis) {
+  const prefix = kind === 'rotate' ? 'rot' : kind;
+  return 'num-' + prefix + '-' + axis;
+}
+function applyAxisSlider(kind, axis, value) {
+  const box = document.getElementById(axisNumId(kind, axis));
+  if (box) box.value = value;
+  if (axis === 'uniform') {
+    ['x', 'y', 'z'].forEach(a => { const b = document.getElementById(axisNumId(kind, a)); if (b) b.value = value; });
+    applyUniformScale(value);
+    return;
+  }
+  applyTransformChange(kind, axis);
+}
+window.applyAxisSlider = applyAxisSlider;
+
+function keyAxisChannel(kind, axis, button) {
+  const eng = window.FECppEngine;
+  if (!eng || typeof eng.insertAxisKeyframeForActive !== 'function') {
+    FE.toast('Animation engine is not ready yet');
+    return 0;
+  }
+  if (kind === 'scale' && (activeObject === 'camera' || activeObject === 'light')) {
+    FE.toast('Scale is not applicable for Camera and Light');
+    return 0;
+  }
+  const prop = kind === 'move' ? 'loc' : (kind === 'rotate' ? 'rot' : 'scale');
+  /* A toggle: the lit ◆ means "this channel has a key on this frame", so
+     pressing it again takes that key back. */
+  const keyed = typeof eng.toggleAxisKeyframeForActive === 'function'
+    ? eng.toggleAxisKeyframeForActive(prop, axis, false)
+    : eng.insertAxisKeyframeForActive(prop, axis, false);
+  if (keyed && button) {
+    /* A short flash for the tap, then the lasting state: a channel with a key on
+       this frame keeps its ◆ lit. That is the bit that was missing - key
+       Location X, key Location Y, and the X button went dark, so the X key
+       looked as though the Y key had overwritten it. Both keys are in the
+       kernel; now both buttons say so. */
+    button.classList.add('keyed');
+    setTimeout(() => {
+      button.classList.remove('keyed');
+      window.syncKeyButtonStates?.();
+    }, 450);
+  }
+  window.syncKeyButtonStates?.();
+  return keyed;
+}
+window.keyAxisChannel = keyAxisChannel;
+
+/* Channel state for the ◆ buttons: lit on a key at the current frame, tinted
+   when the channel is animated elsewhere, plain when it has no keys. */
+function syncKeyButtonStates() {
+  const eng = window.FECppEngine;
+  const exp = eng && eng.exports;
+  if (!exp || !eng.ready || typeof eng.getSlotForObjectId !== 'function') return;
+  const objId = (FE.getActiveObjectId && FE.getActiveObjectId()) || 'cube';
+  const slot = eng.getSlotForObjectId(objId);
+  const frame = Number(timelineConfig && timelineConfig.currentFrame || 0);
+  const bases = { move: 0, rotate: 3, scale: 6 };
+  /* The rotate panel's buttons are `key-rot-x` while the others spell the panel
+     out, so the id prefix is not the key. */
+  const prefixes = { move: 'move', rotate: 'rot', scale: 'scale' };
+  for (const kind of Object.keys(bases)) {
+    for (const axis of ['x', 'y', 'z']) {
+      const button = document.getElementById('key-' + prefixes[kind] + '-' + axis);
+      if (!button) continue;
+      const channel = bases[kind] + (axis === 'x' ? 0 : axis === 'y' ? 1 : 2);
+      /* No allocation here on purpose: this runs on every timeline redraw, and
+         asking the heap for a block that often grew the wasm memory under the
+         rest of the engine and detached the views it had cached. */
+      const state = typeof eng.channelKeyState === 'function'
+        ? eng.channelKeyState(slot, channel, frame)
+        : { count: 0, here: false };
+      const count = state.count;
+      const here = state.here;
+      button.classList.toggle('keyed', here);
+      button.classList.toggle('animated', !here && count > 0);
+      const what = (kind === 'move' ? 'Location' : kind === 'rotate' ? 'Rotation' : 'Scale') + ' ' + axis.toUpperCase();
+      button.title = here
+        ? '\u25c6 ' + what + ' has a key on this frame - press to remove it'
+        : count > 0 ? '\u25c6 ' + what + ' is animated (no key on this frame) - press to key this frame'
+        : 'Keyframe ' + what + ' at the current frame';
+    }
+  }
+}
+window.syncKeyButtonStates = syncKeyButtonStates;
+
+function keyAxisGroup(kind) {
+  const eng = window.FECppEngine;
+  if (!eng || typeof eng.insertKeyframeForActive !== 'function') {
+    FE.toast('Animation engine is not ready yet');
+    return 0;
+  }
+  if (kind === 'scale' && (activeObject === 'camera' || activeObject === 'light')) {
+    FE.toast('Scale is not applicable for Camera and Light');
+    return 0;
+  }
+  const group = kind === 'move' ? 'loc' : (kind === 'rotate' ? 'rot' : 'scale');
+  /* Same toggle as the per-axis buttons: all three of the group's keys on this
+     frame come off on a second press. */
+  const keyed = typeof eng.toggleKeyframeForActive === 'function'
+    ? eng.toggleKeyframeForActive(group, false)
+    : eng.insertKeyframeForActive(group, false);
+  window.syncKeyButtonStates?.();
+  return keyed;
+}
+window.keyAxisGroup = keyAxisGroup;
+
+/* Keep the sliders on the object's real transform, the same way the number
+   boxes are kept, and never fight the control the finger is on. */
+function syncAxisSliders(name) {
+  const target = getActiveObjectMesh();
+  if (!target) return;
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el && isFinite(value)) el.value = String(value);
+  };
+  if (name === 'move') {
+    set('slider-move-x', target.position.x);
+    set('slider-move-y', target.position.y);
+    set('slider-move-z', target.position.z);
+  } else if (name === 'rotate') {
+    target.rotation.setFromQuaternion(target.quaternion);
+    set('slider-rot-x', THREE.MathUtils.radToDeg(target.rotation.x));
+    set('slider-rot-y', THREE.MathUtils.radToDeg(target.rotation.y));
+    set('slider-rot-z', THREE.MathUtils.radToDeg(target.rotation.z));
+  } else if (name === 'scale') {
+    set('slider-scale-x', target.scale.x);
+    set('slider-scale-y', target.scale.y);
+    set('slider-scale-z', target.scale.z);
+    set('slider-scale-uniform', (target.scale.x + target.scale.y + target.scale.z) / 3);
+  }
+}
+window.syncAxisSliders = syncAxisSliders;
 
 function resetPositionToZero() {
   const targetObj = getActiveObjectMesh();
@@ -7405,6 +7605,18 @@ class InteractiveViewHelper {
   }
 }
 
+/* The translate/rotate/scale handles are sized for a mouse by default. Small
+   or touch screens get a larger gizmo so the handles stay finger-sized; the
+   resize path re-applies it when the viewport changes. */
+/* The handles are sized for the *eye*, not for the finger: the touch target is
+   widened separately, on the pick volumes, which are invisible anyway. 2.6 filled
+   a phone screen with arrows and hid the mesh being moved. */
+function gizmoTouchSize(){
+  const w=window.innerWidth||1024,h=window.innerHeight||768;
+  const small=Math.min(w,h)<760||(('ontouchstart' in window)&&Math.min(w,h)<900);
+  return small?1.1:0.9;
+}
+
 FE.register('core',{
   mount({canvas,viewport}){
     const w=viewport.clientWidth||800, h=viewport.clientHeight||600;
@@ -7543,7 +7755,33 @@ FE.register('core',{
     let ptrDownX = 0, ptrDownY = 0, ptrDownTime = 0;
 
     const transformControls = new THREE.TransformControls(viewportCamera, canvas);
-    transformControls.size = 1.15;
+    transformControls.size = gizmoTouchSize();
+
+    /* Grabbing stays easy although the handles are small: TransformControls
+       builds a faint (15% opacity) pick volume around every handle, and those
+       are what the pointer hit-tests. Grow each one about its own centre and
+       take it to fully transparent, so only the target size changes and the
+       gizmo reads as the thin arrows it now is. The volumes for rotate/scale
+       are built lazily the first time that mode is shown, hence the hook on
+       updateMatrixWorld instead of a single pass here. */
+    const feWidenGizmoTargets = () => {
+      transformControls.traverse(child => {
+        const material = child.material;
+        if (!child.isMesh || !material || !child.geometry || child.userData.feWideTarget) return;
+        if (Math.abs(material.opacity - 0.15) > 0.001) return;
+        child.userData.feWideTarget = true;
+        child.geometry = child.geometry.clone();
+        child.geometry.scale(2, 2, 2);
+        material.opacity = 0;
+        material.depthWrite = false;
+        material.needsUpdate = true;
+      });
+    };
+    const feUpdateMatrixWorld = transformControls.updateMatrixWorld.bind(transformControls);
+    transformControls.updateMatrixWorld = (force) => {
+      feWidenGizmoTargets();
+      return feUpdateMatrixWorld(force);
+    };
 
     const viewHelper = new InteractiveViewHelper(viewportCamera, r, oc);
 
@@ -7884,7 +8122,15 @@ FE.register('core',{
       applyCameraAspect(this.sceneCamera,curAspect);
     }
     this.r.setSize(w,h,false);
-    if (this.taa) this.taa.reset();
+    if (this.taa) {
+      /* Resize the pass here rather than letting it catch up on the next frame:
+         a frame drawn from a stale target is stretched to the screen, and a
+         phone resizes its viewport every time the browser chrome slides away. */
+      const db = this._drawingBufferSize || (this._drawingBufferSize = new THREE.Vector2());
+      this.r.getDrawingBufferSize(db);
+      this.taa.setSize?.(db.x, db.y);
+      this.taa.reset();
+    }
     if (typeof updateCameraFrame === 'function') updateCameraFrame();
   },
 
@@ -8025,7 +8271,18 @@ FE.register('core',{
       }
       if (this.taa) {
         const wantTaa = GLOBAL_SETTINGS.taa !== false && !GLOBAL_SETTINGS.highRefresh && this._autoTaa !== false;
-        if (this.taa.enabled !== wantTaa) this.taa.setEnabled(wantTaa);
+        if (this.taa.enabled !== wantTaa) {
+          this.taa.setEnabled(wantTaa);
+          /* Turning it back on after a pause: the renderer may have been resized
+             while the pass was off (so nothing was checking its size), and a
+             target that no longer matches the screen stretches the first frame.
+             Re-size it on the way in. */
+          if (wantTaa) {
+            const db = this._drawingBufferSize || (this._drawingBufferSize = new THREE.Vector2());
+            this.r.getDrawingBufferSize(db);
+            this.taa.setSize?.(db.x, db.y);
+          }
+        }
         this.taa.setBlend(GLOBAL_SETTINGS.taaBlend || 0.12);
         if (this._taaCam !== activeCam) { this._taaCam = activeCam; this.taa.reset(); }
       }
@@ -9192,11 +9449,335 @@ function applyShadingWorldEnvironment(eng,fallbackColor){
   const sky=scene.userData?.feSkyTexture||eng?.skyTexture;
   scene.background=(sky&&sky.isTexture)?sky:new THREE.Color(fallbackColor);
 }
+/* ---- Wireframe shading: the model's edges, not the triangles -------------
+   An indexed triangle mesh carries a diagonal across every quad face.
+   Blender's wireframe does not show it because its faces are quads; ours are
+   triangles, so which line is a real edge is decided by angle - the same rule
+   the kernel's Edit Mode mask uses (`g_edgeDisplay` in fe_editmesh.cpp, 0.6
+   degrees: two triangles whose faces nearly agree are one quad, and the line
+   between them is not an edge of the model). `material.wireframe` cannot make
+   that distinction, so the shape is drawn as an EdgesGeometry overlay while
+   its own material stops writing colour and depth. The mesh stays in the
+   scene and on the raycaster, so picking, the selection outline, the transform
+   gizmo and history snapshots carry on as before. */
+const FE_WIREFRAME_EDGE_ANGLE = 0.6;
+const feWireframeDisplays = new Map();        /* mesh -> {overlay, geometryUuid} */
+const feWireframeMaterialState = new Map();   /* material -> original flags     */
+const feWireframeLineMaterial = new THREE.LineBasicMaterial({ color: 0x94a3b8 });
+feWireframeLineMaterial.userData.feWireframeOverlay = true;
+
+/* A solver surface is rebuilt every frame and an InstancedMesh draws many
+   copies from one geometry: both keep the plain triangle wireframe. */
+function feWireframeKeepsTriangleWireframe(mesh) {
+  const data = mesh.userData || {};
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  if (!material) return true;
+  return !!(data.solverSurface || data.ultraSimShader || data.clothSim || data.softBodySim || material.userData?.ultraSimShader);
+}
+
+/* The wireframe of one mesh, with the diagonal of every quad left out.
+
+   Edit Mode hides a quad's diagonal by *topology* (buildQuadGroups() in
+   cpp/src/fe_editmesh.cpp) because an angle is the one thing a deformation
+   changes: bend a quad by ten degrees and an angle rule calls its diagonal a
+   crease, which is why wireframe mode grew triangles across faces the moment
+   the mesh was edited. The object-mode overlay has to agree with what Edit Mode
+   draws, so it pairs triangles the same way - the shared edge is a diagonal
+   when it is the longest side of both triangles and the two triangles fold by
+   less than 45 degrees - and keeps the old coplanar rule for everything else. */
+function feBuildQuadWireGeometry(geometry) {
+  /* The polygon model answers first: it holds the mesh's actual faces (quads and
+     n-gons), so the lines it draws are the model's own edges and nothing else -
+     no diagonal down the middle of a face, whether the geometry is indexed or
+     not. The table below is the older measurement of the same thing and stays as
+     a fallback for shapes the face builder declines (over its triangle budget). */
+  if (window.FEPoly && typeof window.FEPoly.buildWireGeometry === 'function') {
+    try {
+      const fromFaces = window.FEPoly.buildWireGeometry(geometry);
+      if (fromFaces) return fromFaces;
+    } catch (_) { /* fall through to the edge table */ }
+  }
+  const position = geometry?.attributes?.position;
+  if (!position) return null;
+  const index = geometry.index;
+  const triCount = index ? Math.floor(index.count / 3) : Math.floor(position.count / 3);
+  if (triCount < 1 || triCount > 60000) return null;     /* a phone does not need this for a sculpture */
+  const positions = position.array;
+  const indices = index ? index.array : null;
+  const corner = (t, k) => (indices ? indices[t * 3 + k] : t * 3 + k);
+
+  /* A mesh can be non-indexed - a Boolean or modifier result, a decimated model,
+     most glTF exports: every triangle carries its own three vertices, so two
+     triangles that share an edge share a *position* but not an index. Keyed by
+     index, no edge is ever found shared, no pair is ever called coplanar, and
+     the whole triangulation gets drawn - the diagonal down the middle of a flat
+     face the user pointed at, a line that is not an edge of the model at all.
+     Canonical ids by position fix that for the table below only: indexed meshes
+     keep their indices, non-indexed ones are welded by position. */
+  let canon = null;
+  let rep = null;
+  if (!indices) {
+    canon = new Int32Array(position.count);
+    const first = [];
+    const seen = new Map();
+    for (let i = 0; i < position.count; i++) {
+      const key = positions[i * 3].toFixed(4) + ',' + positions[i * 3 + 1].toFixed(4) + ',' + positions[i * 3 + 2].toFixed(4);
+      let id = seen.get(key);
+      if (id === undefined) { id = first.length; first.push(i); seen.set(key, id); }
+      canon[i] = id;
+    }
+    rep = Int32Array.from(first);
+  }
+  const cid = (i) => (canon ? canon[i] : i);
+  const slot = (id) => (rep ? rep[id] : id);
+
+  const normals = new Float32Array(triCount * 3);
+  for (let t = 0; t < triCount; t++) {
+    const a = corner(t, 0), b = corner(t, 1), c = corner(t, 2);
+    const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
+    const ux = positions[b * 3] - ax, uy = positions[b * 3 + 1] - ay, uz = positions[b * 3 + 2] - az;
+    const vx = positions[c * 3] - ax, vy = positions[c * 3 + 1] - ay, vz = positions[c * 3 + 2] - az;
+    normals[t * 3] = uy * vz - uz * vy;
+    normals[t * 3 + 1] = uz * vx - ux * vz;
+    normals[t * 3 + 2] = ux * vy - uy * vx;
+  }
+  const length2 = (i, j) => {
+    const dx = positions[i * 3] - positions[j * 3];
+    const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
+    const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
+    return dx * dx + dy * dy + dz * dz;
+  };
+
+  /* edge key: vertex indices are well under 2^21, so this stays exact. */
+  const edges = new Map();
+  for (let t = 0; t < triCount; t++) {
+    for (let k = 0; k < 3; k++) {
+      const a = cid(corner(t, k)), b = cid(corner(t, (k + 1) % 3));
+      const lo = a < b ? a : b, hi = a < b ? b : a;
+      const key = lo * 2097152 + hi;
+      let record = edges.get(key);
+      if (!record) { record = { a: lo, b: hi, t0: t, t1: -1 }; edges.set(key, record); }
+      else if (record.t1 === -1 && record.t0 !== t) record.t1 = t;
+      else if (record.t0 !== t && record.t1 !== t) record.t1 = -2;   /* non-manifold: keep it */
+    }
+  }
+
+  /* Which edges are internal structure. Two sources, both measured rather than
+     guessed:
+       1. the quad pairing the kernel made from this mesh when it first had it,
+          handed over in `userData` (see edit-mode.js, stashQuadDiagonals);
+       2. the edges two faces share that are within FE_WIREFRAME_EDGE_ANGLE of
+          each other, i.e. the flat interior of a surface.
+     Deriving quads from the *current* shape - the longest side of both
+     triangles - was the wrong trade twice over: a quad that has been bent stops
+     looking like a quad and grew a triangle down the middle of the face again,
+     while a sphere's own adjacent triangles look exactly like quads, so its
+     wireframe lost a third of its edges. The pairing is trusted only where it
+     was measured. */
+  function keyOf(a, b) { return a < b ? a * 2097152 + b : b * 2097152 + a; }
+  const hidden = new Set();
+  const stash = geometry.userData?.feQuadDiagonals;
+  if (Array.isArray(stash) && stash.length && geometry.userData?.feQuadDiagonalVerts === position.count) {
+    for (let i = 0; i + 1 < stash.length; i += 2) {
+      const ra = stash[i], rb = stash[i + 1];
+      if (ra >= position.count || rb >= position.count) continue;
+      const a = cid(ra), b = cid(rb);
+      hidden.add(keyOf(a, b));
+    }
+  }
+
+  const cosFlat = Math.cos((FE_WIREFRAME_EDGE_ANGLE * Math.PI) / 180);
+  const out = [];
+  edges.forEach(record => {
+    const { a, b, t0, t1 } = record;
+    if (hidden.has(keyOf(a, b))) return;
+    if (t1 >= 0) {
+      const dot = normals[t0 * 3] * normals[t1 * 3] + normals[t0 * 3 + 1] * normals[t1 * 3 + 1] + normals[t0 * 3 + 2] * normals[t1 * 3 + 2];
+      const l0 = normals[t0 * 3] ** 2 + normals[t0 * 3 + 1] ** 2 + normals[t0 * 3 + 2] ** 2;
+      const l1 = normals[t1 * 3] ** 2 + normals[t1 * 3 + 1] ** 2 + normals[t1 * 3 + 2] ** 2;
+      const length0 = Math.sqrt(length2(slot(a), slot(b)));
+      if (length0 <= 1e-7) return;
+      if (l0 > 0 && l1 > 0 && dot / Math.sqrt(l0 * l1) >= cosFlat) return;   /* coplanar: internal structure */
+    }
+    out.push(positions[slot(a) * 3], positions[slot(a) * 3 + 1], positions[slot(a) * 3 + 2], positions[slot(b) * 3], positions[slot(b) * 3 + 1], positions[slot(b) * 3 + 2]);
+  });
+  if (!out.length) return null;
+  const built = new THREE.BufferGeometry();
+  built.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  return built;
+}
+
+function feSyncWireframeOverlay(mesh, record) {
+  const geometry = mesh.geometry;
+  const position = geometry?.attributes?.position;
+  /* Geometry can change in place (a modifier writes into the same buffer, which
+     keeps its uuid and its attribute object), so the uuid alone is not enough
+     to tell a current overlay from a stale one. The attribute's version and
+     vertex count move whenever the shape does. */
+  const stamp = position ? position.count + ':' + (position.version ?? 0) : '';
+  if (record.overlay && record.geometryUuid === geometry?.uuid && record.stamp === stamp) return;
+  if (record.overlay) {
+    record.overlay.parent?.remove(record.overlay);
+    record.overlay.geometry?.dispose?.();
+    record.overlay = null;
+  }
+  record.geometryUuid = geometry?.uuid || null;
+  record.stamp = stamp;
+  if (!geometry || !position) return;
+  /* A phone does not need an edge table for a sculpture. */
+  const indexCount = geometry.index ? geometry.index.count : geometry.attributes.position.count;
+  if (indexCount > 400000) return;
+  let edges = null;
+  try { edges = feBuildQuadWireGeometry(geometry) || new THREE.EdgesGeometry(geometry, FE_WIREFRAME_EDGE_ANGLE); } catch (_) { edges = null; }
+  if (!edges || !edges.attributes?.position || !edges.attributes.position.count) return;
+  const overlay = new THREE.LineSegments(edges, feWireframeLineMaterial);
+  overlay.name = 'FEQuadWireframe';
+  overlay.userData.feWireframeOverlay = true;
+  overlay.frustumCulled = false;
+  overlay.matrixAutoUpdate = false;
+  mesh.add(overlay);
+  record.overlay = overlay;
+}
+
+function feWireframeApplyMaterials(mesh) {
+  const materials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
+  materials.forEach(material => {
+    if (!feWireframeMaterialState.has(material)) {
+      feWireframeMaterialState.set(material, { colorWrite: material.colorWrite, depthWrite: material.depthWrite });
+    }
+    material.wireframe = false;
+    material.colorWrite = false;
+    material.depthWrite = false;
+    material.needsUpdate = true;
+  });
+}
+
+function feWireframeReleaseMaterials(mesh) {
+  const materials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean);
+  materials.forEach(material => {
+    const stillUsed = Array.from(feWireframeDisplays.keys()).some(other => {
+      const list = Array.isArray(other.material) ? other.material : [other.material];
+      return list.indexOf(material) !== -1;
+    });
+    if (stillUsed) return;
+    const state = feWireframeMaterialState.get(material);
+    if (!state) return;
+    if (state.colorWrite !== undefined) material.colorWrite = state.colorWrite;
+    if (state.depthWrite !== undefined) material.depthWrite = state.depthWrite;
+    material.needsUpdate = true;
+    feWireframeMaterialState.delete(material);
+  });
+}
+
+/* The object list of the 3D Workspace is the modelling set; everything else in
+   the scene is a helper that has no business being turned into wireframe:
+   the camera and light bodies, the 3D cursor, the X/Y/Z handles, the grid and
+   the light cone helpers. Painting those made lines appear all over the
+   viewport, far from the mesh being worked on, and hiding their materials left
+   the helpers themselves invisible. */
+function feWireframeIsHelper(mesh) {
+  const eng = FE.engines?.core;
+  /* The gizmo's own handles are meshes with names like X, XY or XYZ, and they
+     reach this list like any other mesh, so a name list alone is not enough.
+     Compare against the engine's own helper objects first: anything that lives
+     inside the transform gizmo, the selection box or the grid is furniture. */
+  const furniture = [eng?.transformControls, eng?.selectionBox, eng?.grid, eng?.shadowFloor, eng?.studioFloor].filter(Boolean);
+  for (let node = mesh; node; node = node.parent) {
+    if (furniture.includes(node)) return true;
+  }
+  const blocked = /^(3DCursor|EditGizmo|EditModeOverlay|TransformControls|XYZ|XY|YZ|XZ|XYZE|E|X|Y|Z|Camera|Light|GridHelper|StudioFloor|ShadowFloor)$/;
+  for (let node = mesh; node; node = node.parent) {
+    if (node.userData?.isEditorHelper || node.userData?.isHelper) return true;
+    if (node.isTransformControls || node.type === 'TransformControls') return true;
+    const name = node.name || '';
+    if (!name) continue;
+    if (blocked.test(name) || /Helper/.test(name) || /Gizmo/.test(name) || /Controls$/.test(name) || /Floor$/.test(name)) return true;
+  }
+  return false;
+}
+
+function feWireframeEligible(mesh) {
+  if (!mesh || !mesh.isMesh || !mesh.parent) return false;
+  if (mesh.userData?.feWireframeOverlay) return false;
+  if (mesh.visible === false || mesh.parent.visible === false) return false;
+  if (feWireframeIsHelper(mesh)) return false;
+  return true;
+}
+
+function feApplyWireframeDisplay(mesh) {
+  if (!feWireframeEligible(mesh)) return false;
+  if (mesh.isInstancedMesh || feWireframeKeepsTriangleWireframe(mesh)) return false;
+  let record = feWireframeDisplays.get(mesh) || { overlay: null, geometryUuid: null };
+  feSyncWireframeOverlay(mesh, record);
+  if (!record.overlay) return false;   /* no edges to draw: keep the old look */
+  feWireframeDisplays.set(mesh, record);
+  feWireframeApplyMaterials(mesh);
+  applyShadingMaterialToMesh(mesh, { color: 0x94a3b8 });
+  return true;
+}
+
+function feRemoveWireframeDisplay(mesh) {
+  const record = feWireframeDisplays.get(mesh);
+  if (!record) return;
+  if (record.overlay) {
+    record.overlay.parent?.remove(record.overlay);
+    record.overlay.geometry?.dispose?.();
+  }
+  feWireframeDisplays.delete(mesh);
+  feWireframeReleaseMaterials(mesh);
+}
+
+function feClearWireframeDisplays() {
+  Array.from(feWireframeDisplays.keys()).forEach(feRemoveWireframeDisplay);
+  feWireframeMaterialState.forEach((state, material) => {
+    if (state.colorWrite !== undefined) material.colorWrite = state.colorWrite;
+    if (state.depthWrite !== undefined) material.depthWrite = state.depthWrite;
+    material.needsUpdate = true;
+  });
+  feWireframeMaterialState.clear();
+}
+
+/* A history restore can bring an overlay back after Wireframe shading was
+   left; nothing should be able to draw those lines outside that mode. */
+function feSweepStrayWireframeOverlays() {
+  const eng = FE.engines?.core;
+  if (!eng?.sc) return;
+  const stray = [];
+  eng.sc.traverse(node => { if (node.userData?.feWireframeOverlay) stray.push(node); });
+  stray.forEach(node => { node.parent?.remove(node); node.geometry?.dispose?.(); });
+}
+
+/* Geometry is replaced by modifiers, sculpting and Edit Mode while Wireframe
+   shading is on, which invalidates the cached edges. */
+if (typeof setInterval === 'function') {
+  setInterval(() => {
+    if (currentShadingMode === 'wireframe') {
+      if (feEditModeActive()) {
+        feSweepStrayWireframeOverlays();
+        getAllSceneMeshes().forEach(mesh => { if (feWireframeEligible(mesh)) feWireframeApplyMaterials(mesh); });
+        return;
+      }
+      feWireframeDisplays.forEach((record, mesh) => {
+        if (!feWireframeEligible(mesh) || !mesh.parent) { feRemoveWireframeDisplay(mesh); return; }
+        feSyncWireframeOverlay(mesh, record);
+      });
+    } else if (feWireframeDisplays.size || feWireframeMaterialState.size) {
+      feClearWireframeDisplays();
+      feSweepStrayWireframeOverlays();
+    }
+  }, 500);
+}
+
+function feEditModeActive() {
+  return !!(window.FEEditMode && typeof window.FEEditMode.isActive === 'function' && window.FEEditMode.isActive());
+}
+
 function applyShadingMode(shading) {
   const eng = FE.engines.core;
   if (!eng || !eng.sc || !eng.r) return;
 
   restoreShadingModeOverrides();
+  feClearWireframeDisplays();
   currentShadingMode = shading;
 
   // Keep all shading selectors synchronized
@@ -9216,8 +9797,24 @@ function applyShadingMode(shading) {
   const allMeshes = getAllSceneMeshes();
 
   if (shading === 'wireframe') {
-    // 1. WIREFRAME: Pure mesh wireframe for ALL models in scene (Cube, Sphere, Cylinder, Cone, Torus, Plane, etc.)
-    allMeshes.forEach(mesh => applyShadingMaterialToMesh(mesh,{wireframe:true,color:0x94a3b8}));
+    // 1. WIREFRAME: Pure mesh wireframe for the models in the scene (Cube, Sphere, Cylinder, Cone, Torus, Plane, etc.)
+    /* Quad-clean wireframe: each mesh draws the edges of the model instead of
+       the edges of its triangles (see feApplyWireframeDisplay). Helpers are left
+       alone - they are not models. */
+    if (feEditModeActive()) {
+      /* Edit Mode draws the cage from the kernel (EditEdges) and keeps it in
+         step with every drag. A second overlay built from the object's three.js
+         geometry is a frame behind, so it hangs in the scene as lines that no
+         longer belong to the shape - and when the geometry is replaced on
+         commit it is an outline of a mesh that is gone. */
+      feSweepStrayWireframeOverlays();
+      allMeshes.forEach(mesh => { if (feWireframeEligible(mesh)) feWireframeApplyMaterials(mesh); });
+    } else {
+      allMeshes.forEach(mesh => {
+        if (!feWireframeEligible(mesh)) return;
+        if (!feApplyWireframeDisplay(mesh)) applyShadingMaterialToMesh(mesh,{wireframe:true,color:0x94a3b8});
+      });
+    }
     if (activeLight) activeLight.visible = false;
     if (eng.shadowFloor) eng.shadowFloor.visible = false;
     if (eng.studioFloor) eng.studioFloor.visible = false;
@@ -10987,6 +11584,17 @@ function modifierEvaluationHash(targetObj, mods) {
 function updateModifiersOnScene(targetOverride) {
   let targetObj = targetOverride || (getActiveObjectMesh ? getActiveObjectMesh() : null);
   try {
+  /* Edit Mode owns the mesh while it is open. It uploads the cage, edits that,
+     and hands the mesh back on exit, which re-runs this function for us. Stack
+     evaluation during the session would swap the mesh on screen for the
+     deformed output while the editor's wireframe and handles still follow the
+     cage, so the two shapes end up in different places - which is exactly what
+     "the wireframe has come loose from the object" looks like. Mark the mesh
+     instead and let the commit pick it up. */
+  if (globalThis.FEEditMode && typeof globalThis.FEEditMode.isActive === 'function' && globalThis.FEEditMode.isActive()) {
+    if (targetObj && targetObj.userData) targetObj.userData.forceModUpdate = true;
+    return;
+  }
   const eng = FE.engines?.core;
   if (!targetObj || !targetObj.isMesh || !targetObj.geometry || !eng || !eng.sc) return;
 
@@ -11045,7 +11653,15 @@ function updateModifiersOnScene(targetOverride) {
     }
 
     if (targetObj.material) {
-      targetObj.material.wireframe = (currentShadingMode === 'wireframe');
+      /* The geometry may have just been replaced, so the cached edges go with
+         the shape the viewport is asking for right now. */
+      if (currentShadingMode === 'wireframe') {
+        targetObj.material.wireframe = false;
+        if (!feApplyWireframeDisplay(targetObj)) targetObj.material.wireframe = true;
+      } else {
+        feRemoveWireframeDisplay(targetObj);
+        targetObj.material.wireframe = false;
+      }
       targetObj.material.needsUpdate = true;
     }
 
@@ -11082,11 +11698,13 @@ function updateModifiersOnScene(targetOverride) {
   targetObj.userData.forceModUpdate = false;
 
   let currentGeo = targetObj.userData.baseGeometry.clone();
+  let currentMod = null;
   const activeSimTypes = new Set();
   const simulationDefs = [];
 
   enabledMods.forEach(mod => {
     const p = mod.values || {};
+    currentMod = mod;
 
     if (mod.name === "Bevel") {
       const amt = parseFloat(p["Amount"] ?? 0.15);
@@ -11219,9 +11837,21 @@ function updateModifiersOnScene(targetOverride) {
     if (m.name === 'Fluid' && (m.values['Type'] || 'Domain') === 'Domain') forceWire = true;
   });
   if (targetObj.material) {
-    targetObj.material.wireframe = forceWire || (currentShadingMode === 'wireframe');
+    /* A Fluid domain is forced to wire even in Solid mode, and its surface is
+       rebuilt every frame, so it keeps the raw triangle wireframe. */
+    if (forceWire) {
+      feRemoveWireframeDisplay(targetObj);
+      targetObj.material.wireframe = true;
+    } else if (currentShadingMode === 'wireframe') {
+      targetObj.material.wireframe = false;
+      if (!feApplyWireframeDisplay(targetObj)) targetObj.material.wireframe = true;
+    } else {
+      feRemoveWireframeDisplay(targetObj);
+      targetObj.material.wireframe = false;
+    }
   }
   targetObj.userData.modifierError = null;
+  feModifierNotice(targetObj, null);
 
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
@@ -11229,9 +11859,13 @@ function updateModifiersOnScene(targetOverride) {
   if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
   refreshModifierDependents(targetObj);
   } catch(e) {
-    if (targetObj?.userData) { targetObj.userData.modifierError = e?.message || String(e); targetObj.userData.lastModHash = null; targetObj.userData.forceModUpdate = false; }
+    const message = e?.message || String(e);
+    if (targetObj?.userData) { targetObj.userData.modifierError = message; targetObj.userData.lastModHash = null; targetObj.userData.forceModUpdate = false; }
     console.error("Modifier update error:", e);
-    if (targetObj === (getActiveObjectMesh ? getActiveObjectMesh() : null)) { FE.toast(`Modifier error: ${e?.message || e}`); if (typeof renderModifierStack === 'function') renderModifierStack(); }
+    /* Name the modifier that refused, once, and leave the reason on the panel. */
+    const label = currentMod && currentMod.name && !String(message).startsWith(currentMod.name) ? `${currentMod.name}: ${message}` : message;
+    feModifierNotice(targetObj, targetObj ? `${targetObj.name || 'this object'} will not be changed - ${label}` : label);
+    if (targetObj === (getActiveObjectMesh ? getActiveObjectMesh() : null)) { FE.toast(`Modifier error: ${label}`); if (typeof renderModifierStack === 'function') renderModifierStack(); }
   }
 }
 let refreshingModifierDependents = false;
@@ -11405,9 +12039,59 @@ function toggleModifierInStack(id) {
   updateModifiersOnScene();
 }
 
+/* The panel says which object its stack belongs to, and why a modifier refused
+   to run. Both were missing: with a stack open it was not obvious which mesh
+   would be changed - so a Boolean could be added to the wrong object and read as
+   "the object I selected was not cut" - and when a stage threw, the toast
+   scrolled away while the card went on looking healthy. */
+function feModifierNotice(targetObj, message) {
+  const sheet = document.getElementById('modifiers-sheet');
+  if (!sheet) return;
+  const title = sheet.querySelector('.modifiers-sheet-title small');
+  if (title) title.textContent = targetObj ? `on ${targetObj.name || targetObj.uuid.slice(0, 5)}` : '';
+  let notice = sheet.querySelector('#modifier-error-notice');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.id = 'modifier-error-notice';
+    notice.style.cssText = 'margin:8px 12px 0;padding:8px 10px;border-radius:8px;background:#3a1216;border:1px solid #b91c1c;color:#fecaca;font:12px/1.4 system-ui,-apple-system,sans-serif;display:none';
+    const body = document.getElementById('modifiers-sheet-body');
+    if (body && body.parentNode) body.parentNode.insertBefore(notice, body);
+    else sheet.appendChild(notice);
+  }
+  if (message) { notice.textContent = `\u26a0 ${message}`; notice.style.display = 'block'; }
+  else { notice.textContent = ''; notice.style.display = 'none'; }
+}
+window.feModifierNotice = feModifierNotice;
+
 function modifierTargetOptions(targetObj) {
+  /* Only real editable solids belong in these dropdowns. The scene carries the
+     viewport's own furniture - the move gizmo's axis handles, the camera body
+     and its lens ring, the light, the grid, the floor, the selection box, the
+     annotation group - and all of them are meshes, so listing every mesh filled
+     the Operand Object list with a few dozen entries named "X", "Y", "Z" next
+     to the two objects the user actually made. Picking one of those made the
+     Boolean fail, or cut the wrong thing, with nothing on screen to say why. */
+  const eng = (window.FE && FE.engines && FE.engines.core) || null;
+  const furniture = [
+    eng && eng.transformControls, eng && eng.selectionBox, eng && eng.cursor3d,
+    eng && eng.grid, eng && eng.floor, eng && eng.shadowFloor,
+    eng && eng.blenderCam, eng && eng.blenderLight,
+    (typeof getAnnotationGroup === 'function' && eng) ? getAnnotationGroup(eng) : null
+  ].filter(Boolean);
+
+  const isFurniture = (mesh) => {
+    for (let node = mesh; node; node = node.parent) {
+      if (furniture.includes(node)) return true;
+      if (node.name === 'SelectionOutlineHelper' || node.name === 'ModifierHelper') return true;
+      if (node === eng || node === eng?.sc) break;
+    }
+    return false;
+  };
+
   return (typeof getAllSceneMeshes === 'function' ? getAllSceneMeshes() : [])
-    .filter(mesh => mesh && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh && mesh.geometry && mesh.name !== 'ModifierHelper' && !mesh.userData?.solverParticleVisual)
+    .filter(mesh => mesh && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh && mesh.geometry
+      && mesh.name !== 'ModifierHelper' && !mesh.userData?.solverParticleVisual
+      && !isFurniture(mesh))
     .map(mesh => ({ value: mesh.uuid, label: `${mesh.name || 'Mesh'} · ${mesh.uuid.slice(0, 5)}` }));
 }
 

@@ -138,7 +138,60 @@
     return bar ? Array.from(bar.querySelectorAll('[data-edit-mode]')) : [];
   }
 
+  /* Something has to hold the object-mode helpers down for the length of the
+     session: the engine attaches its TransformControls whenever a Move / Rotate
+     / Scale panel opens or the selection changes, and three.js shows the gizmo
+     inside `attach()`. That gizmo is a whole-object transform control with long
+     axis lines running through the model, and those lines drawn across a face
+     are easily mistaken for a triangle that will not go away. The cage's own
+     gizmo is a different object (`EditGizmo`), so this one is not needed while
+     the mode runs. */
+  let helperGuardRAF = 0;
+  let helperGuardFrames = 0;
+
+  function startHelperGuard() {
+    stopHelperGuard();
+    if (typeof global.requestAnimationFrame !== 'function') return;
+    const tick = () => {
+      if (!state.active) { helperGuardRAF = 0; return; }
+      const eng = core();
+      const controls = eng?.transformControls;
+      if (controls && controls.visible) controls.visible = false;
+      if ((++helperGuardFrames % 20) === 0) removeSelectionOutlines(state.target);
+      helperGuardRAF = global.requestAnimationFrame(tick);
+    };
+    helperGuardRAF = global.requestAnimationFrame(tick);
+  }
+
+  function stopHelperGuard() {
+    if (helperGuardRAF && typeof global.cancelAnimationFrame === 'function') global.cancelAnimationFrame(helperGuardRAF);
+    helperGuardRAF = 0;
+    helperGuardFrames = 0;
+  }
+
   function engine() { return global.FECppEngine; }
+
+  /* Take every selection outline off the object being edited. The app attaches
+     one from `applyMeshSelectionOutline`, and it is an EdgesGeometry snapshot:
+     it describes the shape the object had when it was selected, while the cage
+     under the finger moves with every drag - which is what "the wireframe came
+     away from the object" looks like. The mode draws its own wireframe from the
+     cage, so the outline is taken out for the session (removed rather than
+     hidden: the app re-applies it from its own paths) and exit rebuilds it from
+     the cage that was committed. */
+  function removeSelectionOutlines(object) {
+    const host = object || state.target;
+    if (!host) return;
+    const doomed = [];
+    host.traverse?.((child) => { if (child && child.name === 'SelectionOutlineHelper') doomed.push(child); });
+    for (const helper of doomed) {
+      helper.parent?.remove?.(helper);
+      helper.geometry?.dispose?.();
+      helper.material?.dispose?.();
+    }
+    const eng = core();
+    if (eng && eng.selectionBox && doomed.includes(eng.selectionBox)) eng.selectionBox = null;
+  }
   function core() { return global.FE?.engines?.core || null; }
   function T() { return global.THREE; }
   function toast(message) { global.FE?.toast?.(message); }
@@ -185,7 +238,15 @@
   function upload(object) {
     const exp = exportsOf();
     if (!exp || !object) return false;
-    const geometry = object.geometry;
+    /* A modifier stack replaces `object.geometry` with its *evaluated* output,
+       so editing that mesh and committing it would feed the deformity back
+       into itself - a Cast or Lattice would be applied twice - and the stack
+       would go on rebuilding from a cage that no longer matches what was
+       edited. Edit the cage the stack is built from, as Blender does; `enter`
+       puts that cage on screen for the duration so the overlay lines up with
+       the surface under the finger. */
+    const cage = object.userData?.baseGeometry;
+    const geometry = (cage && cage.attributes?.position) ? cage : object.geometry;
     const position = geometry.attributes.position;
     const index = geometry.index;
     const vertCount = position.count;
@@ -270,8 +331,81 @@
     return true;
   }
 
-  function syncViewport() {
-    const exp = exportsOf();
+  /* Repair render normals the kernel handed over that cannot be used: not a
+     number, not a direction (zero length), not unit length, or pointing the
+     opposite way from every face at that vertex. Each one is replaced by the
+     average of the faces it actually belongs to. Returns how many were rebuilt,
+     which is what tells a dark patch caused by a bad normal from a dark patch
+     caused by something else. */
+  function sanitizeRenderNormals(target, vertexCount, indexCount) {
+    const geometry = target.geometry;
+    const indexAttr = geometry && geometry.index;
+    const normalAttr = geometry && geometry.attributes && geometry.attributes.normal;
+    const positionAttr = geometry && geometry.attributes && geometry.attributes.position;
+    if (!indexAttr || !normalAttr || !positionAttr) return 0;
+    const position = positionAttr.array;
+    const normal = normalAttr.array;
+    const indices = indexAttr.array;
+    /* The attribute counts are only updated after this runs, so the live counts
+       come from the kernel: scanning the stale tail would flag leftovers that
+       are never drawn. */
+    vertexCount = Math.min(vertexCount, Math.floor(position.length / 3), Math.floor(normal.length / 3));
+    const triangleCount = Math.min(Math.floor(indexCount / 3), Math.floor(indices.length / 3));
+    if (!vertexCount || !triangleCount) return 0;
+
+    const flagged = [];
+    const isBad = new Uint8Array(vertexCount);
+    for (let v = 0; v < vertexCount; v++) {
+      const x = normal[v * 3], y = normal[v * 3 + 1], z = normal[v * 3 + 2];
+      const length = Math.hypot(x, y, z);
+      if (!Number.isFinite(length) || length < 1e-6 || length > 4) {
+        isBad[v] = 1;
+        flagged.push(v);
+      }
+    }
+    if (!flagged.length) return 0;
+
+    const summed = new Map();
+    for (let t = 0; t < triangleCount; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      if (!isBad[a] && !isBad[b] && !isBad[c]) continue;
+      const ax = position[a * 3], ay = position[a * 3 + 1], az = position[a * 3 + 2];
+      const ux = position[b * 3] - ax, uy = position[b * 3 + 1] - ay, uz = position[b * 3 + 2] - az;
+      const vx = position[c * 3] - ax, vy = position[c * 3 + 1] - ay, vz = position[c * 3 + 2] - az;
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const length = Math.hypot(nx, ny, nz);
+      if (!(length > 1e-12)) continue;
+      nx /= length; ny /= length; nz /= length;
+      for (const v of [a, b, c]) {
+        if (!isBad[v]) continue;
+        const record = summed.get(v) || [0, 0, 0];
+        record[0] += nx; record[1] += ny; record[2] += nz;
+        summed.set(v, record);
+      }
+    }
+
+    let repaired = 0;
+    for (const v of flagged) {
+      const record = summed.get(v);
+      let x = record ? record[0] : 0;
+      let y = record ? record[1] : 0;
+      let z = record ? record[2] : 0;
+      let length = Math.hypot(x, y, z);
+      if (!(length > 1e-6)) {
+        x = normal[v * 3]; y = normal[v * 3 + 1]; z = normal[v * 3 + 2];
+        length = Math.hypot(x, y, z);
+      }
+      if (!(length > 1e-6)) { x = 0; y = 1; z = 0; length = 1; }
+      normal[v * 3] = x / length;
+      normal[v * 3 + 1] = y / length;
+      normal[v * 3 + 2] = z / length;
+      repaired++;
+    }
+    normalAttr.needsUpdate = true;
+    return repaired;
+  }
+
+  function syncViewport() {    const exp = exportsOf();
     const target = state.target;
     if (!exp || !target) return;
     const vertexCount = exp.fe_edit_render_vert_count();
@@ -284,6 +418,26 @@
 
     view.position.set(f32(exp.fe_edit_render_pos_ptr(), vertexCount * 3));
     view.normal.set(f32(exp.fe_edit_render_nrm_ptr(), vertexCount * 3));
+    /* Shade Smooth asks the kernel for smoothed vertex normals, and a smoothed
+       normal is an average: if even one of the faces at a vertex has no direction
+       of its own - a zero-area triangle from a Boolean cut or a collapsed edge,
+       which every model picks up sooner or later - averaging it in poisons that
+       vertex and everything sharing it, and the surface goes black. Flat shading
+       never reads these normals, so the mesh only misbehaves after Shade Smooth.
+       Anything not finite, not unit length, or pointing away from the faces it
+       belongs to is rebuilt here from those faces, in render space, so no mapping
+       back to the edit mesh is needed. */
+    state.normalsRepaired = sanitizeRenderNormals(view, vertexCount, indexCount);
+    /* Say it out loud once: a mesh whose smoothed normals had to be rebuilt is a
+       mesh with degenerate faces (a Boolean cut, a collapsed edge), and knowing
+       the count is what separates "Shade Smooth broke my object" from "the
+       object was already like that". */
+    if (state.normalsRepaired > 0 && state.normalsRepaired !== state.lastRepairNotice) {
+      state.lastRepairNotice = state.normalsRepaired;
+      toast('Shade Smooth: rebuilt ' + state.normalsRepaired + ' broken normal' + (state.normalsRepaired === 1 ? '' : 's'));
+    } else if (state.normalsRepaired === 0) {
+      state.lastRepairNotice = 0;
+    }
     view.index.set(u32(exp.fe_edit_render_idx_ptr(), indexCount));
 
     geometry.attributes.position.count = vertexCount;
@@ -308,6 +462,33 @@
     geometry.computeBoundingBox();
   }
 
+  /* The kernel's quad pairing, written onto the committed geometry as vertex
+     index pairs. The mesh the kernel hands back uses the kernel's own vertex
+     indices, which is exactly the numbering a later upload of it will use
+     again, so a pairing recorded here stays true - and it has to be recorded,
+     because it cannot be recovered from a shape that has since been bent: the
+     shell's Wireframe shading reads this in Object Mode (see
+     feBuildQuadWireGeometry) and without it a quad that the editor bent grew a
+     triangle back down the middle of the face. Plain array on purpose: three's
+     clone() round-trips userData through JSON. */
+  function stashQuadDiagonals(geometry) {
+    const exp = exportsOf();
+    const position = geometry?.attributes?.position;
+    if (!geometry || !position || !exp || typeof exp.fe_edit_quad_pairs_ptr !== 'function') return;
+    const data = geometry.userData || (geometry.userData = {});
+    try {
+      const pointer = exp.fe_edit_quad_pairs_ptr();
+      const count = exp.fe_edit_quad_pair_count();
+      if (!count) {
+        delete data.feQuadDiagonals;
+        delete data.feQuadDiagonalVerts;
+        return;
+      }
+      data.feQuadDiagonals = Array.from(u32(pointer, count * 2));
+      data.feQuadDiagonalVerts = position.count;
+    } catch (_) { /* a missing pairing only costs a nicer wireframe */ }
+  }
+
   function commitToObject() {
     const exp = exportsOf();
     const target = state.target;
@@ -328,9 +509,30 @@
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     geometry.computeBoundingBox();
-    target.geometry?.dispose?.();
-    target.geometry = geometry;
+    /* The edited mesh becomes the cage the modifier stack is built from. Only
+       writing `target.geometry` used to lose the edit on the next stack
+       update, which rebuilds from `baseGeometry` (see updateModifiersOnScene):
+       that is the reported "mesh bugs out while editing". The cage and the
+       object's own geometry stay separate objects, as the stack expects. */
+    const wantsCage = !!target.userData.baseGeometry || (target.userData.modStack || []).some((mod) => mod.enabled);
+    const oldBase = target.userData.baseGeometry;
+    if (wantsCage) {
+      if (oldBase && oldBase !== target.geometry) oldBase.dispose?.();
+      target.userData.baseGeometry = geometry;
+      target.geometry?.dispose?.();
+      target.geometry = geometry.clone();
+    } else {
+      target.geometry?.dispose?.();
+      target.geometry = geometry;
+    }
+    delete target.userData.modifierError;
+    target.userData.forceModUpdate = true;
     target.userData.feEdited = true;
+    /* Keep the pairing with the shape it describes: anyone drawing this mesh's
+       wireframe in Object Mode - or re-entering Edit Mode on it - gets the same
+       quads the editor just worked with. */
+    stashQuadDiagonals(target.userData.baseGeometry);
+    if (target.geometry && target.geometry !== target.userData.baseGeometry) stashQuadDiagonals(target.geometry);
     if (typeof global.scheduleCoreHistory === 'function') global.scheduleCoreHistory({ target: target, type: 'change' });
   }
 
@@ -499,6 +701,10 @@
     if (!exp || !THREE || !state.target) return;
     const group = ensureOverlay();
     if (!group) return;
+    /* The app can re-apply its selection outline at any time (a selection event,
+       a modifier rebuild); while this mode runs it would describe the shape the
+       object had before the edit. */
+    removeSelectionOutlines(state.target);
 
     const vertexCount = exp.fe_edit_vert_count();
     const edgeCount = exp.fe_edit_edge_count();
@@ -577,7 +783,10 @@
     /* In point mode the dots are the selection, so they stay on top; the
        wireframe is depth-tested so the shape reads as a solid. */
     dots.material.depthTest = state.mode === 'vertex' ? !state.xray : true;
-    dots.material.size = vertexCount > 2000 ? 4 : vertexCount > 400 ? 5 : 6;
+    /* Dots are the only thing to aim at in point mode, so they get a couple of
+       pixels more on a phone-sized viewport. */
+    const fingerSized = Math.min(window.innerWidth || 1024, window.innerHeight || 768) < 900;
+    dots.material.size = vertexCount > 2000 ? (fingerSized ? 6 : 4) : vertexCount > 400 ? (fingerSized ? 7 : 5) : (fingerSized ? 9 : 6);
 
     /* Selected faces are only painted in face mode. In point mode every
        vertex of a face can be selected without the face being selected, and
@@ -890,25 +1099,127 @@
     });
   }
 
+  /* Tap radius in CSS pixels. A fingertip lands nowhere near a two-pixel
+     vertex, so the kernel is told how much slack to allow in NDC units
+     (2 units span the viewport height) instead of using its own guess. The
+     radius also doubles as the "is this even on the mesh" limit: nothing
+     outside it is picked, which is what stopped empty taps from grabbing the
+     nearest vertex on that side of the screen. */
+  const PICK_RADIUS_TOUCH = 22;
+  const PICK_RADIUS_MOUSE = 11;
+
+  function pickRadiusPixels() {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      if (window.matchMedia('(pointer: coarse)').matches) return PICK_RADIUS_TOUCH;
+    }
+    return PICK_RADIUS_MOUSE;
+  }
+
   function pickAt(point) {
-    return withClip((exp, ptr) => exp.fe_edit_pick(ptr, point.x, point.y));
+    const height = point && point.pixelsY ? point.pixelsY : 0;
+    const tolerance = height > 0 ? (2 * pickRadiusPixels()) / height : 0.045;
+    return withClip((exp, ptr) => {
+      if (typeof exp.fe_edit_set_pick_tolerance === 'function') exp.fe_edit_set_pick_tolerance(tolerance);
+      return exp.fe_edit_pick(ptr, point.x, point.y);
+    });
   }
 
   function selectIndex(kind, index, additive) {
     const exp = exportsOf();
     if (!exp || index < 0) return;
     const op = additive ? 3 : 0;
+    const faceSel = kind === 2 ? u8(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count()) : null;
     const already = kind === 1
       ? u8(exp.fe_edit_edge_sel_ptr(), exp.fe_edit_edge_count())[index]
-      : kind === 2 ? u8(exp.fe_edit_face_sel_ptr(), exp.fe_edit_tri_count())[index] : 0;
+      : kind === 2 ? faceSel[index] : 0;
+    /* A face is the polygon, not the triangle the ray happened to land on: the
+       edit mesh stores triangles, FEPoly knows which of them are one face, so a
+       tap selects all of them and the highlight covers the whole quad. */
+    const group = kind === 2 ? faceTrianglesForKernelFace(exp, index) : null;
+    const indices = group && group.length > 1 ? group : [index];
+    const wasSelected = group && group.length > 1 && faceSel
+      ? indices.some((t) => faceSel[t])
+      : already;
     withArena(null, (exp2) => {
-      const ptr = exp2.fe_malloc(4);
+      const ptr = exp2.fe_malloc(4 * indices.length);
       if (!ptr) return;
-      new Uint32Array(memory(), ptr, 1)[0] = index;
+      const view = new Uint32Array(memory(), ptr, indices.length);
+      for (let i = 0; i < indices.length; i++) view[i] = indices[i];
       if (!additive) exp2.fe_edit_select_none();
       /* Toggle: an already selected edge or face is deselected on the second tap. */
-      exp2.fe_edit_select_by_index(kind, 1, ptr, additive && already ? 2 : op);
+      exp2.fe_edit_select_by_index(kind, indices.length, ptr, additive && wasSelected ? 2 : op);
     });
+  }
+
+  /* Which kernel triangles make up the face a kernel triangle belongs to. The
+     two are matched by centroid, because the upload is free to reorder the
+     triangles; if most of them cannot be matched, the mesh on screen is not the
+     mesh FEPoly measured and a tap stays a triangle rather than grouping the
+     wrong thing. */
+  let polyFaceMap = null;
+  let polyFaceMapStamp = '';
+
+  function faceTrianglesForKernelFace(exp, kernelTri) {
+    const target = state.target;
+    const geometry = target && target.geometry;
+    const api = (typeof window !== 'undefined' ? window : globalThis).FEPoly;
+    if (!api || !geometry || !geometry.attributes || !geometry.attributes.position) return null;
+    const triCount = exp.fe_edit_tri_count();
+    const vertCount = exp.fe_edit_vert_count();
+    const stamp = triCount + ':' + vertCount + ':' + (geometry.attributes.position.version || 0) + ':' + geometry.attributes.position.count;
+    if (!polyFaceMap || polyFaceMapStamp !== stamp) {
+      polyFaceMap = buildPolyFaceMap(exp, geometry, api, triCount, vertCount);
+      polyFaceMapStamp = stamp;
+    }
+    if (!polyFaceMap) return null;
+    const face = polyFaceMap.triToFace[kernelTri];
+    if (face === undefined || face < 0) return null;
+    return polyFaceMap.faceTris[face] || null;
+  }
+
+  function buildPolyFaceMap(exp, geometry, api, triCount, vertCount) {
+    try {
+      const poly = api.faceList(geometry);
+      if (!poly || !poly.faceTris) return null;
+      const positions = geometry.attributes.position.array;
+      const index = geometry.index;
+      const gTriCount = index ? Math.floor(index.count / 3) : Math.floor(geometry.attributes.position.count / 3);
+      if (gTriCount !== triCount) return null;
+      const slotOf = (t, k) => (index ? index.array[t * 3 + k] : t * 3 + k);
+      const key = (x, y, z) => Math.round(x * 1e4) + ',' + Math.round(y * 1e4) + ',' + Math.round(z * 1e4);
+      const cage = f32(exp.fe_edit_pos_interleaved_ptr(), vertCount * 3);
+      const tris = u32(exp.fe_edit_idx_ptr(), triCount * 3);
+      const kernelByCentroid = new Map();
+      for (let t = 0; t < triCount; t++) {
+        const a = tris[t * 3], b = tris[t * 3 + 1], c = tris[t * 3 + 2];
+        const cx = (cage[a * 3] + cage[b * 3] + cage[c * 3]) / 3;
+        const cy = (cage[a * 3 + 1] + cage[b * 3 + 1] + cage[c * 3 + 1]) / 3;
+        const cz = (cage[a * 3 + 2] + cage[b * 3 + 2] + cage[c * 3 + 2]) / 3;
+        kernelByCentroid.set(key(cx, cy, cz), t);
+      }
+      const triToFace = new Int32Array(triCount).fill(-1);
+      const faceTris = [];
+      let matched = 0;
+      for (let f = 0; f < poly.faceTris.length; f++) {
+        const list = [];
+        for (const geometryTri of poly.faceTris[f]) {
+          const a = slotOf(geometryTri, 0), b = slotOf(geometryTri, 1), c = slotOf(geometryTri, 2);
+          const cx = (positions[a * 3] + positions[b * 3] + positions[c * 3]) / 3;
+          const cy = (positions[a * 3 + 1] + positions[b * 3 + 1] + positions[c * 3 + 1]) / 3;
+          const cz = (positions[a * 3 + 2] + positions[b * 3 + 2] + positions[c * 3 + 2]) / 3;
+          const kernelTri = kernelByCentroid.get(key(cx, cy, cz));
+          if (kernelTri === undefined || triToFace[kernelTri] >= 0) continue;
+          triToFace[kernelTri] = f;
+          list.push(kernelTri);
+          matched++;
+        }
+        faceTris.push(list);
+      }
+      if (matched < triCount * 0.9) return null;
+      return { triToFace, faceTris };
+    } catch (_) {
+      return null;
+    }
   }
 
   function boxSelect(from, to, additive) {
@@ -1724,6 +2035,16 @@
     if (exportsOf().fe_edit_vert_count() && state.target === object && state.active) return true;
     if (!upload(object)) return false;
 
+    /* The overlay draws the kernel mesh, so a deformed output left on screen
+       would leave the wireframe floating away from the shape under the finger.
+       The parked output is released on exit, after the stack is rebuilt. */
+    const cageToShow = object.userData?.baseGeometry;
+    if (cageToShow?.attributes?.position && object.geometry !== cageToShow) {
+      state.parkedGeometry = object.geometry;
+      object.geometry = cageToShow;
+      object.userData.forceModUpdate = true;
+    }
+
     state.active = true;
     state.target = object;
     state.mode = 'vertex';
@@ -1747,11 +2068,18 @@
        sit at the old silhouette while the wireframe moves. Both step aside
        for the duration and come back on exit. */
     const eng2 = core();
+    /* Remember which object the object-mode gizmo was attached to, so leaving
+       Edit Mode can hand it back. Forcing `visible = true` on a detached
+       TransformControls (which is what used to happen here) parks its handles
+       wherever the object last was, with nothing to move. */
+    state.gizmoRestore = eng2?.transformControls
+      ? { object: eng2.transformControls.object || null, mode: eng2.transformControls.getMode?.() || 'translate' }
+      : null;
     eng2?.transformControls?.detach?.();
     if (eng2?.transformControls) eng2.transformControls.visible = false;
-    const outline = object.getObjectByName?.('SelectionOutlineHelper');
-    if (outline) outline.visible = false;
-    state.hiddenOutline = outline || null;
+    removeSelectionOutlines(object);
+    state.hiddenOutline = null;
+    startHelperGuard();
     document.body?.classList.add('edit-mode');
 
     bindCategoryBar();
@@ -1778,6 +2106,7 @@
   function exit() {
     if (!state.active) return;
     state.active = false;
+    stopHelperGuard();
     state.drag = null;
     detachPointer();
     clearMarquee();
@@ -1785,6 +2114,7 @@
     state.overlay = null;
     disposeGizmo();
     commitToObject();
+    const committed = state.target;
     state.target = null;
     state.view = null;
     closeSheet();
@@ -1792,7 +2122,32 @@
     removeEditToolsButton();
     const eng = core();
     if (eng?.oc) { eng.oc.enableRotate = true; eng.oc.enablePan = true; eng.oc.enabled = true; }
-    if (eng?.transformControls) eng.transformControls.visible = true;
+    /* `detach()` owns `visible`, and the app only shows the handles while one
+       of the Move / Rotate / Scale / Transform panels is open, so re-sync
+       through the app's own selection path and detach when there is nothing
+       for the gizmo to hold. */
+    const gizmoRestore = state.gizmoRestore;
+    state.gizmoRestore = null;
+    if (eng?.transformControls) {
+      /* Only a visible transform panel shows the handles, so ask the panels
+         rather than assuming: `activeObject` lives in the workspace script's
+         own scope and is not readable from here. */
+      const panelWantsGizmo = ['move', 'rotate', 'scale', 'transform'].some((name) => {
+        const panel = byId('panel-' + name);
+        return !!panel && !panel.hidden && panel.style.display !== 'none';
+      });
+      const held = gizmoRestore?.object;
+      if (panelWantsGizmo && held && held.parent && !held.userData?.isLocked) {
+        held.frustumCulled = false;
+        held.updateMatrix();
+        held.updateMatrixWorld(true);
+        eng.transformControls.attach(held);
+        if (gizmoRestore?.mode) eng.transformControls.setMode(gizmoRestore.mode);
+      } else {
+        eng.transformControls.detach();
+      }
+      eng.transformControls.updateMatrixWorld(true);
+    }
     /* The outline is a copy of the geometry's edges, so the old one has to go:
        the shape it was drawn around no longer exists. */
     const outline = state.hiddenOutline;
@@ -1802,9 +2157,28 @@
       outline.geometry?.dispose?.();
       outline.material?.dispose?.();
     }
-    if (typeof global.applyMeshSelectionOutline === 'function' && typeof global.activeObject !== 'undefined') {
-      try { global.applyMeshSelectionOutline(global.activeObject); } catch { /* no selection to outline */ }
+    if (typeof global.applyMeshSelectionOutline === 'function') {
+      const activeId = global.FE?.getActiveObjectId?.();
+      try { global.applyMeshSelectionOutline(activeId || undefined); } catch { /* no selection to outline */ }
     }
+    if (committed) {
+      /* Rebuild the stack from the cage that was just edited, so a deform is
+         applied once, to the mesh the user changed. */
+      if ((committed.userData?.modStack || []).some((mod) => mod.enabled) && typeof global.updateModifiersOnScene === 'function') {
+        try {
+          committed.userData.forceModUpdate = true;
+          global.updateModifiersOnScene(committed);
+        } catch (error) {
+          console.warn('[FEEditMode] Could not rebuild the modifier stack:', error);
+        }
+      }
+      const parked = state.parkedGeometry;
+      state.parkedGeometry = null;
+      if (parked && parked !== committed.geometry && parked !== committed.userData?.baseGeometry) {
+        parked.dispose?.();
+      }
+    }
+
     /* Keep the mode dropdown honest: Edit Mode can be left from the bar, from
        the dropdown, or by leaving the studio. */
     const modeSelect = byId('core-mode');

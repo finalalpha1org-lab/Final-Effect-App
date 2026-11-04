@@ -51,6 +51,32 @@ uint32_t g_vertMap[kMaxVerts];
    coplanar is internal structure, not a silhouette. */
 uint8_t g_edgeDisplay[kMaxEdges];
 float g_displayAngle = 0.6f;
+
+/* Screen-space pick radius in NDC units. The app sets it from the viewport
+   height so a finger keeps the same target size on any camera; the constants
+   below are only the fallback for a caller that never sets it. */
+float g_pickTolerance = 0.045f;
+/* Quad faces. Two triangles are the two halves of *one* face when the edge they
+   share is the diagonal of a quad - see buildQuadGroups() for how that is
+   decided and why it survives a deformation. Selection lives on vertices, so a
+   face's vertices move together: picking a face means picking all four corners
+   of the side, and the tool acts on the whole side instead of on half of it. */
+uint32_t g_quadOf[kMaxTris];
+uint32_t g_quadFirst[kMaxTris];
+uint32_t g_quadNext[kMaxTris];
+uint32_t g_quadCount = 0;
+uint8_t g_quadPaired[kMaxTris];
+/* The diagonal edge of each group (kNoFace for a lone triangle), the signature
+   of the triangle table the groups were built from, and how far two triangles
+   may fold and still be the two halves of one face. */
+uint32_t g_diagEdge[kMaxTris];
+/* The pairing handed to the shell, as vertex index pairs of the hidden
+   diagonals. */
+uint32_t g_quadPairs[kMaxTris * 2];
+uint32_t g_quadPairCount = 0;
+uint32_t g_quadSignature = 0u;
+bool g_quadBuilt = false;
+float g_quadAngle = 45.0f;
 uint32_t g_weldMerged = 0;
 uint8_t g_vertUsed[kMaxVerts];
 uint32_t g_vertNew[kMaxVerts];
@@ -432,6 +458,155 @@ void rebuildEdges() {
     faceNormal(E.f1[e], bx, by, bz);
     g_edgeDisplay[e] = (ax * bx + ay * by + az * bz) < cosLimit ? 1u : 0u;
   }
+  buildQuadGroups();
+}
+
+/* Signature of the triangle table. The pairing below is valid while the table
+   is: a deformation only moves vertices, so the faces the mesh had are kept,
+   while any operation that adds, removes or re-indexes a triangle invalidates
+   it, so a stored partner can never point at a face that op has since
+   replaced. */
+uint32_t quadTopologySignature() {
+  uint32_t h = 2166136261u;
+  h = (h ^ (M.nt * 2654435761u)) * 16777619u;
+  for (uint32_t i = 0; i < M.nt * 3u; ++i) h = (h ^ M.tri[i]) * 16777619u;
+  return h;
+}
+
+/* True when the edge is the longest side of *both* of its triangles, which is
+   what a quad's diagonal is: a rectangle's diagonal is its hypotenuse while the
+   sides two quads share are shorter than the diagonals of the triangles that
+   touch them. The tolerance is small (2%) because a deformation moves these
+   lengths around: a quad whose corner has been dragged upwards can bring a side
+   close to the length of the diagonal, and the face must stay one face. The
+   crease limit in buildQuadGroups, not this length test, is what keeps a
+   triangulated mesh (a sphere, a cone, a tetrahedron) out of the pairing. */
+bool isQuadDiagonal(const uint32_t e) {
+  if (E.f0[e] == kNoFace || E.f1[e] == kNoFace) return false;
+  const uint32_t a = E.a[e], b = E.b[e];
+  const float dx = M.x[a] - M.x[b], dy = M.y[a] - M.y[b], dz = M.z[a] - M.z[b];
+  const float len2 = dx * dx + dy * dy + dz * dz;
+  if (len2 <= 1e-12f) return false;
+  const float limit = len2 * 1.02f;
+  for (uint32_t k = 0; k < 2; ++k) {
+    const uint32_t f = k ? E.f1[e] : E.f0[e];
+    for (uint32_t c = 0; c < 3; ++c) {
+      const uint32_t v = M.tri[f * 3 + c], w = M.tri[f * 3 + (c + 1u) % 3u];
+      if ((v == a && w == b) || (v == b && w == a)) continue;
+      const float ex = M.x[v] - M.x[w], ey = M.y[v] - M.y[w], ez = M.z[v] - M.z[w];
+      if (ex * ex + ey * ey + ez * ez > limit) return false;
+    }
+  }
+  return true;
+}
+
+/* The two faces may fold towards each other this far and still be one face. */
+bool quadCreaseWithin(const uint32_t e, const float cosLimit) {
+  float ax, ay, az, bx, by, bz;
+  faceNormal(E.f0[e], ax, ay, az);
+  faceNormal(E.f1[e], bx, by, bz);
+  return (ax * bx + ay * by + az * bz) >= cosLimit;
+}
+
+/* Take the diagonal of every paired quad out of the wireframe. Faces are quads:
+   the diagonal is internal structure, and it stays internal however the quad is
+   bent afterwards. */
+void hideQuadDiagonals() {
+  for (uint32_t g = 0; g < g_quadCount; ++g) {
+    const uint32_t e = g_diagEdge[g];
+    if (e != kNoFace && e < E.n) g_edgeDisplay[e] = 0;
+  }
+}
+
+/* One face is one quad, and a lone triangle is a face of its own (a sphere's
+   triangles, for instance). The pairing is greedy - each triangle takes at most
+   one partner - so nothing is merged through a real edge and a subdivided plane
+   comes out as the quads it was drawn with.
+
+   This used to be decided from g_edgeDisplay, i.e. from the angle between the
+   two triangles, which is exactly the thing a deformation changes: move one
+   vertex of a quad by ten degrees and the wireframe grew a triangle back in the
+   middle of the face. It is decided from the shape of the two triangles now, and
+   kept as long as the triangle table is unchanged, so an edit can bend a quad
+   without tearing it into triangles. */
+void buildQuadGroups() {
+  if (g_quadBuilt && g_quadSignature == quadTopologySignature()) {
+    hideQuadDiagonals();
+    return;
+  }
+
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    g_quadOf[t] = kNoFace;
+    g_quadNext[t] = kNoFace;
+    g_quadPaired[t] = 0;
+  }
+  g_quadCount = 0;
+
+  /* Candidate diagonals, longest first: in a triangulated quad mesh the
+     diagonal of a drawn quad is the longest edge of both of its triangles,
+     while the edges two quads share are the shortest - taking the long ones
+     rebuilds the quads the model was drawn with instead of pairing across
+     them. */
+  static uint32_t order[kMaxEdges];
+  uint32_t candidates = 0;
+  /* The pairing is a shape test, not an angle test: two triangles are the two
+     halves of one quad when they share their longest side. The angle is a
+     generous backstop (60 degrees) rather than the old 45: an edit changes the
+     angle, and a quad that has been bent must stay one face, while a real fold
+     - a sphere's, a cone's, a tetrahedron's 70 degrees - still shows its
+     triangles. */
+  const float cosQuad = 0.5f;
+  for (uint32_t e = 0; e < E.n; ++e) {
+    if (!isQuadDiagonal(e)) continue;
+    if (!quadCreaseWithin(e, cosQuad)) continue;
+    order[candidates++] = e;
+  }
+  for (uint32_t i = 1; i < candidates; ++i) {
+    const uint32_t e = order[i];
+    const float dx = M.x[E.a[e]] - M.x[E.b[e]];
+    const float dy = M.y[E.a[e]] - M.y[E.b[e]];
+    const float dz = M.z[E.a[e]] - M.z[E.b[e]];
+    const float len = dx * dx + dy * dy + dz * dz;
+    uint32_t j = i;
+    while (j > 0) {
+      const uint32_t o = order[j - 1];
+      const float ox = M.x[E.a[o]] - M.x[E.b[o]];
+      const float oy = M.y[E.a[o]] - M.y[E.b[o]];
+      const float oz = M.z[E.a[o]] - M.z[E.b[o]];
+      if (ox * ox + oy * oy + oz * oz >= len) break;
+      order[j] = order[j - 1];
+      --j;
+    }
+    order[j] = e;
+  }
+
+  for (uint32_t i = 0; i < candidates; ++i) {
+    const uint32_t e = order[i];
+    const uint32_t f0 = E.f0[e], f1 = E.f1[e];
+    if (g_quadPaired[f0] || g_quadPaired[f1]) continue;
+    if (g_quadCount >= kMaxTris) break;
+    g_quadPaired[f0] = 1;
+    g_quadPaired[f1] = 1;
+    const uint32_t group = g_quadCount++;
+    g_quadOf[f0] = group;
+    g_quadOf[f1] = group;
+    g_quadFirst[group] = f0;
+    g_quadNext[f0] = f1;
+    g_quadNext[f1] = kNoFace;
+    g_diagEdge[group] = e;
+  }
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (g_quadPaired[t]) continue;
+    if (g_quadCount >= kMaxTris) break;
+    const uint32_t group = g_quadCount++;
+    g_quadOf[t] = group;
+    g_quadFirst[group] = t;
+    g_diagEdge[group] = kNoFace;
+  }
+
+  g_quadSignature = quadTopologySignature();
+  g_quadBuilt = true;
+  hideQuadDiagonals();
 }
 
 /* ---- welding -------------------------------------------------------------
@@ -519,16 +694,38 @@ bool faceSelected(uint32_t t) {
   return M.vsel[M.tri[t * 3]] && M.vsel[M.tri[t * 3 + 1]] && M.vsel[M.tri[t * 3 + 2]];
 }
 
+/* Every triangle of the face the picked triangle belongs to. Falls back to the
+   one triangle when the mesh has no groups yet (nothing has been rebuilt). */
+void setFaceVertSelection(uint32_t t, uint8_t value) {
+  if (t >= M.nt) return;
+  const uint32_t group = g_quadOf[t];
+  if (group >= kMaxTris) {
+    M.vsel[M.tri[t * 3]] = value;
+    M.vsel[M.tri[t * 3 + 1]] = value;
+    M.vsel[M.tri[t * 3 + 2]] = value;
+    return;
+  }
+  for (uint32_t f = g_quadFirst[group]; f != kNoFace && f < M.nt; f = g_quadNext[f]) {
+    M.vsel[M.tri[f * 3]] = value;
+    M.vsel[M.tri[f * 3 + 1]] = value;
+    M.vsel[M.tri[f * 3 + 2]] = value;
+  }
+}
+
 void selectFaceVerts(uint32_t t) {
-  M.vsel[M.tri[t * 3]] = 1;
-  M.vsel[M.tri[t * 3 + 1]] = 1;
-  M.vsel[M.tri[t * 3 + 2]] = 1;
+  setFaceVertSelection(t, 1);
 }
 
 void deselectFaceVerts(uint32_t t) {
-  M.vsel[M.tri[t * 3]] = 0;
-  M.vsel[M.tri[t * 3 + 1]] = 0;
-  M.vsel[M.tri[t * 3 + 2]] = 0;
+  setFaceVertSelection(t, 0);
+}
+
+/* Is the face this triangle belongs to selected? */
+bool quadFaceSelected(uint32_t t) {
+  if (t >= M.nt) return false;
+  const uint32_t group = g_quadOf[t];
+  if (group >= kMaxTris) return faceSelected(t);
+  return faceSelected(g_quadFirst[group] < M.nt ? g_quadFirst[group] : t);
 }
 
 void syncSelFromVerts() {
@@ -550,7 +747,14 @@ uint32_t selectedEdgeCount() {
 
 uint32_t selectedFaceCount() {
   uint32_t n = 0;
-  for (uint32_t t = 0; t < M.nt; ++t) n += faceSelected(t) ? 1u : 0u;
+  if (g_quadCount == 0) {
+    for (uint32_t t = 0; t < M.nt; ++t) n += faceSelected(t) ? 1u : 0u;
+    return n;
+  }
+  for (uint32_t group = 0; group < g_quadCount && group < kMaxTris; ++group) {
+    const uint32_t f = g_quadFirst[group];
+    if (f < M.nt && faceSelected(f)) ++n;
+  }
   return n;
 }
 
@@ -1102,41 +1306,66 @@ uint32_t selectByRay(const float* clip, float cx, float cy, int32_t* outIndex, u
 
   const float ndcX = cx * 2.0f - 1.0f;
   const float ndcY = 1.0f - cy * 2.0f;
+
+  /* Only the active element kind is tested, and only within a screen-space
+     radius the app passes in. Two bugs lived here before: the vertex pass ran
+     in every mode with no distance limit, so a tap on empty space still took
+     the nearest vertex - and in face mode that vertex index came back as a
+     face index, selecting something unrelated. The edge pass additionally
+     demanded d < bestDist * 0.8 of that stray vertex, which is why most edges
+     could not be picked at all. */
+  const float tolVert = g_pickTolerance;
+  const float tolEdge = g_pickTolerance * 0.8f;
+  /* Faces are large targets, so their tolerance is tight: a tap next to the
+     mesh must not grab a face it is not on. */
+  const float tolFace = g_pickTolerance * 0.45f;
+
+  /* Frontmost depth under a screen point, or 1e30 where nothing was drawn. */
+  const auto depthAt = [&](float screenX, float screenY) -> float {
+    const uint32_t ix = static_cast<uint32_t>(clampf((screenX * 0.5f + 0.5f) * static_cast<float>(bw), 0.0f, static_cast<float>(bw - 1)));
+    const uint32_t iy = static_cast<uint32_t>(clampf((1.0f - screenY) * 0.5f * static_cast<float>(bh), 0.0f, static_cast<float>(bh - 1)));
+    return zbuf[iy * bw + ix];
+  };
+  const auto project = [&](uint32_t v, float& screenX, float& screenY, float& depth) -> bool {
+    const float w = clip[3] * M.x[v] + clip[7] * M.y[v] + clip[11] * M.z[v] + clip[15];
+    if (w <= 1e-6f) return false;
+    screenX = (clip[0] * M.x[v] + clip[4] * M.y[v] + clip[8] * M.z[v] + clip[12]) / w;
+    screenY = (clip[1] * M.x[v] + clip[5] * M.y[v] + clip[9] * M.z[v] + clip[13]) / w;
+    depth = (clip[2] * M.x[v] + clip[6] * M.y[v] + clip[10] * M.z[v] + clip[14]) / w;
+    return true;
+  };
+  /* Occlusion is judged under the candidate itself, not under the finger: a
+     vertex on the silhouette lands a few pixels from the tap and used to be
+     discarded for the surface depth at the tap instead. */
+  const auto occluded = [&](float screenX, float screenY, float depth) -> bool {
+    return depth > depthAt(screenX, screenY) + 0.02f;
+  };
+
   int32_t best = -1;
   uint32_t bestKind = g_mode;
   float bestDist = 1e30f;
   float bestDepth = 1e30f;
 
-  /* convert NDC -> buffer coords for the occlusion test */
-  const uint32_t bx = static_cast<uint32_t>(clampf((ndcX * 0.5f + 0.5f) * static_cast<float>(bw), 0.0f, static_cast<float>(bw - 1)));
-  const uint32_t by = static_cast<uint32_t>(clampf(((1.0f - ndcY) * 0.5f) * static_cast<float>(bh), 0.0f, static_cast<float>(bh - 1)));
-  const float depthLimit = zbuf[by * bw + bx] + 0.02f;
-
-  for (uint32_t v = 0; v < M.nv; ++v) {
-    const float w = clip[3] * M.x[v] + clip[7] * M.y[v] + clip[11] * M.z[v] + clip[15];
-    if (w <= 1e-6f) continue;
-    const float px = (clip[0] * M.x[v] + clip[4] * M.y[v] + clip[8] * M.z[v] + clip[12]) / w;
-    const float py = (clip[1] * M.x[v] + clip[5] * M.y[v] + clip[9] * M.z[v] + clip[13]) / w;
-    const float pz = (clip[2] * M.x[v] + clip[6] * M.y[v] + clip[10] * M.z[v] + clip[14]) / w;
-    if (pz > depthLimit) continue;
-    const float dx = px - ndcX, dy = py - ndcY;
-    const float d = dx * dx + dy * dy;
-    if (d < bestDist) { bestDist = d; best = static_cast<int32_t>(v); bestKind = kModeVertex; bestDepth = pz; }
-  }
-
-  if (g_mode == kModeEdge) {
+  if (g_mode == kModeVertex) {
+    const float limit = tolVert * tolVert;
+    for (uint32_t v = 0; v < M.nv; ++v) {
+      float sx, sy, sz;
+      if (!project(v, sx, sy, sz)) continue;
+      const float dx = sx - ndcX, dy = sy - ndcY;
+      const float d = dx * dx + dy * dy;
+      if (d > limit) continue;
+      if (occluded(sx, sy, sz)) continue;
+      if (d < bestDist) { bestDist = d; best = static_cast<int32_t>(v); bestKind = kModeVertex; bestDepth = sz; }
+    }
+  } else if (g_mode == kModeEdge) {
+    const float limit = tolEdge * tolEdge;
     for (uint32_t e = 0; e < E.n; ++e) {
+      /* Only the edges the wireframe draws. A quad's diagonal is an edge of the
+         triangle soup, not of the surface, so it is not something to aim at. */
+      if (!g_edgeDisplay[e]) continue;
       const uint32_t a = E.a[e], b = E.b[e];
-      float ax, ay, bx2, by2, az, bz2;
-      const float wa = clip[3] * M.x[a] + clip[7] * M.y[a] + clip[11] * M.z[a] + clip[15];
-      const float wb = clip[3] * M.x[b] + clip[7] * M.y[b] + clip[11] * M.z[b] + clip[15];
-      if (wa <= 1e-6f || wb <= 1e-6f) continue;
-      ax = (clip[0] * M.x[a] + clip[4] * M.y[a] + clip[8] * M.z[a] + clip[12]) / wa;
-      ay = (clip[1] * M.x[a] + clip[5] * M.y[a] + clip[9] * M.z[a] + clip[13]) / wa;
-      az = (clip[2] * M.x[a] + clip[6] * M.y[a] + clip[10] * M.z[a] + clip[14]) / wa;
-      bx2 = (clip[0] * M.x[b] + clip[4] * M.y[b] + clip[8] * M.z[b] + clip[12]) / wb;
-      by2 = (clip[1] * M.x[b] + clip[5] * M.y[b] + clip[9] * M.z[b] + clip[13]) / wb;
-      bz2 = (clip[2] * M.x[b] + clip[6] * M.y[b] + clip[10] * M.z[b] + clip[14]) / wb;
+      float ax, ay, az, bx2, by2, bz2;
+      if (!project(a, ax, ay, az) || !project(b, bx2, by2, bz2)) continue;
       const float vx = bx2 - ax, vy = by2 - ay;
       const float len2 = vx * vx + vy * vy;
       if (len2 < 1e-12f) continue;
@@ -1145,34 +1374,51 @@ uint32_t selectByRay(const float* clip, float cx, float cy, int32_t* outIndex, u
       const float qx = ax + vx * t, qy = ay + vy * t;
       const float dx = qx - ndcX, dy = qy - ndcY;
       const float d = dx * dx + dy * dy;
+      if (d > limit) continue;
       const float z = az + (bz2 - az) * t;
-      if (z > depthLimit) continue;
-      if (d < bestDist * 0.8f) { bestDist = d; best = static_cast<int32_t>(e); bestKind = kModeEdge; bestDepth = z; }
+      if (occluded(qx, qy, z)) continue;
+      if (d < bestDist) { bestDist = d; best = static_cast<int32_t>(e); bestKind = kModeEdge; bestDepth = z; }
     }
-  }
-
-  if (g_mode == kModeFace) {
+  } else if (g_mode == kModeFace) {
+    const float limit = tolFace * tolFace;
     for (uint32_t t = 0; t < M.nt; ++t) {
       float sx[3], sy[3], sz[3];
       bool ok = true;
-      for (uint32_t k = 0; k < 3; ++k) {
-        const uint32_t v = M.tri[t * 3 + k];
-        const float ww = clip[3] * M.x[v] + clip[7] * M.y[v] + clip[11] * M.z[v] + clip[15];
-        if (ww <= 1e-6f) { ok = false; break; }
-        sx[k] = (clip[0] * M.x[v] + clip[4] * M.y[v] + clip[8] * M.z[v] + clip[12]) / ww;
-        sy[k] = (clip[1] * M.x[v] + clip[5] * M.y[v] + clip[9] * M.z[v] + clip[13]) / ww;
-        sz[k] = (clip[2] * M.x[v] + clip[6] * M.y[v] + clip[10] * M.z[v] + clip[14]) / ww;
-      }
+      for (uint32_t k = 0; k < 3 && ok; ++k) ok = project(M.tri[t * 3 + k], sx[k], sy[k], sz[k]);
       if (!ok) continue;
       const float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
       if (absf(area) < 1e-12f) continue;
-      float w0 = ((sx[1] - ndcX) * (sy[2] - ndcY) - (sx[2] - ndcX) * (sy[1] - ndcY)) / area;
-      float w1 = ((sx[2] - ndcX) * (sy[0] - ndcY) - (sx[0] - ndcX) * (sy[2] - ndcY)) / area;
-      float w2 = 1.0f - w0 - w1;
-      if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) continue;
-      const float z = w0 * sz[0] + w1 * sz[1] + w2 * sz[2];
-      if (z > depthLimit) continue;
-      bestDist = 0.0f; best = static_cast<int32_t>(t); bestKind = kModeFace; bestDepth = z;
+      const float w0 = ((sx[1] - ndcX) * (sy[2] - ndcY) - (sx[2] - ndcX) * (sy[1] - ndcY)) / area;
+      const float w1 = ((sx[2] - ndcX) * (sy[0] - ndcY) - (sx[0] - ndcX) * (sy[2] - ndcY)) / area;
+      const float w2 = 1.0f - w0 - w1;
+      float qx = ndcX, qy = ndcY, d = 0.0f;
+      if (w0 < 0.0f || w1 < 0.0f || w2 < 0.0f) {
+        /* A tap just off a thin triangle measures to its closest edge, so the
+           face stays easy to take without reaching out to its neighbours. */
+        const float xs[3] = { sx[0], sx[1], sx[2] };
+        const float ys[3] = { sy[0], sy[1], sy[2] };
+        d = 1e30f;
+        for (uint32_t k = 0; k < 3; ++k) {
+          const uint32_t n2 = (k + 1u) % 3u;
+          const float ex = xs[n2] - xs[k], ey = ys[n2] - ys[k];
+          const float elen2 = ex * ex + ey * ey;
+          const float st = elen2 < 1e-12f ? 0.0f : clampf(((ndcX - xs[k]) * ex + (ndcY - ys[k]) * ey) / elen2, 0.0f, 1.0f);
+          const float ex2 = xs[k] + ex * st, ey2 = ys[k] + ey * st;
+          const float ddx = ex2 - ndcX, ddy = ey2 - ndcY;
+          const float dd = ddx * ddx + ddy * ddy;
+          if (dd < d) { d = dd; qx = ex2; qy = ey2; }
+        }
+        if (d > limit) continue;
+      }
+      /* Depth at the closest point (the tap itself when it is inside). */
+      const float b0 = ((sx[1] - qx) * (sy[2] - qy) - (sx[2] - qx) * (sy[1] - qy)) / area;
+      const float b1 = ((sx[2] - qx) * (sy[0] - qy) - (sx[0] - qx) * (sy[2] - qy)) / area;
+      const float b2 = 1.0f - b0 - b1;
+      const float z = b0 * sz[0] + b1 * sz[1] + b2 * sz[2];
+      if (occluded(qx, qy, z)) continue;
+      if (d < bestDist - 1e-9f || (d <= bestDist + 1e-9f && z < bestDepth)) {
+        bestDist = d; bestDepth = z; best = static_cast<int32_t>(t); bestKind = kModeFace;
+      }
     }
   }
 
@@ -1288,6 +1534,7 @@ uint32_t selectRegion(const float* clip, float minX, float minY, float maxX, flo
       const float bx2 = (clip[0] * M.x[b] + clip[4] * M.y[b] + clip[8] * M.z[b] + clip[12]) / wb;
       const float by2 = (clip[1] * M.x[b] + clip[5] * M.y[b] + clip[9] * M.z[b] + clip[13]) / wb;
       const float bz2 = (clip[2] * M.x[b] + clip[6] * M.y[b] + clip[10] * M.z[b] + clip[14]) / wb;
+      if (!g_edgeDisplay[e]) continue;
       bool hitA, hitB;
       if (circle) {
         const float adx = (ax - ndcCx) * invRx, ady = (ay - ndcCy) * invRy;
@@ -1838,6 +2085,13 @@ FE_EXPORT uint32_t fe_edit_select_circle(const float* clip, float cx, float cy, 
   return selectRegion(clip, 0.0f, 0.0f, 0.0f, 0.0f, cx, cy, radius, 1, op, xray, aspect);
 }
 
+/* Sets the pick radius in NDC units. The app derives it from the viewport
+   height and the pointer type, so a fingertip gets ~22 px and a mouse ~11 px of
+   slack without the kernel having to know about pixels at all. */
+FE_EXPORT void fe_edit_set_pick_tolerance(float tolerance) {
+  g_pickTolerance = clampf(tolerance, 0.002f, 0.5f);
+}
+
 FE_EXPORT int32_t fe_edit_pick(const float* clip, float cx, float cy) {
   if (!clip) return -1;
   int32_t index = -1;
@@ -2299,6 +2553,30 @@ FE_EXPORT const uint32_t* fe_edit_clip_idx_ptr(void) { return C.tri; }
 
 FE_EXPORT uint32_t fe_edit_weld_count(void) { return g_weldMerged; }
 FE_EXPORT const uint8_t* fe_edit_edge_display_ptr(void) { return g_edgeDisplay; }
+
+/* The quad pairing, as vertex index pairs. The shell draws Wireframe shading in
+   Object Mode from the object's own geometry, and the kernel draws the same
+   cage in Edit Mode; handing the pairing over means the two agree by
+   construction instead of by two implementations of the same guess, and it
+   survives the deformations that make the guess wrong (a bent quad still has
+   the diagonal it was drawn with). */
+FE_EXPORT const uint32_t* fe_edit_quad_pairs_ptr(void) {
+  g_quadPairCount = 0;
+  for (uint32_t g = 0; g < g_quadCount; ++g) {
+    const uint32_t e = g_diagEdge[g];
+    if (e == kNoFace || e >= E.n) continue;
+    g_quadPairs[g_quadPairCount * 2u] = E.a[e];
+    g_quadPairs[g_quadPairCount * 2u + 1u] = E.b[e];
+    ++g_quadPairCount;
+  }
+  return g_quadPairs;
+}
+
+/* Reads the pairing, so it is correct whichever call comes first. */
+FE_EXPORT uint32_t fe_edit_quad_pair_count(void) {
+  fe_edit_quad_pairs_ptr();
+  return g_quadPairCount;
+}
 
 FE_EXPORT void fe_edit_set_display_angle(float degrees) {
   g_displayAngle = clampf(degrees, 0.0f, 180.0f);
