@@ -45,7 +45,7 @@ synchronous step, so it may own the full 24 MB scratch arena while it runs.
 | Cast | sphere / cylinder / cuboid projection with factor, radius and size |
 | Warp (twist) | Rodrigues rotation about the chosen axis |
 | Array | per-copy translation + Y rotation, attribute replication |
-| Subdivision | 4-1 midpoint split, welded, Loop vertex rule relaxation |
+| Subdivision | 4-1 midpoint split, welded; Catmull-Clark (Loop vertex rule relaxation, the shape rounds off) or Simple (nothing moves, the silhouette is unchanged) |
 | Decimate | vertex clustering at a bisected grid resolution, optional boundary lock |
 | Lattice | Bernstein free-form deformation; cage fitted to mesh bounds, rest vs deformed control points |
 | Armature | smoothstep heat weights down the bone chain; dual-quaternion blend (Preserve Volume) or LBS |
@@ -95,9 +95,20 @@ the C++ path always scanned exactly, and the reference now agrees with it.
 
 ## Known limits
 
-- Subdivision uses midpoint edge placement plus the Loop vertex rule. It keeps
-  flat faces flat and rounds curved ones, but it is not a full Loop limit
-  surface (no 3/8–1/8 edge weights).
+- Subdivision has Blender's two modes. Catmull-Clark uses midpoint edge
+  placement plus the Loop vertex rule; it keeps flat faces flat and rounds
+  curved ones, but it is not a full Loop limit surface (no 3/8–1/8 edge
+  weights). Simple builds exactly the same topology and moves nothing: the
+  midpoints are already on the edges they split and the old vertices keep their
+  positions, so the silhouette of the mesh does not change.
+- Subdivision levels are bounded by the session, not by a number in the UI. The
+  slider goes to 10; a level quadruples the triangles, so
+  `fe_mod_subdivide(levels, simple)` builds level after level and stops at the
+  last one the session holds, returning how many it built. The reference path
+  counts before each level with the same ceilings. The result carries
+  `geometry.userData.feSubdivision = { requested, levels, simple, limited }`,
+  and the modifier card says "built level 6 of 10" rather than showing a slider
+  that promises something the mesh did not get.
 - Decimate uses vertex clustering above 12k triangles and the JS QEM collapse
   below that, so quality is higher on small meshes and speed is higher on large
   ones.

@@ -124,6 +124,67 @@ test('C++ subdivision quadruples triangles per level and keeps uv coverage', () 
   });
 });
 
+test('C++ Simple subdivision splits the mesh and moves nothing', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const simple = subdivideLoop(source, 2, { simple: true });
+    assert.equal(simple.index.count / 3, 192, 'four triangles out of every one, twice');
+    const box = simple.boundingBox || (simple.computeBoundingBox(), simple.boundingBox);
+    assert.deepEqual(box.min.toArray().map((v) => +v.toFixed(6)), [-1, -1, -1], 'the silhouette is untouched');
+    assert.deepEqual(box.max.toArray().map((v) => +v.toFixed(6)), [1, 1, 1]);
+    /* Every corner of the box is still a corner of the subdivided mesh. */
+    const p = simple.attributes.position;
+    const corners = new Set();
+    for (let i = 0; i < p.count; i++) corners.add(`${p.getX(i).toFixed(4)},${p.getY(i).toFixed(4)},${p.getZ(i).toFixed(4)}`);
+    for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) {
+      assert.ok(corners.has(`${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`), `corner ${x},${y},${z} survived`);
+    }
+    assert.equal(simple.userData.feSubdivision.simple, true);
+    assert.equal(simple.userData.feSubdivision.levels, 2);
+  });
+});
+
+test('C++ Catmull-Clark subdivision is the mode that changes the shape', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const smooth = subdivideLoop(source, 2);
+    const simple = subdivideLoop(source, 2, { simple: true });
+    assert.equal(smooth.index.count, simple.index.count, 'the same topology either way');
+    assert.equal(smooth.attributes.position.count, simple.attributes.position.count);
+    const a = smooth.attributes.position, b = simple.attributes.position;
+    let moved = 0;
+    for (let i = 0; i < a.count; i++) if (Math.abs(a.getX(i) - b.getX(i)) > 1e-6) moved++;
+    assert.ok(moved > a.count * 0.5, `the smoothing is what moves the surface, ${moved} of ${a.count}`);
+    assert.ok(smooth.boundingBox.max.x < 0.999, `and the corners pull in, ${smooth.boundingBox.max.x}`);
+    assert.equal(simple.boundingBox.max.x, 1, 'while Simple leaves the box exactly 2 wide');
+    assert.equal(smooth.userData.feSubdivision.simple, false);
+    assert.equal(smooth.userData.feSubdivision.levels, 2);
+  });
+});
+
+test('C++ subdivision builds the levels the session holds and reports the count', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const result = subdivideLoop(source, 10);
+    const info = result.userData.feSubdivision;
+    assert.equal(info.requested, 10, 'ten is what the slider asked for');
+    assert.ok(info.levels >= 1 && info.levels < 10, `built ${info.levels}`);
+    assert.equal(info.limited, true);
+    assert.equal(result.index.count / 3, 12 * 4 ** info.levels, 'the mesh is exactly that many levels');
+    assert.ok(result.attributes.position.count <= 131072, 'and it never passes the session');
+    assert.ok(finite(result));
+  });
+});
+
+test('C++ subdivision of nothing to do leaves the mesh alone and says so', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const result = subdivideLoop(source, 0);
+    assert.equal(result.index.count / 3, 12);
+    assert.deepEqual(result.userData.feSubdivision, { requested: 0, levels: 0, simple: false, limited: false });
+  });
+});
+
 test('C++ decimation collapses a large sphere toward the requested ratio', () => {
   withCore(() => {
     /* Above 12k triangles the bridge routes Decimate to the C++ clustering

@@ -417,37 +417,123 @@ export function mirrorGeometry(geometry, { axes = [true,false,false], clipping =
   src.dispose();return updateBounds(result);
 }
 
-export function subdivideLoop(geometry, levels = 1, maxFaces = 200000) {
-  const levelCount = clamp(Math.round(levels), 0, 4);
-  const viaCpp = levelCount > 0 ? runCppKernel(geometry, (v,t) => {
-    let cv = v, ct = t;
-    for (let i = 0; i < levelCount; i++) { cv += ct * 3; ct *= 4; if (cv > 131072 || ct > 262144) return null; }
-    return [cv, ct];
-  }, exp => exp.fe_mod_subdivide(Math.min(levelCount, 3))) : null;
-  if (viaCpp) return viaCpp;
-  let g=weldGeometry(geometry,1e-7);
-  if(!levelCount)return g;
-  for(let level=0;level<levelCount;level++){
-    const p=g.attributes.position, idx=g.index.array, faceCount=idx.length/3;
-    if(faceCount*4>maxFaces) { g.dispose(); throw new Error(`Subdivision would exceed ${maxFaces} triangles`); }
-    const edgeMap=new Map(), neighbors=Array.from({length:p.count},()=>new Set());
-    const edge=(a,b,opp)=>{const lo=Math.min(a,b),hi=Math.max(a,b),key=`${lo}:${hi}`;let e=edgeMap.get(key);if(!e){e={a:lo,b:hi,opposites:[]};edgeMap.set(key,e)}if(opp!==undefined)e.opposites.push(opp);neighbors[a].add(b);neighbors[b].add(a);};
-    for(let i=0;i<idx.length;i+=3){const a=idx[i],b=idx[i+1],c=idx[i+2];edge(a,b,c);edge(b,c,a);edge(c,a,b)}
-    const boundary=Array.from({length:p.count},()=>[]);for(const e of edgeMap.values())if(e.opposites.length===1){boundary[e.a].push(e.b);boundary[e.b].push(e.a)}
-    const attrs=Object.entries(g.attributes), values=Object.fromEntries(attrs.map(([n])=>[n,[]]));
-    const oldPos=Array.from({length:p.count},(_,i)=>new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)));
-    for(let i=0;i<p.count;i++){
-      let q=oldPos[i].clone(), bn=boundary[i];
-      if(bn.length>=2) q.multiplyScalar(.75).addScaledVector(oldPos[bn[0]],.125).addScaledVector(oldPos[bn[1]],.125);
-      else {const ns=[...neighbors[i]],n=ns.length;if(n){const beta=n===3?3/16:3/(8*n);q.multiplyScalar(1-n*beta);for(const j of ns)q.addScaledVector(oldPos[j],beta)}}
-      for(const [name,a] of attrs)for(let c=0;c<a.itemSize;c++)values[name].push(name==='position'?q.getComponent(c):a.array[i*a.itemSize+c]);
+/* The modifier session's ceilings, from cpp/src/fe_modifiers.cpp. No
+   subdivision can be built past them, whatever the slider says. */
+const SUBDIV_MAX_VERTS = 131072;
+const SUBDIV_MAX_TRIS = 262144;
+
+/* Subdivide the way the Subdivision Surface modifier does, in the two modes
+   Blender offers:
+
+     - Catmull-Clark (the default): every triangle becomes four and the surface
+       is relaxed once per level, so a cube rounds off into a ball;
+     - Simple: the same split, and nothing moves. The midpoints lie exactly on
+       the edges they split and the old vertices keep their positions, so the
+       silhouette of the mesh does not change - only its topology, for whatever
+       sits above this modifier in the stack.
+
+   A level quadruples the triangles, so the levels a mesh can take are decided
+   by the session that builds them, not by the slider: the kernel builds as many
+   as fit and says how many, and the reference path below counts before each
+   level the same way. The level actually built is written to
+   geometry.userData.feSubdivision, so the panel can say "level 6 of 10" rather
+   than quietly doing something else. */
+export function subdivideLoop(geometry, levels = 1, options = {}) {
+  /* The third argument used to be a bare triangle ceiling. */
+  const opts = typeof options === 'number' ? { maxFaces: options } : (options || {});
+  const requested = clamp(Math.round(Number(levels) || 0), 0, 10);
+  const simple = opts.simple === true || opts.mode === 'Simple' || opts.type === 'Simple';
+  const triCeiling = Math.min(SUBDIV_MAX_TRIS, Math.max(4, Math.round(Number(opts.maxFaces) || 200000)));
+  const built = requested > 0
+    ? (subdivideViaCpp(geometry, requested, simple) || subdivideReference(geometry, requested, simple, triCeiling))
+    : subdivideReference(geometry, 0, simple, triCeiling);
+  const out = built.geometry;
+  out.userData = { ...(out.userData || {}), feSubdivision: { requested, levels: built.levels, simple, limited: built.levels < requested } };
+  return out;
+}
+
+/* The C++ session, asked for the levels the user wants and told how many it
+   managed. Reserving the whole session up front is what lets the kernel answer
+   that itself: it stops at the last level that fits, and the number it returns
+   is the number of levels in the buffers. */
+function subdivideViaCpp(geometry, levels, simple) {
+  const exp = cppExports();
+  if (!exp) return null;
+  const base = kernelCapacities(geometry);
+  if (!base) return null;
+  const attrs = geometry.attributes;
+  for (const name of Object.keys(attrs)) if (name !== 'position' && name !== 'normal' && name !== 'uv') return null;
+  if (attrs.position.itemSize !== 3) return null;
+  const hasUv = !!(attrs.uv && attrs.uv.itemSize === 2);
+  if (attrs.uv && !hasUv) return null;
+  try {
+    if (exp.fe_mod_begin(SUBDIV_MAX_VERTS, SUBDIV_MAX_TRIS, hasUv ? 1 : 0) !== 0) return null;
+    const buf = exp.memory.buffer;
+    new Float32Array(buf, exp.fe_mod_in_pos_ptr(), base.v * 3).set(attrs.position.array.subarray(0, base.v * 3));
+    const idxView = new Uint32Array(buf, exp.fe_mod_in_idx_ptr(), base.t * 3);
+    if (geometry.index) idxView.set(geometry.index.array.subarray(0, base.t * 3));
+    else for (let i = 0; i < base.t * 3; i++) idxView[i] = i;
+    if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
+    exp.fe_mod_set_counts(base.v, base.t);
+    const built = exp.fe_mod_subdivide(levels, simple ? 1 : 0);
+    if (built < 1) return null;
+    const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
+    const outV = counts[0], outT = counts[1];
+    if (!outV || !outT) return null;
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_pos_ptr(), outV * 3).slice(), 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_normals_ptr(), outV * 3).slice(), 3));
+    if (hasUv) out.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_uv_ptr(), outV * 2).slice(), 2));
+    out.setIndex(new THREE.BufferAttribute(new Uint32Array(exp.memory.buffer, exp.fe_mod_in_idx_ptr(), outT * 3).slice(), 1));
+    return { geometry: updateBounds(out), levels: built };
+  } catch { return null; }
+}
+
+/* The reference path, used when there is no compiled core. Same ceilings, same
+   "stop at the last level that fits" rule, counted before each level because
+   here the counts are known exactly. */
+function subdivideReference(geometry, levels, simple, triCeiling = 200000) {
+  let g = weldGeometry(geometry, 1e-7);
+  let built = 0;
+  for (let level = 0; level < levels; level++) {
+    const p = g.attributes.position, idx = g.index.array, faceCount = idx.length / 3;
+    /* The split adds three vertices per triangle before the weld takes the
+       duplicates back, and four triangles out of every one. */
+    if (p.count + faceCount * 3 > SUBDIV_MAX_VERTS || faceCount * 4 > triCeiling) break;
+    const edgeMap = new Map(), neighbors = Array.from({ length: p.count }, () => new Set());
+    const edge = (a, b, opp) => { const lo = Math.min(a, b), hi = Math.max(a, b), key = `${lo}:${hi}`; let e = edgeMap.get(key); if (!e) { e = { a: lo, b: hi, opposites: [] }; edgeMap.set(key, e); } if (opp !== undefined) e.opposites.push(opp); neighbors[a].add(b); neighbors[b].add(a); };
+    for (let i = 0; i < idx.length; i += 3) { const a = idx[i], b = idx[i + 1], c = idx[i + 2]; edge(a, b, c); edge(b, c, a); edge(c, a, b); }
+    const boundary = Array.from({ length: p.count }, () => []); for (const e of edgeMap.values()) if (e.opposites.length === 1) { boundary[e.a].push(e.b); boundary[e.b].push(e.a); }
+    const attrs = Object.entries(g.attributes), values = Object.fromEntries(attrs.map(([n]) => [n, []]));
+    const oldPos = Array.from({ length: p.count }, (_, i) => new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i)));
+    for (let i = 0; i < p.count; i++) {
+      let q = oldPos[i].clone(), bn = boundary[i];
+      if (!simple) {
+        if (bn.length >= 2) q.multiplyScalar(.75).addScaledVector(oldPos[bn[0]], .125).addScaledVector(oldPos[bn[1]], .125);
+        else { const ns = [...neighbors[i]], n = ns.length; if (n) { const beta = n === 3 ? 3 / 16 : 3 / (8 * n); q.multiplyScalar(1 - n * beta); for (const j of ns) q.addScaledVector(oldPos[j], beta); } }
+      }
+      for (const [name, a] of attrs) for (let c = 0; c < a.itemSize; c++) values[name].push(name === 'position' ? q.getComponent(c) : a.array[i * a.itemSize + c]);
     }
-    const edgeIndex=new Map();
-    for(const [key,e] of edgeMap){const va=oldPos[e.a],vb=oldPos[e.b],q=va.clone().add(vb).multiplyScalar(.375);if(e.opposites.length===1)q.copy(va).add(vb).multiplyScalar(.5);else if(e.opposites.length>=2)q.addScaledVector(oldPos[e.opposites[0]],.125).addScaledVector(oldPos[e.opposites[1]],.125);const id=values.position.length/3;edgeIndex.set(key,id);for(const [name,a] of attrs)for(let c=0;c<a.itemSize;c++)values[name].push(name==='position'?q.getComponent(c):(a.array[e.a*a.itemSize+c]+a.array[e.b*a.itemSize+c])*.5)}
-    const ei=(a,b)=>edgeIndex.get(`${Math.min(a,b)}:${Math.max(a,b)}`), out=[];for(let i=0;i<idx.length;i+=3){const a=idx[i],b=idx[i+1],c=idx[i+2],ab=ei(a,b),bc=ei(b,c),ca=ei(c,a);out.push(a,ab,ca,ab,b,bc,ca,bc,c,ab,bc,ca)}
-    const next=new THREE.BufferGeometry();for(const [name,a]of attrs)if(name!=='normal')writeAttribute(next,name,values[name],a.itemSize,a);next.setIndex(new THREE.BufferAttribute(out.length>65535?new Uint32Array(out):new Uint16Array(out),1));next.computeVertexNormals();updateBounds(next);g.dispose();g=next;
+    const edgeIndex = new Map();
+    for (const [key, e] of edgeMap) {
+      const va = oldPos[e.a], vb = oldPos[e.b];
+      let q;
+      if (simple) q = va.clone().add(vb).multiplyScalar(.5);
+      else {
+        q = va.clone().add(vb).multiplyScalar(.375);
+        if (e.opposites.length === 1) q.copy(va).add(vb).multiplyScalar(.5);
+        else if (e.opposites.length >= 2) q.addScaledVector(oldPos[e.opposites[0]], .125).addScaledVector(oldPos[e.opposites[1]], .125);
+      }
+      const id = values.position.length / 3; edgeIndex.set(key, id);
+      for (const [name, a] of attrs) for (let c = 0; c < a.itemSize; c++) values[name].push(name === 'position' ? q.getComponent(c) : (a.array[e.a * a.itemSize + c] + a.array[e.b * a.itemSize + c]) * .5);
+    }
+    const ei = (a, b) => edgeIndex.get(`${Math.min(a, b)}:${Math.max(a, b)}`), out = []; for (let i = 0; i < idx.length; i += 3) { const a = idx[i], b = idx[i + 1], c = idx[i + 2], ab = ei(a, b), bc = ei(b, c), ca = ei(c, a); out.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca); }
+    const next = new THREE.BufferGeometry(); for (const [name, a] of attrs) if (name !== 'normal') writeAttribute(next, name, values[name], a.itemSize, a);
+    next.setIndex(new THREE.BufferAttribute(out.length > 65535 ? new Uint32Array(out) : new Uint16Array(out), 1));
+    next.computeVertexNormals(); updateBounds(next); g.dispose(); g = next;
+    built++;
   }
-  return g;
+  return { geometry: g, levels: built };
 }
 
 export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true } = {}) {

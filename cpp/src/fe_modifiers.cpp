@@ -1161,18 +1161,32 @@ FE_EXPORT int32_t fe_mod_array(uint32_t count, float ox, float oy, float oz, flo
   return commit(v * copies, t * copies);
 }
 
-/* Split every triangle into four with edge midpoints, weld the shared midpoints,
-   then relax once so the surface reads like a Loop limit (documented). */
-FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels) {
+/* Subdivision. Split every triangle into four with edge midpoints and weld the
+   shared midpoints; then the two modes Blender offers:
+
+     - Catmull-Clark (mode 0): relax once with the Loop vertex rule, so the
+       surface rounds off and the silhouette changes;
+     - Simple (mode 1): move nothing. The midpoints are already exactly on the
+       edges they split and the old vertices keep their positions, so the
+       silhouette is unchanged and only the topology is finer.
+
+   The session has a fixed capacity, and a slider has no idea how big a level
+   is before it is built. Rather than refuse the whole request when level ten
+   does not fit, the kernel builds level after level and stops at the last one
+   the session holds, returning how many it built. A caller that asked for ten
+   on a mesh with room for six gets six levels of real geometry and a 6. */
+FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels, uint32_t simple) {
   if (!g_s.ready) return -1;
-  const uint32_t lv = levels > 3u ? 3u : levels;
-  if (lv == 0u) return 0;
+  const uint32_t want = levels > 10u ? 10u : levels;
+  if (want == 0u) return 0;
+  const bool plain = simple != 0u;
 
   uint32_t v = g_s.vc, t = g_s.tc;
-  for (uint32_t level = 0; level < lv; ++level) {
+  uint32_t done = 0;
+  for (uint32_t level = 0; level < want; ++level) {
     const uint32_t nv = v + t * 3u;
     const uint32_t nt = t * 4u;
-    if (nv > g_s.vcap || nt > g_s.tcap) return -2;
+    if (nv > g_s.vcap || nt > g_s.tcap) break;
 
     for (uint32_t i = 0; i < v; ++i) {
       writePos(g_s.outPos, i, readPos(g_s.inPos, i));
@@ -1206,18 +1220,25 @@ FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels) {
     uint32_t* remap = modArray<uint32_t>(v + 1u);
     if (!remap) return -2;
     uint32_t wv = 0, wt = 0;
-    int32_t rc = weldSession(1e-6f, &wv, &wt, remap);
+    const int32_t rc = weldSession(1e-6f, &wv, &wt, remap);
     if (rc != 0) return rc;
     copyOutToIn(wv, wt);
     v = wv;
     t = wt;
 
-    rc = loopRelax();
-    if (rc != 0) return rc;
+    if (!plain) {
+      const int32_t rr = loopRelax();
+      if (rr != 0) return rr;
+    }
+    ++done;
   }
+  if (done == 0u) return -2;
+  /* Simple mode never enters loopRelax, which is where the other mode gets its
+     normals, so they are built once here for both. */
+  computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
   g_s.counts[0] = v;
   g_s.counts[1] = t;
-  return 0;
+  return static_cast<int32_t>(done);
 }
 
 /* Vertex-clustering decimation: choose a grid resolution by bisection so the

@@ -11289,7 +11289,7 @@ const modifiersData = {
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
-    {name:"Subdivision Surface", fields:[["Viewport Levels","range",0,4,2,1]]},
+    {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
     {name:"Triangulate", fields:[["Keep Normals","check",true]]},
     {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
     {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
@@ -11449,7 +11449,7 @@ function modifierRelativeMatrix(sourceObj, targetObj) {
   return new THREE.Matrix4().copy(sourceObj.matrixWorld).invert().multiply(targetObj.matrixWorld);
 }
 function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
-function applySubdivisionModifier(geometry, levels) { return modifierGeometryApi().subdivideLoop(geometry, levels); }
+function applySubdivisionModifier(geometry, levels, simple=false) { return modifierGeometryApi().subdivideLoop(geometry, levels, { simple }); }
 function applySolidifyModifier(geometry, thickness, offset, rim=true, evenThickness=true) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset, { rim, evenThickness }); }
 function applyBooleanModifier(targetObj, geometry, params) {
   const operand = getAllSceneMeshes().find(mesh => mesh.uuid === params['Operand Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
@@ -11739,6 +11739,8 @@ function updateModifiersOnScene(targetOverride) {
 
     targetObj.userData.lastModHash = "empty";
     targetObj.userData.modifierError = null;
+    targetObj.userData.feSubdivision = null;
+    feSubdivisionNote(null);
     targetObj.userData.forceModUpdate = false;
 
     if (eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
@@ -11771,6 +11773,9 @@ function updateModifiersOnScene(targetOverride) {
 
   let currentGeo = targetObj.userData.baseGeometry.clone();
   let currentMod = null;
+  /* What the subdivision actually built, so the card can say "level 6 of 10"
+     when the mesh could not take what the slider asked for. */
+  let subdivisionNote = null;
   const activeSimTypes = new Set();
   const simulationDefs = [];
 
@@ -11783,7 +11788,9 @@ function updateModifiersOnScene(targetOverride) {
       if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false));
     } else if (mod.name === "Subdivision Surface") {
       const lvl = parseInt(p["Viewport Levels"] ?? 2, 10);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applySubdivisionModifier(currentGeo, lvl));
+      const simple = p["Subdivision Type"] === "Simple";
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySubdivisionModifier(currentGeo, lvl, simple));
+      subdivisionNote = currentGeo?.userData?.feSubdivision || null;
     } else if (mod.name === "Solidify") {
       const th = parseFloat(p["Thickness"] ?? 0.1);
       const off = parseFloat(p["Offset"] ?? -1);
@@ -11924,6 +11931,8 @@ function updateModifiersOnScene(targetOverride) {
   }
   targetObj.userData.modifierError = null;
   feModifierNotice(targetObj, null);
+  targetObj.userData.feSubdivision = subdivisionNote;
+  feSubdivisionNote(subdivisionNote);
 
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
@@ -12180,6 +12189,20 @@ function feModifierNotice(targetObj, message) {
 }
 window.feModifierNotice = feModifierNotice;
 
+/* One line under the Subdivision Surface fields when the level slider asked for
+   more levels than the mesh took. Silence when the whole request was built:
+   there is nothing to explain. */
+function feSubdivisionNote(info, element) {
+  const note = element || document.querySelector('#stack .mod-card[data-modifier="Subdivision Surface"] .mod-note');
+  if (!note) return;
+  const limited = info && Number.isFinite(info.levels) && Number.isFinite(info.requested) && info.levels < info.requested;
+  if (!limited) { note.textContent = ''; note.style.display = 'none'; return; }
+  const mode = info.simple ? 'Simple' : 'Catmull-Clark';
+  note.textContent = `${mode}: built level ${info.levels} of ${info.requested} - the next level would pass what the modifier can hold on this device.`;
+  note.style.display = 'block';
+}
+window.feSubdivisionNote = feSubdivisionNote;
+
 function modifierTargetOptions(targetObj) {
   /* Only real editable solids belong in these dropdowns. The scene carries the
      viewport's own furniture - the move gizmo's axis handles, the camera body
@@ -12290,7 +12313,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       const p=mod.values||{};
       const stage=(fn)=>{geometry=applyModifierGeometryStage(geometry,()=>fn(geometry))};
       if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false)); }
-      else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2)));
+      else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2),p['Subdivision Type']==='Simple'));
       else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1),p['Rim Fill']!==false,p['Even Thickness']!==false));
       else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));
       else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0)));
@@ -12551,6 +12574,19 @@ function renderModifierStack() {
       bindBtn.textContent = mod.surfaceBinding ? '✓ Re-Bind to Target Surface' : '🔗 Bind to Target Surface';
       bindBtn.onclick = () => { const t = getActiveObjectMesh(); if (t) bindSurfaceDeformTarget(t, mod); };
       body.appendChild(bindBtn);
+    }
+    if (mod.name === "Subdivision Surface") {
+      /* Says what the level slider could actually build. A level quadruples the
+         triangles, so the top of the slider is past what a phone (or the
+         modifier session) holds for any real mesh; the number here is the level
+         that was built, not the one that was asked for. */
+      const note = document.createElement('div');
+      note.className = 'mod-note';
+      note.style.cssText = 'color:#fbbf24;font-size:12px;line-height:1.45;margin:6px 0 2px;display:none';
+      card.dataset.modifier = mod.name;
+      body.appendChild(note);
+      const info = (typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null)?.userData?.feSubdivision || null;
+      if (info) feSubdivisionNote(info, note);
     }
     if (mod.name === "Fluid") { const hint=document.createElement('div');hint.className='mod-help-text';hint.style.cssText='color:#94a3b8;font-size:12px;line-height:1.45;padding:10px 12px;margin:8px 0;background:rgba(59,130,246,.08);border:1px solid rgba(148,163,184,.18);border-radius:8px';hint.textContent='Fluid starts automatically when the physics solver is ready. Flow emits from the selected mesh surface. Standard browser solver budget: up to 768 SPH particles and 96 surface cells (up to 1728 PBF-FLIP particles with a spatial hash); higher settings improve reconstruction detail but are not a 256³ grid/full CFD solver.';body.appendChild(hint); }
 
