@@ -88,7 +88,12 @@ produce.
 Leaving the mode writes the **canonical mesh** back into the object — one shared
 vertex per corner, the kernel's triangles, its vertex colours — and rebuilds the
 geometry, so the exporter, the physics bridge and the scene registry all see the
-edit.
+edit. A mesh that ends the session with any flat face is written back **split**
+instead: `fe_edit_build_render_split()` runs the same render pass with the
+all-flat shortcut switched off, so the object carries real per-face normals.
+Everything downstream — the viewport's material, the glTF exporter, undo — only
+understands normals, so a face marked flat is only flat if its corners are no
+longer shared with its neighbours.
 
 Smooth normals are computed in the kernel by summing each face normal **weighted
 by the angle that face subtends at the vertex**. Area weighting - the obvious
@@ -101,18 +106,44 @@ quad's own corner angle, and a cube's eight smooth normals land exactly on
 mesh use that weight, and `cpp/tests/fe_editmesh_tests.cpp` asserts the
 symmetry.
 
-Flat shading is a material property, not extra geometry: the kernel keeps the
-indexed mesh and the bridge sets `material.flatShading` from
-`fe_edit_get_shade()`. Smooth and flat therefore differ twice over - in the
-normals the kernel emits and in the flag the material carries - so neither can
-silently do nothing.
+## Per-face shading
+
+Shading is a **flag per face**, as in Blender: `M.fsmooth[]` in the kernel, one
+byte per triangle, 1 = smooth and 0 = flat. A cylinder is round with flat caps,
+and a single face can stay flat while the whole model around it rounds off — the
+thing a whole-object `flatShading` switch can never express.
+
+* `fe_edit_set_shade(1|0)` applies to the selected faces in Face mode and to the
+  whole mesh otherwise, exactly as the two buttons read.
+* `fe_edit_shade_state()` answers **0** all flat, **1** all smooth, **2** both.
+  The viewport has exactly one mechanism in charge at a time: all-flat keeps the
+  indexed mesh and the material's derivative normals (which is also the only way
+  a dense flat mesh fits the render-vertex budget), while any smooth face makes
+  the kernel split the corners and write real per-face normals, so the material
+  goes back to smooth.
+* `fe_edit_upload_face_shade(ptr, count)` restores flags that were written down.
+  They are never re-derived: the cage the editor is handed back has shared
+  vertices and averaged normals, so deriving would forget the cube was ever
+  flat. The flags travel on the committed geometry as
+  `userData.feFaceShading` (one byte per triangle).
+* A topology tool appends triangles without touching the flags, so everything
+  past the last written flag (`M.fsmoothCount`) takes the mesh's own answer
+  instead of a stale byte; `buildRenderMesh()` settles the array before it is
+  read.
+
+The same flags reach the modifier stack: `fe_mod_face_smooth_ptr`,
+`fe_mod_set_face_smooth`, `fe_mod_derive_face_smooth` (reads
+`fe_mod_in_nrm_ptr`) and `fe_mod_shade` (the normal-split pass on its own).
+`commit()` applies the split whenever `flagMode` is on — set by
+`fe_mod_set_counts`, cleared by solidify and decimate, whose output is new
+surface — so a subdivided flat cube stays flat instead of coming back rounded.
 
 ## Kernel ABI
 
 Lifecycle and readback:
 
 ```
-fe_edit_reset            fe_edit_upload(vc, pos, tc, idx, colors)
+fe_edit_reset            fe_edit_upload(vc, pos, tc, idx, colors, normals)
 fe_edit_vert_count       fe_edit_tri_count        fe_edit_edge_count
 fe_edit_max_verts        fe_edit_has_color
 fe_edit_pos_interleaved_ptr   fe_edit_color_interleaved_ptr
@@ -170,7 +201,10 @@ fe_edit_symmetrize(axis)
 Shading and history:
 
 ```
-fe_edit_set_shade   fe_edit_get_shade   fe_edit_mark_sharp   fe_edit_mark_seam
+fe_edit_set_shade   fe_edit_get_shade   fe_edit_shade_state   fe_edit_face_shade_ptr
+fe_edit_face_shade_count  fe_edit_upload_face_shade(ptr, count)
+fe_edit_build_render  fe_edit_build_render_split  fe_edit_render_weld_ptr
+fe_edit_mark_sharp   fe_edit_mark_seam
 fe_edit_sharp_count fe_edit_seam_count  fe_edit_recalc_normals(outside)
 fe_edit_flip_normals
 fe_edit_undo_push   fe_edit_undo   fe_edit_redo

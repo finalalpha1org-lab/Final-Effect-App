@@ -509,4 +509,77 @@ test('Edit Mode is entered from the mode dropdown and nowhere else', () => {
   const sheetCss = html.slice(html.indexOf('#edit-sheet {'), html.indexOf('.edit-sheet-head {'));
   assert.match(sheetCss, /position: fixed/, 'the tool panel is a popover');
   assert.match(sheetCss, /border-radius: 14px/, 'and it has its own rounded shape');
+  /* A hard ceiling, in viewport units and in pixels: the panel is a strip of
+     tools at the bottom of the screen and may never grow into the model. */
+  assert.match(sheetCss, /max-height: min\(40dvh, 330px\)/, 'the panel has a hard maximum height');
+
+  /* The settings inside it read top to bottom: one label, one control across
+     the full width. Side by side they left the right half of every row empty. */
+  const stackStart = html.indexOf('.edit-sheet-row.edit-sheet-stack {');
+  assert.ok(stackStart > 0, 'index.html has no stacked setting rows');
+  const stackCss = html.slice(stackStart, stackStart + 900);
+  assert.match(stackCss, /flex-direction: column/, 'a stacked setting puts its label above its control');
+  for (const id of ['edit-axis-row', 'edit-prop-row', 'edit-exact-row']) {
+    assert.match(html, new RegExp(`class="edit-sheet-row edit-sheet-stack" id="${id}"`),
+      `${id} must use the stacked layout`);
+  }
+});
+
+test('a face marked flat keeps its shading after leaving Edit Mode', () => {
+  /* A cube whose faces were written down as flat, on a mesh that has no
+     normals of its own - the cage the editor is handed back. The flags are the
+     only record of the shading, which is exactly the case that used to be lost
+     the moment the mode closed. */
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(CUBE_VERTS), 3));
+  geometry.setIndex(new BufferAttribute(new Uint32Array(CUBE_TRIS), 1));
+  geometry.userData.feFaceShading = new Uint8Array(12);
+  const faceted = new THREE.Mesh(geometry, new Material());
+  faceted.name = 'FacetedCube';
+  scene.add(faceted);
+  const savedObject = globalThis.getActiveObjectMesh;
+  globalThis.getActiveObjectMesh = () => faceted;
+  try {
+    assert.equal(EditMode.enter(), true);
+    assert.equal(exp.fe_edit_shade_state(), 0, 'the written flags must reach the kernel as flat faces');
+
+    /* Everything smooth, then one face flat again: the mixed mesh is the case
+       no whole-object switch can express. */
+    EditMode.setMode('face');
+    EditMode.runTool('all');
+    EditMode.runTool('smooth');
+    assert.equal(exp.fe_edit_shade_state(), 1);
+    EditMode.runTool('none');
+    exp.fe_arena_reset();
+    const facePtr = exp.fe_malloc(4);
+    new Uint32Array(exp.memory.buffer, facePtr, 1)[0] = 0;
+    exp.fe_edit_select_by_index(2, 1, facePtr, 0);
+    exp.fe_arena_reset();
+    EditMode.runTool('flat');
+    exp.fe_edit_build_render();
+    assert.equal(exp.fe_edit_shade_state(), 2, 'one flat quad in a smooth cube');
+
+    EditMode.exit();
+
+    /* The object comes back split: a flat face and a smooth one cannot share a
+       vertex, so the corners are broken apart and the normals say which is
+       which - that is what survives export, and what the next tool reads. */
+    const committed = faceted.geometry;
+    const flags = committed.userData.feFaceShading;
+    assert.ok(flags instanceof Uint8Array, 'the flags must travel with the committed geometry');
+    assert.equal(flags.length, 12, 'one flag per triangle');
+    assert.equal(Array.from(flags).filter((v) => v === 0).length, 2, 'the quad the user marked is still flat');
+    assert.ok(committed.attributes.position.count > 8, `a mixed mesh cannot share vertices, got ${committed.attributes.position.count}`);
+    assert.equal(committed.attributes.normal.count, committed.attributes.position.count);
+    assert.equal(faceted.material.flatShading, false, 'the geometry carries the shading, not the material');
+
+    /* And re-entering starts from those flags again, not from a guess. */
+    assert.equal(EditMode.enter(), true);
+    assert.equal(exp.fe_edit_shade_state(), 2, 'the mixed shading was not restored');
+    EditMode.exit();
+  } finally {
+    globalThis.getActiveObjectMesh = savedObject;
+    scene.remove(faceted);
+    geometry.dispose?.();
+  }
 });

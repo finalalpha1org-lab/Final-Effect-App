@@ -48,7 +48,15 @@ struct ModSession {
   uint32_t vcap = 0, tcap = 0, vc = 0, tc = 0;
   float* inPos = nullptr;
   float* inUv = nullptr;
+  float* inNrm = nullptr;      /* the normals the mesh arrived with */
   uint32_t* inIdx = nullptr;
+  /* Per-face shading, 1 = smooth / 0 = flat, one byte per triangle. The whole
+     point of carrying it here is that a modifier is not allowed to decide how
+     the model is shaded: a flat-shaded cube subdivided four times is four
+     thousand small flat facets, not a sphere. */
+  uint8_t* inSmooth = nullptr;
+  uint8_t* outSmooth = nullptr;
+  uint32_t flagMode = 0;       /* 0 = this kernel does not keep the flags */
   float* outPos = nullptr;
   float* outUv = nullptr;
   uint32_t* outIdx = nullptr;
@@ -123,10 +131,121 @@ void computeNormals(const float* pos, const uint32_t* idx, uint32_t vCount, uint
   for (uint32_t i = 0; i < vCount; ++i) writePos(out, i, normalize(readPos(out, i)));
 }
 
+/* Writes the per-face flags into the normals the caller will read: every corner
+   of a flat face points along that face. A vertex shared between a flat face and
+   a face with a different normal has to become two vertices - the split every
+   modeller does when it hands out a normal per corner - and that is what this
+   allocates, in the same buffers, while the vertex budget lasts. Past it the
+   face normals are written where the corners already are: an all-flat mesh still
+   looks right (its corners all agree), and a mixed one is only wrong on the
+   edge between the two, instead of losing the whole shading. */
+uint32_t applyFaceShading(uint32_t v, uint32_t t) {
+  if (!g_s.inSmooth || t == 0) return v;
+  static float fn[3 * 4096];
+  float* faceN = fn;
+  if (t > 4096u) {
+    /* Fall back to a re-read of the face normal when the mesh is large: the
+       split below only needs the face it is on, so nothing is stored. */
+    faceN = nullptr;
+  }
+  auto normalAt = [&](uint32_t f, float& nx, float& ny, float& nz) {
+    const uint32_t a = g_s.inIdx[f * 3], b = g_s.inIdx[f * 3 + 1], c = g_s.inIdx[f * 3 + 2];
+    const Vec3 pa = readPos(g_s.inPos, a), pb = readPos(g_s.inPos, b), pc = readPos(g_s.inPos, c);
+    const Vec3 n = normalize(cross(pb - pa, pc - pa));
+    nx = n.x; ny = n.y; nz = n.z;
+  };
+  if (faceN) {
+    for (uint32_t f = 0; f < t; ++f) normalAt(f, faceN[f * 3], faceN[f * 3 + 1], faceN[f * 3 + 2]);
+  }
+
+  /* How many triangles actually need their corners broken away. */
+  uint32_t needed = 0;
+  for (uint32_t f = 0; f < t; ++f) {
+    if (g_s.inSmooth[f]) continue;
+    float nx, ny, nz;
+    if (faceN) { nx = faceN[f * 3]; ny = faceN[f * 3 + 1]; nz = faceN[f * 3 + 2]; }
+    else normalAt(f, nx, ny, nz);
+    bool split = false;
+    for (uint32_t k = 0; k < 3 && !split; ++k) {
+      const uint32_t c = g_s.inIdx[f * 3 + k];
+      const float dot = nx * g_s.nrm[c * 3] + ny * g_s.nrm[c * 3 + 1] + nz * g_s.nrm[c * 3 + 2];
+      if (dot < 0.9995f) split = true;
+    }
+    if (split) ++needed;
+  }
+
+  if (needed == 0) {
+    /* Nothing to break apart: write the face normal where each flat corner
+       already is. Coplanar neighbours agree, so this is exact. */
+    for (uint32_t f = 0; f < t; ++f) {
+      if (g_s.inSmooth[f]) continue;
+      float nx, ny, nz;
+      if (faceN) { nx = faceN[f * 3]; ny = faceN[f * 3 + 1]; nz = faceN[f * 3 + 2]; }
+      else normalAt(f, nx, ny, nz);
+      for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t c = g_s.inIdx[f * 3 + k];
+        g_s.nrm[c * 3] = nx; g_s.nrm[c * 3 + 1] = ny; g_s.nrm[c * 3 + 2] = nz;
+      }
+    }
+    return v;
+  }
+
+  if (v + needed * 3u > g_s.vcap || v + needed * 3u > MOD_MAX_VERTS) {
+    /* No room to split: still shade the flat faces flat. */
+    for (uint32_t f = 0; f < t; ++f) {
+      if (g_s.inSmooth[f]) continue;
+      float nx, ny, nz;
+      if (faceN) { nx = faceN[f * 3]; ny = faceN[f * 3 + 1]; nz = faceN[f * 3 + 2]; }
+      else normalAt(f, nx, ny, nz);
+      for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t c = g_s.inIdx[f * 3 + k];
+        g_s.nrm[c * 3] = nx; g_s.nrm[c * 3 + 1] = ny; g_s.nrm[c * 3 + 2] = nz;
+      }
+    }
+    return v;
+  }
+
+  uint32_t next = v;
+  for (uint32_t f = 0; f < t; ++f) {
+    if (g_s.inSmooth[f]) continue;
+    float nx, ny, nz;
+    if (faceN) { nx = faceN[f * 3]; ny = faceN[f * 3 + 1]; nz = faceN[f * 3 + 2]; }
+    else normalAt(f, nx, ny, nz);
+    bool split = false;
+    for (uint32_t k = 0; k < 3 && !split; ++k) {
+      const uint32_t c = g_s.inIdx[f * 3 + k];
+      const float dot = nx * g_s.nrm[c * 3] + ny * g_s.nrm[c * 3 + 1] + nz * g_s.nrm[c * 3 + 2];
+      if (dot < 0.9995f) split = true;
+    }
+    if (!split) {
+      for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t c = g_s.inIdx[f * 3 + k];
+        g_s.nrm[c * 3] = nx; g_s.nrm[c * 3 + 1] = ny; g_s.nrm[c * 3 + 2] = nz;
+      }
+      continue;
+    }
+    for (uint32_t k = 0; k < 3; ++k) {
+      const uint32_t c = g_s.inIdx[f * 3 + k];
+      const uint32_t nv = next++;
+      g_s.inPos[nv * 3] = g_s.inPos[c * 3];
+      g_s.inPos[nv * 3 + 1] = g_s.inPos[c * 3 + 1];
+      g_s.inPos[nv * 3 + 2] = g_s.inPos[c * 3 + 2];
+      if (g_s.hasUv) {
+        g_s.inUv[nv * 2] = g_s.inUv[c * 2];
+        g_s.inUv[nv * 2 + 1] = g_s.inUv[c * 2 + 1];
+      }
+      g_s.nrm[nv * 3] = nx; g_s.nrm[nv * 3 + 1] = ny; g_s.nrm[nv * 3 + 2] = nz;
+      g_s.inIdx[f * 3 + k] = nv;
+    }
+  }
+  return next;
+}
+
 void copyOutToIn(uint32_t v, uint32_t t) {
   for (uint32_t i = 0; i < v * 3u; ++i) g_s.inPos[i] = g_s.outPos[i];
   if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.inUv[i] = g_s.outUv[i];
   for (uint32_t i = 0; i < t * 3u; ++i) g_s.inIdx[i] = g_s.outIdx[i];
+  if (g_s.inSmooth && g_s.outSmooth) for (uint32_t i = 0; i < t; ++i) g_s.inSmooth[i] = g_s.outSmooth[i];
   g_s.vc = v;
   g_s.tc = t;
 }
@@ -136,6 +255,11 @@ int32_t commit(uint32_t v, uint32_t t) {
   if (v > g_s.vcap || t > g_s.tcap) return -2;
   copyOutToIn(v, t);
   computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
+  /* The normal-split pass: a kernel that kept the flags hands out split normals
+     here, so every caller - the viewport, the next modifier, the exporter -
+     reads shading the way the model was authored. */
+  if (g_s.flagMode) v = applyFaceShading(v, t);
+  g_s.vc = v;
   g_s.counts[0] = v;
   g_s.counts[1] = t;
   return 0;
@@ -207,6 +331,7 @@ int32_t weldSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* rem
     const uint32_t a = remap[g_s.inIdx[i * 3]], b = remap[g_s.inIdx[i * 3 + 1]], c = remap[g_s.inIdx[i * 3 + 2]];
     if (a == b || b == c || c == a) continue;
     g_s.outIdx[newT * 3] = a; g_s.outIdx[newT * 3 + 1] = b; g_s.outIdx[newT * 3 + 2] = c;
+    if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[newT] = g_s.inSmooth[i];
     ++newT;
   }
   if (newV == 0 || newT == 0) return -4;
@@ -825,7 +950,11 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
   g_s.tc = 0;
   g_s.inPos = modArray<float>(v * 3u);
   g_s.inUv = modArray<float>(uvCap);
+  g_s.inNrm = modArray<float>(v * 3u);
   g_s.inIdx = modArray<uint32_t>(t * 3u);
+  g_s.inSmooth = modArray<uint8_t>(t);
+  g_s.outSmooth = modArray<uint8_t>(t);
+  g_s.flagMode = 0;
   g_s.outPos = modArray<float>(v * 3u);
   g_s.outUv = modArray<float>(uvCap);
   g_s.outIdx = modArray<uint32_t>(t * 3u);
@@ -836,7 +965,8 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
     for (uint32_t i = 0; i < 16u; ++i) g_s.matrix[i] = 0.0f;
     g_s.matrix[0] = 1.0f; g_s.matrix[5] = 1.0f; g_s.matrix[10] = 1.0f; g_s.matrix[15] = 1.0f;
   }
-  if (!g_s.inPos || !g_s.inUv || !g_s.inIdx || !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts || !g_s.matrix) {
+  if (!g_s.inPos || !g_s.inUv || !g_s.inNrm || !g_s.inIdx || !g_s.inSmooth || !g_s.outSmooth ||
+      !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts || !g_s.matrix) {
     g_s.ready = false;
     return -2;
   }
@@ -850,14 +980,103 @@ FE_EXPORT uint32_t fe_mod_counts_ptr(void) { return g_s.counts ? static_cast<uin
 FE_EXPORT uint32_t fe_mod_in_pos_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inPos)); }
 FE_EXPORT uint32_t fe_mod_in_uv_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inUv)); }
 FE_EXPORT uint32_t fe_mod_in_idx_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inIdx)); }
+FE_EXPORT uint32_t fe_mod_in_nrm_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inNrm)); }
+/* One byte per triangle, 1 = smooth, 0 = flat. The bridge writes it when the
+   geometry carries its own flags, or calls fe_mod_derive_face_smooth() to have
+   them read off the normals the mesh arrived with. */
+FE_EXPORT uint32_t fe_mod_face_smooth_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inSmooth)); }
+
+FE_EXPORT uint32_t fe_mod_set_face_smooth(uint32_t count) {
+  if (!g_s.ready || !g_s.inSmooth) return 0;
+  if (count > g_s.tcap) return 0;
+  for (uint32_t t = count; t < g_s.tcap; ++t) g_s.inSmooth[t] = 1u;
+  g_s.flagMode = 1;
+  return 1;
+}
+
+/* Flat comes from the model, not from a modifier default: a face is flat when
+   its three corner normals already point where the face does. Read from the
+   normals the shell uploaded, so a cube straight out of three is flat and a UV
+   sphere is smooth without either of them saying so. */
+FE_EXPORT uint32_t fe_mod_derive_face_smooth(void) {
+  if (!g_s.ready || !g_s.inSmooth) return 0;
+  const uint32_t t = g_s.tc;
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t a = g_s.inIdx[f * 3], b = g_s.inIdx[f * 3 + 1], c = g_s.inIdx[f * 3 + 2];
+    const Vec3 pa = readPos(g_s.inPos, a), pb = readPos(g_s.inPos, b), pc = readPos(g_s.inPos, c);
+    const Vec3 n = cross(pb - pa, pc - pa);
+    const float len = sqrtf(n.x * n.x + n.y * n.y + n.z * n.z);
+    uint8_t flat = 1u;
+    if (len > 1e-20f) {
+      const Vec3 unit = n * (1.0f / len);
+      const uint32_t corners[3] = {a, b, c};
+      for (uint32_t k = 0; k < 3 && flat; ++k) {
+        const float dot = unit.x * g_s.inNrm[corners[k] * 3] + unit.y * g_s.inNrm[corners[k] * 3 + 1] +
+                          unit.z * g_s.inNrm[corners[k] * 3 + 2];
+        if (dot < 0.9995f) flat = 0u;
+      }
+    } else {
+      flat = 0u;
+    }
+    g_s.inSmooth[f] = flat ? 0u : 1u;
+  }
+  for (uint32_t f = t; f < g_s.tcap; ++f) g_s.inSmooth[f] = 1u;
+  g_s.flagMode = 1;
+  return 1;
+}
 FE_EXPORT uint32_t fe_mod_normals_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.nrm)); }
 
 FE_EXPORT void fe_mod_set_counts(uint32_t vert_count, uint32_t tri_count) {
   if (!g_s.ready) return;
   g_s.vc = vert_count > g_s.vcap ? g_s.vcap : vert_count;
   g_s.tc = tri_count > g_s.tcap ? g_s.tcap : tri_count;
+  /* A kernel that moves vertices and leaves the faces where they are keeps the
+     shading for free: the flags it will commit are the ones it was given. */
+  g_s.flagMode = 1;
+  if (g_s.inSmooth && g_s.outSmooth) {
+    for (uint32_t t = 0; t < g_s.tc; ++t) g_s.outSmooth[t] = g_s.inSmooth[t];
+  }
   g_s.counts[0] = g_s.vc;
   g_s.counts[1] = g_s.tc;
+}
+
+/* Rebuild the normals of the mesh already in the session, with the per-face
+   shading applied. This is the normal-split pass on its own: no geometry moves,
+   the corners a flat face cannot share are broken apart and the rest is left
+   alone. The shell uses it to give Object Mode the same shading Edit Mode shows,
+   and the modifier stack runs it through commit() at the end of every kernel. */
+FE_EXPORT int32_t fe_mod_shade(void) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  /* Start from the normals the mesh arrived with, not from a fresh average of
+     its corners. A smoothed surface reaches here with its corners already
+     carrying the averaged direction, but the corners are *split* - three hands
+     a UV sphere over as one normal per corner, a welded cage as one per point -
+     and averaging each corner on its own would find the single face that owns
+     it and call the whole surface flat. Nothing moved, so nothing needs
+     recomputing; only the faces flagged flat are rewritten below. */
+  bool seeded = false;
+  if (g_s.inNrm) {
+    for (uint32_t i = 0; i < v * 3u; ++i) {
+      const float value = g_s.inNrm[i];
+      g_s.nrm[i] = value;
+      if (value != 0.0f) seeded = true;
+    }
+    if (seeded) {
+      for (uint32_t i = 0; i < v; ++i) {
+        const Vec3 n = normalize(readPos(g_s.nrm, i));
+        writePos(g_s.nrm, i, n);
+      }
+    }
+  }
+  if (!seeded) computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
+  uint32_t outV = v;
+  if (g_s.flagMode) outV = applyFaceShading(v, t);
+  g_s.vc = outV;
+  g_s.counts[0] = outV;
+  g_s.counts[1] = t;
+  return 0;
 }
 
 FE_EXPORT int32_t fe_mod_weld(float epsilon) {
@@ -963,6 +1182,7 @@ FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merg
       const uint32_t o = (k * t + f) * 3;
       if (flip) { g_s.outIdx[o] = base + c; g_s.outIdx[o + 1] = base + b; g_s.outIdx[o + 2] = base + a; }
       else { g_s.outIdx[o] = base + a; g_s.outIdx[o + 1] = base + b; g_s.outIdx[o + 2] = base + c; }
+      if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[k * t + f] = g_s.inSmooth[f];
     }
   }
 
@@ -982,6 +1202,10 @@ FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merg
 
 FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness) {
   if (!g_s.ready) return -1;
+  /* Two shells, a rim and an inner face for every triangle: what the input's
+     faces were shaded like no longer describes the output, so the new surface is
+     smooth all over rather than half-inheriting a flag at random. */
+  g_s.flagMode = 0;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
   if (v * 2u > g_s.vcap) return -2;
@@ -1156,6 +1380,7 @@ FE_EXPORT int32_t fe_mod_array(uint32_t count, float ox, float oy, float oz, flo
       g_s.outIdx[o] = base + g_s.inIdx[f * 3];
       g_s.outIdx[o + 1] = base + g_s.inIdx[f * 3 + 1];
       g_s.outIdx[o + 2] = base + g_s.inIdx[f * 3 + 2];
+      if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[c * t + f] = g_s.inSmooth[f];
     }
   }
   return commit(v * copies, t * copies);
@@ -1212,6 +1437,16 @@ FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels, uint32_t simple) {
       g_s.outIdx[o++] = iab; g_s.outIdx[o++] = b;   g_s.outIdx[o++] = ibc;
       g_s.outIdx[o++] = ica; g_s.outIdx[o++] = ibc; g_s.outIdx[o++] = c;
       g_s.outIdx[o++] = iab; g_s.outIdx[o++] = ibc; g_s.outIdx[o++] = ica;
+      /* Four children, one parent: they inherit how it is shaded. A flat face
+         subdivides into flat faces, and Simple subdivision then shows exactly
+         the model it started from. */
+      if (g_s.outSmooth && g_s.inSmooth) {
+        const uint8_t shade = g_s.inSmooth[f];
+        g_s.outSmooth[f * 4] = shade;
+        g_s.outSmooth[f * 4 + 1] = shade;
+        g_s.outSmooth[f * 4 + 2] = shade;
+        g_s.outSmooth[f * 4 + 3] = shade;
+      }
     }
     copyOutToIn(nv, nt);
     v = nv;
@@ -1234,8 +1469,12 @@ FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels, uint32_t simple) {
   }
   if (done == 0u) return -2;
   /* Simple mode never enters loopRelax, which is where the other mode gets its
-     normals, so they are built once here for both. */
+     normals, so they are built once here for both - and then the per-face
+     shading is applied, which is what keeps a flat cube flat however many times
+     it is split. */
   computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
+  if (g_s.flagMode) v = applyFaceShading(v, t);
+  g_s.vc = v;
   g_s.counts[0] = v;
   g_s.counts[1] = t;
   return static_cast<int32_t>(done);
@@ -1245,6 +1484,8 @@ FE_EXPORT int32_t fe_mod_subdivide(uint32_t levels, uint32_t simple) {
    surviving face count lands near the requested ratio, then emit the collapse. */
 FE_EXPORT int32_t fe_mod_decimate(float ratio, int32_t preserve_boundary) {
   if (!g_s.ready) return -1;
+  /* Clustered faces do not correspond to the ones they replaced. */
+  g_s.flagMode = 0;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
   const float r = clampf(ratio, 0.01f, 1.0f);

@@ -10,7 +10,7 @@
 
 extern "C" {
 unsigned int fe_edit_reset(void);
-unsigned int fe_edit_upload(unsigned int, const float*, unsigned int, const unsigned int*, const float*);
+unsigned int fe_edit_upload(unsigned int, const float*, unsigned int, const unsigned int*, const float*, const float*);
 unsigned int fe_edit_vert_count(void);
 unsigned int fe_edit_tri_count(void);
 unsigned int fe_edit_edge_count(void);
@@ -106,7 +106,7 @@ static const unsigned int kCubeTris[36] = {
 
 static void loadCube(void) {
   fe_edit_reset();
-  fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0);
+  fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0, 0);
 }
 
 static float cubeVolume(void) {
@@ -152,7 +152,7 @@ static void testUpload(void) {
   CHECK(fe_edit_tri_count() == 12);
   CHECK(fe_edit_edge_count() == 18);
   CHECK_NEAR(cubeVolume(), 8.0, 1e-3);
-  CHECK(fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0) == 1);
+  CHECK(fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0, 0) == 1);
   /* more vertices than the kernel holds is refused, not truncated */
   CHECK(fe_edit_max_verts() >= 8192);
 }
@@ -484,7 +484,7 @@ static void uploadSplitQuad(const float* corners, const float* normals) {
     pos[i * 3 + 2] = corners[c + 2];
   }
   fe_edit_reset();
-  CHECK(fe_edit_upload(6, pos, 2, tris, 0) == 1);
+  CHECK(fe_edit_upload(6, pos, 2, tris, 0, 0) == 1);
   (void)normals;
 }
 

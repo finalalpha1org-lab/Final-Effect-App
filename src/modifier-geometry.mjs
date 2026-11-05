@@ -71,6 +71,49 @@ function uploadTargetMesh(exp, targetGeometry, matrixElements) {
   return writeSessionMatrix(exp, matrixElements);
 }
 
+/* The face shading the geometry arrived with, if it says: the Edit Mode kernel
+   stores one byte per triangle under `feFaceShading`, and it is only meaningful
+   while the triangle count still matches. */
+function storedFaceShading(geometry, triCount) {
+  const flags = geometry?.userData?.feFaceShading;
+  if (!flags || typeof flags.length !== 'number' || flags.length !== triCount) return null;
+  return flags;
+}
+
+/* Fill the session's per-face shading: the mesh's own flags when it has them,
+   otherwise read off the normals it arrived with (a cube straight out of three
+   is flat, a UV sphere is smooth). Without either, everything is smooth, which
+   is what every modifier did before the flag existed. */
+function uploadFaceShading(exp, geometry, vertexCount, triCount) {
+  const ptr = typeof exp.fe_mod_face_smooth_ptr === 'function' ? exp.fe_mod_face_smooth_ptr() : 0;
+  const nrm = geometry?.attributes?.normal;
+  if (nrm && nrm.itemSize === 3 && typeof exp.fe_mod_in_nrm_ptr === 'function') {
+    new Float32Array(exp.memory.buffer, exp.fe_mod_in_nrm_ptr(), vertexCount * 3).set(nrm.array.subarray(0, vertexCount * 3));
+  }
+  const stored = storedFaceShading(geometry, triCount);
+  if (!ptr) return;
+  if (stored) {
+    new Uint8Array(exp.memory.buffer, ptr, triCount).set(stored);
+    exp.fe_mod_set_face_smooth(triCount);
+    return;
+  }
+  if (nrm && nrm.itemSize === 3 && typeof exp.fe_mod_derive_face_smooth === 'function') {
+    if (exp.fe_mod_derive_face_smooth() === 1) return;
+  }
+  new Uint8Array(exp.memory.buffer, ptr, triCount).fill(1);
+  exp.fe_mod_set_face_smooth(triCount);
+}
+
+/* Read the shading back out, so the next modifier in the stack starts from the
+   same answer instead of guessing again from split normals. */
+function readFaceShading(exp, geometry, triCount) {
+  if (!geometry || typeof exp.fe_mod_face_smooth_ptr !== 'function') return;
+  const ptr = exp.fe_mod_face_smooth_ptr();
+  if (!ptr || !triCount) return;
+  const flags = new Uint8Array(exp.memory.buffer, ptr, triCount).slice();
+  geometry.userData = { ...(geometry.userData || {}), feFaceShading: flags };
+}
+
 function runCppKernel(geometry, capsFn, call, prepare) {
   const exp = cppExports();
   if (!exp) return null;
@@ -94,6 +137,7 @@ function runCppKernel(geometry, capsFn, call, prepare) {
     else for (let i = 0; i < base.t * 3; i++) idxView[i] = i;
     if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
     exp.fe_mod_set_counts(base.v, base.t);
+    uploadFaceShading(exp, geometry, base.v, base.t);
     if (prepare && prepare(exp) === false) return null;
     if (call(exp) !== 0) return null;
     const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
@@ -104,6 +148,7 @@ function runCppKernel(geometry, capsFn, call, prepare) {
     out.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_normals_ptr(), outV * 3).slice(), 3));
     if (hasUv) out.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_uv_ptr(), outV * 2).slice(), 2));
     out.setIndex(new THREE.BufferAttribute(new Uint32Array(exp.memory.buffer, exp.fe_mod_in_idx_ptr(), outT * 3).slice(), 1));
+    readFaceShading(exp, out, outT);
     return updateBounds(out);
   } catch { return null; }
 }
@@ -475,6 +520,7 @@ function subdivideViaCpp(geometry, levels, simple) {
     else for (let i = 0; i < base.t * 3; i++) idxView[i] = i;
     if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
     exp.fe_mod_set_counts(base.v, base.t);
+    uploadFaceShading(exp, geometry, base.v, base.t);
     const built = exp.fe_mod_subdivide(levels, simple ? 1 : 0);
     if (built < 1) return null;
     const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
@@ -485,6 +531,7 @@ function subdivideViaCpp(geometry, levels, simple) {
     out.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_normals_ptr(), outV * 3).slice(), 3));
     if (hasUv) out.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(exp.memory.buffer, exp.fe_mod_in_uv_ptr(), outV * 2).slice(), 2));
     out.setIndex(new THREE.BufferAttribute(new Uint32Array(exp.memory.buffer, exp.fe_mod_in_idx_ptr(), outT * 3).slice(), 1));
+    readFaceShading(exp, out, outT);
     return { geometry: updateBounds(out), levels: built };
   } catch { return null; }
 }
@@ -534,6 +581,18 @@ function subdivideReference(geometry, levels, simple, triCeiling = 200000) {
     built++;
   }
   return { geometry: g, levels: built };
+}
+
+/* The normal-split pass on its own: rebuild a mesh's normals from its per-face
+   shading, without touching a vertex. A flat face's corners cannot be shared
+   with the faces around it, so those corners are broken apart; everything else
+   is left exactly where it was. Used wherever the app needs Object Mode to show
+   the shading Edit Mode ended on, and exported so the tests can hold it. */
+export function shadeGeometry(geometry) {
+  const viaCpp = runCppKernel(geometry, (v,t)=>[v + t * 3, t], exp => exp.fe_mod_shade());
+  /* No kernel, no split: handing back the mesh unchanged is honest, and the
+     caller still owns (and can dispose) what it passed in. */
+  return viaCpp || geometry;
 }
 
 export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true } = {}) {

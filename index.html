@@ -1897,10 +1897,43 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 #edit-sheet[hidden] { display: none; }
 /* A ceiling in pixels as well as in viewport units: the sheet is a strip of tools
    at the bottom of the screen, and on a tall phone 42vh is most of the screen
-   with a hand's width of empty space under the last row. */
+   with a hand's width of empty space under the last row. Forty percent is the
+   hard maximum - the same number the grab handle stops at (SHEET_CEILING in the
+   grip controller), so dragging the panel up cannot bury the model either. */
 #edit-sheet { max-height: min(40dvh, 330px); }
 #edit-sheet-tools { max-height: min(26dvh, 210px); overflow-y: auto; }
-#edit-sheet-head { flex: none; }
+/* The category row and Done stay put while the body under them scrolls: the one
+   button that leaves the mode must not be the thing that scrolled away. */
+#edit-sheet-head {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(17, 20, 28, 0.98);
+  border-radius: 14px 14px 0 0;
+}
+/* Rows that carry a label and a control read as settings, and a setting is a
+   stack: label above, control across the full width. Side by side they left the
+   right-hand half of every row empty and squeezed a slider into a 60px slice. */
+.edit-sheet-row.edit-sheet-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 2px 0 4px;
+  border-top: 1px solid #23283a;
+}
+.edit-sheet-row.edit-sheet-stack > label {
+  min-width: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7d8798;
+}
+.edit-sheet-row.edit-sheet-stack > output { text-align: left; }
+.edit-sheet-row.edit-sheet-stack > input[type="range"],
+.edit-sheet-row.edit-sheet-stack > select,
+.edit-sheet-row.edit-sheet-stack > input[type="number"] { width: 100%; }
+.edit-sheet-row.edit-sheet-stack > .tool { justify-content: center; }
 
 .edit-sheet-head {
   display: flex;
@@ -3756,7 +3789,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <input type="range" id="edit-amount" min="0" max="1" step="0.01" value="0.2" />
         <output id="edit-amount-out">0.20</output>
       </div>
-      <div class="edit-sheet-row" id="edit-axis-row">
+      <div class="edit-sheet-row edit-sheet-stack" id="edit-axis-row">
         <label for="edit-axis">Axis</label>
         <select id="edit-axis">
           <option value="0">All</option>
@@ -3766,7 +3799,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         </select>
         <button class="tool" type="button" id="edit-prop"><i class="ico" data-ico="gauge"></i><span>Proportional</span></button>
       </div>
-      <div class="edit-sheet-row" id="edit-prop-row" hidden>
+      <div class="edit-sheet-row edit-sheet-stack" id="edit-prop-row" hidden>
         <select id="edit-prop-falloff" aria-label="Falloff">
           <option value="0">Constant</option>
           <option value="1">Linear</option>
@@ -3778,7 +3811,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <input type="range" id="edit-prop-radius" min="0.05" max="10" step="0.05" value="1" aria-label="Proportional radius" />
         <output id="edit-prop-radius-out">1.00</output>
       </div>
-      <div class="edit-sheet-row" id="edit-exact-row" hidden>
+      <div class="edit-sheet-row edit-sheet-stack" id="edit-exact-row" hidden>
         <label>Exact</label>
         <input type="number" id="edit-exact-x" step="0.1" value="0" inputmode="decimal" aria-label="X offset" />
         <input type="number" id="edit-exact-y" step="0.1" value="0" inputmode="decimal" aria-label="Y offset" />
@@ -6889,6 +6922,11 @@ window.addEventListener('DOMContentLoaded', () => {
     'modifiers-sheet', 'animation-sheet', 'edit-sheet'
   ];
   const MAX_FRACTION = 0.92;
+  /* Some panels are a strip of tools rather than a workspace: dragged open they
+     stop at a hard ceiling and leave the model on screen, which is what the
+     panel at the bottom of Edit Mode has to do. Kept in step with the sheet's
+     own max-height in the stylesheet. */
+  const SHEET_CEILING = { 'edit-sheet': 0.40 };
   const naturals = new WeakMap();
   let drag = null;
 
@@ -6915,9 +6953,20 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function viewHeight() {
+    return (window.visualViewport && window.visualViewport.height) || window.innerHeight || 640;
+  }
+
   function tallHeight() {
-    const view = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 640;
-    return Math.round(view * MAX_FRACTION);
+    return Math.round(viewHeight() * MAX_FRACTION);
+  }
+
+  /* How tall this sheet is allowed to get. A capped sheet still has to open
+     wider than it rests, or the handle would do nothing at all. */
+  function ceilingFor(sheet, natural) {
+    const cap = SHEET_CEILING[sheet.id];
+    if (!cap) return Math.max(tallHeight(), natural + 80);
+    return Math.max(Math.round(viewHeight() * cap), natural);
   }
 
   function paint(sheet, height) {
@@ -6959,7 +7008,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!drag || event.pointerId !== drag.id) return;
     const dy = event.clientY - drag.startY;
     drag.moved = Math.max(drag.moved, Math.abs(dy));
-    const ceiling = Math.max(tallHeight(), drag.natural + 80);
+    const ceiling = ceilingFor(drag.sheet, drag.natural);
     drag.height = Math.min(ceiling, Math.max(drag.natural, drag.startHeight - dy));
     paint(drag.sheet, Math.round(drag.height));
     event.preventDefault();
@@ -6971,7 +7020,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const { sheet, natural, height, moved } = drag;
     drag = null;
     sheet.classList.remove('sheet-dragging');
-    const ceiling = Math.max(tallHeight(), natural + 80);
+    const ceiling = ceilingFor(sheet, natural);
     const expanded = moved < 6 ? !sheet.classList.contains('sheet-expanded') : height > (natural + ceiling) / 2;
     settle(sheet, expanded ? ceiling : natural, expanded);
   }
@@ -6982,7 +7031,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', () => {
     for (const sheet of sheetList()) {
       if (!sheet.classList) continue;
-      if (sheet.classList.contains('sheet-expanded')) paint(sheet, tallHeight());
+      if (sheet.classList.contains('sheet-expanded')) paint(sheet, ceilingFor(sheet, naturals.get(sheet) || 240));
       /* A rotation changes what "its own height" means for every other sheet,
          so the measured height is dropped rather than reused. */
       else naturals.delete(sheet);
@@ -11451,6 +11500,19 @@ function modifierRelativeMatrix(sourceObj, targetObj) {
 function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
 function applySubdivisionModifier(geometry, levels, simple=false) { return modifierGeometryApi().subdivideLoop(geometry, levels, { simple }); }
 function applySolidifyModifier(geometry, thickness, offset, rim=true, evenThickness=true) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset, { rim, evenThickness }); }
+/* Re-applies the per-face shading a mesh was left with. Called whenever a
+   geometry is rebuilt by copying attributes instead of by the modifier path
+   that bakes the shading itself - a clone plus computeVertexNormals() averages
+   every shared vertex, which quietly turns a face marked flat back into a
+   smooth one. */
+function applyStoredFaceShading(geometry) {
+  if (!geometry || !geometry.userData?.feFaceShading) return geometry;
+  try {
+    const shaded = modifierGeometryApi().shadeGeometry(geometry);
+    if (shaded && shaded !== geometry) geometry.dispose();
+    return shaded || geometry;
+  } catch (error) { console.warn('[FEShading] Could not reapply per-face shading:', error); return geometry; }
+}
 function applyBooleanModifier(targetObj, geometry, params) {
   const operand = getAllSceneMeshes().find(mesh => mesh.uuid === params['Operand Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
   if (!operand) throw new Error('Boolean needs a different closed mesh selected as Operand Object.');
@@ -11711,8 +11773,7 @@ function updateModifiersOnScene(targetOverride) {
       if (targetObj.geometry !== targetObj.userData.baseGeometry) {
         targetObj.geometry.dispose();
       }
-      targetObj.geometry = targetObj.userData.baseGeometry.clone();
-      targetObj.geometry.computeVertexNormals();
+      targetObj.geometry = applyStoredFaceShading(targetObj.userData.baseGeometry.clone());
       targetObj.geometry.computeBoundingBox();
       targetObj.geometry.computeBoundingSphere();
     }

@@ -96,7 +96,7 @@ function uploadCube(exp) {
   assert.ok(posPtr && triPtr, 'scratch arena refused the cube upload');
   new Float32Array(exp.memory.buffer, posPtr, CUBE_VERTS.length).set(CUBE_VERTS);
   new Uint32Array(exp.memory.buffer, triPtr, CUBE_TRIS.length).set(CUBE_TRIS);
-  const ok = exp.fe_edit_upload(8, posPtr, 12, triPtr, 0);
+  const ok = exp.fe_edit_upload(8, posPtr, 12, triPtr, 0, 0);
   exp.fe_arena_reset();
   assert.equal(ok, 1, 'fe_edit_upload rejected the unit cube');
 }
@@ -152,7 +152,9 @@ test('shipped wasm exposes the whole Edit Mode surface', () => {
     'fe_edit_to_sphere', 'fe_edit_bend', 'fe_edit_randomize', 'fe_edit_align', 'fe_edit_mirror',
     'fe_edit_slide', 'fe_edit_set_shade', 'fe_edit_mark_sharp', 'fe_edit_mark_seam',
     'fe_edit_recalc_normals', 'fe_edit_flip_normals',
-    'fe_edit_build_render', 'fe_edit_render_pos_ptr', 'fe_edit_render_nrm_ptr',
+    'fe_edit_build_render', 'fe_edit_build_render_split', 'fe_edit_upload_face_shade',
+    'fe_edit_shade_state', 'fe_edit_face_shade_ptr', 'fe_edit_face_shade_count',
+    'fe_edit_render_pos_ptr', 'fe_edit_render_nrm_ptr',
     'fe_edit_render_idx_ptr', 'fe_edit_render_vert_count', 'fe_edit_render_idx_count',
     'fe_edit_undo_push', 'fe_edit_undo', 'fe_edit_redo', 'fe_edit_undo_depth', 'fe_edit_redo_depth',
     'fe_edit_extrude', 'fe_edit_inset', 'fe_edit_subdivide', 'fe_edit_merge_center',
@@ -191,7 +193,7 @@ test('upload builds the expected topology and refuses oversized meshes', () => {
   exp.fe_arena_reset();
   const posPtr = exp.fe_malloc(3 * 4 * 8);
   const triPtr = exp.fe_malloc(12);
-  assert.equal(exp.fe_edit_upload(exp.fe_edit_max_verts() + 1, posPtr, 1, triPtr, 0), 0);
+  assert.equal(exp.fe_edit_upload(exp.fe_edit_max_verts() + 1, posPtr, 1, triPtr, 0, 0), 0);
   exp.fe_arena_reset();
   /* The refused upload must leave the previous mesh untouched. */
   assert.equal(exp.fe_edit_vert_count(), 8);
@@ -714,7 +716,7 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
   /* Faceted: the six faces carry six different normals, so the editor must go
      on shading the cube flat instead of rounding it. */
   assert.equal(exp.fe_edit_detect_smooth(posPtr, nrmPtr, 24), 0);
-  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0), 1);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
   exp.fe_arena_reset();
 
   assert.equal(exp.fe_edit_vert_count(), 8, 'the split corners were not welded');
@@ -730,7 +732,14 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
   for (let e = 0; e < ne; e++) drawn += shown[e] ? 1 : 0;
   assert.equal(drawn, 12, 'a cube draws twelve edges, not eighteen');
 
-  assert.equal(exp.fe_edit_get_shade(), 1, 'upload leaves the shading at smooth until the bridge decides');
+  /* Uploaded with its own normals, the cube arrives faceted: the kernel reads
+     the six different face directions off the corners it is about to weld and
+     keeps every face flat, instead of rounding a cube the user built to be
+     sharp. */
+  assert.equal(exp.fe_edit_get_shade(), 0, 'the per-face normals must arrive as flat faces');
+  assert.equal(exp.fe_edit_shade_state(), 0, 'and every one of the twelve faces is flat');
+  exp.fe_edit_set_shade(1);
+  assert.equal(exp.fe_edit_get_shade(), 1);
   exp.fe_edit_set_shade(0);
   assert.equal(exp.fe_edit_get_shade(), 0);
 
@@ -754,6 +763,80 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
 
 function positionsOf(mesh) { return mesh.positions; }
 
+/* Blender keeps a flag per face. A face marked flat next to smooth neighbours
+   needs two different normals at the same point, and two normals at one point
+   is not a shared vertex - the kernel has to break the corners apart, and that
+   split is what the viewport and every exporter after it can actually read. */
+test('one face stays flat while the faces around it stay smooth', () => {
+  const exp = loadEngine();
+  const mesh = makeSplitCube();
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  const nrmPtr = exp.fe_malloc(mesh.normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  new Float32Array(exp.memory.buffer, nrmPtr, mesh.normals.length).set(mesh.normals);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  const faceCount = exp.fe_edit_face_shade_count();
+  assert.equal(faceCount, 12, 'one flag per triangle');
+  const flags = () => new Uint8Array(exp.memory.buffer, exp.fe_edit_face_shade_ptr(), faceCount);
+  assert.equal(flags().reduce((a, b) => a + b, 0), 0, 'a faceted cube starts with every face flat');
+
+  /* All flat is the one case the material still draws by itself: the indexed
+     mesh comes back untouched, so a dense flat mesh never triples its corners. */
+  assert.equal(exp.fe_edit_build_render(), 8, 'an all-flat cube keeps its shared vertices');
+
+  /* Mark one face, in Face mode: the rest of the cube must not move. */
+  exp.fe_edit_set_mode(2);
+  exp.fe_arena_reset();
+  const facePtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, facePtr, 1)[0] = 0;
+  exp.fe_edit_select_by_index(2, 1, facePtr, 0);
+  exp.fe_arena_reset();
+  exp.fe_edit_set_shade(1);
+
+  assert.equal(exp.fe_edit_shade_state(), 2, 'one smooth face in a flat cube is a mixed mesh');
+  /* The flag is per triangle - it has to be, that is what the render pass
+     reads - but the face the user picked is the quad, so both of its triangles
+     follow the tap and the five quads around it do not. */
+  assert.equal(flags().filter((v) => v).length, 2, 'exactly the selected quad went smooth');
+  assert.equal(exp.fe_edit_get_shade(), 1, 'and the mesh now has smoothing somewhere');
+
+  /* The render pass splits those corners, which is the only way one face can be
+     flat and its neighbour smooth across a point they share. */
+  const mixed = exp.fe_edit_build_render();
+  assert.ok(mixed > 8, `a mixed mesh must break its flat corners apart, got ${mixed}`);
+  assert.equal(exp.fe_edit_render_split_count(), mixed - 8, 'every extra vertex is a split corner');
+
+  /* Leaving Edit Mode has to carry the shading out as geometry, so the same
+     pass runs with the all-flat shortcut switched off. */
+  assert.equal(exp.fe_edit_build_render_split(), mixed, 'the mixed mesh is already split');
+
+  exp.fe_edit_set_mode(0);
+  exp.fe_edit_select_all();
+  exp.fe_edit_set_shade(0);
+  assert.equal(exp.fe_edit_shade_state(), 0, 'shading the whole mesh flat is still one call');
+  exp.fe_edit_select_none();
+  assert.equal(exp.fe_edit_build_render(), 8, 'and the all-flat shortcut comes back');
+  assert.equal(exp.fe_edit_build_render_split(), 36, 'twelve faces, three corners each, when it is forced');
+
+  /* Flags that were written down are restored as they are, not re-derived from
+     normals: a cage has shared vertices and averaged normals, so deriving would
+     forget that the cube was ever flat. */
+  const restored = new Uint8Array(faceCount);
+  restored[3] = 1;
+  exp.fe_arena_reset();
+  const flagPtr = exp.fe_malloc(faceCount);
+  new Uint8Array(exp.memory.buffer, flagPtr, faceCount).set(restored);
+  assert.equal(exp.fe_edit_upload_face_shade(flagPtr, faceCount), faceCount);
+  exp.fe_arena_reset();
+  assert.deepEqual(Array.from(flags()), Array.from(restored), 'the flags survived the round trip');
+  assert.equal(exp.fe_edit_upload_face_shade(0, 0), 0, 'a missing buffer is refused, not guessed at');
+});
+
 test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   const exp = loadEngine();
   const mesh = makeSplitCube();
@@ -762,7 +845,7 @@ test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   const triPtr = exp.fe_malloc(mesh.indices.byteLength);
   new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
   new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
-  exp.fe_edit_upload(24, posPtr, 12, triPtr, 0);
+  exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, 0);
   exp.fe_arena_reset();
   exp.fe_edit_select_all();
 

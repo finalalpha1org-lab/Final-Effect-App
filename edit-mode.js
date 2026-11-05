@@ -78,8 +78,11 @@
 
     { id: 'recalc', cat: 'normals', label: 'Recalc Outside', icon: 'normal' },
     { id: 'flip', cat: 'normals', label: 'Flip Faces', icon: 'flip', needsSelection: true },
-    { id: 'smooth', cat: 'normals', label: 'Shade Smooth', icon: 'smooth' },
-    { id: 'flat', cat: 'normals', label: 'Shade Flat', icon: 'flat' },
+    /* The shading is a flag per face, not a switch for the object: with faces
+       taken in Face mode these two apply to those faces and leave the rest of
+       the model alone, which is how a cylinder gets round sides and flat caps. */
+    { id: 'smooth', cat: 'normals', label: 'Shade Smooth', icon: 'smooth', hint: 'Smooth the chosen faces, or the whole mesh' },
+    { id: 'flat', cat: 'normals', label: 'Shade Flat', icon: 'flat', hint: 'Hold the chosen faces flat, or the whole mesh' },
     { id: 'sharp', cat: 'normals', label: 'Mark Sharp', icon: 'sharp', needsSelection: true },
     { id: 'seam', cat: 'normals', label: 'Mark Seam', icon: 'seam', needsSelection: true }
   ];
@@ -279,16 +282,29 @@
     const normal = geometry.attributes.normal;
     const normals = normal ? new Float32Array(normal.array.subarray(0, vertCount * 3)) : null;
 
+    /* The shading this mesh already carries, if it was written down. A cage has
+       shared vertices and averaged normals, so nothing can be read back off it;
+       the flags are kept beside the geometry instead, one byte per triangle. */
+    const stored = geometry.userData?.feFaceShading;
+    const flags = (stored && stored.length === triCount) ? stored : null;
+
     return withArena(null, (exp2) => {
       const posPtr = copyIn(exp2, positions, Float32Array);
       const triPtr = copyIn(exp2, triangles, Uint32Array);
       const colPtr = colours ? copyIn(exp2, colours, Float32Array) : 0;
+      const flagPtr = flags ? copyIn(exp2, new Uint8Array(flags), Uint8Array) : 0;
+      /* Normals go in with the mesh so the kernel can tell a hard surface from
+         a smooth one in the same pass that welds the shared vertices - it is
+         the only moment the split corners still exist. */
       const nrmPtr = normals ? copyIn(exp2, normals, Float32Array) : 0;
       if (!posPtr || !triPtr) { toast('The engine could not reserve memory for this mesh.'); return false; }
-      /* Asked before the upload: after it, the split vertices no longer exist. */
-      const smooth = nrmPtr ? exp2.fe_edit_detect_smooth(posPtr, nrmPtr, vertCount) : 1;
-      if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr) !== 1) return false;
-      exp2.fe_edit_set_shade(smooth ? 1 : 0);
+      if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr, nrmPtr) !== 1) return false;
+      /* Written flags beat the guess: a genuinely flat face and a smooth face
+         that happens to lie flat in a coarse mesh look identical from normals
+         alone, but only one of them should merge with its neighbours. */
+      if (flagPtr && typeof exp2.fe_edit_upload_face_shade === 'function') {
+        exp2.fe_edit_upload_face_shade(flagPtr, triCount);
+      }
       /* The faces the mesh arrived with - a cylinder cap is one thirty-two-gon
          face in Blender and a fan of triangles in the buffer - in the
          geometry's own vertex numbering. The kernel welds the mesh and maps
@@ -580,6 +596,49 @@
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     geometry.computeBoundingBox();
+
+    /* The per-face flags, one byte per triangle. They are the only record of
+       the shading that survives this function: the cage below has shared
+       vertices, and a shared vertex cannot hold two normals at once, so there
+       is nowhere on it for a flat face to be written down. */
+    const shade = typeof exp.fe_edit_shade_state === 'function' ? exp.fe_edit_shade_state() : (exp.fe_edit_get_shade() === 0 ? 0 : 1);
+    let flags = null;
+    if (typeof exp.fe_edit_face_shade_ptr === 'function') {
+      const count = exp.fe_edit_face_shade_count ? exp.fe_edit_face_shade_count() : triCount;
+      if (count) flags = new Uint8Array(u8(exp.fe_edit_face_shade_ptr(), count));
+    }
+    if (flags) geometry.userData.feFaceShading = flags;
+
+    /* Flat or mixed shading has to leave here as real geometry: everything
+       downstream - the viewport's own material, the glTF exporter, whatever
+       opens the file next - only understands normals, so a face marked flat is
+       only flat if its corners are no longer shared. Ask the kernel for the
+       render mesh with its all-flat shortcut switched off and hand *that* to
+       the object, while the shared-vertex cage stays the mesh Edit Mode, the
+       modifier stack and the quad rings work on. */
+    let display = null;
+    if (shade !== 1 && typeof exp.fe_edit_build_render_split === 'function') {
+      const built = exp.fe_edit_build_render_split();
+      const renderCount = built ? exp.fe_edit_render_vert_count() : 0;
+      const renderIndexCount = built ? exp.fe_edit_render_idx_count() : 0;
+      /* The split has a vertex budget of its own. A mesh too dense for it comes
+         back with its vertices shared, which is exactly the smooth normals the
+         cage already has - so it is not used, and the shading falls back to the
+         material's flat mode below. */
+      const splitHappened = renderCount > vertexCount || shade === 2;
+      if (renderCount && renderIndexCount && splitHappened) {
+        display = new THREE.BufferGeometry();
+        display.setAttribute('position', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_pos_ptr(), renderCount * 3)), 3));
+        display.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_nrm_ptr(), renderCount * 3)), 3));
+        display.setIndex(new THREE.BufferAttribute(new Uint32Array(u32(exp.fe_edit_render_idx_ptr(), renderIndexCount)), 1));
+        if (exp.fe_edit_has_color()) {
+          display.setAttribute('color', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_col_ptr(), renderCount * 3)), 3));
+        }
+        display.computeBoundingSphere();
+        display.computeBoundingBox();
+        if (flags) display.userData.feFaceShading = flags;
+      }
+    }
     /* The edited mesh becomes the cage the modifier stack is built from. Only
        writing `target.geometry` used to lose the edit on the next stack
        update, which rebuilds from `baseGeometry` (see updateModifiersOnScene):
@@ -591,21 +650,43 @@
       if (oldBase && oldBase !== target.geometry) oldBase.dispose?.();
       target.userData.baseGeometry = geometry;
       target.geometry?.dispose?.();
-      target.geometry = geometry.clone();
+      /* A stack rebuilds the object's own geometry from the cage, and that
+         rebuild runs the same normal-split pass, so the clone is only a
+         placeholder for the frame in between. */
+      target.geometry = display || geometry.clone();
     } else {
       target.geometry?.dispose?.();
-      target.geometry = geometry;
+      target.geometry = display || geometry;
+    }
+
+    /* One mechanism in charge at a time, here as in the viewport: baked split
+       normals mean no material flattening, and a mesh that outgrew the split
+       budget keeps its look through the material instead. */
+    const baked = !!display;
+    const materials = Array.isArray(target.material) ? target.material : [target.material];
+    for (const material of materials) {
+      if (!material) continue;
+      const flat = !baked && shade === 0;
+      if (material.flatShading === flat) continue;
+      material.flatShading = flat;
+      material.needsUpdate = true;
     }
     delete target.userData.modifierError;
     target.userData.forceModUpdate = true;
     target.userData.feEdited = true;
     /* Keep the pairing with the shape it describes: anyone drawing this mesh's
        wireframe in Object Mode - or re-entering Edit Mode on it - gets the same
-       quads the editor just worked with. */
-    stashQuadDiagonals(target.userData.baseGeometry);
-    if (target.geometry && target.geometry !== target.userData.baseGeometry) stashQuadDiagonals(target.geometry);
-    stashFaces(target.userData.baseGeometry || target.geometry);
-    if (target.geometry && target.geometry !== target.userData.baseGeometry) stashFaces(target.geometry);
+       quads the editor just worked with. Only a mesh whose vertices are still
+       the cage's own. The rings are
+       written in cage slots, and a split display mesh has its vertices
+       renumbered, so copying them onto it would pair a face with the wrong
+       corners; leaving them off lets the shell infer the rings from the
+       positions instead - the split corners sit exactly where the cage's did. */
+    const ringHost = target.userData.baseGeometry || target.geometry;
+    if (ringHost === geometry) {
+      stashQuadDiagonals(ringHost);
+      stashFaces(ringHost);
+    }
     if (typeof global.scheduleCoreHistory === 'function') global.scheduleCoreHistory({ target: target, type: 'change' });
   }
 
@@ -1131,14 +1212,21 @@
     syncSheet();
   }
 
-  /* The kernel keeps the indexed mesh for flat shading and lets the material
-     take derivative normals, which is the only way to shade flat without
-     tripling the vertex count. So the material has to follow the flag. */
+  /* Two mechanisms, and exactly one of them is ever in charge. When every face
+     is flat the kernel hands back the indexed mesh - a dense flat mesh would
+     not fit the render budget any other way - and the material's derivative
+     normals do the shading. As soon as one face is smooth the kernel splits its
+     corners instead and writes real per-face normals, so the material has to go
+     back to smooth or the GPU would flatten the smooth faces as well. That is
+     what lets a single face stay flat while the rest of the model rounds off. */
   function applyShading() {
     const exp = exportsOf();
     const target = state.target;
     if (!exp || !target) return;
-    const flat = exp.fe_edit_get_shade() === 0;
+    const shade = typeof exp.fe_edit_shade_state === 'function'
+      ? exp.fe_edit_shade_state()
+      : (exp.fe_edit_get_shade() === 0 ? 0 : 1);
+    const flat = shade === 0;
     const materials = Array.isArray(target.material) ? target.material : [target.material];
     for (const material of materials) {
       if (!material || material.flatShading === flat) continue;
@@ -1752,7 +1840,13 @@
       toast('Nothing changed for that tool on this selection.');
       return 0;
     }
-    if (id === 'smooth' || id === 'flat') toast(tool.label);
+    if (id === 'smooth' || id === 'flat') {
+      /* Say what was shaded. "Shade Flat" with a face under the finger is one
+         face going flat next to a smooth neighbour, which looks like nothing
+         happened unless the message counts them. */
+      const faces = state.mode === 'face' ? exp.fe_edit_sel_count() : 0;
+      toast(faces ? `${tool.label} · ${faces} face${faces === 1 ? '' : 's'}` : tool.label);
+    }
     return result;
   }
 

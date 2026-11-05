@@ -46,6 +46,15 @@ struct Mesh {
   float weight[kMaxVerts];
   uint32_t tri[kMaxTris * 3];
   uint8_t fsel[kMaxTris];
+  /* Per-face shading, the flag every modeller keeps: 1 = smooth, 0 = flat. A
+     face is the unit of shading, not the mesh - a cylinder is round with flat
+     caps - so this lives beside `fsel` and travels with the triangles through
+     every edit, the undo stack and the committed geometry. */
+  uint8_t fsmooth[kMaxTris];
+  /* How far those flags have been written. A topology tool appends triangles
+     without touching them, so everything past this point would otherwise be a
+     stale byte left behind by the mesh that was there before the tool ran. */
+  uint32_t fsmoothCount;
   /* No default member initialisers anywhere in these structures: an NSDMI
      turns the array into .data, and a 2 MB block of zeroes then ships inside
      the wasm file. Everything is initialised explicitly by fe_edit_reset(). */
@@ -190,6 +199,10 @@ extern uint32_t g_outIdx[kMaxTris * 3];
 extern uint32_t g_outVerts;
 extern uint32_t g_outIdxCount;
 extern uint32_t g_outSplit;
+/* For every render vertex, the welded (cage) vertex it was built from. A flat
+   face has its own copies, so the shell needs this to map anything expressed in
+   cage vertices - the face rings - onto the render mesh it draws. */
+extern uint32_t g_renderWeld[kMaxRenderVerts];
 
 } // namespace fe_edit
 

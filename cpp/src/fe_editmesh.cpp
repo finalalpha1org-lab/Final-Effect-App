@@ -149,6 +149,7 @@ uint32_t g_outIdx[kMaxTris * 3];
 uint32_t g_outVerts = 0;
 uint32_t g_outIdxCount = 0;
 uint32_t g_outSplit = 0;
+uint32_t g_renderWeld[kMaxRenderVerts];
 
 namespace {
 
@@ -251,6 +252,7 @@ uint32_t snapshotSize() {
   size += M.nv * 12u;                  /* positions */
   if (M.hasColor) size += M.nv * 12u;  /* colours */
   size += M.nt * 12u;                  /* triangles */
+  size += M.nt;                        /* per-face shading flags */
   size += (g_seams.n + g_sharp.n) * 12u;
   return (size + 3u) & ~3u;
 }
@@ -295,6 +297,7 @@ void encodeState(uint8_t* dst) {
     for (uint32_t i = 0; i < M.nv; ++i) { putFloat(p, M.cr[i]); putFloat(p, M.cg[i]); putFloat(p, M.cb[i]); }
   }
   for (uint32_t i = 0; i < M.nt * 3u; ++i) putU32(p, M.tri[i]);
+  for (uint32_t i = 0; i < M.nt; ++i) *p++ = M.fsmooth[i];
   for (uint32_t i = 0; i < g_seams.n; ++i) { putU32(p, g_seams.a[i]); putU32(p, g_seams.b[i]); putFloat(p, g_seams.value[i]); }
   for (uint32_t i = 0; i < g_sharp.n; ++i) { putU32(p, g_sharp.a[i]); putU32(p, g_sharp.b[i]); putFloat(p, g_sharp.value[i]); }
 }
@@ -316,6 +319,8 @@ bool decodeState(const uint8_t* src) {
     for (uint32_t i = 0; i < nv; ++i) { M.cr[i] = getFloat(p); M.cg[i] = getFloat(p); M.cb[i] = getFloat(p); }
   }
   for (uint32_t i = 0; i < nt * 3u; ++i) M.tri[i] = getU32(p);
+  for (uint32_t i = 0; i < nt; ++i) { M.fsmooth[i] = static_cast<uint8_t>(*p++ & 1u); }
+  M.fsmoothCount = nt;
   const uint32_t seamCount = pairHeader / 4u;
   const uint32_t sharpCount = pairHeader - seamCount * 4u;
   g_seams.n = seamCount;
@@ -881,9 +886,11 @@ void weldVertices() {
     const uint32_t a = g_vertMap[M.tri[t * 3]], b = g_vertMap[M.tri[t * 3 + 1]], c = g_vertMap[M.tri[t * 3 + 2]];
     if (a == b || b == c || a == c) continue;
     M.tri[keep * 3] = a; M.tri[keep * 3 + 1] = b; M.tri[keep * 3 + 2] = c;
+    M.fsmooth[keep] = M.fsmooth[t] ? 1u : 0u;
     ++keep;
   }
   M.nt = keep;
+  M.fsmoothCount = keep;
 
   /* Compact the vertex array so the survivors are 0..n-1 in first-use order. */
   for (uint32_t v = 0; v < M.nv; ++v) g_vertUsed[v] = 0;
@@ -1268,26 +1275,57 @@ uint32_t g_groupOf[64];
 
 } // namespace
 
+/* Set by fe_edit_build_render_split: the same pass, but it always splits, even
+   when every face is flat. Leaving Edit Mode needs that, because the object it
+   hands the mesh back to has no "flat" switch of its own - the only place the
+   shading can live is inside the normals. */
+bool g_forceSplit = false;
+
+/* The shading of one face, with the stale bytes past the last written flag
+   replaced by the mesh's own answer. A mesh that is smooth all over stays
+   smooth through a subdivide, instead of inheriting whatever the previous,
+   smaller mesh happened to leave in those slots. */
+uint8_t faceSmoothFlag(uint32_t t) {
+  if (t < M.fsmoothCount) return M.fsmooth[t] ? 1u : 0u;
+  return M.smooth ? 1u : 0u;
+}
+
 uint32_t buildRenderMesh() {
   g_outVerts = 0;
   g_outIdxCount = 0;
   g_outSplit = 0;
   if (M.nt == 0 || M.nv == 0) return 0;
+  /* Hold the flags to the triangles that exist, so everything downstream - the
+     ptr the bridge copies onto the committed geometry, the next snapshot - sees
+     a defined value for every face the tools just created. */
+  for (uint32_t t = 0; t < M.nt; ++t) M.fsmooth[t] = faceSmoothFlag(t);
+  M.fsmoothCount = M.nt;
 
   /* Everything big is static: this runs on the wasm stack, which is 64 kB. */
   static float nx[kMaxVerts], ny[kMaxVerts], nz[kMaxVerts];
   static float fnx[kMaxTris], fny[kMaxTris], fnz[kMaxTris], farea[kMaxTris];
   vertexNormals(nx, ny, nz);
 
-  if (!M.smooth) {
-    /* Flat shading is done by the material (derivative normals in the
-       fragment shader), so the indexed mesh can be reused untouched. */
+  /* Anything smooth at all, and the split pass below runs: a mesh with a flat
+     face and a smooth one needs the flat face's corners broken away from the
+     smooth ones, or the smoothing wins at every shared vertex. */
+  bool anySmooth = false;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (faceSmoothFlag(t)) { anySmooth = true; break; }
+  }
+
+  if (!anySmooth && !g_forceSplit) {
+    /* Every face is flat. Flat shading is done by the material (derivative
+       normals in the fragment shader), so the indexed mesh can be reused
+       untouched - and that is also the only way to keep a 30 000 triangle flat
+       mesh inside the render-vertex budget, which tripling corners would not. */
     for (uint32_t i = 0; i < M.nv; ++i) {
       g_outPos[i * 3] = M.x[i]; g_outPos[i * 3 + 1] = M.y[i]; g_outPos[i * 3 + 2] = M.z[i];
       g_outNrm[i * 3] = nx[i]; g_outNrm[i * 3 + 1] = ny[i]; g_outNrm[i * 3 + 2] = nz[i];
       g_outCol[i * 3] = M.hasColor ? M.cr[i] : 1.0f;
       g_outCol[i * 3 + 1] = M.hasColor ? M.cg[i] : 1.0f;
       g_outCol[i * 3 + 2] = M.hasColor ? M.cb[i] : 1.0f;
+      g_renderWeld[i] = i;
     }
     g_outVerts = M.nv;
     for (uint32_t t = 0; t < M.nt; ++t) {
@@ -1324,6 +1362,7 @@ uint32_t buildRenderMesh() {
       g_outNrm[renderCount * 3] = nx[v];
       g_outNrm[renderCount * 3 + 1] = ny[v];
       g_outNrm[renderCount * 3 + 2] = nz[v];
+      g_renderWeld[renderCount] = v;
       ++renderCount;
       continue;
     }
@@ -1354,6 +1393,11 @@ uint32_t buildRenderMesh() {
               }
             }
             if (shared == 0xFFFFFFFFu) continue;
+            /* A flat face is its own smoothing group, always: the whole point
+               of the flag is that this face does not average with its
+               neighbours. Its group is a single face, so the weighted average
+               below is exactly the face normal. */
+            if (!faceSmoothFlag(fa) || !faceSmoothFlag(fb)) continue;
             float crease = 0.0f;
             if (pairGet(g_sharp, v, shared, &crease)) continue;
             g_groupOf[b] = g;
@@ -1389,6 +1433,7 @@ uint32_t buildRenderMesh() {
       g_outCol[rv * 3] = M.hasColor ? M.cr[v] : 1.0f;
       g_outCol[rv * 3 + 1] = M.hasColor ? M.cg[v] : 1.0f;
       g_outCol[rv * 3 + 2] = M.hasColor ? M.cb[v] : 1.0f;
+      g_renderWeld[rv] = v;
       groupVerts[groupTotal + g] = rv;
     }
     groupTotal += groupCount;
@@ -1419,6 +1464,7 @@ unsplit:
     g_outCol[i * 3] = M.hasColor ? M.cr[i] : 1.0f;
     g_outCol[i * 3 + 1] = M.hasColor ? M.cg[i] : 1.0f;
     g_outCol[i * 3 + 2] = M.hasColor ? M.cb[i] : 1.0f;
+    g_renderWeld[i] = i;
   }
   for (uint32_t t = 0; t < M.nt; ++t) {
     g_outIdx[t * 3] = M.tri[t * 3];
@@ -1998,6 +2044,7 @@ extern "C" {
 FE_EXPORT void fe_edit_reset(void) {
   M.nv = 0;
   M.nt = 0;
+  M.fsmoothCount = 0;
   M.hasColor = false;
   M.smooth = true;
   E.n = 0;
@@ -2035,9 +2082,50 @@ FE_EXPORT void fe_edit_reset(void) {
   g_outSplit = 0;
 }
 
+/* Which faces the model meant to shade flat, from the normals it arrived with.
+   three builds a cube as twenty-four corners whose normals are the six face
+   normals, and a sphere as corners whose normals are the smooth surface: a face
+   is flat exactly when all three of its corner normals already point the way
+   the face itself does. Read before the weld, while the corner normals still
+   exist - after it the mesh has one normal per point and the answer is gone. */
+void deriveFaceShade(const float* positions, const uint32_t* indices, uint32_t triCount,
+                     const float* normals) {
+  if (!normals) {
+    for (uint32_t t = 0; t < triCount; ++t) M.fsmooth[t] = 1;
+    M.smooth = true;
+    return;
+  }
+  bool anySmooth = false, anyFlat = false;
+  for (uint32_t t = 0; t < triCount; ++t) {
+    const uint32_t a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+    const float ux = positions[b * 3] - positions[a * 3];
+    const float uy = positions[b * 3 + 1] - positions[a * 3 + 1];
+    const float uz = positions[b * 3 + 2] - positions[a * 3 + 2];
+    const float vx = positions[c * 3] - positions[a * 3];
+    const float vy = positions[c * 3 + 1] - positions[a * 3 + 1];
+    const float vz = positions[c * 3 + 2] - positions[a * 3 + 2];
+    float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const float len = sqrtf(nx * nx + ny * ny + nz * nz);
+    bool flat = len > 1e-20f;
+    if (flat) {
+      nx /= len; ny /= len; nz /= len;
+      const uint32_t corners[3] = {a, b, c};
+      for (uint32_t k = 0; k < 3 && flat; ++k) {
+        const float dot = nx * normals[corners[k] * 3] + ny * normals[corners[k] * 3 + 1] +
+                          nz * normals[corners[k] * 3 + 2];
+        if (dot < 0.9995f) flat = false;
+      }
+    }
+    M.fsmooth[t] = flat ? 0 : 1;
+    if (flat) anyFlat = true; else anySmooth = true;
+  }
+  M.smooth = anySmooth;
+  (void)anyFlat;
+}
+
 FE_EXPORT uint32_t fe_edit_upload(uint32_t vertCount, const float* positions,
                                   uint32_t triCount, const uint32_t* indices,
-                                  const float* colors) {
+                                  const float* colors, const float* normals) {
   if (!positions || !indices) return 0;
   if (vertCount > kMaxVerts || triCount > kMaxTris) return 0;
   if (vertCount < 3 || triCount < 1) return 0;
@@ -2062,6 +2150,8 @@ FE_EXPORT uint32_t fe_edit_upload(uint32_t vertCount, const float* positions,
     const uint32_t v = indices[i];
     M.tri[i] = v < vertCount ? v : 0;
   }
+  deriveFaceShade(positions, M.tri, triCount, normals);
+  M.fsmoothCount = triCount;
   for (uint32_t t = 0; t < M.nt; ++t) M.fsel[t] = 0;
   /* Weld before the edge table exists: an edge list built over duplicates
      would describe a mesh that is not the one being edited. */
@@ -2628,8 +2718,79 @@ FE_EXPORT uint32_t fe_edit_slide(float amount) {
 
 /* ---- flags ------------------------------------------------------------- */
 
-FE_EXPORT void fe_edit_set_shade(uint32_t smooth) { M.smooth = smooth != 0; }
+/* Shade Smooth / Shade Flat. With faces selected in Face mode it applies to
+   those faces and leaves the rest of the model alone, which is what makes a
+   cylinder round with flat caps; with nothing selected it is the whole mesh. */
+FE_EXPORT void fe_edit_set_shade(uint32_t smooth) {
+  const uint8_t value = smooth != 0 ? 1u : 0u;
+  bool any = false;
+  if (g_mode == kModeFace) {
+    for (uint32_t t = 0; t < M.nt; ++t) {
+      if (!M.fsel[t]) continue;
+      M.fsmooth[t] = value;
+      any = true;
+    }
+  }
+  if (!any) {
+    for (uint32_t t = 0; t < M.nt; ++t) M.fsmooth[t] = value;
+  }
+  /* The single flag stays as the answer to "is anything here smooth", which is
+     what the whole-mesh shading switch and the snapshot's legacy bit read. It
+     is derived from the per-face flags rather than set alongside them, so a
+     face marked smooth inside a flat cube cannot leave it behind. */
+  M.smooth = false;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (!M.fsmooth[t]) continue;
+    M.smooth = true;
+    break;
+  }
+  M.fsmoothCount = M.nt;
+}
+
 FE_EXPORT uint32_t fe_edit_get_shade(void) { return M.smooth ? 1u : 0u; }
+
+/* 0 = every face flat, 1 = every face smooth, 2 = both. The viewport only needs
+   the material's derivative-normal mode for the first case; the split normals
+   the render mesh carries cover the other two. */
+FE_EXPORT uint32_t fe_edit_shade_state(void) {
+  if (M.nt == 0) return 1u;
+  bool smoothSeen = false, flatSeen = false;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (faceSmoothFlag(t)) smoothSeen = true; else flatSeen = true;
+    if (smoothSeen && flatSeen) return 2u;
+  }
+  return smoothSeen ? 1u : 0u;
+}
+
+/* Restores per-face flags wholesale, for a mesh that already carries them.
+   Deriving them from the corner normals cannot work here: the cage the editor
+   is handed back has shared vertices and therefore averaged normals, so a cube
+   whose faces were marked flat would come back in looking smooth. The flags
+   travel with the mesh instead of being inferred from it. */
+FE_EXPORT uint32_t fe_edit_upload_face_shade(const uint8_t* flags, uint32_t count) {
+  if (!flags || M.nt == 0) return 0;
+  const uint32_t n = count < M.nt ? count : M.nt;
+  bool anySmooth = false;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    M.fsmooth[t] = t < n ? (flags[t] ? 1u : 0u) : 1u;
+    if (M.fsmooth[t]) anySmooth = true;
+  }
+  M.smooth = anySmooth;
+  M.fsmoothCount = n;
+  return n;
+}
+
+/* The per-face flags, one byte per triangle in the mesh's own triangle order:
+   what the viewport writes onto the committed geometry so the modifier stack
+   and the next session start from the same shading the editor ended on. */
+FE_EXPORT const uint8_t* fe_edit_face_shade_ptr(void) { return M.fsmooth; }
+FE_EXPORT uint32_t fe_edit_face_shade_count(void) { return M.nt; }
+
+/* The render vertex each welded vertex became, for the shell: committing an
+   edit keeps the shared-vertex mesh (that is the cage), so the split normals of
+   the render mesh have to be mapped back onto it. */
+FE_EXPORT const uint32_t* fe_edit_render_weld_ptr(void) { return g_renderWeld; }
+FE_EXPORT uint32_t fe_edit_render_weld_count(void) { return g_outVerts; }
 
 FE_EXPORT uint32_t fe_edit_mark_sharp(uint32_t on) {
   uint32_t count = 0;
@@ -2763,7 +2924,24 @@ FE_EXPORT const float* fe_edit_bounds_ptr(void) {
   return out;
 }
 
-FE_EXPORT uint32_t fe_edit_build_render(void) { return fe_edit::buildRenderMesh(); }
+FE_EXPORT uint32_t fe_edit_build_render(void) {
+  fe_edit::g_forceSplit = false;
+  return fe_edit::buildRenderMesh();
+}
+
+/* The same render pass with the all-flat shortcut switched off. Committing an
+   edit hands the mesh to code that only understands normals, so an all-flat
+   cube has to come out of here with its corners broken - otherwise a face the
+   user marked flat would be drawn smooth by the next thing that touches it.
+   The split still has a budget: past it the mesh falls back to the shared
+   vertices, which is the one case where a flat face keeps its look only through
+   the material. */
+FE_EXPORT uint32_t fe_edit_build_render_split(void) {
+  fe_edit::g_forceSplit = true;
+  const uint32_t built = fe_edit::buildRenderMesh();
+  fe_edit::g_forceSplit = false;
+  return built;
+}
 FE_EXPORT const float* fe_edit_render_pos_ptr(void) { return g_outPos; }
 FE_EXPORT const float* fe_edit_render_nrm_ptr(void) { return g_outNrm; }
 FE_EXPORT const float* fe_edit_render_col_ptr(void) { return g_outCol; }

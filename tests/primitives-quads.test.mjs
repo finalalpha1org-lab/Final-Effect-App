@@ -100,7 +100,7 @@ function kernelFaces(geometry) {
   new Float32Array(KERNEL.memory.buffer, positionPtr, vertexCount * 3)
     .set(position.array.subarray(0, vertexCount * 3));
   new Uint32Array(KERNEL.memory.buffer, triPtr, triCount * 3).set(triangles);
-  KERNEL.fe_edit_upload(vertexCount, positionPtr, triCount, triPtr, 0);
+  KERNEL.fe_edit_upload(vertexCount, positionPtr, triCount, triPtr, 0, 0);
 
   /* The faces the mesh was built with, when it has them: the kernel claims
      them before it looks at the shape (fe_edit_set_faces). */
@@ -391,7 +391,11 @@ test('the shell hands the declaration in and the table back out', () => {
   assert.ok(bridge.includes('fe_edit_set_faces'), 'and hands the rings to the kernel');
   assert.ok(/function stashFaces\(/.test(bridge), 'the shell has the commit side');
   assert.ok(bridge.includes('fe_edit_face_start_ptr'), 'which reads the kernel table back');
-  assert.ok(/stashFaces\(target\.userData\.baseGeometry/.test(bridge), 'and writes it onto the committed mesh');
+  /* Onto the cage - the mesh whose vertex slots the rings are written in - not
+     onto a split display mesh, whose vertices are renumbered by the shading. */
+  assert.match(bridge, /const ringHost = target\.userData\.baseGeometry \|\| target\.geometry;/,
+    'the commit side picks the mesh the rings belong to');
+  assert.match(bridge, /stashFaces\(ringHost\)/, 'and writes them there');
   assert.ok(bridge.includes('feFaceVerts'), 'stamped, so a rewritten buffer invalidates it');
 });
 
