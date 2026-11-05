@@ -173,7 +173,12 @@ function makeEngine(scene, cube) {
     getActiveCamera: () => camera,
     viewportCamera: camera,
     oc: { enableRotate: true, enablePan: true, enableZoom: true, enabled: true },
-    transformControls: { detach() {} },
+    transformControls: {
+      detach() {},
+      attach() {},
+      setMode() {},
+      updateMatrixWorld() {}
+    },
     r: { domElement: null }
   };
 }
@@ -328,7 +333,10 @@ test('the tool table drives the kernel and keeps stats honest', () => {
   assert.equal(EditMode.stats().selected, 8);
 
   EditMode.setMode('face');
-  assert.equal(exp.fe_edit_sel_count(), 12, 'face mode counts the faces of an all-vertex selection');
+  /* Six quads, not twelve triangles: the kernel pairs the two halves of a quad
+     into one face (buildQuadGroups in cpp/src/fe_editmesh.cpp), and the shell
+     has to report what the viewport draws. */
+  assert.equal(exp.fe_edit_sel_count(), 6, 'face mode counts the faces of an all-vertex selection');
 
   EditMode.setMode('edge');
   assert.equal(exp.fe_edit_sel_count(), 18);
@@ -469,16 +477,18 @@ test("one button in the main toolbar opens the edit tools, and they reach the ke
   assert.equal(elementFor('toolbar-core').hidden, false, 'and the object toolbar is still there');
 });
 
-test('the Edit tool in the main bar is not Edit Mode and never switches the mode', () => {
-  /* Two different things, and the user asked for them to stay different:
-     the ✏️ Edit tool opens its own object bar, while Edit Mode lives on the
-     mode dropdown and brings its own main toolbar and sub-toolbars. */
+test('Edit Mode is entered from the mode dropdown and nowhere else', () => {
+  /* Two different things used to share the word Edit: the ✏️ Edit tool in the
+     main bar opened the Object Tools panel, and Edit Mode lives on the mode
+     dropdown and edits vertices, edges and faces in the C++ kernel. The tool
+     is gone - a second thing called Edit was forever being taken for the mode -
+     so the dropdown is the only door, and this test holds that shut. */
   const html = readFileSync('index.html', 'utf8');
-  const handler = html.slice(html.indexOf("if (k === 'edit') {"), html.indexOf("if (k === 'add') {"));
-  assert.ok(handler.length > 0, 'the Edit tool must have its own branch');
-  assert.match(handler, /renderObjectTools\(\);/, 'the Edit tool keeps its object bar');
-  assert.ok(!/FEEditMode\?*\.enter\(/.test(handler), 'the Edit tool must not enter Edit Mode');
-  assert.ok(!/modeSel\.value\s*=\s*'edit'/.test(handler), 'and it must not move the mode dropdown');
+  const bar = html.slice(html.indexOf('tools:['), html.indexOf("['render','⚡','Render Engine']"));
+  assert.ok(bar.length > 0, 'the main toolbar must be findable');
+  assert.ok(!/\['edit',/.test(bar), 'the main bar must have no second Edit tool');
+  assert.match(html, /modes:\[\['object','Object Mode'\],\['edit','Edit Mode'\]\]/,
+    'the dropdown offers Object Mode and Edit Mode');
 
   /* Entering the mode is the dropdown's job: one event, one listener. */
   assert.match(html, /mode\.onchange=\(\)=>\{\s*emit\('mode',\{studio:id,mode:mode\.value\}\);/,
@@ -490,9 +500,9 @@ test('the Edit tool in the main bar is not Edit Mode and never switches the mode
   /* The edit tools are one panel of this app's own language: a left-to-right
      row of categories over a left-to-right row of tools, both scrollable, and
      neither one a copy of another application's panel. */
-  const barCss = html.slice(html.indexOf('.edit-sheet-head {'), html.indexOf('#edit-sheet-tools {'));
+  const barCss = html.slice(html.indexOf('.edit-sheet-head {'), html.indexOf('.edit-bar-sep {'));
   assert.match(barCss, /\.edit-sheet-head \.tool \{ gap: 6px;/, 'the category row is a row of tools');
-  const subCss = html.slice(html.indexOf('#edit-sheet-tools {'), html.indexOf('.edit-sheet-row {'));
+  const subCss = html.slice(html.indexOf('#edit-sheet-tools {', barCss.length + html.indexOf('.edit-sheet-head {')), html.indexOf('.edit-sheet-row {'));
   assert.match(subCss, /flex-wrap: nowrap/, 'the tool row is one row, not a grid of tiles');
   assert.match(subCss, /overflow-x: auto/, 'and it scrolls sideways when it runs out of room');
   /* The panel floats; it does not wall the viewport in. */

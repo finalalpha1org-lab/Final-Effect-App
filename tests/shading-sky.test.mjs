@@ -35,7 +35,27 @@ function harness(shadingMode = 'solid') {
     },
     EquirectangularReflectionMapping: 302,
     sRGBEncoding: 3001,
-    DoubleSide: 2
+    DoubleSide: 2,
+    /* Solid shading draws the model's own edges now, so the harness needs the
+       line primitives it builds there. They are inert: the shading split the
+       tests are about lives in scene.background / scene.environment. */
+    Float32BufferAttribute: class Float32BufferAttribute {
+      constructor(array, itemSize) { this.array = array; this.itemSize = itemSize; this.count = array.length / itemSize; }
+    },
+    BufferGeometry: class BufferGeometry {
+      constructor() { this.attributes = {}; }
+      setAttribute(name, attribute) { this.attributes[name] = attribute; return this; }
+      setIndex() { return this; }
+      dispose() {}
+    },
+    EdgesGeometry: class EdgesGeometry { constructor(geometry) { this.source = geometry; } dispose() {} },
+    LineBasicMaterial: class LineBasicMaterial {
+      constructor(options) { Object.assign(this, options || {}); this.userData = {}; }
+      dispose() {}
+    },
+    LineSegments: class LineSegments {
+      constructor(geometry, material) { this.geometry = geometry; this.material = material; this.visible = true; }
+    }
   };
   const gradients = [];
   const document = {

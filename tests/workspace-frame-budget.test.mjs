@@ -27,10 +27,21 @@ function loopBody() {
 
 test('the viewport frame loop does not allocate', () => {
   const body = loopBody();
-  /* Every `new THREE.x` left in the loop is behind a `|| (this._x = new ...)`
-     one-time guard. Anything else is a per-frame allocation. */
-  const allocations = body.match(/new THREE\.[A-Za-z]+/g) || [];
-  assert.equal(allocations.length, 1, `unexpected per-frame allocations: ${allocations.join(', ')}`);
+  /* Every `new THREE.x` in the loop has to sit behind a
+     `this._x || (this._x = new ...)` one-time guard. The count is not pinned:
+     a new cached scratch object is fine, an unguarded allocation is not. */
+  const lines = body.split('\n');
+  let guarded = 0;
+  body.split('\n').forEach((line) => {
+    if (!line.includes('new THREE.')) return;
+    assert.match(
+      line,
+      /(this\._[A-Za-z0-9]+) \|\| \(\1 = new THREE\.[A-Za-z0-9]+\(/,
+      `per-frame allocation without a cache guard: ${line.trim()}`,
+    );
+    guarded++;
+  });
+  assert.ok(guarded >= 1, 'the loop still has its cached scratch objects');
   assert.match(
     body,
     /this\._originV3 \|\| \(this\._originV3 = new THREE\.Vector3\(0, 0, 0\)\)/,

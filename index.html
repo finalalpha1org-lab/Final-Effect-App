@@ -918,6 +918,21 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   #modifiers-sheet-body {
     grid-template-columns: 1fr;
   }
+  /* The library is 24 names in four groups; on a phone it filled the whole
+     sheet and the stack sat underneath it, so the thing the user came for was
+     one long swipe away. Bounded and scrollable on its own, the stack follows
+     the library instead of replacing it. */
+  #modifiers-sheet-body > .sidebar {
+    max-height: 30vh;
+  }
+  /* Touch targets. A 24 px icon row is a miss with a finger, which on this
+     panel means removing the wrong modifier. */
+  .mod-head { padding: 6px 8px; }
+  .icon-btn { min-width: 40px; min-height: 40px; font-size: 15px; }
+  .small-btn { padding: 10px; font-size: 12px; }
+  .mod-btn { padding: 11px 12px; font-size: 13px; }
+  .field input[type=range] { height: 30px; }
+  .field input[type=checkbox] { width: 20px; height: 20px; }
 }
 .category-title {
   font-size: 11px;
@@ -2598,7 +2613,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
 
     <div id="camera-sheet-body">
       <div class="cam-toolbar-row">
-        <div class="cam-field"><label for="camera-selector">Camera</label><select id="camera-selector"><option value="sceneCamera">Camera 1 (Main)</option></select></div>
         <div class="cam-field"><label for="camera-aspect">Aspect Ratio</label><select id="camera-aspect"><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="21:9">21:9</option><option value="4:5">4:5</option><option value="1:1">1:1</option></select></div>
       </div>
 
@@ -2610,7 +2624,6 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="cam-control"><span>Anamorphic Squeeze</span><input id="cam-squeeze" type="range" min=".5" max="2" step=".01" value="1"><output id="out-squeeze">1.00×</output></div>
         <div class="cam-control"><span>Lens Shift X</span><input id="cam-shift-x" type="range" min="-1" max="1" step=".001" value="0"><output id="out-shift-x">0.000</output></div>
         <div class="cam-control"><span>Lens Shift Y</span><input id="cam-shift-y" type="range" min="-1" max="1" step=".001" value="0"><output id="out-shift-y">0.000</output></div>
-        <div class="cam-control"><span>Lens Distortion</span><input id="cam-distortion" type="range" min="0" max="1" step=".01" value="0"><output id="out-distortion">0%</output></div>
       </div></details>
 
       <!-- 2. Camera Transform -->
@@ -2996,7 +3009,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <button class="anim-btn" type="button" onclick="FECppEngine.insertKeyframeForActive('scale')">+ Scale</button>
         <button class="anim-btn danger" type="button" onclick="FECppEngine.deleteKeyframeAtCurrentFrame()" title="Delete Keyframe at Current Frame">🗑 Del Key</button>
         <button class="anim-btn" type="button" onclick="FECppEngine.clearActiveObjectAnimation()" title="Clear All Keyframes on Selected Object">🧹 Clear</button>
-        <select class="anim-select" id="anim-interp-select" title="Curve interpolation" onchange="FECppEngine.currentInterp=parseInt(this.value)||0">
+        <select class="anim-select" id="anim-interp-select" title="Curve interpolation — applies to the selected keyframe, or to the next one" onchange="FECppEngine.setAnimationInterpolation(this.value)">
           <option value="0">Curve: Bezier Smooth</option>
           <option value="1">Curve: Linear</option>
           <option value="2">Curve: Step / Hold</option>
@@ -3004,7 +3017,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           <option value="4">Curve: Ease Out</option>
           <option value="5">Curve: Bounce</option>
         </select>
-        <select class="anim-select" id="anim-extrap-select" title="Track Repeat Mode" onchange="if(FECppEngine.ready){FECppEngine.exports.fe_anim_set_extrapolation(FECppEngine.getSlotForObjectId(FE.getActiveObjectId?.()||'cube'),parseInt(this.value)||0);renderDopeSheetAndCurveCanvas();}">
+        <select class="anim-select" id="anim-extrap-select" title="Track Repeat Mode" onchange="FECppEngine.setTrackExtrapolation(this.value)">
           <option value="0">Mode: Hold</option>
           <option value="1">Mode: Loop Cycle</option>
           <option value="2">Mode: Ping-Pong</option>
@@ -3217,7 +3230,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
           </div>
           <div class="render-row" id="render-still-quality-row" hidden>
             <label for="render-still-quality">Quality</label>
-            <input type="range" id="render-still-quality" min="50" max="100" step="1" value="92">
+            <input type="range" id="render-still-quality" min="50" max="100" step="1" value="92" oninput="document.getElementById('out-still-quality').textContent=this.value+'%'"><output id="out-still-quality">92%</output>
           </div>
           <div style="font-size:10px;color:#64748b;line-height:1.45;margin-top:4px;">
             Video is written as MP4 (H.264) when the browser can encode it, WebM otherwise.
@@ -6039,6 +6052,30 @@ function preserveLightRigState(group, state) {
   }
 }
 
+/* ---- Auto-Key from the transform panels -------------------------------
+   Auto-Key only ever fired when a gizmo drag ended, so typing a position,
+   dragging the Move slider or pressing 2.0x wrote no key at all even with
+   Auto-Key lit. Every one of those edits goes through applyTransformChange
+   or applyUniformScale, so the key is requested from there. A slider fires
+   on every pixel of a drag, hence the requests are coalesced: one key is
+   written once the edits settle, which is also one refresh instead of fifty. */
+let autoKeyFlushTimer = 0;
+function requestAutoKey() {
+  const eng = window.FECppEngine;
+  if (!eng || !eng.ready || !eng.autoKey) return false;
+  if (autoKeyFlushTimer) clearTimeout(autoKeyFlushTimer);
+  autoKeyFlushTimer = setTimeout(() => {
+    autoKeyFlushTimer = 0;
+    const live = window.FECppEngine;
+    if (!live || !live.ready || !live.autoKey) return;
+    if (live.insertKeyframeForActive('keyset', true) > 0) {
+      FE?.toast?.('\u23fa Auto-Keyed Frame ' + (window.timelineConfig?.currentFrame || 0));
+    }
+  }, 180);
+  return true;
+}
+window.requestAutoKey = requestAutoKey;
+
 function applyTransformChange(type, specificAxis) {
   const targetObj = getActiveObjectMesh();
   if (!targetObj) return;
@@ -6185,6 +6222,7 @@ function applyTransformChange(type, specificAxis) {
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
   updateMeasurePanel();
+  requestAutoKey();
 }
 window.applyTransformChange = applyTransformChange;
 
@@ -6226,6 +6264,7 @@ function applyUniformScale(val) {
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
   updateMeasurePanel();
+  requestAutoKey();
 }
 window.applyUniformScale = applyUniformScale;
 
@@ -6385,6 +6424,7 @@ function resetPositionToZero() {
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
   updateMeasurePanel();
+  requestAutoKey();
   FE.toast('Position reset to origin [0, 0, 0]');
 }
 window.resetPositionToZero = resetPositionToZero;
@@ -6403,6 +6443,7 @@ function resetRotationToZero() {
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
   updateMeasurePanel();
+  requestAutoKey();
   FE.toast('Rotation reset to 0°');
 }
 window.resetRotationToZero = resetRotationToZero;
@@ -7617,6 +7658,125 @@ function gizmoTouchSize(){
   return small?1.1:0.9;
 }
 
+/* =========================================================
+   VIEWPORT IDLE GUARD
+   =========================================================
+   The viewport drew a frame every time the browser offered one, whether or not
+   anything had changed. On a phone that is the whole battery story: a Workspace
+   left open on a scene nobody is touching keeps the GPU at work, warms the
+   device, and the browser then throttles everything else the user does - which
+   is what "it starts fast and then crawls" is.
+
+   A frame is only skipped when both of the things that make the picture have
+   stopped changing (the active camera and the scene's own shape) and no input
+   has arrived for half a second. A drag, a slider, the gizmo, a playing
+   timeline, a running simulation or a modifier all move one of those, so a
+   frame the user is waiting for is never dropped. */
+const FE_IDLE_AFTER_MS = 500;
+let __feLastActivityAt = (typeof performance !== 'undefined' ? performance.now() : 0);
+function feMarkViewportActive() {
+  __feLastActivityAt = performance.now();
+  /* The next frame is drawn whatever the fingerprint says: a pointer that has
+     just landed is about to change something this frame cannot see yet. */
+  const fe = typeof FE !== 'undefined' ? FE : null;
+  const eng = fe && fe.engines ? fe.engines.core : null;
+  if (eng) eng._framePrint = null;
+}
+(function watchViewportActivity() {
+  if (typeof addEventListener !== 'function') return;
+  const mark = () => feMarkViewportActive();
+  /* Passive, capture-phase and one listener per kind: this runs on every pointer
+     move in the app, so it must not be able to block a gesture or touch the DOM. */
+  for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'keydown']) {
+    addEventListener(type, mark, { capture: true, passive: true });
+  }
+  document.addEventListener('input', mark, { capture: true, passive: true });
+  document.addEventListener('change', mark, { capture: true, passive: true });
+  document.addEventListener('click', mark, { capture: true, passive: true });
+  /* Coming back to the tab, or the URL bar sliding away and resizing the
+     viewport, changes what should be on screen even though nothing was touched. */
+  document.addEventListener('visibilitychange', mark);
+  addEventListener('resize', mark, { passive: true });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', mark, { passive: true });
+})();
+
+/* The fingerprint of a frame: the active camera's world and projection matrices,
+   then the scene's own shape - transforms, geometry versions, the visible flags,
+   light intensity and the material colours. Two frames with the same print draw
+   the same picture. Buffers are reused, so this allocates nothing per frame. */
+const __fePrintNow = new Float64Array(24);
+function feFillFramePrint(cam, sc, out) {
+  out.fill(0);
+  if (cam) {
+    const m = cam.matrixWorld.elements;
+    for (let i = 0; i < 16; i++) out[i] = m[i];
+    out[16] = cam.projectionMatrix.elements[0];
+    out[17] = cam.projectionMatrix.elements[5];
+    out[18] = cam.zoom || 1;
+    out[19] = cam.isOrthographicCamera ? 1 : 0;
+  }
+  if (sc) {
+    let count = 0, shape = 0;
+    const fold = (o, deep) => {
+      const m = o.matrixWorld.elements;
+      shape += m[0] + m[1] + m[4] + m[5] + m[8] + m[9] + m[12] + m[13] + m[14];
+      shape += (o.visible === false ? 1000.5 : 0) + (o.children.length * 0.5);
+      if (o.isLight) shape += (o.intensity || 0) * 11 + (o.color && o.color.getHex ? o.color.getHex() * 0.0001 : 0);
+      const g = o.geometry;
+      if (g) {
+        const p = g.attributes && g.attributes.position;
+        if (p) shape += (p.version || 0) * 3.1 + p.count * 0.001;
+        if (g.index) shape += (g.index.version || 0) * 1.7;
+        if (g.drawRange) shape += (g.drawRange.count === Infinity ? -7 : g.drawRange.count) * 0.00037;
+      }
+      const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      for (const mat of mats) {
+        if (!mat) continue;
+        if (mat.color && mat.color.r !== undefined) shape += mat.color.r + mat.color.g * 3.1 + mat.color.b * 7.3;
+        shape += (mat.opacity === undefined ? 1 : mat.opacity) + (mat.visible === false ? 5 : 0) + (mat.needsUpdate ? 61 : 0);
+      }
+      /* A model arrives as a group of meshes, and moving one mesh inside it is a
+         change the picture shows. Two levels is what this app's scenes are. */
+      if (deep) { const inner = o.children; for (let i = 0; i < inner.length; i++) fold(inner[i], false); }
+    };
+    const kids = sc.children;
+    for (let i = 0; i < kids.length; i++) { count++; fold(kids[i], true); }
+    out[20] = count;
+    out[21] = shape;
+    /* The backdrop is part of the picture and it arrives asynchronously: an HDRI
+       finishes decoding after the file dialog that started it has closed, so it
+       cannot rely on "someone just touched the screen" to get drawn. */
+    const bg = sc.background;
+    out[22] = bg ? (bg.isTexture ? 1 : (bg.getHex ? bg.getHex() * 0.0001 : 2)) : 0;
+    out[23] = sc.environment ? 1 : 0;
+  }
+  return out;
+}
+function feFramePrintMatches(a, b) {
+  if (!a) return false;
+  for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+function feShouldDrawFrame(eng, activeCam, now) {
+  /* Someone is touching the screen: draw. */
+  if (now - (__feLastActivityAt || 0) < FE_IDLE_AFTER_MS) return true;
+  /* Things that move without an input: the gizmo drag, a playing timeline, an
+     orbiting camera, a solver surface. */
+  if (eng.transformControls && eng.transformControls.dragging) return true;
+  if (typeof timelineConfig !== 'undefined' && timelineConfig && timelineConfig.isPlaying) return true;
+  if (eng.oc && eng.oc.autoRotate) return true;
+  /* Matrices are written by the renderer, so a skipped frame would leave them
+     stale and the change that was meant to be seen could never be noticed. */
+  activeCam?.updateMatrixWorld?.();
+  eng.sc?.updateMatrixWorld?.();
+  feFillFramePrint(activeCam, eng.sc, __fePrintNow);
+  if (!feFramePrintMatches(eng._framePrint, __fePrintNow)) {
+    eng._framePrint = Float64Array.from(__fePrintNow);
+    return true;
+  }
+  return false;
+}
+
 FE.register('core',{
   mount({canvas,viewport}){
     const w=viewport.clientWidth||800, h=viewport.clientHeight||600;
@@ -7644,6 +7804,40 @@ FE.register('core',{
     r.shadowMap.needsUpdate = true;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = GLOBAL_SETTINGS.exposure||1.25;
+
+    /* One anti-aliasing technique at a time on a phone. The renderer already
+       asks for MSAA, which smooths the scene's edges for free; temporal AA is a
+       whole extra pass - a jittered scene target, a history target and a
+       composite - and on an iPhone that pass alone is a large share of the
+       frame. It starts off on a touch screen and the governor turns it on once
+       it has watched eight good ticks (about ten seconds of real frames), so a
+       phone that can afford it still gets it. */
+    try {
+      const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+      if (coarse && (navigator.maxTouchPoints || 0) > 1) this._autoTaa = false;
+    } catch (_) { /* no matchMedia: keep the desktop default */ }
+
+    /* iOS drops a WebGL context when the tab is parked or the phone runs hot,
+       and the canvas then goes black until the page is reloaded - which reads
+       as "the app broke". Calling preventDefault() on the loss is what asks the
+       browser to hand the context back; three.js rebuilds the GPU resources it
+       owns, and the two things that keep their own copy - the temporal history
+       and the shadow map - are reset here. */
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      this._contextLost = true;
+      console.warn('[Viewport] WebGL context lost; waiting for the browser to restore it.');
+      if (window.FE?.toast) FE.toast('Graphics paused - the browser is restoring the viewport');
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      this._contextLost = false;
+      try {
+        this.taa?.reset?.();
+        if (this.r?.shadowMap) this.r.shadowMap.needsUpdate = true;
+      } catch (error) { console.warn('[Viewport] Graphics restore:', error); }
+      feMarkViewportActive();
+      if (window.FE?.toast) FE.toast('Graphics restored');
+    });
 
     // OrbitControls initialized on viewportCamera with smooth finger navigation
     let oc=new THREE.OrbitControls(viewportCamera,canvas);
@@ -8122,6 +8316,8 @@ FE.register('core',{
       applyCameraAspect(this.sceneCamera,curAspect);
     }
     this.r.setSize(w,h,false);
+    /* A resize is a new picture even though nothing was touched. */
+    feMarkViewportActive();
     if (this.taa) {
       /* Resize the pass here rather than letting it catch up on the next frame:
          a frame drawn from a stale target is stretched to the screen, and a
@@ -8141,6 +8337,16 @@ FE.register('core',{
       if(!this._viewportRunning)return;
       this.raf=requestAnimationFrame(t);
       if(document.hidden)return;
+      /* Nothing has moved and nobody is touching the screen, so there is no
+         frame to draw. Drawing it anyway is what kept a phone's GPU busy on a
+         still image. */
+      const idleCam=isCameraView?this.sceneCamera:this.viewportCamera;
+      if(!this._contextLost&&!feShouldDrawFrame(this,idleCam,performance.now())){
+        this._idleFrames=(this._idleFrames||0)+1;
+        this._lastViewportFrame=0;
+        return;
+      }
+      if(this._idleFrames)this._idleFrames=0;
       const frameStart=performance.now();
       const previous=this._lastViewportFrame||frameStart;
       this._lastViewportFrame=frameStart;
@@ -8206,8 +8412,12 @@ FE.register('core',{
       // Dynamic continuous autofocus if enabled (cached: this runs every frame)
       if (this._afCheck === undefined) this._afCheck = document.getElementById('cam-autofocus');
       const afCheck = this._afCheck;
-      if (afCheck && afCheck.checked && this.sceneCamera && this.cube) {
-        const dist = this.sceneCamera.position.distanceTo(this.cube.position);
+      if (afCheck && afCheck.checked && this.sceneCamera) {
+        /* The focus point the camera panel asks for, not always the starter
+           cube: autofocus used to stop the moment that cube was deleted. */
+        const afTarget = this._afTarget || (this._afTarget = new THREE.Vector3());
+        getConfiguredCameraFocusTarget(this, this.sceneCamera, afTarget);
+        const dist = this.sceneCamera.position.distanceTo(afTarget);
         /* Autofocus used to do two DOM lookups, a string format, two DOM writes
            and a full `updateDoFFilter()` - a dozen more lookups and a filter
            rebuild - on every frame, whether or not anything had moved. The
@@ -8378,27 +8588,48 @@ function syncCameraSlidersFromScene() {
   if (rotY && document.activeElement !== rotY) { rotY.value = degY; const o=out('out-rot-y'); if(o) o.textContent=degY+'°'; }
   if (rotZ && document.activeElement !== rotZ) { rotZ.value = degZ; const o=out('out-rot-z'); if(o) o.textContent=degZ+'°'; }
 
+  /* Zoom and crop are two halves of one number (see applyCameraZoom), and the
+     sliders used to show whatever the user last typed while the camera held
+     something else. */
+  const zoomInput = document.getElementById('cam-zoom');
+  if (zoomInput && document.activeElement !== zoomInput) {
+    const shown = cameraZoomSetting(c);
+    zoomInput.value = shown.toFixed(2);
+    const o = out('out-zoom'); if (o) o.textContent = shown.toFixed(2) + '×';
+  }
+  const cropSelect = document.getElementById('cam-crop');
+  if (cropSelect && document.activeElement !== cropSelect) {
+    const crop = cameraSensorCrop(c);
+    const match = [...cropSelect.options].find(option => Math.abs(parseFloat(option.value) - crop) < 1e-6);
+    if (match) cropSelect.value = match.value;
+  }
+  syncCameraPanelLabel();
+
   const pan = document.getElementById('cam-pan');
   const tilt = document.getElementById('cam-tilt');
   if (pan && document.activeElement !== pan) { pan.value = degY; const o=out('out-pan'); if(o) o.textContent=degY+'°'; }
   if (tilt && document.activeElement !== tilt) { tilt.value = degX; const o=out('out-tilt'); if(o) o.textContent=degX+'°'; }
 }
 
-function getConfiguredCameraFocusTarget(eng, camera) {
+/* `out` lets the per-frame callers (autofocus, DoF) reuse one vector instead of
+   allocating a fresh one sixty times a second. */
+function getConfiguredCameraFocusTarget(eng, camera, out = null) {
   const mode = document.getElementById('cam-focus-point')?.value || 'center';
-  if (mode === 'center') return new THREE.Vector3(0, 0, 0);
-  if (mode === 'cube' && eng.cube?.position) return eng.cube.position.clone();
+  if (mode === 'center') return out ? out.set(0, 0, 0) : new THREE.Vector3(0, 0, 0);
+  const copy = (v) => (out ? out.copy(v) : v.clone());
+  if (mode === 'cube' && eng.cube?.position) return copy(eng.cube.position);
   if (mode === 'active') {
     const active = window.getActiveObjectMesh ? window.getActiveObjectMesh() : eng.cube;
-    if (active?.position) return active.position.clone();
-    if (eng.cube?.position) return eng.cube.position.clone();
+    if (active?.position) return copy(active.position);
+    if (eng.cube?.position) return copy(eng.cube.position);
   }
   if (mode === 'camera' && camera) {
     const forward = camera.getWorldDirection(new THREE.Vector3());
     const focusDistance = Math.max(0.1, Number(eng.focusDistance) || Number(document.getElementById('cam-focus-distance')?.value) || 6);
-    return camera.position.clone().addScaledVector(forward, focusDistance);
+    const point = (out || camera.position.clone()).copy(camera.position);
+    return point.addScaledVector(forward, focusDistance);
   }
-  return eng.sceneCameraTarget?.clone() || new THREE.Vector3(0, 0, 0);
+  return eng.sceneCameraTarget ? copy(eng.sceneCameraTarget) : (out ? out.set(0, 0, 0) : new THREE.Vector3(0, 0, 0));
 }
 
 function aimSceneCameraAtConfiguredFocus(camera, eng) {
@@ -8431,6 +8662,90 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(input => {
 // =========================================================
 // BLENDER CAMERA FRAME & VIEW OFFSET ENGINE (ZERO DISTORTION)
 // =========================================================
+/* ---- what the Lens/Image controls actually do ------------------------------
+
+   Two things were tangled in `camera.zoom`.
+
+   The Sensor switch, the Crop preset and the Zoom slider all wrote it, and the
+   Zoom slider was never read back, so changing the sensor silently reset the
+   zoom and the slider kept showing a number the camera no longer had. They are
+   three different statements: the sensor is a property of the lens (what the
+   same focal length covers on a smaller chip), the crop preset is the same idea
+   as a number, and zoom is the user's own control. The projection is their
+   product, and each one is remembered on the camera so the sliders can show the
+   truth. */
+function cameraSensorCrop(camera) {
+  const value = Number(camera?.userData?.sensorCrop);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+function cameraZoomSetting(camera) {
+  const value = Number(camera?.userData?.zoom);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+function applyCameraZoom(camera) {
+  if (!camera) return 1;
+  camera.zoom = cameraZoomSetting(camera) * cameraSensorCrop(camera);
+  camera.updateProjectionMatrix();
+  updateCameraFrame();
+  return camera.zoom;
+}
+function setCameraZoom(camera, value) {
+  if (!camera) return;
+  const zoom = Math.max(0.25, Math.min(10, Number(value) || 1));
+  camera.userData ||= {};
+  camera.userData.zoom = zoom;
+  applyCameraZoom(camera);
+}
+function setCameraSensorCrop(camera, value) {
+  if (!camera) return;
+  const crop = Math.max(0.5, Math.min(4, Number(value) || 1));
+  camera.userData ||= {};
+  camera.userData.sensorCrop = crop;
+  applyCameraZoom(camera);
+}
+
+/* Stabilization is one feature made of three controls, and the Mode switch is
+   the one that decides whether it applies. Smoothness and Strength used to
+   change the orbit controls with the mode set to Off, so a camera with
+   stabilization switched off still had its speed pulled around by two sliders
+   that were supposed to be asleep. Off restores the viewport's own defaults. */
+const CAMERA_STAB_DEFAULTS = { damping: 0.08, speed: 1 };
+function applyCameraStabilization(eng) {
+  const oc = eng?.oc;
+  if (!oc) return { mode: 'off', damping: 0, speed: 0 };
+  const mode = document.getElementById('cam-stab-mode')?.value || 'off';
+  const smooth = Math.max(0, Math.min(1, Number(document.getElementById('cam-stab-smooth')?.value ?? 0.5)));
+  const strength = Math.max(0, Math.min(1, Number(document.getElementById('cam-stab-strength')?.value ?? 0.5)));
+  const baseSpeed = Number(GLOBAL_SETTINGS.sensitivity) || CAMERA_STAB_DEFAULTS.speed;
+  if (mode === 'off') {
+    oc.dampingFactor = CAMERA_STAB_DEFAULTS.damping;
+    oc.rotateSpeed = baseSpeed;
+    return { mode, damping: oc.dampingFactor, speed: oc.rotateSpeed };
+  }
+  /* Heavier smoothness means the camera eases into place instead of following
+     the finger exactly; strength takes speed away, and the digital mode is the
+     one that takes it away hardest. Optical stabilisation only steadies the
+     motion, it does not slow the camera down. */
+  oc.dampingFactor = Math.max(0.02, 0.16 - smooth * 0.13);
+  oc.rotateSpeed = mode === 'digital'
+    ? Math.max(0.2, baseSpeed * (1 - strength * 0.6))
+    : baseSpeed;
+  return { mode, damping: oc.dampingFactor, speed: oc.rotateSpeed };
+}
+
+/* The panel edits one camera in this build, and its header used to say so in
+   markup that nothing ever updated: switch the lens to Orthographic and the
+   label still read "Camera 1". */
+function syncCameraPanelLabel() {
+  const eng = FE.engines?.core;
+  const label = document.getElementById('camera-selected-label');
+  if (!label || !eng?.sceneCamera) return;
+  const c = eng.sceneCamera;
+  const lens = c.isOrthographicCamera ? 'Orthographic' : 'Perspective';
+  const name = eng.blenderCam?.name && eng.blenderCam.name !== 'Camera' ? eng.blenderCam.name : 'Camera 1 (Main)';
+  label.textContent = name + ' · ' + lens;
+}
+
 function updateCameraFrame() {
   const container = document.getElementById('camera-view-container');
   const box = document.getElementById('cam-frame-box');
@@ -8605,7 +8920,7 @@ function updateDoFFilter() {
 
   const isBokehActive = dofEnabled && bokehToggle && bokehShape !== 'off' && bokehSize !== 'off';
   if (isBokehActive && eng && eng.sceneCamera) {
-    const targetPos = (eng.cube ? eng.cube.position : new THREE.Vector3(0, 0, 0));
+    const targetPos = getConfiguredCameraFocusTarget(eng, eng.sceneCamera);
     const actualDist = eng.sceneCamera.position.distanceTo(targetPos);
     const focusDist = parseFloat(document.getElementById('cam-focus-distance')?.value || actualDist);
     const aperture = parseFloat(document.getElementById('cam-aperture')?.value || 2.8);
@@ -8636,7 +8951,7 @@ function updateDoFFilter() {
 
   // Focus Peaking
   if (peaking && eng && eng.sceneCamera) {
-    const targetPos = (eng.cube ? eng.cube.position : new THREE.Vector3(0, 0, 0));
+    const targetPos = getConfiguredCameraFocusTarget(eng, eng.sceneCamera);
     const actualDist = eng.sceneCamera.position.distanceTo(targetPos);
     const focusDist = parseFloat(document.getElementById('cam-focus-distance')?.value || actualDist);
     const aperture = parseFloat(document.getElementById('cam-aperture')?.value || 2.8);
@@ -8816,9 +9131,6 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(el => {
       updateCameraFrame();
     } else if (el.id === 'cam-shift-x' || el.id === 'cam-shift-y') {
       updateCameraFrame();
-    } else if (el.id === 'cam-distortion') {
-      const canvas = document.querySelector('.viewport canvas');
-      if (canvas) canvas.style.borderRadius = (val * 24) + 'px';
     }
     // 2. Transform
     else if (el.id === 'cam-pos-x') { 
@@ -8853,11 +9165,7 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(el => {
       if (eng.blenderCam) eng.blenderCam.rotation.z = c.rotation.z; 
       syncTransformToControls(c); 
     }
-    else if (el.id === 'cam-zoom') { 
-      c.zoom = val; 
-      c.updateProjectionMatrix(); 
-      updateCameraFrame(); 
-    }
+    else if (el.id === 'cam-zoom') { setCameraZoom(c, val); }
     else if (el.id === 'cam-pan') { 
       c.rotation.y = THREE.MathUtils.degToRad(val); 
       if (eng.blenderCam) eng.blenderCam.rotation.y = c.rotation.y; 
@@ -8890,11 +9198,10 @@ document.querySelectorAll('#camera-sheet input[type=range]').forEach(el => {
       updateWhiteBalance();
     }
     // 8. Stabilization
-    else if (el.id === 'cam-stab-smooth') {
-      if (eng.oc) eng.oc.dampingFactor = 0.01 + (val * 0.15);
-    }
-    else if (el.id === 'cam-stab-strength') {
-      if (eng.oc) eng.oc.rotateSpeed = Math.max(0.2, 1.2 - (val * 0.7));
+    else if (el.id === 'cam-stab-smooth' || el.id === 'cam-stab-strength') {
+      /* Through the mode switch: with stabilization Off both sliders are
+         asleep, which is what Off has to mean. */
+      applyCameraStabilization(eng);
     }
     // 10. Advanced / Cinematic
     else if (el.id === 'fx-vignette') {
@@ -8936,6 +9243,7 @@ document.querySelectorAll('#camera-sheet select').forEach(el => {
       }
       updateCameraFrame();
       syncCameraSlidersFromScene();
+      syncCameraPanelLabel();
       FE.toast(el.value === 'orthographic' ? 'Orthographic Projection' : 'Perspective Projection');
     } else if (el.id === 'cam-focus-point') {
       aimSceneCameraAtConfiguredFocus(c, eng);
@@ -8950,12 +9258,10 @@ document.querySelectorAll('#camera-sheet select').forEach(el => {
       updateDoFFilter();
     } else if (el.id === 'cam-sensor') {
       const sensorCrops = { fullframe: 1, apsc: 1.5, m43: 2.0, red8k: 0.88 };
-      const crop = sensorCrops[el.value] || 1;
+      setCameraSensorCrop(c, sensorCrops[el.value] || 1);
       const cropEl = document.getElementById('cam-crop');
-      if (cropEl) cropEl.value = crop;
-      c.zoom = crop;
-      c.updateProjectionMatrix();
-      updateCameraFrame();
+      if (cropEl) cropEl.value = String(sensorCrops[el.value] || 1);
+      syncCameraSlidersFromScene();
       FE.toast('Sensor: ' + el.options[el.selectedIndex].text);
     } else if (el.id === 'cam-resolution') {
       if (el.value === '1920x1080' || el.value === '3840x2160' || el.value === '7680x4320') {
@@ -8967,12 +9273,28 @@ document.querySelectorAll('#camera-sheet select').forEach(el => {
       }
       FE.toast('Resolution: ' + el.value);
     } else if (el.id === 'cam-crop') {
-      c.zoom = parseFloat(el.value);
-      c.updateProjectionMatrix();
-      updateCameraFrame();
+      /* The crop preset is the same statement as the sensor, as a number: set
+         it through the sensor so the two controls cannot disagree. */
+      setCameraSensorCrop(c, parseFloat(el.value));
+      const sensorEl = document.getElementById('cam-sensor');
+      if (sensorEl) {
+        const match = [...sensorEl.options].find(o => Math.abs(parseFloat(o.value === 'fullframe' ? '1' : o.value) - parseFloat(el.value)) < 1e-6);
+        if (match) sensorEl.value = match.value;
+      }
+      syncCameraSlidersFromScene();
     } else if (el.id === 'cam-fps') {
-      FE.toast('Camera Frame Rate: ' + el.value + ' fps');
+      /* The camera's frame rate is the project's frame rate: it is what the
+         animation and the video export are timed in, so it has to be one number
+         rather than a dropdown that only says a number back. */
+      const fps = Math.max(1, Math.min(240, parseInt(el.value, 10) || 30));
+      if (typeof timelineConfig !== 'undefined' && timelineConfig) {
+        timelineConfig.fps = fps;
+        if (typeof syncTimelineUI === 'function') syncTimelineUI();
+        else if (typeof drawTimeline === 'function') drawTimeline();
+      }
+      FE.toast('Camera Frame Rate: ' + fps + ' fps');
     } else if (el.id === 'cam-stab-mode') {
+      applyCameraStabilization(eng);
       FE.toast('Stabilization: ' + el.options[el.selectedIndex].text);
     }
   });
@@ -8990,7 +9312,10 @@ document.querySelectorAll('#camera-sheet input[type=checkbox]').forEach(el => {
     else if (el.id === 'ov-safe') { const o = document.getElementById('overlay-safe'); if (o) o.style.display = isChecked ? 'block' : 'none'; }
     else if (el.id === 'ov-horizon') { const o = document.getElementById('overlay-horizon'); if (o) o.style.display = isChecked ? 'block' : 'none'; }
     else if (el.id === 'cam-autofocus') {
-      if (isChecked && eng && eng.sceneCamera && eng.cube) {
+      /* Any scene, not only the one that still has the starter cube in it: the
+         focus point the panel offers ("Active Mesh", "Scene Center", ...) is
+         what autofocus should follow. */
+      if (isChecked && eng && eng.sceneCamera) {
         triggerAutofocus();
       }
     }
@@ -10729,7 +11054,7 @@ const modifiersData = {
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
-    {name:"Subdivision Surface", fields:[["Viewport Levels","range",0,4,2,1],["Render Levels","range",0,4,2,1]]},
+    {name:"Subdivision Surface", fields:[["Viewport Levels","range",0,4,2,1]]},
     {name:"Triangulate", fields:[["Keep Normals","check",true]]},
     {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
     {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
@@ -10741,7 +11066,7 @@ const modifiersData = {
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}]]},
-    {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01],["Falloff","range",1,8,2.5,.25]]},
+    {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01]]},
     {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1],["Axis","select",["Y","X","Z"],{advanced:true}]]},
     {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1],["Axis","select",["Y","X","Z"],{advanced:true}],["Phase","range",0,6.28,0,.01,{advanced:true}]]}
   ],
@@ -10872,498 +11197,6 @@ function buildModifierLibrary(filter="") {
 
     libEl.appendChild(cat);
   }
-}
-
-/* =========================================================
-   REAL PROCEDURAL GEOMETRY MODIFIER FUNCTIONS
-   ========================================================= */
-function applyBevelModifier(geometry, amount, segments) {
-  if (amount <= 0.001) return geometry;
-  geometry.computeBoundingBox();
-  const bbox = geometry.boundingBox || new THREE.Box3();
-  const size = bbox.getSize(new THREE.Vector3());
-  const w = size.x || 1.4, h = size.y || 1.4, d = size.z || 1.4;
-  
-  const bevel = Math.min(amount * 0.4, Math.min(w, h, d) * 0.45);
-  if (bevel <= 0.001) return geometry;
-
-  const shape = new THREE.Shape();
-  const hw = w / 2 - bevel, hh = h / 2 - bevel;
-  shape.absarc(hw, hh, bevel, 0, Math.PI / 2, false);
-  shape.absarc(-hw, hh, bevel, Math.PI / 2, Math.PI, false);
-  shape.absarc(-hw, -hh, bevel, Math.PI, Math.PI * 1.5, false);
-  shape.absarc(hw, -hh, bevel, Math.PI * 1.5, Math.PI * 2, false);
-  
-  const extrudeSettings = {
-    depth: Math.max(0.01, d - bevel * 2),
-    bevelEnabled: true,
-    bevelSegments: Math.max(1, segments),
-    steps: 1,
-    bevelSize: bevel,
-    bevelThickness: bevel,
-    curveSegments: Math.max(2, segments * 2)
-  };
-  const beveledGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-  beveledGeo.center();
-  beveledGeo.computeVertexNormals();
-  return beveledGeo;
-}
-
-function applySubdivisionModifier(geometry, levels) {
-  if (levels <= 0) return geometry;
-  levels = Math.min(levels, 4);
-  
-  let currentGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  
-  for (let lvl = 0; lvl < levels; lvl++) {
-    const posAttr = currentGeo.attributes.position;
-    if (!posAttr) break;
-    const count = posAttr.count, uvAttr = currentGeo.attributes.uv;
-    const newPos = [], newUv = [];
-    
-    for (let i = 0; i < count; i += 3) {
-      const v0 = new THREE.Vector3().fromBufferAttribute(posAttr, i);
-      const v1 = new THREE.Vector3().fromBufferAttribute(posAttr, i + 1);
-      const v2 = new THREE.Vector3().fromBufferAttribute(posAttr, i + 2);
-      
-      const m01 = new THREE.Vector3().addVectors(v0, v1).multiplyScalar(0.5);
-      const m12 = new THREE.Vector3().addVectors(v1, v2).multiplyScalar(0.5);
-      const m20 = new THREE.Vector3().addVectors(v2, v0).multiplyScalar(0.5);
-      
-      const centroid = new THREE.Vector3().addVectors(v0, v1).add(v2).divideScalar(3);
-      let uv0, uv1, uv2, uvM01, uvM12, uvM20;
-      if (uvAttr) {
-        uv0 = new THREE.Vector2().fromBufferAttribute(uvAttr, i); uv1 = new THREE.Vector2().fromBufferAttribute(uvAttr, i + 1); uv2 = new THREE.Vector2().fromBufferAttribute(uvAttr, i + 2);
-        const uvCenter = new THREE.Vector2().addVectors(uv0, uv1).add(uv2).multiplyScalar(1 / 3);
-        uvM01 = new THREE.Vector2().addVectors(uv0, uv1).multiplyScalar(0.5).lerp(uvCenter, 0.12);
-        uvM12 = new THREE.Vector2().addVectors(uv1, uv2).multiplyScalar(0.5).lerp(uvCenter, 0.12);
-        uvM20 = new THREE.Vector2().addVectors(uv2, uv0).multiplyScalar(0.5).lerp(uvCenter, 0.12);
-      }
-      const smoothFactor = 0.12;
-      
-      m01.lerp(centroid, smoothFactor);
-      m12.lerp(centroid, smoothFactor);
-      m20.lerp(centroid, smoothFactor);
-      
-      newPos.push(v0.x, v0.y, v0.z, m01.x, m01.y, m01.z, m20.x, m20.y, m20.z);
-      newPos.push(m01.x, m01.y, m01.z, v1.x, v1.y, v1.z, m12.x, m12.y, m12.z);
-      newPos.push(m20.x, m20.y, m20.z, m12.x, m12.y, m12.z, v2.x, v2.y, v2.z);
-      newPos.push(m01.x, m01.y, m01.z, m12.x, m12.y, m12.z, m20.x, m20.y, m20.z);
-      if (uvAttr) {
-        newUv.push(uv0.x,uv0.y,uvM01.x,uvM01.y,uvM20.x,uvM20.y, uvM01.x,uvM01.y,uv1.x,uv1.y,uvM12.x,uvM12.y);
-        newUv.push(uvM20.x,uvM20.y,uvM12.x,uvM12.y,uv2.x,uv2.y, uvM01.x,uvM01.y,uvM12.x,uvM12.y,uvM20.x,uvM20.y);
-      }
-    }
-    
-    const nextGeo = new THREE.BufferGeometry();
-    nextGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPos, 3));
-    if (uvAttr) nextGeo.setAttribute('uv', new THREE.Float32BufferAttribute(newUv, 2));
-    nextGeo.computeVertexNormals();
-    currentGeo.dispose();
-    currentGeo = nextGeo;
-  }
-  
-  return currentGeo;
-}
-
-function applySolidifyModifier(geometry, thickness, offset) {
-  if (Math.abs(thickness) < 0.001) return geometry;
-  
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  srcGeo.computeVertexNormals();
-  
-  const posAttr = srcGeo.attributes.position;
-  const normAttr = srcGeo.attributes.normal;
-  if (!posAttr || !normAttr) return geometry;
-  
-  const count = posAttr.count;
-  const positions = [];
-  
-  const outerDist = thickness * (1 - offset) * 0.5;
-  const innerDist = -thickness * (1 + offset) * 0.5;
-  
-  for (let i = 0; i < count; i++) {
-    positions.push(
-      posAttr.getX(i) + normAttr.getX(i) * outerDist,
-      posAttr.getY(i) + normAttr.getY(i) * outerDist,
-      posAttr.getZ(i) + normAttr.getZ(i) * outerDist
-    );
-  }
-  
-  for (let i = 0; i < count; i += 3) {
-    for (let j = 2; j >= 0; j--) {
-      const idx = i + j;
-      positions.push(
-        posAttr.getX(idx) + normAttr.getX(idx) * innerDist,
-        posAttr.getY(idx) + normAttr.getY(idx) * innerDist,
-        posAttr.getZ(idx) + normAttr.getZ(idx) * innerDist
-      );
-    }
-  }
-  
-  const newGeo = new THREE.BufferGeometry();
-  newGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  newGeo.computeVertexNormals();
-  return newGeo;
-}
-
-function applyBooleanModifier(targetObj, geometry, params) {
-  const op = params["Operation"] || "Difference";
-  const cutterGeo = new THREE.BoxGeometry(1.2, 1.2, 1.2);
-  const cutterOffset = new THREE.Vector3(0.35, 0.35, 0.35);
-
-  const nonIdxA = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const nonIdxB = cutterGeo.index ? cutterGeo.toNonIndexed() : cutterGeo.clone();
-
-  const posA = nonIdxA.attributes.position;
-  const posB = nonIdxB.attributes.position;
-
-  cutterGeo.computeBoundingBox();
-  const bboxB = cutterGeo.boundingBox.clone().translate(cutterOffset);
-
-  const newPos = [];
-
-  if (op === 'Difference') {
-    for (let i = 0; i < posA.count; i += 3) {
-      const v0 = new THREE.Vector3().fromBufferAttribute(posA, i);
-      const v1 = new THREE.Vector3().fromBufferAttribute(posA, i + 1);
-      const v2 = new THREE.Vector3().fromBufferAttribute(posA, i + 2);
-
-      const in0 = bboxB.containsPoint(v0);
-      const in1 = bboxB.containsPoint(v1);
-      const in2 = bboxB.containsPoint(v2);
-
-      if (!(in0 && in1 && in2)) {
-        newPos.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
-      }
-    }
-    const capSize = bboxB.getSize(new THREE.Vector3());
-    const capCenter = bboxB.getCenter(new THREE.Vector3());
-    const capGeo = new THREE.BoxGeometry(capSize.x * 0.98, capSize.y * 0.98, capSize.z * 0.98);
-    const capPos = capGeo.attributes.position;
-    for (let i = 0; i < capPos.count; i += 3) {
-      const cv0 = new THREE.Vector3().fromBufferAttribute(capPos, i).add(capCenter);
-      const cv1 = new THREE.Vector3().fromBufferAttribute(capPos, i + 1).add(capCenter);
-      const cv2 = new THREE.Vector3().fromBufferAttribute(capPos, i + 2).add(capCenter);
-      geometry.computeBoundingBox();
-      if (geometry.boundingBox && geometry.boundingBox.containsPoint(cv0)) {
-        newPos.push(cv2.x, cv2.y, cv2.z, cv1.x, cv1.y, cv1.z, cv0.x, cv0.y, cv0.z);
-      }
-    }
-  } else if (op === 'Union') {
-    for (let i = 0; i < posA.count; i++) {
-      newPos.push(posA.getX(i), posA.getY(i), posA.getZ(i));
-    }
-    for (let i = 0; i < posB.count; i++) {
-      newPos.push(posB.getX(i) + cutterOffset.x, posB.getY(i) + cutterOffset.y, posB.getZ(i) + cutterOffset.z);
-    }
-  } else if (op === 'Intersect') {
-    for (let i = 0; i < posA.count; i += 3) {
-      const v0 = new THREE.Vector3().fromBufferAttribute(posA, i);
-      const v1 = new THREE.Vector3().fromBufferAttribute(posA, i + 1);
-      const v2 = new THREE.Vector3().fromBufferAttribute(posA, i + 2);
-      if (bboxB.containsPoint(v0) || bboxB.containsPoint(v1) || bboxB.containsPoint(v2)) {
-        newPos.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
-      }
-    }
-  }
-
-  const resultGeo = new THREE.BufferGeometry();
-  resultGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPos, 3));
-  resultGeo.computeVertexNormals();
-  return resultGeo;
-}
-
-function applyArrayModifier(geometry, count, ox, oy, oz) {
-  if (count <= 1) return geometry;
-  let stepX = ox, stepY = oy, stepZ = oz;
-  if (ox === 0 && oy === 0 && oz === 0) stepX = 1.8;
-
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  const countPerGeo = posAttr.count;
-  const totalPositions = [];
-
-  for (let c = 0; c < count; c++) {
-    const shiftX = c * stepX;
-    const shiftY = c * stepY;
-    const shiftZ = c * stepZ;
-    for (let i = 0; i < countPerGeo; i++) {
-      totalPositions.push(
-        posAttr.getX(i) + shiftX,
-        posAttr.getY(i) + shiftY,
-        posAttr.getZ(i) + shiftZ
-      );
-    }
-  }
-
-  const arrayGeo = new THREE.BufferGeometry();
-  arrayGeo.setAttribute('position', new THREE.Float32BufferAttribute(totalPositions, 3));
-  arrayGeo.computeVertexNormals();
-  return arrayGeo;
-}
-
-function applyMirrorModifier(geometry, xA, yA, zA) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  const count = posAttr.count;
-  const positions = [];
-
-  for (let i = 0; i < count; i++) {
-    positions.push(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-  }
-
-  if (xA) {
-    for (let i = 0; i < count; i += 3) {
-      positions.push(-posAttr.getX(i + 2) - 2.0, posAttr.getY(i + 2), posAttr.getZ(i + 2));
-      positions.push(-posAttr.getX(i + 1) - 2.0, posAttr.getY(i + 1), posAttr.getZ(i + 1));
-      positions.push(-posAttr.getX(i) - 2.0, posAttr.getY(i), posAttr.getZ(i));
-    }
-  }
-  if (yA) {
-    for (let i = 0; i < count; i += 3) {
-      positions.push(posAttr.getX(i + 2), -posAttr.getY(i + 2) + 2.0, posAttr.getZ(i + 2));
-      positions.push(posAttr.getX(i + 1), -posAttr.getY(i + 1) + 2.0, posAttr.getZ(i + 1));
-      positions.push(posAttr.getX(i), -posAttr.getY(i) + 2.0, posAttr.getZ(i));
-    }
-  }
-  if (zA) {
-    for (let i = 0; i < count; i += 3) {
-      positions.push(posAttr.getX(i + 2), posAttr.getY(i + 2), -posAttr.getZ(i + 2) - 2.0);
-      positions.push(posAttr.getX(i + 1), posAttr.getY(i + 1), -posAttr.getZ(i + 1) - 2.0);
-      positions.push(posAttr.getX(i), posAttr.getY(i), -posAttr.getZ(i) - 2.0);
-    }
-  }
-
-  const mirrorGeo = new THREE.BufferGeometry();
-  mirrorGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  mirrorGeo.computeVertexNormals();
-  return mirrorGeo;
-}
-
-function applyDecimateModifier(geometry, ratio) {
-  if (ratio >= 0.99) return geometry;
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  const count = posAttr.count;
-  const stride = Math.max(3, Math.floor(1 / Math.max(0.01, ratio)) * 3);
-  const newPositions = [];
-
-  for (let i = 0; i < count; i += stride) {
-    if (i + 2 < count) {
-      newPositions.push(
-        posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i),
-        posAttr.getX(i+1), posAttr.getY(i+1), posAttr.getZ(i+1),
-        posAttr.getX(i+2), posAttr.getY(i+2), posAttr.getZ(i+2)
-      );
-    }
-  }
-
-  const decGeo = new THREE.BufferGeometry();
-  decGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPositions, 3));
-  decGeo.computeVertexNormals();
-  return decGeo;
-}
-
-function applyTriangulateModifier(geometry) {
-  const src = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  src.computeVertexNormals();
-  return src;
-}
-
-function applyWeldModifier(geometry, distance) {
-  const src = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = src.attributes.position;
-  if (!posAttr) return geometry;
-  const count = posAttr.count;
-  const positions = [];
-  const distSq = distance * distance;
-  const unique = [];
-
-  for (let i = 0; i < count; i++) {
-    const v = new THREE.Vector3().fromBufferAttribute(posAttr, i);
-    let matched = null;
-    for (let u of unique) {
-      if (v.distanceToSquared(u) <= distSq) {
-        matched = u;
-        break;
-      }
-    }
-    if (matched) {
-      positions.push(matched.x, matched.y, matched.z);
-    } else {
-      unique.push(v);
-      positions.push(v.x, v.y, v.z);
-    }
-  }
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applyDisplaceModifier(geometry, strength, midlevel) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  srcGeo.computeVertexNormals();
-  const posAttr = srcGeo.attributes.position;
-  const normAttr = srcGeo.attributes.normal;
-  if (!posAttr || !normAttr) return geometry;
-
-  const positions = [];
-  const count = posAttr.count;
-  const disp = (strength - midlevel * 0.1);
-
-  for (let i = 0; i < count; i++) {
-    const nx = normAttr.getX(i), ny = normAttr.getY(i), nz = normAttr.getZ(i);
-    positions.push(
-      posAttr.getX(i) + nx * disp,
-      posAttr.getY(i) + ny * disp,
-      posAttr.getZ(i) + nz * disp
-    );
-  }
-
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applyWaveModifier(geometry, speed, height, width) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  if (!posAttr) return geometry;
-
-  const positions = [];
-  const count = posAttr.count;
-
-  for (let i = 0; i < count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
-    const wave = Math.sin(x * width * 1.5 + speed) * height * 0.2;
-    positions.push(x, y + wave, z);
-  }
-
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applyCastModifier(geometry, shape, factor, radius) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  if (!posAttr) return geometry;
-
-  const positions = [];
-  const count = posAttr.count;
-
-  for (let i = 0; i < count; i++) {
-    const vec = new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-    if (shape === 'Sphere') {
-      const dir = vec.clone().normalize().multiplyScalar(radius * 0.8);
-      vec.lerp(dir, factor);
-    } else if (shape === 'Cylinder') {
-      const dir = new THREE.Vector3(vec.x, 0, vec.z).normalize().multiplyScalar(radius * 0.8);
-      vec.x = THREE.MathUtils.lerp(vec.x, dir.x, factor);
-      vec.z = THREE.MathUtils.lerp(vec.z, dir.z, factor);
-    }
-    positions.push(vec.x, vec.y, vec.z);
-  }
-
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applySmoothModifier(geometry, factor, iterations) {
-  let srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const posAttr = srcGeo.attributes.position;
-    if (!posAttr) break;
-    const count = posAttr.count;
-    const positions = [];
-
-    for (let i = 0; i < count; i += 3) {
-      const v0 = new THREE.Vector3().fromBufferAttribute(posAttr, i);
-      const v1 = new THREE.Vector3().fromBufferAttribute(posAttr, i + 1);
-      const v2 = new THREE.Vector3().fromBufferAttribute(posAttr, i + 2);
-
-      const centroid = new THREE.Vector3().addVectors(v0, v1).add(v2).divideScalar(3);
-
-      v0.lerp(centroid, factor * 0.2);
-      v1.lerp(centroid, factor * 0.2);
-      v2.lerp(centroid, factor * 0.2);
-
-      positions.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
-    }
-
-    const result = new THREE.BufferGeometry();
-    result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    result.computeVertexNormals();
-    srcGeo = result;
-  }
-
-  return srcGeo;
-}
-
-function applyWarpModifier(geometry, strength) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  if (!posAttr) return geometry;
-  const count = posAttr.count;
-  const positions = [];
-  for (let i = 0; i < count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
-    const angle = y * strength * 0.5;
-    const cosA = Math.cos(angle), sinA = Math.sin(angle);
-    positions.push(x * cosA - z * sinA, y, x * sinA + z * cosA);
-  }
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applyLatticeModifier(geometry, strength) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  if (!posAttr) return geometry;
-  const count = posAttr.count;
-  const positions = [];
-  for (let i = 0; i < count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i);
-    const z = posAttr.getZ(i);
-    const taper = 1.0 + (y * 0.3 * strength);
-    positions.push(x * taper, y, z * taper);
-  }
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
-}
-
-function applyShrinkwrapModifier(geometry, offset) {
-  const srcGeo = geometry.index ? geometry.toNonIndexed() : geometry.clone();
-  const posAttr = srcGeo.attributes.position;
-  if (!posAttr) return geometry;
-  const count = posAttr.count;
-  const positions = [];
-  const targetRadius = 1.0 + offset;
-  for (let i = 0; i < count; i++) {
-    const v = new THREE.Vector3().fromBufferAttribute(posAttr, i);
-    v.normalize().multiplyScalar(targetRadius);
-    positions.push(v.x, v.y, v.z);
-  }
-  const result = new THREE.BufferGeometry();
-  result.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  result.computeVertexNormals();
-  return result;
 }
 
 // Modifier geometry v2 delegates supported topology operations to the tested module.
@@ -11551,9 +11384,7 @@ function bindSurfaceDeformTarget(targetObj, mod) {
   }
   const baseGeo = targetObj.userData?.baseGeometry || targetObj.geometry;
   const relative = modifierRelativeMatrix(targetObj, surfTarget);
-  mod.surfaceBinding = modifierGeometryApi().bindSurfaceDeform(baseGeo, surfTarget.geometry, relative.elements, {
-    falloff: parseFloat(p['Falloff'] ?? 2.5)
-  });
+  mod.surfaceBinding = modifierGeometryApi().bindSurfaceDeform(baseGeo, surfTarget.geometry, relative.elements);
   targetObj.userData.forceModUpdate = true;
   renderModifierStack();
   updateModifiersOnScene(targetObj);
@@ -11578,7 +11409,13 @@ function modifierEvaluationHash(targetObj, mods) {
     return { name:mod.name, values:mod.values, bound:!!mod.surfaceBinding, target:object ? {uuid:object.uuid,geometry:object.geometry?.uuid,positionVersion:pos?.version,matrix:object.matrixWorld?.elements} : ref || null };
   });
   const base=targetObj.userData.baseGeometry,basePos=base?.attributes?.position;
-  return JSON.stringify({base:base?.uuid,baseVersion:basePos?.version,transform:targetObj.matrixWorld?.elements,mods:deps});
+  /* Only the modifiers that work in the other object's space - Boolean,
+     Shrinkwrap, Lattice, Armature, Surface Deform - care where this object
+     stands. Folding the transform into every stack's hash made a subdivision
+     surface rebuild its whole mesh on each step of a Move drag, which is felt
+     on a phone. */
+  const needsPlacement = mods.some(mod => modifierDependencyRef(mod));
+  return JSON.stringify({base:base?.uuid,baseVersion:basePos?.version,transform:needsPlacement ? targetObj.matrixWorld?.elements : null,mods:deps});
 }
 
 function updateModifiersOnScene(targetOverride) {
@@ -11671,7 +11508,7 @@ function updateModifiersOnScene(targetOverride) {
 
     if (eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
     if (eng.transformControls) eng.transformControls.updateMatrixWorld(true);
-    if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
+    feSaveProjectSoon();
     refreshModifierDependents(targetObj);
     return;
   }
@@ -11856,7 +11693,7 @@ function updateModifiersOnScene(targetOverride) {
   if (eng && eng.selectionBox && typeof eng.selectionBox.update === 'function') eng.selectionBox.update();
   if (eng && eng.transformControls) eng.transformControls.updateMatrixWorld(true);
 
-  if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
+  feSaveProjectSoon();
   refreshModifierDependents(targetObj);
   } catch(e) {
     const message = e?.message || String(e);
@@ -11888,6 +11725,51 @@ function refreshModifierDependents(changedObj) {
 }
 window.refreshModifierDependents = refreshModifierDependents;
 window.updateModifiersOnScene = updateModifiersOnScene;
+
+/* ---- One evaluation per frame, one project write per gesture ------------
+   A modifier slider fires `input` on every pointer move, and the sheet-wide
+   listener fires for the same event a second time, so a single drag ran the
+   whole stack twice per pixel. Each run ends by writing the recents record to
+   localStorage and committing a history entry - on a phone that is the most
+   expensive thing the panel does, and none of the intermediate frames are
+   ever seen. Edits are coalesced into one evaluation per animation frame
+   here, and the record is written once the gesture settles. Explicit actions
+   (add, remove, reorder, apply) keep calling updateModifiersOnScene directly. */
+let modifierUpdateHandle = 0;
+let modifierUpdateTarget = null;
+function scheduleModifierUpdate(targetObj, immediate = false) {
+  if (targetObj) modifierUpdateTarget = targetObj;
+  const run = () => {
+    modifierUpdateHandle = 0;
+    const target = modifierUpdateTarget;
+    modifierUpdateTarget = null;
+    updateModifiersOnScene(target || undefined);
+  };
+  if (immediate) {
+    if (modifierUpdateHandle && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(modifierUpdateHandle);
+    modifierUpdateHandle = 0;
+    run();
+    return true;
+  }
+  if (modifierUpdateHandle) return true;
+  modifierUpdateHandle = typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame(run)
+    : setTimeout(run, 16);
+  return true;
+}
+window.scheduleModifierUpdate = scheduleModifierUpdate;
+
+let feSaveProjectSoonHandle = 0;
+function feSaveProjectSoon() {
+  if (typeof saveCurrentProjectAsRecent !== 'function') return 0;
+  if (feSaveProjectSoonHandle) clearTimeout(feSaveProjectSoonHandle);
+  feSaveProjectSoonHandle = setTimeout(() => {
+    feSaveProjectSoonHandle = 0;
+    if (typeof saveCurrentProjectAsRecent === 'function') saveCurrentProjectAsRecent();
+  }, 350);
+  return 1;
+}
+window.feSaveProjectSoon = feSaveProjectSoon;
 
 const FLUID_PRESETS = {
   // Liquid sub-types (Water, Honey, Oil, Slime)
@@ -12116,8 +11998,11 @@ function createModifierField(mod, index, field) {
       mod.values[label] = parseFloat(input.value);
       const targetObj = getActiveObjectMesh ? getActiveObjectMesh() : null;
       if (targetObj) targetObj.userData.forceModUpdate = true;
-      updateModifiersOnScene();
+      scheduleModifierUpdate(targetObj);
     };
+    /* Releasing the slider evaluates the value it lands on at once, instead of
+       leaving the shape one frame behind the number. */
+    input.onchange = () => scheduleModifierUpdate(null, true);
     wrapper.append(labelEl, input);
   } else if (type === "check") {
     const input = document.createElement("input");
@@ -12129,7 +12014,7 @@ function createModifierField(mod, index, field) {
       mod.values[label] = input.checked;
       const targetObj = getActiveObjectMesh ? getActiveObjectMesh() : null;
       if (targetObj) targetObj.userData.forceModUpdate = true;
-      updateModifiersOnScene();
+      scheduleModifierUpdate(targetObj, true);
     };
     wrapper.appendChild(labelEl);
   } else if (type === "select") {
@@ -12536,10 +12421,10 @@ if (modSearchInput) {
 const modifiersSheetEl = document.getElementById('modifiers-sheet');
 if (modifiersSheetEl) {
   modifiersSheetEl.addEventListener('input', () => {
-    updateModifiersOnScene();
+    scheduleModifierUpdate();
   });
   modifiersSheetEl.addEventListener('change', () => {
-    updateModifiersOnScene();
+    scheduleModifierUpdate(null, true);
   });
 }
 

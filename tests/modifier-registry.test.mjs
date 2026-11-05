@@ -39,6 +39,14 @@ test('critical Boolean is operand-backed; unsupported rig/cage modifiers fail ex
   assert.doesNotMatch(evaluator,/applyLatticeModifier\(currentGeo, inf/);
 });
 
-test('Final3D export includes each object’s modifier configuration',()=>{
-  assert.match(html,/modifiers:\s*\(obj\.userData\?\.modStack\s*\|\|\s*\[\]\)\.map/);
+test('the project file carries each object’s modifier configuration',()=>{
+  /* The hand-rolled .final3d writer used to spell the stack out itself, one
+     `modifiers: (obj.userData?.modStack || []).map(...)` per object. The project
+     file (`.fe3d` / `.fe3a`, fe-project.js) stores the engine's own autosave
+     blob instead, and every object's userData - where modStack lives - travels
+     inside it; tests/fe-project.test.mjs reads that back out of the bytes. */
+  assert.ok(!/modifiers:\s*\(obj\.userData\?\.modStack/.test(html), 'one scene description, not two');
+  assert.ok(html.includes('<script src="fe-project.js"></script>'), 'the project writer is shipped');
+  const project=readFileSync(appPath('fe-project.js'),'utf8');
+  assert.ok(project.includes('serializeAutosave()'), 'and it saves the scene through the engine round trip');
 });

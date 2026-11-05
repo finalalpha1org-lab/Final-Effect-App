@@ -221,7 +221,7 @@
     '⚠': 'warning', '⏱': 'clock', '⏳': 'clock', '❓': 'help', '📋': 'list', '🎲': 'dice',
     '📊': 'activity', '📈': 'activity', '🧪': 'flask', '🔬': 'flask', '💾': 'save', '📤': 'upload',
     '📥': 'download', '📲': 'phone', '📱': 'phone', '🖥': 'desktop', '💻': 'desktop', '🔧': 'gear',
-    '🛠': 'sliders', '🧩': 'nodes', '🕸': 'nodes', '⌗': 'hash', '🟢': 'dot', '🔵': 'dot',
+    '🛠': 'sliders', '🧩': 'nodes', '🕸': 'nodes', '⌗': 'hash', '🟢': 'dot', '🟩': 'dot', '🔵': 'dot',
     '🟠': 'dot', '🟡': 'dot', '🔴': 'dot', '⚪': 'dot', '⚫': 'dot', '⚡': 'bolt', '💤': 'moon',
     '✋': 'pin', '🖐': 'pin', '👆': 'pin', '⇧': 'arrowUp', '→': 'arrowRight', '←': 'arrowRight',
     '▼': 'chevronDown', '▶︎': 'play', '⛶': 'grid', '◼': 'stop', '◻': 'shape', '●': 'dot',

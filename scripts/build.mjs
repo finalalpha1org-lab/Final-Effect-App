@@ -38,6 +38,8 @@ if (hasPublicDir) {
     "volume-atlas.js",
     "volume-library.js",
     "volume-library.bin",
+    "fe-poly.js",
+    "fe-project.js",
     "simulationCore.js",
     "simulation_solver.wasm",
     "fe-cpp-engine.js",
@@ -61,6 +63,10 @@ if (hasPublicDir) {
    browser assets under public/, so those artifacts are staged into the client
    directory here instead. */
 copyFileSync("wasm/fe_core_engine.wasm", "build/client/fe_core_engine.wasm");
+/* The modifier tests and the standalone runner load the kernel from the
+   repository root. It is a build artifact and gitignored, so a fresh clone had
+   no engine to test until this wrote one there. */
+copyFileSync("wasm/fe_core_engine.wasm", "fe_core_engine.wasm");
 if (existsSync("wasm/simulation_solver.wasm")) {
   copyFileSync("wasm/simulation_solver.wasm", "build/client/simulation_solver.wasm");
 } else if (existsSync(srcPath("simulation_solver.wasm"))) {
@@ -110,6 +116,8 @@ const minifiableJs = [
   "modifier-engine.js",
   "volume-atlas.js",
   "volume-library.js",
+  "fe-poly.js",
+  "fe-project.js",
   "simulationCore.js",
   "fe-cpp-engine.js",
 ];
@@ -167,6 +175,8 @@ const WORKSPACE_SCRIPTS = [
   "volume-library.js",
   "simulationCore.js",
   "modifier-engine.js",
+  "fe-poly.js",
+  "fe-project.js",
   "fe-cpp-engine.js",
 ];
 
@@ -254,6 +264,8 @@ const standaloneAppHtml = createStandaloneAppHtml(
     feIcons: readFileSync(srcPath("fe-icons.js"), "utf8"),
     feTaa: readFileSync(srcPath("fe-taa.js"), "utf8"),
     volumeLibrary: readFileSync(srcPath("volume-library.js"), "utf8"),
+    fePoly: readFileSync(srcPath("fe-poly.js"), "utf8"),
+    feProject: readFileSync(srcPath("fe-project.js"), "utf8"),
     simulationCore: readFileSync(srcPath("simulationCore.js"), "utf8"),
     modifierEngine: readFileSync(srcPath("modifier-engine.js"), "utf8"),
     feCppEngine: readFileSync(srcPath("fe-cpp-engine.js"), "utf8"),

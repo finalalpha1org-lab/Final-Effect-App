@@ -156,14 +156,20 @@ test('C++ Sculpt & Vertex Paint kernels support symmetry and normal recomputatio
   assert.ok(Math.abs(outP[1] - outP[4]) < 1e-5, 'Mirror X symmetry should displace both sides equally');
 });
 
-test('UI shell wires C++ Animation Studio, Render Engine, Sculpt Mode, GPU Tier, PWA & Capacitor', () => {
+test('UI shell wires C++ Animation Studio, Render Engine, Edit Mode, GPU Tier, PWA & Capacitor', () => {
   const html = readFileSync(appPath('index.html'), 'utf8');
   const bridge = readFileSync(appPath('fe-cpp-engine.js'), 'utf8');
 
   assert.ok(html.includes('<script src="fe-cpp-engine.js"></script>'));
   assert.ok(html.includes('id="anim-dopesheet-canvas"'));
   assert.ok(html.includes('id="render-engine-modal"'));
-  assert.ok(html.includes('id="cpp-sculpt-paint-bar"'));
+  /* Sculpt Mode, Vertex Paint, Weight Paint and Texture Paint were offered but
+     never finished; this build is Object Mode and Edit Mode only (see
+     LOCAL-PATCHES.md). The brush bar is gone and must not come back by
+     accident - if a sculpt mode returns it belongs to a real brush pipeline. */
+  assert.ok(!html.includes('id="cpp-sculpt-paint-bar"'), 'the half-finished sculpt bar must stay gone');
+  assert.match(html, /modes:\[\['object','Object Mode'\],\['edit','Edit Mode'\]\]/,
+    'the mode dropdown offers Object Mode and Edit Mode and nothing else');
   assert.ok(html.includes('id="mobile-quick-hud"'));
   assert.ok(html.includes('id="set-gpu-tier"'));
   assert.ok(html.includes('rel="manifest" href="./manifest.webmanifest"'));
@@ -189,6 +195,8 @@ test('standalone 1-file portable build embeds C++20 WASM and passes the live sel
     workspaceExport: readFileSync(appPath('workspace-export.js'), 'utf8'),
     editMode: readFileSync(appPath('edit-mode.js'), 'utf8'),
     volumeLibrary: readFileSync(appPath('volume-library.js'), 'utf8'),
+    fePoly: readFileSync(appPath('fe-poly.js'), 'utf8'),
+    feProject: readFileSync(appPath('fe-project.js'), 'utf8'),
     simulationCore: 'window.__simStub = true;',
     modifierEngine: 'window.__modStub = true;',
     feCppEngine: bridge,

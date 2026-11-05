@@ -1,6 +1,6 @@
 /* Bumped whenever the shipped shell changes so installed clients drop stale
    copies of index.html / the wasm artifact on activate. */
-const CACHE_NAME = 'final-effect-cpp-v45';
+const CACHE_NAME = 'final-effect-cpp-v46';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -19,6 +19,8 @@ const CORE_ASSETS = [
   './simulationCore.js',
   './simulation_solver.wasm',
   './modifier-engine.js',
+  './fe-poly.js',
+  './fe-project.js',
   './favicon.svg',
   './manifest.webmanifest',
   /* The shell loads one bundle instead of a dozen separate scripts, and three.js

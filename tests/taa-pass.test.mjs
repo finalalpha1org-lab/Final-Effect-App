@@ -154,7 +154,13 @@ test('the workspace wires the pass, exposes both toggles and keeps a fallback',(
   assert.ok(html.includes('id="ws-taa"')&&html.includes('id="ws-taa-blend"'),'the viewport sheet controls it');
   assert.ok(html.includes('id="set-taa"')&&html.includes('id="set-taa-blend"'),'the global sheet stores it');
   assert.ok(html.includes('taa:true'),'enabled by default');
-  assert.ok(html.includes('if (this.taa) this.taa.reset();'),'a resize clears the history');
+  /* A resize reallocates the history targets and throws the old frames away;
+     letting the pass catch up on the next frame stretched a frame drawn from
+     the stale target across the screen. */
+  const resize = html.slice(html.indexOf('this.r.setSize(w,h,false);'),
+    html.indexOf('if (typeof updateCameraFrame === \'function\') updateCameraFrame();'));
+  assert.ok(resize.includes('this.taa.setSize?.(db.x, db.y);'),'a resize resizes the history targets');
+  assert.ok(resize.includes('this.taa.reset();'),'a resize clears the history');
 
   const core=readFileSync('simulationCore.js','utf8');
   assert.ok(core.includes('uFrame'),'the volume raymarch is frame-indexed for the history');
