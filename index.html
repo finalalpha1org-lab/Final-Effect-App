@@ -2593,6 +2593,10 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('cone')"><i data-ico="cone"></i><span>Cone</span></button>
     <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('torus')"><i data-ico="torus"></i><span>Torus</span></button>
     <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('plane')"><i data-ico="plane"></i><span>Plane</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('grid')"><i data-ico="meshgrid"></i><span>Grid</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('ring')"><i data-ico="ring"></i><span>Ring</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('quadsphere')"><i data-ico="quadsphere"></i><span>Quad Sphere</span></button>
+    <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('knot')"><i data-ico="knot"></i><span>Knot</span></button>
     <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('camera')"><i data-ico="camera"></i><span>Camera</span></button>
     <button class="add-3d-card-btn" onclick="addNewObjectAtCursor('light')"><i data-ico="bulb"></i><span>Light</span></button>
   </div>
@@ -5544,6 +5548,54 @@ function closeAdd3DModal() {
 window.closeAdd3DModal = closeAdd3DModal;
 
 let customObjCounter = 1;
+
+/* ---- The mesh library behind the Add 3D Element sheet --------------------
+   Every primitive is listed once here: the sheet names it, this builds it, and
+   `tests/primitives-quads.test.mjs` runs each one through the real edit kernel
+   to check the faces it ends up with. That last part is the reason the table
+   exists at all - see the note below it about quads.
+
+   `lift` is how far above the 3D cursor the object sits, so it spawns standing
+   on the grid instead of half sunk into it. `flat` turns a shape that is drawn
+   in the XY plane (a plane, a grid, a ring) to lie on the ground. */
+const PRIMITIVE_MESHES = {
+  cube:     { label: 'Cube',      lift: 0.70, build: () => new THREE.BoxGeometry(1.4, 1.4, 1.4) },
+  sphere:   { label: 'Sphere',    lift: 0.80, build: () => new THREE.SphereGeometry(0.8, 32, 32) },
+  cylinder: { label: 'Cylinder',  lift: 0.70, build: () => new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32) },
+  cone:     { label: 'Cone',      lift: 0.70, build: () => new THREE.ConeGeometry(0.8, 1.4, 32) },
+  torus:    { label: 'Torus',     lift: 0.70, build: () => new THREE.TorusGeometry(0.7, 0.25, 16, 32) },
+  plane:    { label: 'Plane',     lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2) },
+  grid:     { label: 'Grid',      lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2, 8, 8) },
+  ring:     { label: 'Ring',      lift: 0.01, flat: true, build: () => new THREE.RingGeometry(0.5, 0.9, 48) },
+  quadsphere: { label: 'Quad Sphere', lift: 0.85, build: () => createQuadSphereGeometry(0.85, 12) },
+  knot:     { label: 'Knot',      lift: 0.78, build: () => new THREE.TorusKnotGeometry(0.6, 0.18, 96, 12) }
+};
+
+/* A sphere out of quads.
+
+   three's SphereGeometry is a latitude/longitude grid, so every face is a quad
+   except the two rows the poles pinch into triangles - Blender's UV sphere has
+   the same two rows, which is why it is kept. A cube whose corners are pushed
+   out to the radius has no pole at all: all six faces are subdivided into
+   squares, the squares stay quads after the projection, and the editor shows a
+   surface with no triangle anywhere in it. */
+function createQuadSphereGeometry(radius = 0.85, segments = 12) {
+  const geometry = new THREE.BoxGeometry(radius * 2, radius * 2, radius * 2, segments, segments, segments);
+  const position = geometry.attributes.position;
+  const point = new THREE.Vector3();
+  for (let i = 0; i < position.count; i++) {
+    point.fromBufferAttribute(position, i);
+    if (point.lengthSq() < 1e-12) continue;
+    point.normalize().multiplyScalar(radius);
+    position.setXYZ(i, point.x, point.y, point.z);
+  }
+  position.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 function addNewObjectAtCursor(type) {
   closeAdd3DModal();
   const eng = FE.engines?.core;
@@ -5560,31 +5612,12 @@ function addNewObjectAtCursor(type) {
     wireframe: currentShadingMode === 'wireframe'
   });
 
-  if (type === 'cube') {
-    name = `Cube_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), mat);
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.7, 0));
-  } else if (type === 'sphere') {
-    name = `Sphere_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 32), mat);
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.8, 0));
-  } else if (type === 'cylinder') {
-    name = `Cylinder_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32), mat);
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.7, 0));
-  } else if (type === 'cone') {
-    name = `Cone_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.4, 32), mat);
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.7, 0));
-  } else if (type === 'torus') {
-    name = `Torus_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.25, 16, 32), mat);
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.7, 0));
-  } else if (type === 'plane') {
-    name = `Plane_${customObjCounter++}`;
-    mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, 0.01, 0));
+  const spec = PRIMITIVE_MESHES[type];
+  if (spec) {
+    name = `${spec.label}_${customObjCounter++}`;
+    mesh = new THREE.Mesh(spec.build(), mat);
+    if (spec.flat) mesh.rotation.x = -Math.PI / 2;
+    mesh.position.copy(cursorPos).add(new THREE.Vector3(0, spec.lift, 0));
   } else if (type === 'camera') {
     if (!eng.blenderCam) {
       eng.blenderCam = createBlenderCameraObject();
@@ -5625,7 +5658,8 @@ function addNewObjectAtCursor(type) {
 
   if (mesh) {
     const existingNames = new Set(Object.values(eng.customObjects || {}).map(obj => obj?.name).filter(Boolean));
-    while (existingNames.has(name)) name = `${type.charAt(0).toUpperCase() + type.slice(1)}_${customObjCounter++}`;
+    const baseLabel = spec ? spec.label : type.charAt(0).toUpperCase() + type.slice(1);
+    while (existingNames.has(name)) name = `${baseLabel}_${customObjCounter++}`;
     mesh.name = name;
     mesh.castShadow = true;
     mesh.receiveShadow = true;

@@ -174,11 +174,21 @@ test('the Add 3D Element sheet draws real primitive icons, not emoji',()=>{
   assert.ok(start > 0 && end > start);
   const body = page.slice(start,end);
   const buttons = [...body.matchAll(/<button class="add-3d-card-btn"[^>]*><i data-ico="([a-z0-9]+)"><\/i><span>([^<]+)<\/span>/g)];
-  assert.equal(buttons.length,8,`all eight primitives are declarative icons, found ${buttons.length}`);
+  /* Ten meshes, then the camera and the light. The four mesh cards added with
+     the mesh library (Grid, Ring, Quad Sphere, Knot) came with their own
+     outlines, so every card on the sheet is still geometry. */
+  assert.equal(buttons.length,12,`all twelve cards are declarative icons, found ${buttons.length}`);
   const byLabel = Object.fromEntries(buttons.map(b=>[b[2],b[1]]));
   assert.equal(byLabel.Cylinder,'cylinder');
   assert.equal(byLabel.Cone,'cone');
   assert.equal(byLabel.Plane,'plane');
+  assert.equal(byLabel.Grid,'meshgrid');
+  assert.equal(byLabel.Ring,'ring');
+  assert.equal(byLabel['Quad Sphere'],'quadsphere');
+  assert.equal(byLabel.Knot,'knot');
   assert.equal(byLabel.Light,'bulb');
+  assert.deepEqual(Object.keys(byLabel), [
+    'Cube','Sphere','Cylinder','Cone','Torus','Plane','Grid','Ring','Quad Sphere','Knot','Camera','Light'
+  ], 'the sheet offers these twelve cards, in this order');
   assert.ok(!EMOJI.test(body),'no emoji is left in the Add 3D sheet');
 });

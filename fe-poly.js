@@ -19,10 +19,18 @@
        share an edge share a position but not an index;
      - two triangles that share an edge and face the same way are one quad of the
        model, and the edge between them is not an edge of the model;
-     - the candidate pairs are taken shortest shared edge first (the diagonal of a
-       quad is longer than its sides), each triangle is used at most once, and a
-       pair is only accepted when the four corners form a convex quad, so a
-       sphere's neighbouring triangles - which differ in angle - are never fused;
+     - "face the same way" is measured two ways, because a quad on a curved
+       surface is not flat: a pair that is coplanar to within the wireframe angle
+       is one face, and so is a pair whose shared edge is the longest side of
+       both triangles while the two of them fold by less than 60 degrees. The
+       second rule is the one the edit kernel pairs faces with, so a Quad Sphere
+       or a knot - every face of which is a slightly warped quad - draws the same
+       faces in Object Mode as it does in Edit Mode, instead of growing a
+       diagonal across each of them;
+     - the candidate pairs are taken longest shared edge first (the diagonal of a
+       quad is longer than the sides it shares with its neighbours), each
+       triangle is used at most once, and a pair is only accepted when the four
+       corners form a convex quad;
      - everything left over stays a triangle.
 
    Faces hold three or more vertices, so an n-gon that arrives from a loader is
@@ -38,6 +46,13 @@
      one surface, so the edge between them is internal structure. */
   const QUAD_ANGLE_DEG = 0.6;
   const COS_FLAT = Math.cos((QUAD_ANGLE_DEG * Math.PI) / 180);
+  /* The second pairing rule: a pair that is not flat may still be one face, up
+     to this fold. It is the edit kernel's number (see buildQuadGroups in
+     cpp/src/fe_editmesh.cpp) and for the same reason - an edit bends a face, and
+     the face must stay one face - while a real fold, a cone's or a cube's
+     ninety degrees, still shows as two. */
+  const QUAD_ANGLE_TOLERANT_DEG = 60;
+  const COS_QUAD = Math.cos((QUAD_ANGLE_TOLERANT_DEG * Math.PI) / 180);
 
   /* Vertices within a tenth of a millimetre at unit scale are the same vertex. */
   const QUANT = 1e4;
@@ -146,6 +161,23 @@
     /* Convexity: going round a-c-b-d, every turn must bend the same way, so the
        four corners enclose a real quad and not a folded or arrow-shaped one.
        The turn is measured against the quad's own normal. */
+    /* The shared edge is a quad's diagonal when it is the longest side of both
+       of its triangles: in a rectangle the diagonal is the hypotenuse, and the
+       sides two quads share are shorter than the diagonals that touch them. The
+       tolerance is 2%, so a deformation that brings a side close to the
+       diagonal's length does not tear the face into two. */
+    const diagonalEdge = (t0, t1, a, b) => {
+      const limit = length2(a, b) * 1.02;
+      for (const t of [t0, t1]) {
+        for (let k = 0; k < 3; k++) {
+          const v = corners[t * 3 + k];
+          const w = corners[t * 3 + ((k + 1) % 3)];
+          if ((v === a && w === b) || (v === b && w === a)) continue;
+          if (length2(v, w) > limit) return false;
+        }
+      }
+      return true;
+    };
     const convex = (a, c, b, d) => {
       const quad = [point(a), point(c), point(b), point(d)];
       const ux = quad[2][0] - quad[0][0], uy = quad[2][1] - quad[0][1], uz = quad[2][2] - quad[0][2];
@@ -171,10 +203,24 @@
     edges.forEach((record) => {
       const { a, b, t0, t1 } = record;
       if (t1 < 0) return;
-      if (!flat(t0, t1)) return;
+      if (!flat(t0, t1)) {
+        /* Not coplanar: one face only if the shared edge is the diagonal of a
+           quad and the two halves do not fold away from each other. */
+        const fold = normals[t0 * 3] * normals[t1 * 3] +
+                     normals[t0 * 3 + 1] * normals[t1 * 3 + 1] +
+                     normals[t0 * 3 + 2] * normals[t1 * 3 + 2];
+        if (fold < COS_QUAD) return;
+        if (!diagonalEdge(t0, t1, a, b)) return;
+      }
       candidates.push({ a, b, t0, t1, len: length2(a, b) });
     });
-    candidates.sort((x, y) => x.len - y.len);
+    /* Longest shared edge first, which is the order the edit kernel uses. The
+       diagonal of a drawn quad is longer than the sides it shares with its
+       neighbours, so taking the long ones first rebuilds the quads the model was
+       built from; taking the short ones first (which this did) pairs across a
+       grid's cell borders instead, and a square grid's borders are the same
+       length as its diagonals' neighbours, so faces came out the wrong way. */
+    candidates.sort((x, y) => y.len - x.len);
 
     const faces = [];
     const faceTris = [];
