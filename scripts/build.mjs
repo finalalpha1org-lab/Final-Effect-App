@@ -63,6 +63,10 @@ if (hasPublicDir) {
    browser assets under public/, so those artifacts are staged into the client
    directory here instead. */
 copyFileSync("wasm/fe_core_engine.wasm", "build/client/fe_core_engine.wasm");
+/* The modifier tests and the standalone runner load the kernel from the
+   repository root. It is a build artifact and gitignored, so a fresh clone had
+   no engine to test until this wrote one there. */
+copyFileSync("wasm/fe_core_engine.wasm", "fe_core_engine.wasm");
 if (existsSync("wasm/simulation_solver.wasm")) {
   copyFileSync("wasm/simulation_solver.wasm", "build/client/simulation_solver.wasm");
 } else if (existsSync(srcPath("simulation_solver.wasm"))) {

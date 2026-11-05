@@ -96,9 +96,13 @@
     },
     renderState: {
       engine: 'cycles_cpp', // 'cycles_cpp' | 'eevee_cpp'
-      aspectPreset: '9:16', // Default mobile-editor friendly preset, switchable to 16:9, 1:1, 21:9
+      /* These defaults are the panel's own initial values. They used to differ
+         (9:16 and 32 SPP), so anything that read the state before the first
+         render - the range readout, the preview window - described a render the
+         dialog was not showing. */
+      aspectPreset: '16:9', // the panel's default: 16:9, 9:16, 1:1 or 21:9
       resScale: 'hd',       // 'draft' | 'hd' | 'fhd'
-      targetSamples: 32,
+      targetSamples: 8,
       bounces: 2,
       tonemap: 0,           // 0=ACES, 1=AgX, 2=Reinhard, 3=Filmic, 4=Linear
       exposure: 1.25,
@@ -478,6 +482,13 @@
         /* The kernel takes one channel index here (not a bitmask - the mask form
            belongs to the range calls), and 0xFFFFFFFF means every channel. */
         const removed = this.exports.fe_anim_remove_keyframe_at(slot, channel, frame, 0.5);
+        if (removed > 0) {
+          if (this.selectedKey && this.selectedKey.slot === slot && this.selectedKey.channel === channel &&
+              Math.abs(this.selectedKey.frame - frame) <= 0.5) {
+            this.selectedKey = null;
+          }
+          this.evaluateSceneAtFrame(frame);
+        }
         refreshAnimationStudioUI();
         if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
         if (!silent) window.FE?.toast?.(removed > 0 ? ('\u25c7 removed ' + label + ' key on ' + name + ' at frame ' + frame) : ('No ' + label + ' key on frame ' + frame));
@@ -502,6 +513,13 @@
       }
       let removed = 0;
       for (const c of channels) removed += this.exports.fe_anim_remove_keyframe_at(slot, c, frame, 0.5);
+      if (removed > 0) {
+        const sel = this.selectedKey;
+        if (sel && sel.slot === slot && channels.includes(sel.channel) && Math.abs(sel.frame - frame) <= 0.5) {
+          this.selectedKey = null;
+        }
+        this.evaluateSceneAtFrame(frame);
+      }
       refreshAnimationStudioUI();
       if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
       if (!silent) {
@@ -517,6 +535,16 @@
       const slot = this.getSlotForObjectId(objId);
       const frame = Number(window.timelineConfig?.currentFrame || 0);
       const removed = this.exports.fe_anim_remove_keyframe_at(slot, 0xFFFFFFFF, frame, 0.5);
+      if (removed > 0) {
+        /* A selection on a key that just went away would leave Duplicate and
+           Delete lit, and the object kept the pose the deleted key held: put
+           the scene back on what the remaining keys say. */
+        if (this.selectedKey && this.selectedKey.slot === slot &&
+            Math.abs(this.selectedKey.frame - frame) <= 0.5) {
+          this.selectedKey = null;
+        }
+        this.evaluateSceneAtFrame(frame);
+      }
       refreshAnimationStudioUI();
       if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
       window.FE?.toast?.(removed > 0 ? `Removed ${removed} keyframe channel(s) at Frame ${frame}` : `No keyframe on Frame ${frame}`);
@@ -528,6 +556,9 @@
       const objId = window.FE?.getActiveObjectId?.() || 'cube';
       const slot = this.getSlotForObjectId(objId);
       this.exports.fe_anim_clear_object(slot);
+      /* The selection pointed at a key that no longer exists: Duplicate and
+         Delete would still light up and then do nothing. */
+      this.selectedKey = null;
       refreshAnimationStudioUI();
       if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
       window.FE?.toast?.(`Cleared animation keys for ${window.getActiveObjectDisplayName?.() || objId}`);
@@ -612,6 +643,14 @@
           if (this.exports.fe_anim_get_keyframe_count(slot, 9) > 0) {
             eng.blenderLight.light.intensity = Math.max(0, v[9]);
           }
+        }
+
+        /* Channel 10 is roughness: it was keyed and drawn in the dope sheet but
+           never read back, so a roughness key did nothing to the material. */
+        if (objId !== 'camera' && objId !== 'light' &&
+            this.exports.fe_anim_get_keyframe_count(slot, 10) > 0 &&
+            obj.material && typeof obj.material.roughness === 'number') {
+          obj.material.roughness = Math.max(0, Math.min(1, v[10]));
         }
 
         obj.updateMatrix();
@@ -1068,6 +1107,10 @@
       }
       this.renderState.isRendering = true;
       this.renderState.cancelRequested = false;
+      /* A finished render leaves the bar at 100%; the next one has to start
+         from nothing or the dialog looks like it is already done. */
+      if (barEl) barEl.style.width = '0%';
+      if (statusEl) statusEl.textContent = 'Starting…';
 
       const targetSpp = Math.max(1, this.renderState.targetSamples);
       const bounces = this.renderState.bounces;
@@ -1220,18 +1263,25 @@
 
     downloadRenderedStill() {
       const canvas = document.getElementById('render-preview-canvas');
-      if (!canvas || !canvas.width) return;
+      if (!canvas) return false;
       const X = window.FERenderExport;
-      if (!X) return;
+      if (!X) { window.FE?.toast?.('The export module did not load.'); return false; }
+      /* The button used to do nothing at all when no frame had been rendered
+         yet, which reads as a broken button. */
+      if (!canvas.width || !canvas.height) {
+        window.FE?.toast?.('Render a frame first — there is no image to save yet.');
+        return false;
+      }
       const frame = Number(window.timelineConfig?.currentFrame || 0);
-      X.encodeStill(canvas, this.stillFormat().id, this.stillQuality()).then(async (encoded) => {
+      return X.encodeStill(canvas, this.stillFormat().id, this.stillQuality()).then(async (encoded) => {
         if (!encoded) {
           window.FE?.toast?.('This browser could not encode the image.');
-          return;
+          return false;
         }
         const name = X.fileName('FinalEffect', canvas.width, canvas.height, `F${frame}`, encoded.ext);
         const result = await X.saveBlob(encoded.blob, name);
         window.FE?.toast?.(result.method === 'share' ? `Saved ${name}` : `Downloading ${name}`);
+        return true;
       });
     },
 
@@ -1724,6 +1774,9 @@
     extra: { label: 'Keying Set: Lens / Light', channels: [9, 10] }
   };
 
+  const INTERP_LABELS = ['Bezier Smooth', 'Linear', 'Step', 'Ease In', 'Ease Out', 'Bounce'];
+  const EXTRAP_LABELS = ['Hold', 'Loop Cycle', 'Ping-Pong'];
+
   function keyingSetChannels(id) {
     return (KEYING_SETS[id] || KEYING_SETS.transform).channels.slice();
   }
@@ -1782,6 +1835,53 @@
       this.keyingSet = KEYING_SETS[id] ? id : 'transform';
       refreshAnimationStudioUI();
       window.FE?.toast?.((KEYING_SETS[this.keyingSet]).label.replace('Keying Set: ', 'Keying set → '));
+    },
+
+    /* Curve interpolation is a property of a key, and the dropdown only ever
+       set the default for *new* keys: pick "Linear" with a key selected and
+       nothing on screen changed. With a key selected it now re-keys that key at
+       its own frame and value with the chosen curve (the kernel replaces a key
+       inserted at an existing frame), and without a selection it stays the
+       default for the keys about to be made. */
+    setAnimationInterpolation(mode) {
+      const value = Math.max(0, Math.min(5, parseInt(mode, 10) || 0));
+      this.currentInterp = value;
+      const sel = this.selectedKey;
+      if (!this.ready || !sel) {
+        refreshAnimationStudioUI();
+        return 0;
+      }
+      const key = readAllKeys(sel.slot, sel.channel)
+        .find(entry => Math.abs(entry.frame - sel.frame) <= 0.01);
+      if (!key) {
+        window.FE?.toast?.('That key is no longer in the channel.');
+        return 0;
+      }
+      this.exports.fe_arena_reset();
+      this.exports.fe_anim_insert_keyframe(sel.slot, sel.channel, key.frame, key.value, value);
+      this.evaluateSceneAtFrame(sceneTimeConfig().curF);
+      refreshAnimationStudioUI();
+      if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+      window.FE?.toast?.(`${CHANNEL_LABELS[sel.channel]} key at frame ${Math.round(key.frame)} → ${INTERP_LABELS[value] || 'Bezier'}`);
+      return 1;
+    },
+
+    /* Track extrapolation: outside the keyed range the track holds, loops or
+       ping-pongs. The dropdown used to write the mode and redraw the dope sheet
+       without re-evaluating the scene, so the viewport kept showing the old
+       pose until something else moved the playhead. */
+    setTrackExtrapolation(mode) {
+      if (!this.ready) return 0;
+      const extrap = Math.max(0, Math.min(2, parseInt(mode, 10) || 0));
+      const objId = window.FE?.getActiveObjectId?.() || 'cube';
+      const slot = this.getSlotForObjectId(objId);
+      this.exports.fe_arena_reset();
+      const set = this.exports.fe_anim_set_extrapolation(slot, extrap);
+      this.evaluateSceneAtFrame(sceneTimeConfig().curF);
+      refreshAnimationStudioUI();
+      if (typeof window.renderTimelineRulerCanvas === 'function') window.renderTimelineRulerCanvas();
+      window.FE?.toast?.(`Track mode: ${EXTRAP_LABELS[extrap] || 'Hold'}`);
+      return set;
     },
 
     setAnimationEditorMode(mode) {
@@ -1852,13 +1952,17 @@
           }
         }
       } else {
-        /* The same rows the sheet draws: one per channel. */
+        /* The same rows the sheet draws: one per channel. The hit radius is
+           clamped to the row band, because a fixed 7 px reaches past a row that
+           is only ~12 px tall on a phone - tapping a Scale Y key could select
+           the Scale X key stacked above it. */
         const rows = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         const rowH = m.plotH / rows.length;
+        const radius = Math.max(3, Math.min(7, rowH * 0.45));
         rows.forEach((c, idx) => {
           const yMid = m.padT + idx * rowH + rowH * 0.5;
           for (const key of readAllKeys(slot, c)) {
-            consider(c, key.frame, key.value, m.frameToX(key.frame), yMid, 7);
+            consider(c, key.frame, key.value, m.frameToX(key.frame), yMid, radius);
           }
         });
       }
@@ -2183,6 +2287,11 @@
       const sheetOpen = !!(sheet && !sheet.hidden && sheet.style.display !== 'none');
       if (!this.motionTrail.enabled || !sheetOpen || !this.ready) { group.visible = false; return; }
 
+      /* Playback calls this once per frame for a path that only changes when a
+         key does. The line is left standing instead of being rebuilt 60 times
+         a second, which is what it cost on a phone. */
+      if (window.timelineConfig?.isPlaying) return;
+
       const objId = window.FE?.getActiveObjectId?.() || 'cube';
       const obj = window.getActiveObjectMesh?.();
       const slot = this.getSlotForObjectId(objId);
@@ -2192,7 +2301,9 @@
       const length = Math.max(2, Math.min(120, this.motionTrail.length | 0));
       const from = Math.max(startF, curF - length);
       const to = curF;
-      const count = Math.max(2, Math.round(to - from) + 1);
+      /* The sample block is 64 floats: asking for more used to give back a
+         truncated curve with a flat tail, so the count is clamped here. */
+      const count = Math.max(2, Math.min(64, Math.round(to - from) + 1));
 
       const base = this.readObjectChannels11(objId);
       this.exports.fe_arena_reset();
@@ -2217,10 +2328,20 @@
       const now = new T.Color(0xffd166);
       const old = new T.Color(0x6366f1);
       const mix = new T.Color();
+      /* The channels hold the object's own space; the trail lives in the scene,
+         so a parented object's path is carried through its parent first - the
+         same correction the onion skin makes. */
+      const parentWorld = obj.parent && obj.parent !== eng.sc ? obj.parent.matrixWorld : null;
+      const point = new T.Vector3();
       for (let i = 0; i < count; i++) {
-        positions[i * 3] = coords[0][i];
-        positions[i * 3 + 1] = coords[1][i];
-        positions[i * 3 + 2] = coords[2][i];
+        if (parentWorld) {
+          point.set(coords[0][i], coords[1][i], coords[2][i]).applyMatrix4(parentWorld);
+        } else {
+          point.set(coords[0][i], coords[1][i], coords[2][i]);
+        }
+        positions[i * 3] = point.x;
+        positions[i * 3 + 1] = point.y;
+        positions[i * 3 + 2] = point.z;
         mix.copy(old).lerp(now, count === 1 ? 1 : i / (count - 1));
         colors[i * 3] = mix.r;
         colors[i * 3 + 1] = mix.g;
@@ -2455,6 +2576,19 @@
       extrapSel.value = String(FECppEngine.exports.fe_anim_get_extrapolation(slot));
     }
 
+    /* The two curve dropdowns show what is actually in force: the selected
+       key's own curve, or the default the next key will be made with. */
+    const interpSel = document.getElementById('anim-interp-select');
+    if (interpSel) {
+      const sel = FECppEngine.selectedKey;
+      let shown = FECppEngine.currentInterp;
+      if (sel && FECppEngine.ready) {
+        const key = readAllKeys(sel.slot, sel.channel).find(entry => Math.abs(entry.frame - sel.frame) <= 0.01);
+        if (key) shown = key.interp;
+      }
+      interpSel.value = String(shown);
+    }
+
     const autoBtn = document.getElementById('btn-anim-autokey');
     if (autoBtn) {
       autoBtn.classList.toggle('active-autokey', FECppEngine.autoKey);
@@ -2640,7 +2774,7 @@
         { c: 0, label: 'Location X' }, { c: 1, label: 'Location Y' }, { c: 2, label: 'Location Z' },
         { c: 3, label: 'Rotation X' }, { c: 4, label: 'Rotation Y' }, { c: 5, label: 'Rotation Z' },
         { c: 6, label: 'Scale X' },    { c: 7, label: 'Scale Y' },    { c: 8, label: 'Scale Z' },
-        { c: 9, label: 'Lens' },       { c: 10, label: 'Light' }
+        { c: 9, label: 'Lens/Light' }, { c: 10, label: 'Roughness' }
       ];
       const rowH = m.plotH / rows.length;
 
@@ -2741,8 +2875,26 @@
   }
   window.renderDopeSheetAndCurveCanvas = renderDopeSheetAndCurveCanvas;
 
+  /* Which controls the chosen engine can honour. The path tracer takes samples
+     and bounces; the raster engine has neither, so leaving those two live makes
+     a user change a number that cannot do anything. They are disabled with a
+     reason instead of silently ignored. */
+  function syncRenderEngineEnabled() {
+    const engine = document.getElementById('render-engine-select')?.value || 'cycles_cpp';
+    const isPath = engine === 'cycles_cpp';
+    for (const id of ['render-samples-select', 'render-bounces-select']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.disabled = !isPath;
+      el.title = isPath ? '' : 'Only the path tracer takes samples and bounces; FE Eevee renders the WebGL frame once.';
+      const row = el.closest('.render-row');
+      if (row) row.style.opacity = isPath ? '' : '0.55';
+    }
+  }
+
   function syncRenderControlsFromUI() {
     const rs = FECppEngine.renderState;
+    syncRenderEngineEnabled();
     const getVal = (id, def) => {
       const el = document.getElementById(id);
       return el ? el.value : def;
@@ -2780,6 +2932,7 @@
     const previewToggle = document.getElementById('render-new-window');
     if (previewToggle && window.FERenderPreview) previewToggle.checked = window.FERenderPreview.enabled();
     FECppEngine.updateRenderRangeReadout();
+    syncRenderEngineEnabled();
     FECppEngine.startStillRender();
   }
   window.openRenderEngineModal = openRenderEngineModal;
