@@ -91,8 +91,14 @@ uint32_t g_quadPairCount = 0;
    build. They are consumed once: after an operation that changes the topology
    a declared ring describes vertices that may no longer be there, so the
    kernel goes back to the shape's own hints instead of holding a stale face. */
-constexpr uint32_t kMaxDeclFaces = 4096u;
-constexpr uint32_t kMaxDeclCorners = 16384u;
+/* The capacity is the mesh's own capacity, not a smaller budget: a face is at
+   least one triangle, so there are never more faces than triangles, and a
+   triangle carries three corners while a quad carries four for two triangles
+   and an n-gon n for n - 2. Three corners per triangle therefore covers every
+   mesh this kernel accepts, which makes the declaration a property of the mesh
+   instead of a second, smaller limit a user can walk into. */
+constexpr uint32_t kMaxDeclFaces = kMaxTris;
+constexpr uint32_t kMaxDeclCorners = kMaxTris * 3u;
 uint32_t g_declStart[kMaxDeclFaces + 1];
 uint32_t g_declRing[kMaxDeclCorners];
 uint32_t g_declFaces = 0;
@@ -149,11 +155,12 @@ namespace {
 constexpr uint32_t kHashBits = 17;
 constexpr uint32_t kHashSize = 1u << kHashBits;
 constexpr uint32_t kNoFace = 0xFFFFFFFFu;
-/* The most corners a declared face may have. A face is a polygon, and a
-   polygon with more than this in one mesh is a model problem, not an editor
-   one; the ring frame below is a fixed-size buffer because the kernel has no
-   allocator. */
-constexpr uint32_t kMaxRingCorners = 256u;
+/* The most corners one face may have. The ring frame below is a fixed buffer
+   because the kernel has no allocator, so there has to be a bound; this one is
+   larger than any polygon the vertex budget allows. A ring that somehow arrives
+   bigger is skipped on its own rather than failing the call, so one absurd face
+   cannot cost the mesh every other face it declared. */
+constexpr uint32_t kMaxRingCorners = 2048u;
 
 uint32_t g_hash[kHashSize];
 
@@ -583,10 +590,14 @@ uint32_t triangleApex(uint32_t t, uint32_t a, uint32_t b) {
 struct RingFrame {
   float nx, ny, nz, d;      /* plane: dot(n, p) = d */
   float scale;              /* how big the ring is, for a tolerance */
-  float px[kMaxRingCorners];
-  float py[kMaxRingCorners];
+  uint32_t n;               /* corners projected into the buffers below */
   uint32_t axis;            /* 0: xy, 1: xz, 2: yz - the projection used */
 };
+/* The projection lives in globals rather than inside the struct: the kernel has
+   no allocator, a face may have a thousand corners, and eight kilobytes of
+   stack for one would be a stack overflow waiting for a big n-gon. */
+float g_ringPX[kMaxRingCorners];
+float g_ringPY[kMaxRingCorners];
 
 bool ringFrame(const uint32_t* ring, uint32_t n, RingFrame& frame) {
   /* Newell's method: the normal of a polygon, and its centroid. */
@@ -616,26 +627,28 @@ bool ringFrame(const uint32_t* ring, uint32_t n, RingFrame& frame) {
      ring's area and no two corners of a convex face coincide. */
   const float ax = fe::absf(frame.nx), ay = fe::absf(frame.ny), az = fe::absf(frame.nz);
   frame.axis = (az >= ax && az >= ay) ? 0u : (ay >= ax ? 1u : 2u);
+  frame.n = n;
   for (uint32_t i = 0; i < n; ++i) {
     const uint32_t v = ring[i];
-    if (frame.axis == 0u) { frame.px[i] = M.x[v]; frame.py[i] = M.y[v]; }
-    else if (frame.axis == 1u) { frame.px[i] = M.x[v]; frame.py[i] = M.z[v]; }
-    else { frame.px[i] = M.y[v]; frame.py[i] = M.z[v]; }
+    if (frame.axis == 0u) { g_ringPX[i] = M.x[v]; g_ringPY[i] = M.y[v]; }
+    else if (frame.axis == 1u) { g_ringPX[i] = M.x[v]; g_ringPY[i] = M.z[v]; }
+    else { g_ringPX[i] = M.y[v]; g_ringPY[i] = M.z[v]; }
   }
   return true;
 }
 
 bool pointInRing(const RingFrame& frame, uint32_t n, float x, float y, float z) {
+  (void)n;   /* the frame carries how many corners it projected */
   float u, v;
   if (frame.axis == 0u) { u = x; v = y; }
   else if (frame.axis == 1u) { u = x; v = z; }
   else { u = y; v = z; }
   bool inside = false;
   for (uint32_t i = 0, j = n - 1; i < n; j = i++) {
-    const float yi = frame.py[i], yj = frame.py[j];
+    const float yi = g_ringPY[i], yj = g_ringPY[j];
     if ((yi > v) == (yj > v)) continue;
     const float t = (v - yi) / (yj - yi);
-    if (u < frame.px[i] + t * (frame.px[j] - frame.px[i])) inside = !inside;
+    if (u < g_ringPX[i] + t * (g_ringPX[j] - g_ringPX[i])) inside = !inside;
   }
   return inside;
 }
@@ -2844,21 +2857,29 @@ FE_EXPORT uint32_t fe_edit_set_faces(uint32_t faceCount, const uint32_t* starts,
   for (uint32_t f = 0; f < faceCount; ++f) {
     if (starts[f + 1] <= starts[f]) return 0;
     const uint32_t n = starts[f + 1] - starts[f];
-    if (n < 3 || n > kMaxRingCorners) return 0;
+    if (n < 3) continue;
+    /* A ring too large for the projection buffer is one face the mesh loses,
+       not a reason to lose the declaration: the shell would fall back to the
+       shape's hints for *every* face, which is a far bigger change than the one
+       face this skips. */
+    if (n > kMaxRingCorners) continue;
     uint32_t prev = kNoFace;
     uint32_t first = kNoFace;
     uint32_t kept = 0;
+    bool overflow = false;
     for (uint32_t i = 0; i < n; ++i) {
       const uint32_t slot = corners[starts[f] + i];
       if (slot >= g_slotFinalCount) return 0;
       const uint32_t v = g_slotFinal[slot];
       if (v == kNoFace || v == prev) continue;
       if (kept == 0) first = v;
-      if (total >= kMaxDeclCorners) return 0;
+      if (total >= kMaxDeclCorners) { overflow = true; break; }
       g_declRing[total++] = v;
       prev = v;
       ++kept;
     }
+    /* A ring that did not fit is dropped whole: half a polygon is not a face. */
+    if (overflow) { total -= kept; continue; }
     /* A ring closes: the last corner may not repeat the first one. */
     if (kept > 1 && g_declRing[total - 1] == first) { --total; --kept; }
     /* A ring the weld flattened is not a face: three builds a cone's side as a

@@ -5564,40 +5564,122 @@ let customObjCounter = 1;
    triangulation need it; a quad mesh is paired from its shape and comes out
    right on its own. */
 
-/* The rim of a cap that lies on the plane y = value, in the order a polygon
-   walks it: every vertex on that plane far enough from the middle to be a rim
-   vertex rather than the fan's centre, deduplicated by position (three gives
-   the cap and the wall their own copies of the same point), sorted by angle. */
-function feRingAroundY(geometry, value, eps = 1e-4) {
-  const position = geometry?.attributes?.position;
-  if (!position) return null;
-  const onPlane = [];
-  for (let i = 0; i < position.count; i++) {
-    if (Math.abs(position.getY(i) - value) <= eps) onPlane.push(i);
+/* A cap with no vertex in the middle of it.
+
+   three builds every cap as a triangle fan around a centre vertex, so a
+   cylinder arrives with a point in the middle of each end that the model does
+   not have, and Edit Mode draws it. Blender's cylinder has 64 vertices and a
+   single thirty-two sided face at each end. This is that cap: the rim ring, plus
+   the polygon's own triangulation - a fan from the ring's first corner, which
+   needs no vertex the face does not have.
+
+   The face it makes is returned with the geometry, as ring slots, because the
+   ring is the whole point: `feMergePieces` offsets it into the merged mesh and
+   `withFaces` hands it to both face models. */
+function feCapPiece(radius, segments, y, up) {
+  const positions = new Float32Array(segments * 3);
+  const normals = new Float32Array(segments * 3);
+  const uvs = new Float32Array(segments * 2);
+  for (let i = 0; i < segments; i++) {
+    /* The same expression three uses for a cylinder's rim - sin on x, cos on z -
+       so a cap vertex is bit-identical to the wall vertex it stands on and the
+       kernel's weld joins them; rounding it the other way round leaves a rim of
+       doubled points. */
+    const theta = (i / segments) * Math.PI * 2;
+    const sinTheta = Math.sin(theta);
+    const cosTheta = Math.cos(theta);
+    positions[i * 3] = radius * sinTheta;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = radius * cosTheta;
+    normals[i * 3] = 0; normals[i * 3 + 1] = up; normals[i * 3 + 2] = 0;
+    uvs[i * 2] = cosTheta * 0.5 + 0.5;
+    uvs[i * 2 + 1] = sinTheta * 0.5 + 0.5;
   }
-  if (onPlane.length < 4) return null;
-  let cx = 0, cz = 0;
-  for (const i of onPlane) { cx += position.getX(i); cz += position.getZ(i); }
-  cx /= onPlane.length; cz /= onPlane.length;
-  const radius = onPlane.map((i) => Math.hypot(position.getX(i) - cx, position.getZ(i) - cz));
-  const widest = Math.max(...radius);
-  if (!(widest > 1e-6)) return null;
+  /* One winding per side: seen from above (+Y) the ring runs the way three's
+     own arrays run, from below it is reversed, so the cap faces outwards. */
+  const indices = [];
+  for (let i = 1; i + 1 < segments; i++) {
+    if (up > 0) indices.push(0, i, i + 1);
+    else indices.push(0, i + 1, i);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
   const ring = [];
-  const seen = new Set();
-  for (let k = 0; k < onPlane.length; k++) {
-    if (radius[k] < widest * 0.5) continue;              /* the fan's middle vertex */
-    const i = onPlane[k];
-    /* Quantised, not toFixed: three's seam vertex sits at -1e-17 rather than 0,
-       and toFixed writes that as "-0.0000" - a different key for the same
-       point, which put a thirty third corner on every cylinder cap. */
-    const key = Math.round(position.getX(i) * 1e4) + ',' + Math.round(position.getY(i) * 1e4) + ',' + Math.round(position.getZ(i) * 1e4);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    ring.push({ slot: i, angle: Math.atan2(position.getZ(i) - cz, position.getX(i) - cx) });
+  for (let i = 0; i < segments; i++) ring.push(i);
+  return { geometry, rings: [ring] };
+}
+
+/* Join geometries into one mesh, moving each piece's declared faces to where
+   their corners landed. Only the attributes every piece has are carried
+   (position, normal, uv), which is what the primitive needs. */
+function feMergePieces(pieces) {
+  const parts = (pieces || []).filter((piece) => piece && piece.geometry && piece.geometry.attributes?.position);
+  if (!parts.length) return null;
+  const names = ['position', 'normal', 'uv'];
+  const vertexCount = parts.reduce((sum, piece) => sum + piece.geometry.attributes.position.count, 0);
+  const geometry = new THREE.BufferGeometry();
+  for (const name of names) {
+    if (!parts.every((piece) => piece.geometry.attributes[name])) continue;
+    const itemSize = parts[0].geometry.attributes[name].itemSize;
+    const array = new Float32Array(vertexCount * itemSize);
+    let at = 0;
+    for (const piece of parts) {
+      const source = piece.geometry.attributes[name].array;
+      array.set(source, at);
+      at += source.length;
+    }
+    geometry.setAttribute(name, new THREE.BufferAttribute(array, itemSize));
   }
-  if (ring.length < 3) return null;
-  ring.sort((a, b) => a.angle - b.angle);
-  return ring.map((entry) => entry.slot);
+  let indexCount = 0;
+  for (const piece of parts) {
+    const source = piece.geometry;
+    indexCount += source.index ? source.index.count : source.attributes.position.count;
+  }
+  const index = new Uint32Array(indexCount);
+  const rings = [];
+  let at = 0, base = 0;
+  for (const piece of parts) {
+    const source = piece.geometry;
+    const count = source.attributes.position.count;
+    if (source.index) {
+      const data = source.index.array;
+      for (let i = 0; i < data.length; i++) index[at++] = data[i] + base;
+    } else {
+      for (let i = 0; i < count; i++) index[at++] = base + i;
+    }
+    for (const ring of piece.rings || []) {
+      if (Array.isArray(ring)) rings.push(ring.map((slot) => slot + base));
+    }
+    base += count;
+  }
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.computeBoundingSphere();
+  geometry.computeBoundingBox();
+  return withFaces(geometry, rings);
+}
+
+/* Drop the triangles a generator leaves with no area - three pairs a cone's side
+   into quads whose top edge is a single point, and half of every one of those
+   quads collapses. They render nothing, the editor's weld deletes them anyway,
+   and they would be the first thing anyone saw in an exported OBJ. */
+function feDropDegenerateTriangles(geometry) {
+  const position = geometry?.attributes?.position;
+  const index = geometry?.index;
+  if (!position || !index) return geometry;
+  const same = (a, b) => position.getX(a) === position.getX(b) &&
+    position.getY(a) === position.getY(b) && position.getZ(a) === position.getZ(b);
+  const keep = [];
+  for (let t = 0; t < index.count; t += 3) {
+    const a = index.getX(t), b = index.getX(t + 1), c = index.getX(t + 2);
+    if (same(a, b) || same(b, c) || same(a, c)) continue;
+    keep.push(a, b, c);
+  }
+  if (keep.length === index.count) return geometry;
+  geometry.setIndex(keep);
+  return geometry;
 }
 
 /* Every triangle that touches the plane y = value, as a ring of its own three
@@ -5647,32 +5729,39 @@ function withFaces(geometry, rings) {
 const PRIMITIVE_MESHES = {
   cube:     { label: 'Cube',      lift: 0.70, build: () => new THREE.BoxGeometry(1.4, 1.4, 1.4) },
   /* A UV sphere's two pole rows are triangles, and Blender's are too; declaring
-     them keeps the pairing from turning each pair into a pie slice. */
+     them keeps the pairing from turning each pair into a pie slice. three
+     writes each pole quad with two coincident corners, so the triangles that
+     collapse are dropped first and the pole row is the thirty-two it has. */
   sphere: {
     label: 'Sphere', lift: 0.80,
     build: () => {
-      const geometry = new THREE.SphereGeometry(0.8, 32, 32);
+      const geometry = feDropDegenerateTriangles(new THREE.SphereGeometry(0.8, 32, 32));
       const top = feFanRingsAroundY(geometry, 0.8) || [];
       const bottom = feFanRingsAroundY(geometry, -0.8) || [];
       return withFaces(geometry, [...top, ...bottom]);
     }
   },
-  /* The caps are n-gons: one face each, as Blender draws them. */
+  /* The caps are n-gons, one face each, with no vertex in the middle: the side
+     wall comes from three without ends, and the two caps are built here (see
+     feCapPiece). A cylinder in Blender has 64 vertices; so does this one. */
   cylinder: {
     label: 'Cylinder', lift: 0.70,
-    build: () => {
-      const geometry = new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32);
-      return withFaces(geometry, [feRingAroundY(geometry, 0.7), feRingAroundY(geometry, -0.7)]);
-    }
+    build: () => feMergePieces([
+      { geometry: new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32, 1, true) },
+      feCapPiece(0.7, 32, 0.7, 1),
+      feCapPiece(0.7, 32, -0.7, -1)
+    ])
   },
   /* The cone keeps its triangle fan - a cone has a tip, and Blender gives it
-     thirty-two triangles there too - but the base is one face, and the
-     triangles are declared so the pairing leaves them alone. */
+     thirty-two triangles there too - but the base is one n-gon with no centre
+     vertex, and the tip's triangles are declared so the pairing leaves them
+     alone. */
   cone: {
     label: 'Cone', lift: 0.70,
     build: () => {
-      const geometry = new THREE.ConeGeometry(0.8, 1.4, 32);
-      return withFaces(geometry, [feRingAroundY(geometry, -0.7), ...(feFanRingsAroundY(geometry, 0.7) || [])]);
+      const side = feDropDegenerateTriangles(new THREE.ConeGeometry(0.8, 1.4, 32, 1, true));
+      const geometry = feMergePieces([{ geometry: side }, feCapPiece(0.8, 32, -0.7, -1)]);
+      return withFaces(geometry, [...(geometry.userData.feFaces || []), ...(feFanRingsAroundY(geometry, 0.7) || [])]);
     }
   },
   torus:    { label: 'Torus',     lift: 0.70, build: () => new THREE.TorusGeometry(0.7, 0.25, 16, 32) },

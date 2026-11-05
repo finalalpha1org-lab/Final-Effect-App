@@ -53,16 +53,24 @@ function loadPrimitives() {
      The ring helpers need a geometry, so they are extracted rather than
      rewritten here - a copy would be a second definition of the same face. */
   const parts = [
-    sourceOf(html, 'function feRingAroundY('),
+    sourceOf(html, 'function feCapPiece('),
+    sourceOf(html, 'function feMergePieces('),
+    sourceOf(html, 'function feDropDegenerateTriangles('),
     sourceOf(html, 'function feFanRingsAroundY('),
     sourceOf(html, 'function withFaces('),
     sourceOf(html, 'function createQuadSphereGeometry('),
     sourceOf(html, 'const PRIMITIVE_MESHES ='),
-    'globalThis.PRIMITIVE_MESHES = PRIMITIVE_MESHES;'
+    'globalThis.PRIMITIVE_MESHES = PRIMITIVE_MESHES;',
+    'globalThis.feCapPiece = feCapPiece;'
   ];
   vm.runInContext(parts.join('\n'), context);
+  HELPERS = { feCapPiece: context.feCapPiece };
   return context.PRIMITIVE_MESHES;
 }
+
+/* The helpers the table builds its geometry with, for the tests that build a
+   piece of it directly (a cap with four hundred sides, say). */
+let HELPERS = null;
 
 const PRIMITIVES = loadPrimitives();
 const KERNEL = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {}).exports;
@@ -218,9 +226,11 @@ function text(label) {
 
    The n-gons exist because the app declares them: three gives a cap a fan of
    triangles around a middle vertex, and no shape test can tell that fan from a
-   subdivided disc, so the mesh library says which rings are faces
-   (feRingAroundY) and both models take it as read. The numbers below are the
-   same for the kernel and for fe-poly - that agreement is the test. */
+   subdivided disc, so the app builds the cap itself (feCapPiece: the rim, plus
+   the polygon's own triangulation) and hands the ring over; the cone's tip
+   triangles are declared the same way. Both models take the declaration as
+   read, and the numbers below are the same for the kernel and for fe-poly -
+   that agreement is the test. */
 const SHIPPED = {
   cube:       { quads: 6,    tris: 0,  ngons: 0 },
   sphere:     { quads: 960,  tris: 64, ngons: 0 },
@@ -383,6 +393,86 @@ test('the shell hands the declaration in and the table back out', () => {
   assert.ok(bridge.includes('fe_edit_face_start_ptr'), 'which reads the kernel table back');
   assert.ok(/stashFaces\(target\.userData\.baseGeometry/.test(bridge), 'and writes it onto the committed mesh');
   assert.ok(bridge.includes('feFaceVerts'), 'stamped, so a rewritten buffer invalidates it');
+});
+
+test('a cap has no vertex in the middle of it', () => {
+  /* three builds every cap as a triangle fan around a centre vertex, and that
+     vertex is not part of the model: Blender's cylinder has 64 vertices and six
+     surfaces. The caps are built here instead (feCapPiece) - the rim, and the
+     polygon's own triangulation - so there is nothing in the middle. */
+  const cylinder = PRIMITIVES.cylinder.build();
+  const position = cylinder.attributes.position;
+  let onAxis = 0;
+  for (let i = 0; i < position.count; i++) {
+    if (Math.hypot(position.getX(i), position.getZ(i)) > 1e-6) continue;
+    if (Math.abs(Math.abs(position.getY(i)) - 0.7) < 1e-6) onAxis++;
+  }
+  assert.equal(onAxis, 0, 'a cylinder has no vertex in the middle of either cap');
+  /* Array.from: the faces come from the vm's realm, whose Array is not this
+     realm's Array as far as deepEqual is concerned. */
+  const rings = Array.from(FEPoly.facesInSlots(cylinder), (face) => face.length)
+    .filter((n) => n > 4).sort((a, b) => a - b);
+  assert.deepEqual(rings, [32, 32], 'and each cap is one face of thirty-two corners');
+
+  const cone = PRIMITIVES.cone.build();
+  const conePosition = cone.attributes.position;
+  let baseCentre = 0;
+  for (let i = 0; i < conePosition.count; i++) {
+    if (Math.hypot(conePosition.getX(i), conePosition.getZ(i)) > 1e-6) continue;
+    if (Math.abs(conePosition.getY(i) + 0.7) < 1e-6) baseCentre++;
+  }
+  assert.equal(baseCentre, 0, 'the cone keeps its tip, which is a vertex of the model, and no centre in its base');
+
+  /* A degenerate triangle would mean a face of two corners; three's cone and
+     sphere are full of them before the cleanup. */
+  for (const type of ['cylinder', 'cone', 'sphere']) {
+    const geometry = PRIMITIVES[type].build();
+    const index = geometry.index;
+    let flat = 0;
+    for (let t = 0; t < index.count; t += 3) {
+      const a = index.getX(t), b = index.getX(t + 1), c = index.getX(t + 2);
+      if (a === b || b === c || a === c) flat++;
+      else if (geometry.attributes.position.getX(a) === geometry.attributes.position.getX(b) &&
+               geometry.attributes.position.getY(a) === geometry.attributes.position.getY(b) &&
+               geometry.attributes.position.getZ(a) === geometry.attributes.position.getZ(b)) flat++;
+    }
+    assert.equal(flat, 0, `${type}: no triangle has two corners in the same place`);
+  }
+});
+
+test('a mesh may declare every face it has, however many that is', () => {
+  /* The declaration used to stop at 4096 faces and 16384 corners, which a
+     subdivided mesh walks past. The kernel's capacity is now the mesh's own. */
+  const geometry = new THREE.PlaneGeometry(2, 2, 70, 70);
+  const faces = [];
+  for (let row = 0; row < 70; row++) {
+    for (let column = 0; column < 70; column++) {
+      const a = row * 71 + column;
+      faces.push([a, a + 1, a + 72, a + 71]);
+    }
+  }
+  geometry.userData.feFaces = faces;
+  geometry.userData.feFaceVerts = geometry.attributes.position.count;
+  const measured = kernelFaces(geometry);
+  assert.equal(measured.declared, true, 'four thousand nine hundred faces were taken');
+  assert.deepEqual([measured.quads, measured.tris, measured.ngons], [4900, 0, 0], 'and every one of them is a quad');
+  const poly = polyStats(geometry);
+  assert.equal(poly.faces, 4900, 'the wireframe agrees');
+  assert.equal(poly.quads, 4900);
+});
+
+test('a face may be a polygon with hundreds of sides', () => {
+  /* The projection buffer a ring is measured in used to hold 256 corners. */
+  const piece = HELPERS.feCapPiece(1, 400, 0, 1);
+  const geometry = piece.geometry;
+  geometry.userData.feFaces = piece.rings;
+  geometry.userData.feFaceVerts = geometry.attributes.position.count;
+  const measured = kernelFaces(geometry);
+  assert.equal(measured.declared, true);
+  assert.deepEqual([measured.quads, measured.tris, measured.ngons], [0, 0, 1], 'one face of four hundred corners');
+  const poly = polyStats(geometry);
+  assert.equal(poly.faces, 1);
+  assert.equal(poly.ngons, 1);
 });
 
 test('a mesh added twice is named from the table, and nothing is built outside it', () => {
