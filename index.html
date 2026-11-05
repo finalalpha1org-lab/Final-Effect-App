@@ -5549,6 +5549,92 @@ window.closeAdd3DModal = closeAdd3DModal;
 
 let customObjCounter = 1;
 
+/* ---- Faces that three's generators lose ---------------------------------
+
+   three hands every mesh over as triangles, and some of its shapes are triangles
+   the model never had: a cylinder's cap is one thirty-two sided face in Blender,
+   and a fan of thirty-two triangles in the buffer; a cone's side is a fan of
+   triangles around its tip, which the editor's pairing would otherwise fuse into
+   pie slices that are not faces of anything.
+
+   The mesh library knows its own shapes, so it says which faces they have, as
+   rings of vertex slots, and both face models take that as read (`fe-poly.js`
+   for the Object Mode wireframe, the kernel's `fe_edit_set_faces` for the Edit
+   Mode cage). Only the shapes whose fan cannot be recovered from the
+   triangulation need it; a quad mesh is paired from its shape and comes out
+   right on its own. */
+
+/* The rim of a cap that lies on the plane y = value, in the order a polygon
+   walks it: every vertex on that plane far enough from the middle to be a rim
+   vertex rather than the fan's centre, deduplicated by position (three gives
+   the cap and the wall their own copies of the same point), sorted by angle. */
+function feRingAroundY(geometry, value, eps = 1e-4) {
+  const position = geometry?.attributes?.position;
+  if (!position) return null;
+  const onPlane = [];
+  for (let i = 0; i < position.count; i++) {
+    if (Math.abs(position.getY(i) - value) <= eps) onPlane.push(i);
+  }
+  if (onPlane.length < 4) return null;
+  let cx = 0, cz = 0;
+  for (const i of onPlane) { cx += position.getX(i); cz += position.getZ(i); }
+  cx /= onPlane.length; cz /= onPlane.length;
+  const radius = onPlane.map((i) => Math.hypot(position.getX(i) - cx, position.getZ(i) - cz));
+  const widest = Math.max(...radius);
+  if (!(widest > 1e-6)) return null;
+  const ring = [];
+  const seen = new Set();
+  for (let k = 0; k < onPlane.length; k++) {
+    if (radius[k] < widest * 0.5) continue;              /* the fan's middle vertex */
+    const i = onPlane[k];
+    /* Quantised, not toFixed: three's seam vertex sits at -1e-17 rather than 0,
+       and toFixed writes that as "-0.0000" - a different key for the same
+       point, which put a thirty third corner on every cylinder cap. */
+    const key = Math.round(position.getX(i) * 1e4) + ',' + Math.round(position.getY(i) * 1e4) + ',' + Math.round(position.getZ(i) * 1e4);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ring.push({ slot: i, angle: Math.atan2(position.getZ(i) - cz, position.getX(i) - cx) });
+  }
+  if (ring.length < 3) return null;
+  ring.sort((a, b) => a.angle - b.angle);
+  return ring.map((entry) => entry.slot);
+}
+
+/* Every triangle that touches the plane y = value, as a ring of its own three
+   corners: the triangles of a fan around a pole or a tip. Declaring them stops
+   the pairing from fusing two of them into a quad - a fan's neighbouring
+   triangles share a radial edge, which is longer than their rims, so every
+   shape test calls them halves of one quad and every one of them is wrong. */
+function feFanRingsAroundY(geometry, value, eps = 1e-4) {
+  const position = geometry?.attributes?.position;
+  const index = geometry?.index;
+  if (!position || !index) return null;
+  const hub = new Set();
+  for (let i = 0; i < position.count; i++) {
+    if (Math.abs(position.getY(i) - value) <= eps) hub.add(i);
+  }
+  if (!hub.size) return null;
+  const rings = [];
+  for (let t = 0; t < index.count; t += 3) {
+    const a = index.getX(t), b = index.getX(t + 1), c = index.getX(t + 2);
+    if (!hub.has(a) && !hub.has(b) && !hub.has(c)) continue;
+    rings.push([a, b, c]);
+  }
+  return rings.length ? rings : null;
+}
+
+/* Attach the rings to the geometry. `feFaceVerts` is the vertex count they were
+   measured against: a modifier that rewrites the buffer invalidates them, and
+   both readers check the stamp before trusting a ring. */
+function withFaces(geometry, rings) {
+  const usable = (rings || []).filter((ring) => Array.isArray(ring) && ring.length >= 3);
+  if (!geometry || !usable.length) return geometry;
+  geometry.userData = geometry.userData || {};
+  geometry.userData.feFaces = usable;
+  geometry.userData.feFaceVerts = geometry.attributes.position.count;
+  return geometry;
+}
+
 /* ---- The mesh library behind the Add 3D Element sheet --------------------
    Every primitive is listed once here: the sheet names it, this builds it, and
    `tests/primitives-quads.test.mjs` runs each one through the real edit kernel
@@ -5560,9 +5646,35 @@ let customObjCounter = 1;
    in the XY plane (a plane, a grid, a ring) to lie on the ground. */
 const PRIMITIVE_MESHES = {
   cube:     { label: 'Cube',      lift: 0.70, build: () => new THREE.BoxGeometry(1.4, 1.4, 1.4) },
-  sphere:   { label: 'Sphere',    lift: 0.80, build: () => new THREE.SphereGeometry(0.8, 32, 32) },
-  cylinder: { label: 'Cylinder',  lift: 0.70, build: () => new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32) },
-  cone:     { label: 'Cone',      lift: 0.70, build: () => new THREE.ConeGeometry(0.8, 1.4, 32) },
+  /* A UV sphere's two pole rows are triangles, and Blender's are too; declaring
+     them keeps the pairing from turning each pair into a pie slice. */
+  sphere: {
+    label: 'Sphere', lift: 0.80,
+    build: () => {
+      const geometry = new THREE.SphereGeometry(0.8, 32, 32);
+      const top = feFanRingsAroundY(geometry, 0.8) || [];
+      const bottom = feFanRingsAroundY(geometry, -0.8) || [];
+      return withFaces(geometry, [...top, ...bottom]);
+    }
+  },
+  /* The caps are n-gons: one face each, as Blender draws them. */
+  cylinder: {
+    label: 'Cylinder', lift: 0.70,
+    build: () => {
+      const geometry = new THREE.CylinderGeometry(0.7, 0.7, 1.4, 32);
+      return withFaces(geometry, [feRingAroundY(geometry, 0.7), feRingAroundY(geometry, -0.7)]);
+    }
+  },
+  /* The cone keeps its triangle fan - a cone has a tip, and Blender gives it
+     thirty-two triangles there too - but the base is one face, and the
+     triangles are declared so the pairing leaves them alone. */
+  cone: {
+    label: 'Cone', lift: 0.70,
+    build: () => {
+      const geometry = new THREE.ConeGeometry(0.8, 1.4, 32);
+      return withFaces(geometry, [feRingAroundY(geometry, -0.7), ...(feFanRingsAroundY(geometry, 0.7) || [])]);
+    }
+  },
   torus:    { label: 'Torus',     lift: 0.70, build: () => new THREE.TorusGeometry(0.7, 0.25, 16, 32) },
   plane:    { label: 'Plane',     lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2) },
   grid:     { label: 'Grid',      lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2, 8, 8) },

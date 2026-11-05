@@ -92,14 +92,14 @@ extern float g_snapIncrement;
 /* scratch, reused by every operation */
 extern uint8_t g_triMark[kMaxTris];
 
-/* Quad faces: two triangles the wireframe joins into one face (see
-   buildQuadGroups). g_quadOf maps a triangle to its group, g_quadFirst holds
-   the group's first triangle and g_quadNext walks to its partner. */
+/* Faces: the triangles the wireframe joins into one surface (see
+   buildQuadGroups). g_quadOf maps a triangle to its face, g_quadFirst holds
+   the face's first triangle and g_quadNext walks the rest - a cube side is two
+   triangles, a cylinder cap is thirty-two, a cone's side is one. */
 extern uint32_t g_quadOf[kMaxTris];
 extern uint32_t g_quadFirst[kMaxTris];
 extern uint32_t g_quadNext[kMaxTris];
 extern uint32_t g_quadCount;
-extern uint32_t g_diagEdge[kMaxTris];
 extern float g_quadAngle;
 extern uint32_t g_vertMap[kMaxVerts];
 extern uint32_t g_vertStamp[kMaxVerts];

@@ -289,6 +289,11 @@
       const smooth = nrmPtr ? exp2.fe_edit_detect_smooth(posPtr, nrmPtr, vertCount) : 1;
       if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr) !== 1) return false;
       exp2.fe_edit_set_shade(smooth ? 1 : 0);
+      /* The faces the mesh arrived with - a cylinder cap is one thirty-two-gon
+         face in Blender and a fan of triangles in the buffer - in the
+         geometry's own vertex numbering. The kernel welds the mesh and maps
+         the rings through the weld. */
+      declareFaces(exp2, geometry, vertCount);
       return true;
     }) === true;
   }
@@ -471,6 +476,35 @@
      feBuildQuadWireGeometry) and without it a quad that the editor bent grew a
      triangle back down the middle of the face. Plain array on purpose: three's
      clone() round-trips userData through JSON. */
+  /* The faces a mesh was built with, handed to the kernel. The rings are in the
+     geometry's own vertex slots and the kernel maps them through its weld, so a
+     ring may name any of the three copies three.js gives a shared point. A mesh
+     that declares nothing leaves the kernel to its own reading of the shape. */
+  function declareFaces(exp, geometry, vertCount) {
+    if (typeof exp.fe_edit_set_faces !== 'function') return;
+    const rings = geometry && geometry.userData && geometry.userData.feFaces;
+    if (!Array.isArray(rings) || !rings.length) return;
+    if (geometry.userData.feFaceVerts !== vertCount) return;
+    let total = 0;
+    for (const ring of rings) if (Array.isArray(ring)) total += ring.length;
+    if (total < 3) return;
+    const starts = new Uint32Array(rings.length + 1);
+    const corners = new Uint32Array(total);
+    let at = 0;
+    for (let f = 0; f < rings.length; f++) {
+      starts[f] = at;
+      const ring = rings[f];
+      if (!Array.isArray(ring)) continue;
+      for (const slot of ring) if (at < corners.length) corners[at++] = slot;
+    }
+    starts[rings.length] = at;
+    try {
+      const startsPtr = copyIn(exp, starts, Uint32Array);
+      const cornersPtr = copyIn(exp, corners, Uint32Array);
+      if (startsPtr && cornersPtr) exp.fe_edit_set_faces(rings.length, startsPtr, cornersPtr);
+    } catch (_) { /* no declared faces is a fallback, not a failure */ }
+  }
+
   function stashQuadDiagonals(geometry) {
     const exp = exportsOf();
     const position = geometry?.attributes?.position;
@@ -487,6 +521,43 @@
       data.feQuadDiagonals = Array.from(u32(pointer, count * 2));
       data.feQuadDiagonalVerts = position.count;
     } catch (_) { /* a missing pairing only costs a nicer wireframe */ }
+  }
+
+  /* The faces themselves, written onto the committed geometry the same way and
+     for the same reason: the wireframe draws one line per face boundary, an
+     n-gon cap has no spokes, and a re-entry into Edit Mode hands the mesh back
+     with the faces it was drawn with instead of re-deriving them from a shape
+     that may since have been bent. */
+  function stashFaces(geometry) {
+    const exp = exportsOf();
+    const position = geometry?.attributes?.position;
+    if (!geometry || !position || !exp) return;
+    if (typeof exp.fe_edit_face_count !== 'function' || typeof exp.fe_edit_face_start_ptr !== 'function') return;
+    const data = geometry.userData || (geometry.userData = {});
+    try {
+      const count = exp.fe_edit_face_count();
+      if (!count) {
+        delete data.feFaces;
+        delete data.feFaceVerts;
+        return;
+      }
+      const starts = u32(exp.fe_edit_face_start_ptr(), count + 1);
+      const ringCount = exp.fe_edit_face_ring_count();
+      const ring = u32(exp.fe_edit_face_ring_ptr(), ringCount);
+      const faces = [];
+      for (let f = 0; f < count; f++) {
+        const from = starts[f], to = starts[f + 1];
+        if (to - from < 3 || to > ringCount) continue;
+        faces.push(Array.from(ring.subarray(from, to)));
+      }
+      if (faces.length) {
+        data.feFaces = faces;
+        data.feFaceVerts = position.count;
+      } else {
+        delete data.feFaces;
+        delete data.feFaceVerts;
+      }
+    } catch (_) { /* the shell redraws from the shape if the table is missing */ }
   }
 
   function commitToObject() {
@@ -533,6 +604,8 @@
        quads the editor just worked with. */
     stashQuadDiagonals(target.userData.baseGeometry);
     if (target.geometry && target.geometry !== target.userData.baseGeometry) stashQuadDiagonals(target.geometry);
+    stashFaces(target.userData.baseGeometry || target.geometry);
+    if (target.geometry && target.geometry !== target.userData.baseGeometry) stashFaces(target.geometry);
     if (typeof global.scheduleCoreHistory === 'function') global.scheduleCoreHistory({ target: target, type: 'change' });
   }
 

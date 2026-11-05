@@ -66,17 +66,42 @@ uint32_t g_quadFirst[kMaxTris];
 uint32_t g_quadNext[kMaxTris];
 uint32_t g_quadCount = 0;
 uint8_t g_quadPaired[kMaxTris];
-/* The diagonal edge of each group (kNoFace for a lone triangle), the signature
-   of the triangle table the groups were built from, and how far two triangles
-   may fold and still be the two halves of one face. */
-uint32_t g_diagEdge[kMaxTris];
-/* The pairing handed to the shell, as vertex index pairs of the hidden
-   diagonals. */
-uint32_t g_quadPairs[kMaxTris * 2];
-uint32_t g_quadPairCount = 0;
+/* Each face's corner ring, flattened: g_grpStart[f] is where face f starts in
+   g_grpRing and g_grpStart[f + 1] is where it ends, so the ring of face f is
+   g_grpRing[g_grpStart[f] .. g_grpStart[f + 1]). Three corners for a triangle,
+   four for a quad, n for an n-gon. This is the table the shell outlines and
+   the tests read; it is bounded by three corners per triangle, which covers
+   every case (a quad needs four corners for two triangles, an n-gon n corners
+   for n - 2). */
+uint32_t g_grpStart[kMaxTris + 1];
+uint32_t g_grpRing[kMaxTris * 3];
+uint32_t g_grpRingCount = 0;
+uint32_t g_ngonCount = 0;
+/* The signature of the triangle table the groups were built from, and how far
+   two triangles may fold and still be the two halves of one face. */
 uint32_t g_quadSignature = 0u;
 bool g_quadBuilt = false;
 float g_quadAngle = 45.0f;
+/* The edges inside a face, handed to the shell as vertex index pairs: the
+   diagonal of a quad, the spokes of a fan. Bounded by the edge table. */
+uint32_t g_quadPairs[kMaxEdges * 2];
+uint32_t g_quadPairCount = 0;
+
+/* The faces the app declared (fe_edit_set_faces), waiting for the next group
+   build. They are consumed once: after an operation that changes the topology
+   a declared ring describes vertices that may no longer be there, so the
+   kernel goes back to the shape's own hints instead of holding a stale face. */
+constexpr uint32_t kMaxDeclFaces = 4096u;
+constexpr uint32_t kMaxDeclCorners = 16384u;
+uint32_t g_declStart[kMaxDeclFaces + 1];
+uint32_t g_declRing[kMaxDeclCorners];
+uint32_t g_declFaces = 0;
+bool g_declPending = false;
+/* Upload slot -> welded vertex, so a face declared in the geometry's own
+   numbering still names the right vertex after three's split corners have been
+   welded. kNoFace when the weld dropped the vertex. */
+uint32_t g_slotFinal[kMaxVerts];
+uint32_t g_slotFinalCount = 0;
 uint32_t g_weldMerged = 0;
 uint8_t g_vertUsed[kMaxVerts];
 uint32_t g_vertNew[kMaxVerts];
@@ -124,6 +149,11 @@ namespace {
 constexpr uint32_t kHashBits = 17;
 constexpr uint32_t kHashSize = 1u << kHashBits;
 constexpr uint32_t kNoFace = 0xFFFFFFFFu;
+/* The most corners a declared face may have. A face is a polygon, and a
+   polygon with more than this in one mesh is a model problem, not an editor
+   one; the ring frame below is a fixed-size buffer because the kernel has no
+   allocator. */
+constexpr uint32_t kMaxRingCorners = 256u;
 
 uint32_t g_hash[kHashSize];
 
@@ -508,30 +538,185 @@ bool quadCreaseWithin(const uint32_t e, const float cosLimit) {
   return (ax * bx + ay * by + az * bz) >= cosLimit;
 }
 
-/* Take the diagonal of every paired quad out of the wireframe. Faces are quads:
-   the diagonal is internal structure, and it stays internal however the quad is
-   bent afterwards. */
-void hideQuadDiagonals() {
-  for (uint32_t g = 0; g < g_quadCount; ++g) {
-    const uint32_t e = g_diagEdge[g];
-    if (e != kNoFace && e < E.n) g_edgeDisplay[e] = 0;
+/* Take the inside of every face out of the wireframe. A face's *interior*
+   edges are the ones its own triangles share: a quad's diagonal, the spokes a
+   fan draws from the middle of a cap. They are structure the face does not
+   have, so they stay hidden however the face is bent afterwards - which is why
+   this is decided from the face table and not from the angle between two
+   triangles. */
+void hideFaceInteriors() {
+  for (uint32_t e = 0; e < E.n; ++e) {
+    if (E.f0[e] == kNoFace || E.f1[e] == kNoFace) continue;
+    const uint32_t g = g_quadOf[E.f0[e]];
+    if (g == kNoFace || g != g_quadOf[E.f1[e]]) continue;
+    g_edgeDisplay[e] = 0;
   }
 }
 
-/* One face is one quad, and a lone triangle is a face of its own (a sphere's
-   triangles, for instance). The pairing is greedy - each triangle takes at most
-   one partner - so nothing is merged through a real edge and a subdivided plane
-   comes out as the quads it was drawn with.
+/* The corner of triangle t that is not a or b. */
+uint32_t triangleApex(uint32_t t, uint32_t a, uint32_t b) {
+  for (uint32_t k = 0; k < 3; ++k) {
+    const uint32_t v = M.tri[t * 3 + k];
+    if (v != a && v != b) return v;
+  }
+  return kNoFace;
+}
 
-   This used to be decided from g_edgeDisplay, i.e. from the angle between the
-   two triangles, which is exactly the thing a deformation changes: move one
-   vertex of a quad by ten degrees and the wireframe grew a triangle back in the
-   middle of the face. It is decided from the shape of the two triangles now, and
-   kept as long as the triangle table is unchanged, so an edit can bend a quad
-   without tearing it into triangles. */
+/* ---- declared faces -------------------------------------------------------
+   The app built the mesh, so it knows which triangles are one face: a cylinder
+   cap is a thirty-two-gon in Blender and a fan of thirty-two triangles in the
+   buffer, and no shape test can tell that fan apart from a flat quad mesh
+   subdivided the same way. So the app can say it, and this is how.
+
+   A declared face claims its triangles with one of two tests:
+
+     1. every corner of the triangle is a corner of the ring. Exact, and true
+        of any shape, which is what a face that has since been bent needs;
+     2. the triangle lies in the ring's plane and its centroid is inside the
+        ring. This is the fan case: a cap's middle vertex is not a corner of
+        the cap, so the rim ring cannot name it, but every triangle of the fan
+        is inside the rim.
+
+   Both are the model's own geometry. Nothing here guesses. */
+
+/* The plane and the 2D projection of a face's ring, computed once per face. */
+struct RingFrame {
+  float nx, ny, nz, d;      /* plane: dot(n, p) = d */
+  float scale;              /* how big the ring is, for a tolerance */
+  float px[kMaxRingCorners];
+  float py[kMaxRingCorners];
+  uint32_t axis;            /* 0: xy, 1: xz, 2: yz - the projection used */
+};
+
+bool ringFrame(const uint32_t* ring, uint32_t n, RingFrame& frame) {
+  /* Newell's method: the normal of a polygon, and its centroid. */
+  float nx = 0.0f, ny = 0.0f, nz = 0.0f, cx = 0.0f, cy = 0.0f, cz = 0.0f;
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t a = ring[i], b = ring[(i + 1u) % n];
+    nx += (M.y[a] - M.y[b]) * (M.z[a] + M.z[b]);
+    ny += (M.z[a] - M.z[b]) * (M.x[a] + M.x[b]);
+    nz += (M.x[a] - M.x[b]) * (M.y[a] + M.y[b]);
+    cx += M.x[a]; cy += M.y[a]; cz += M.z[a];
+  }
+  const float inv = 1.0f / static_cast<float>(n);
+  cx *= inv; cy *= inv; cz *= inv;
+  const float len = fe::sqrtf(nx * nx + ny * ny + nz * nz);
+  if (!(len > 1e-9f)) return false;
+  frame.nx = nx / len; frame.ny = ny / len; frame.nz = nz / len;
+  frame.d = frame.nx * cx + frame.ny * cy + frame.nz * cz;
+  float extent = 0.0f;
+  for (uint32_t i = 0; i < n; ++i) {
+    const float dx = M.x[ring[i]] - cx, dy = M.y[ring[i]] - cy, dz = M.z[ring[i]] - cz;
+    const float r = dx * dx + dy * dy + dz * dz;
+    if (r > extent) extent = r;
+  }
+  frame.scale = fe::sqrtf(extent);
+  if (!(frame.scale > 1e-9f)) return false;
+  /* Project along the axis the face faces most: the projection then keeps the
+     ring's area and no two corners of a convex face coincide. */
+  const float ax = fe::absf(frame.nx), ay = fe::absf(frame.ny), az = fe::absf(frame.nz);
+  frame.axis = (az >= ax && az >= ay) ? 0u : (ay >= ax ? 1u : 2u);
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t v = ring[i];
+    if (frame.axis == 0u) { frame.px[i] = M.x[v]; frame.py[i] = M.y[v]; }
+    else if (frame.axis == 1u) { frame.px[i] = M.x[v]; frame.py[i] = M.z[v]; }
+    else { frame.px[i] = M.y[v]; frame.py[i] = M.z[v]; }
+  }
+  return true;
+}
+
+bool pointInRing(const RingFrame& frame, uint32_t n, float x, float y, float z) {
+  float u, v;
+  if (frame.axis == 0u) { u = x; v = y; }
+  else if (frame.axis == 1u) { u = x; v = z; }
+  else { u = y; v = z; }
+  bool inside = false;
+  for (uint32_t i = 0, j = n - 1; i < n; j = i++) {
+    const float yi = frame.py[i], yj = frame.py[j];
+    if ((yi > v) == (yj > v)) continue;
+    const float t = (v - yi) / (yj - yi);
+    if (u < frame.px[i] + t * (frame.px[j] - frame.px[i])) inside = !inside;
+  }
+  return inside;
+}
+
+bool ringClaimsTriangle(const uint32_t t, const uint32_t* ring, uint32_t n, const RingFrame& frame) {
+  const uint32_t a = M.tri[t * 3], b = M.tri[t * 3 + 1], c = M.tri[t * 3 + 2];
+  /* 1. the triangle's corners are the ring's own corners. */
+  uint32_t hits = 0;
+  for (uint32_t k = 0; k < 3; ++k) {
+    const uint32_t v = M.tri[t * 3 + k];
+    for (uint32_t i = 0; i < n; ++i) {
+      if (ring[i] == v) { ++hits; break; }
+    }
+  }
+  if (hits == 3) return true;
+  /* 2. the triangle is in the face's plane and inside its ring. */
+  const float eps = frame.scale * 1.0e-3f;
+  for (uint32_t k = 0; k < 3; ++k) {
+    const uint32_t v = M.tri[t * 3 + k];
+    const float side = frame.nx * M.x[v] + frame.ny * M.y[v] + frame.nz * M.z[v] - frame.d;
+    if (side > eps || side < -eps) return false;
+  }
+  const float cx = (M.x[a] + M.x[b] + M.x[c]) * (1.0f / 3.0f);
+  const float cy = (M.y[a] + M.y[b] + M.y[c]) * (1.0f / 3.0f);
+  const float cz = (M.z[a] + M.z[b] + M.z[c]) * (1.0f / 3.0f);
+  return pointInRing(frame, n, cx, cy, cz);
+}
+
+/* The triangles of every declared face, claimed before the shape is asked for
+   its own hints: a declared face is a fact, a pairing is a guess. */
+void claimDeclaredFaces() {
+  if (g_declFaces == 0) return;
+  buildVertexFaces();
+  for (uint32_t f = 0; f < g_declFaces; ++f) {
+    const uint32_t start = g_declStart[f], end = g_declStart[f + 1];
+    const uint32_t n = end - start;
+    if (n < 3 || n > kMaxRingCorners) continue;
+    const uint32_t* ring = &g_declRing[start];
+    RingFrame frame;
+    if (!ringFrame(ring, n, frame)) continue;
+    uint32_t group = kNoFace, last = kNoFace;
+    for (uint32_t k = 0; k < n; ++k) {
+      const uint32_t v = ring[k];
+      for (uint32_t i = g_faceStart[v]; i < g_faceStart[v + 1]; ++i) {
+        const uint32_t t = g_faceList[i];
+        if (g_quadOf[t] != kNoFace) continue;      /* already part of a face */
+        if (!ringClaimsTriangle(t, ring, n, frame)) continue;
+        if (group == kNoFace) {
+          if (g_quadCount >= kMaxTris) return;
+          if (g_grpRingCount + n > kMaxTris * 3u) return;
+          group = g_quadCount++;
+          g_quadFirst[group] = t;
+          g_grpStart[group] = g_grpRingCount;
+          for (uint32_t c = 0; c < n; ++c) g_grpRing[g_grpRingCount++] = ring[c];
+          g_grpStart[group + 1] = g_grpRingCount;
+        }
+        g_quadOf[t] = group;
+        g_quadPaired[t] = 1;
+        if (last == kNoFace) last = t;
+        else { g_quadNext[last] = t; last = t; }
+        g_quadNext[t] = kNoFace;
+      }
+    }
+    if (group != kNoFace && n >= 5) ++g_ngonCount;
+  }
+}
+
+/* One face is one surface. It is built from, in order: the faces the app
+   declared; then, for what is left, two triangles that share the diagonal of a
+   quad; then every triangle that found no partner (a sphere's pole, a cone's
+   side, a tetrahedron's face).
+
+   The pairing half used to be decided from g_edgeDisplay, i.e. from the angle
+   between the two triangles, which is exactly the thing a deformation changes:
+   move one vertex of a quad by ten degrees and the wireframe grew a triangle
+   back in the middle of the face. It is decided from the shape of the two
+   triangles now, and kept as long as the triangle table is unchanged, so an
+   edit can bend a quad without tearing it into triangles. */
 void buildQuadGroups() {
   if (g_quadBuilt && g_quadSignature == quadTopologySignature()) {
-    hideQuadDiagonals();
+    hideFaceInteriors();
     return;
   }
 
@@ -541,8 +726,16 @@ void buildQuadGroups() {
     g_quadPaired[t] = 0;
   }
   g_quadCount = 0;
+  g_grpRingCount = 0;
+  g_ngonCount = 0;
+  g_grpStart[0] = 0;
 
-  /* Candidate diagonals, longest first: in a triangulated quad mesh the
+  /* 1. what the app said the faces are. */
+  claimDeclaredFaces();
+  g_declFaces = 0;                 /* consumed: a topology change invalidates it */
+  g_declPending = false;
+
+  /* 2. Candidate diagonals, longest first: in a triangulated quad mesh the
      diagonal of a drawn quad is the longest edge of both of its triangles,
      while the edges two quads share are the shortest - taking the long ones
      rebuilds the quads the model was drawn with instead of pairing across
@@ -585,6 +778,7 @@ void buildQuadGroups() {
     const uint32_t f0 = E.f0[e], f1 = E.f1[e];
     if (g_quadPaired[f0] || g_quadPaired[f1]) continue;
     if (g_quadCount >= kMaxTris) break;
+    if (g_grpRingCount + 4u > kMaxTris * 3u) break;
     g_quadPaired[f0] = 1;
     g_quadPaired[f1] = 1;
     const uint32_t group = g_quadCount++;
@@ -593,20 +787,37 @@ void buildQuadGroups() {
     g_quadFirst[group] = f0;
     g_quadNext[f0] = f1;
     g_quadNext[f1] = kNoFace;
-    g_diagEdge[group] = e;
+    /* The quad's own ring: the shared edge is its diagonal, so the corners run
+       a, apex(f0), b, apex(f1) - four corners in the order the face has. */
+    const uint32_t a = E.a[e], b = E.b[e];
+    const uint32_t c = triangleApex(f0, a, b);
+    const uint32_t d = triangleApex(f1, a, b);
+    g_grpStart[group] = g_grpRingCount;
+    g_grpRing[g_grpRingCount++] = a;
+    g_grpRing[g_grpRingCount++] = c;
+    g_grpRing[g_grpRingCount++] = b;
+    g_grpRing[g_grpRingCount++] = d;
+    g_grpStart[group + 1] = g_grpRingCount;
   }
+
+  /* 3. Every triangle that found no partner is a face of its own. */
   for (uint32_t t = 0; t < M.nt; ++t) {
     if (g_quadPaired[t]) continue;
     if (g_quadCount >= kMaxTris) break;
+    if (g_grpRingCount + 3u > kMaxTris * 3u) break;
     const uint32_t group = g_quadCount++;
     g_quadOf[t] = group;
     g_quadFirst[group] = t;
-    g_diagEdge[group] = kNoFace;
+    g_grpStart[group] = g_grpRingCount;
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3];
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 1];
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 2];
+    g_grpStart[group + 1] = g_grpRingCount;
   }
 
   g_quadSignature = quadTopologySignature();
   g_quadBuilt = true;
-  hideQuadDiagonals();
+  hideFaceInteriors();
 }
 
 /* ---- welding -------------------------------------------------------------
@@ -644,7 +855,12 @@ void weldVertices() {
     g_vertMap[v] = rep;
   }
   g_weldMerged = merged;
-  if (merged == 0) return;
+  g_slotFinalCount = M.nv;
+  if (merged == 0) {
+    /* Nothing moved: every slot is its own vertex. */
+    for (uint32_t v = 0; v < M.nv; ++v) g_slotFinal[v] = v;
+    return;
+  }
 
   /* Re-index the triangles and drop the ones that collapsed onto themselves. */
   uint32_t keep = 0;
@@ -670,6 +886,10 @@ void weldVertices() {
     ++next;
   }
   for (uint32_t i = 0; i < M.nt * 3u; ++i) M.tri[i] = g_vertNew[M.tri[i]];
+  /* A face declared in the geometry's numbering has to name the welded vertex:
+     the shell knows the mesh three.js handed it, where a cube's corner is three
+     vertices, and the kernel edits the one. */
+  for (uint32_t v = 0; v < g_slotFinalCount; ++v) g_slotFinal[v] = g_vertNew[g_vertMap[v]];
   M.nv = next;
 }
 
@@ -1790,6 +2010,11 @@ FE_EXPORT void fe_edit_reset(void) {
   g_quadCount = 0;
   g_quadPairCount = 0;
   g_quadSignature = 0u;
+  g_grpRingCount = 0;
+  g_ngonCount = 0;
+  g_declFaces = 0;
+  g_declPending = false;
+  g_slotFinalCount = 0;
   GZ.active = false;
   GZ.handle = -1;
   g_outVerts = 0;
@@ -2563,17 +2788,19 @@ FE_EXPORT const uint32_t* fe_edit_clip_idx_ptr(void) { return C.tri; }
 FE_EXPORT uint32_t fe_edit_weld_count(void) { return g_weldMerged; }
 FE_EXPORT const uint8_t* fe_edit_edge_display_ptr(void) { return g_edgeDisplay; }
 
-/* The quad pairing, as vertex index pairs. The shell draws Wireframe shading in
-   Object Mode from the object's own geometry, and the kernel draws the same
-   cage in Edit Mode; handing the pairing over means the two agree by
+/* The edges *inside* a face, as vertex index pairs: a quad's diagonal, the
+   spokes a fan draws from the middle of an n-gon cap. The shell draws Wireframe
+   shading in Object Mode from the object's own geometry, and the kernel draws
+   the same cage in Edit Mode; handing these over means the two agree by
    construction instead of by two implementations of the same guess, and it
-   survives the deformations that make the guess wrong (a bent quad still has
-   the diagonal it was drawn with). */
-FE_EXPORT const uint32_t* fe_edit_quad_pairs_ptr(void) {
+   survives the deformations that make a guess wrong (a bent quad still has the
+   diagonal it was drawn with). */
+FE_EXPORT const uint32_t* fe_edit_interior_pairs_ptr(void) {
   g_quadPairCount = 0;
-  for (uint32_t g = 0; g < g_quadCount; ++g) {
-    const uint32_t e = g_diagEdge[g];
-    if (e == kNoFace || e >= E.n) continue;
+  for (uint32_t e = 0; e < E.n && g_quadPairCount < kMaxEdges; ++e) {
+    if (E.f0[e] == kNoFace || E.f1[e] == kNoFace) continue;
+    const uint32_t g = g_quadOf[E.f0[e]];
+    if (g == kNoFace || g != g_quadOf[E.f1[e]]) continue;
     g_quadPairs[g_quadPairCount * 2u] = E.a[e];
     g_quadPairs[g_quadPairCount * 2u + 1u] = E.b[e];
     ++g_quadPairCount;
@@ -2582,10 +2809,87 @@ FE_EXPORT const uint32_t* fe_edit_quad_pairs_ptr(void) {
 }
 
 /* Reads the pairing, so it is correct whichever call comes first. */
-FE_EXPORT uint32_t fe_edit_quad_pair_count(void) {
-  fe_edit_quad_pairs_ptr();
+FE_EXPORT uint32_t fe_edit_interior_pair_count(void) {
+  fe_edit_interior_pairs_ptr();
   return g_quadPairCount;
 }
+
+/* The older name for the same thing: when every face was a quad, the hidden
+   edges were exactly the diagonals. Kept because the shell and the tests read
+   it. */
+FE_EXPORT const uint32_t* fe_edit_quad_pairs_ptr(void) { return fe_edit_interior_pairs_ptr(); }
+FE_EXPORT uint32_t fe_edit_quad_pair_count(void) { return fe_edit_interior_pair_count(); }
+
+/* ---- faces -------------------------------------------------------------- */
+
+/* The faces the app knows about, declared as corner rings. A ring is the
+   boundary of one face in the geometry's own vertex numbering: four corners
+   for a quad, thirty-two for a cylinder cap, three for a triangle. The kernel
+   claims the triangles inside each ring and draws them as one face - which is
+   what makes an n-gon possible at all, because a triangle buffer cannot say
+   "these thirty-two triangles were one face" any other way.
+
+   `starts` is faceCount + 1 offsets into `corners`; corners are upload vertex
+   slots, translated through the weld so a face may name any of three's split
+   corners. Returns 1 when the faces were taken, 0 when they were not (an empty
+   mesh, a malformed ring, more faces than the kernel holds): a caller that
+   gets 0 still has a mesh, it just gets the shape's own hints instead. */
+FE_EXPORT uint32_t fe_edit_set_faces(uint32_t faceCount, const uint32_t* starts, const uint32_t* corners) {
+  if (!starts || !corners) return 0;
+  if (faceCount == 0 || faceCount > kMaxDeclFaces) return 0;
+  if (g_slotFinalCount < 3 || g_slotFinalCount > kMaxVerts) return 0;
+  if (M.nt == 0) return 0;
+  uint32_t total = 0;
+  uint32_t faces = 0;
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    if (starts[f + 1] <= starts[f]) return 0;
+    const uint32_t n = starts[f + 1] - starts[f];
+    if (n < 3 || n > kMaxRingCorners) return 0;
+    uint32_t prev = kNoFace;
+    uint32_t first = kNoFace;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t slot = corners[starts[f] + i];
+      if (slot >= g_slotFinalCount) return 0;
+      const uint32_t v = g_slotFinal[slot];
+      if (v == kNoFace || v == prev) continue;
+      if (kept == 0) first = v;
+      if (total >= kMaxDeclCorners) return 0;
+      g_declRing[total++] = v;
+      prev = v;
+      ++kept;
+    }
+    /* A ring closes: the last corner may not repeat the first one. */
+    if (kept > 1 && g_declRing[total - 1] == first) { --total; --kept; }
+    /* A ring the weld flattened is not a face: three builds a cone's side as a
+       quad whose top edge has no length, and the half of it that collapsed is
+       the half the kernel already dropped. Skipping it is the same decision
+       the weld made; failing the whole call over it would cost the mesh every
+       other face it declared. */
+    if (kept < 3) { total -= kept; continue; }
+    g_declStart[faces + 1] = total;
+    ++faces;
+  }
+  if (faces == 0) return 0;
+  g_declStart[0] = 0;
+  g_declFaces = faces;
+  g_declPending = true;
+  g_quadBuilt = false;
+  g_quadSignature = 0u;
+  buildQuadGroups();
+  return 1;
+}
+
+/* What Edit Mode draws as one face. */
+FE_EXPORT uint32_t fe_edit_face_count(void) { return g_quadCount; }
+/* Faces with more than four corners: the n-gons a triangle buffer cannot
+   describe on its own. */
+FE_EXPORT uint32_t fe_edit_ngon_count(void) { return g_ngonCount; }
+/* The corner rings, flattened: face f owns corners
+   [faceStart[f], faceStart[f + 1]). */
+FE_EXPORT uint32_t fe_edit_face_ring_count(void) { return g_grpRingCount; }
+FE_EXPORT const uint32_t* fe_edit_face_start_ptr(void) { return g_grpStart; }
+FE_EXPORT const uint32_t* fe_edit_face_ring_ptr(void) { return g_grpRing; }
 
 FE_EXPORT void fe_edit_set_display_angle(float degrees) {
   g_displayAngle = clampf(degrees, 0.0f, 180.0f);

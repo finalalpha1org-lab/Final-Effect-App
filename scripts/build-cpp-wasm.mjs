@@ -97,6 +97,9 @@ const REQUIRED_EXPORTS = [
   'fe_edit_color_interleaved_ptr',
   'fe_edit_edge_ptr','fe_edit_edge_b_ptr','fe_edit_edge_face_ptr','fe_edit_edge_sel_ptr',
   'fe_edit_quad_pairs_ptr','fe_edit_quad_pair_count',
+  'fe_edit_interior_pairs_ptr','fe_edit_interior_pair_count',
+  'fe_edit_set_faces','fe_edit_face_count','fe_edit_ngon_count',
+  'fe_edit_face_ring_count','fe_edit_face_start_ptr','fe_edit_face_ring_ptr',
   'fe_edit_face_sel_ptr','fe_edit_pos_interleaved_ptr',
   'fe_edit_set_mode','fe_edit_get_mode','fe_edit_select_all','fe_edit_select_none','fe_edit_select_invert',
   'fe_edit_sel_count','fe_edit_select_by_index','fe_edit_select_linked','fe_edit_select_more',
@@ -211,6 +214,13 @@ if (zig) {
     /* Edit Mode tap radius, set by the shell from the viewport height. */
     '-Wl,--export=fe_edit_set_pick_tolerance',
     '-Wl,--export=fe_edit_quad_pairs_ptr','-Wl,--export=fe_edit_quad_pair_count',
+    '-Wl,--export=fe_edit_interior_pairs_ptr','-Wl,--export=fe_edit_interior_pair_count',
+    /* Faces: the app declares its n-gons (a cylinder cap is one thirty-two-gon
+       face in Blender and a fan of triangles in the buffer), and the shell
+       reads the face table back to outline and stash them. */
+    '-Wl,--export=fe_edit_set_faces','-Wl,--export=fe_edit_face_count',
+    '-Wl,--export=fe_edit_ngon_count','-Wl,--export=fe_edit_face_ring_count',
+    '-Wl,--export=fe_edit_face_start_ptr','-Wl,--export=fe_edit_face_ring_ptr',
     '-Wl,--export=fe_edit_select_loop','-Wl,--export=fe_edit_set_proportional',
     '-Wl,--export=fe_edit_set_pivot','-Wl,--export=fe_edit_set_snap',
     '-Wl,--export=fe_edit_move','-Wl,--export=fe_edit_rotate','-Wl,--export=fe_edit_scale',
