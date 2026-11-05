@@ -1896,11 +1896,12 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 #edit-sheet.open { display: flex; }
 #edit-sheet[hidden] { display: none; }
 /* A ceiling in pixels as well as in viewport units: the sheet is a strip of tools
-   at the bottom of the screen, and on a tall phone 42vh is most of the screen
-   with a hand's width of empty space under the last row. Forty percent is the
-   hard maximum - the same number the grab handle stops at (SHEET_CEILING in the
-   grip controller), so dragging the panel up cannot bury the model either. */
-#edit-sheet { max-height: min(40dvh, 330px); }
+   at the bottom of the screen, and on a tall phone a third of the screen is
+   already a lot to spend on chrome above the toolbar. Thirty-four percent is the
+   hard maximum, and it is the same number the grab handle stops at
+   (SHEET_CEILING in the grip controller), so dragging the panel up cannot bury
+   the model either. The body scrolls; the head does not. */
+#edit-sheet { max-height: min(34dvh, 280px); }
 #edit-sheet-tools { max-height: min(26dvh, 210px); overflow-y: auto; }
 /* The category row and Done stay put while the body under them scrolls: the one
    button that leaves the mode must not be the thing that scrolled away. */
@@ -2184,7 +2185,7 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
     left: 6px;
     right: 6px;
     bottom: calc(var(--tb) + var(--sb) + 6px);
-    max-height: min(38dvh, 300px);
+    max-height: min(56dvh, 250px);
     padding: 6px 8px 6px;
     gap: 4px;
   }
@@ -6926,7 +6927,7 @@ window.addEventListener('DOMContentLoaded', () => {
      stop at a hard ceiling and leave the model on screen, which is what the
      panel at the bottom of Edit Mode has to do. Kept in step with the sheet's
      own max-height in the stylesheet. */
-  const SHEET_CEILING = { 'edit-sheet': 0.40 };
+  const SHEET_CEILING = { 'edit-sheet': 0.34 };
   const naturals = new WeakMap();
   let drag = null;
 

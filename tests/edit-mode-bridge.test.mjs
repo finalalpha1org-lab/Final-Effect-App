@@ -511,7 +511,7 @@ test('Edit Mode is entered from the mode dropdown and nowhere else', () => {
   assert.match(sheetCss, /border-radius: 14px/, 'and it has its own rounded shape');
   /* A hard ceiling, in viewport units and in pixels: the panel is a strip of
      tools at the bottom of the screen and may never grow into the model. */
-  assert.match(sheetCss, /max-height: min\(40dvh, 330px\)/, 'the panel has a hard maximum height');
+  assert.match(sheetCss, /max-height: min\(34dvh, 280px\)/, 'the panel has a hard maximum height');
 
   /* The settings inside it read top to bottom: one label, one control across
      the full width. Side by side they left the right half of every row empty. */

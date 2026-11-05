@@ -188,6 +188,9 @@ test('the edit panel stops at its ceiling instead of covering the model', () => 
   load(dom);
   const sheet = dom.sheets.get('edit-sheet');
   assert.ok(sheet, 'the edit sheet is missing from the fixture');
+  /* Its resting height is under its own ceiling - the stylesheet caps it there
+     before the handle is ever touched. */
+  sheet.height = 240;
 
   /* A long drag up. Every other sheet opens to 92% of the screen; this one is a
      strip of tools and has to leave the model visible, so it settles at its own
@@ -196,7 +199,7 @@ test('the edit panel stops at its ceiling instead of covering the model', () => 
   pointer(dom, sheet, 'pointermove', { y: -400 });
   pointer(dom, sheet, 'pointerup', { y: -400 });
   assert.equal(sheet.classList.contains('sheet-expanded'), true, 'the panel did not open');
-  assert.equal(sheet.style.height, '320px', `the ceiling is 40% of 800px, got ${sheet.style.height}`);
+  assert.equal(sheet.style.height, '272px', `the ceiling is 34% of 800px, got ${sheet.style.height}`);
 
   /* The other sheets are unchanged: they still get the tall panel. */
   const camera = dom.sheets.get('camera-sheet');
