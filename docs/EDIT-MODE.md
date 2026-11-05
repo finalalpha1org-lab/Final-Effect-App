@@ -138,6 +138,29 @@ The same flags reach the modifier stack: `fe_mod_face_smooth_ptr`,
 `fe_mod_set_counts`, cleared by solidify and decimate, whose output is new
 surface — so a subdivided flat cube stays flat instead of coming back rounded.
 
+## One normal per face, one line per edge
+
+A quad is two triangles in the buffer, and shading them separately draws a line
+down the diagonal the face does not have - the crease the model never had, and
+the one the user kept finding on a cube. Two rules keep it off:
+
+* **A flat face is one smoothing group, not two.** The render pass groups the
+  faces at a vertex; a flat face normally stands alone, but the triangles that
+  make up *one* face share a group, so every corner of the quad carries the
+  face's own normal - the weighted average of the triangles the face is made of.
+  A bent quad is still one face and is still shaded as one.
+* **The material only shades when the kernel can hand it a planar mesh.** With
+  every face flat *and* planar the indexed mesh goes to the material, whose
+  derivative normals are exact (`fe_edit_flat_planar()` answers that). A bent
+  face falls through to the split pass instead: the shader would derive a
+  different normal for each half of it.
+
+The overlay draws the **face rings**, not the edge table: `fe_edit_face_start_ptr`
+and `fe_edit_face_ring_ptr` are the model's own boundary, so no interior edge can
+be drawn even on a face that has been deformed. The edge table still answers
+picking and the edge selection; the drawn line list is cached against the
+topology counts so a drag does not rebuild it every frame.
+
 ## Kernel ABI
 
 Lifecycle and readback:

@@ -763,6 +763,71 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
 
 function positionsOf(mesh) { return mesh.positions; }
 
+/* The line across a face. A quad is two triangles in the buffer, and if each of
+   them takes its own normal the render draws the diagonal - the crease the user
+   keeps finding in the middle of a face that Blender, which stores quads, never
+   shows. Shading is decided per face, so both halves carry one normal, and the
+   wireframe is drawn from the face rings, so the diagonal is not an edge of the
+   model at all. */
+test('a bent face keeps one normal, and its diagonal is not a wireframe edge', () => {
+  const exp = loadEngine();
+  exp.fe_arena_reset();
+  const quad = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
+  const faces = new Uint32Array([0, 1, 2, 0, 2, 3]);
+  const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  const posPtr = exp.fe_malloc(quad.byteLength);
+  const triPtr = exp.fe_malloc(faces.byteLength);
+  const nrmPtr = exp.fe_malloc(normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, quad.length).set(quad);
+  new Uint32Array(exp.memory.buffer, triPtr, faces.length).set(faces);
+  new Float32Array(exp.memory.buffer, nrmPtr, normals.length).set(normals);
+  assert.equal(exp.fe_edit_upload(4, posPtr, 2, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  /* One face, four corners: the two triangles are the two halves of a quad. */
+  assert.equal(exp.fe_edit_face_count(), 1);
+  assert.deepEqual(
+    Array.from(new Uint32Array(exp.memory.buffer, exp.fe_edit_face_ring_ptr(), 4)),
+    [0, 1, 2, 3],
+    'the ring of the face is its four corners'
+  );
+  assert.equal(exp.fe_edit_flat_planar(), 0, 'nothing has been rendered yet');
+
+  /* Bend it: lift one corner out of the plane the quad was drawn in. */
+  exp.fe_arena_reset();
+  const selPtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, selPtr, 1)[0] = 2;
+  exp.fe_edit_select_by_index(0, 1, selPtr, 0);
+  exp.fe_arena_reset();
+  exp.fe_edit_move(0, 0, 0.6, 0);
+
+  const verts = exp.fe_edit_build_render();
+  assert.equal(verts, 4, 'a bent face still needs one vertex per corner, not per triangle');
+  assert.equal(exp.fe_edit_flat_planar(), 0, 'a bent face cannot be shaded by derivative normals');
+  const renderNormals = new Float32Array(exp.memory.buffer, exp.fe_edit_render_nrm_ptr(), verts * 3);
+  for (let v = 1; v < verts; v++) {
+    for (let c = 0; c < 3; c++) {
+      assert.ok(Math.abs(renderNormals[v * 3 + c] - renderNormals[c]) < 1e-5,
+        `corner ${v} points a different way than corner 0, which is the diagonal showing`);
+    }
+  }
+  assert.ok(Math.abs(Math.hypot(renderNormals[0], renderNormals[1], renderNormals[2]) - 1) < 1e-4, 'and it is a unit normal');
+
+  /* The wireframe is the face boundary: four lines, and the diagonal the two
+     triangles share is not one of them. */
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), 2);
+  const ring = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_ring_ptr(), exp.fe_edit_face_ring_count());
+  const drawn = new Set();
+  for (let f = 0; f + 1 < starts.length; f++) {
+    const n = starts[f + 1] - starts[f];
+    for (let i = 0; i < n; i++) {
+      const a = ring[starts[f] + i], b = ring[starts[f] + (i + 1) % n];
+      drawn.add(a < b ? `${a}:${b}` : `${b}:${a}`);
+    }
+  }
+  assert.deepEqual(Array.from(drawn).sort(), ['0:1', '0:3', '1:2', '2:3'], 'four edges around the quad, no 0:2 diagonal');
+});
+
 /* Blender keeps a flag per face. A face marked flat next to smooth neighbours
    needs two different normals at the same point, and two normals at one point
    is not a shared vertex - the kernel has to break the corners apart, and that
@@ -821,7 +886,11 @@ test('one face stays flat while the faces around it stay smooth', () => {
   assert.equal(exp.fe_edit_shade_state(), 0, 'shading the whole mesh flat is still one call');
   exp.fe_edit_select_none();
   assert.equal(exp.fe_edit_build_render(), 8, 'and the all-flat shortcut comes back');
-  assert.equal(exp.fe_edit_build_render_split(), 36, 'twelve faces, three corners each, when it is forced');
+  /* Forced, the cube splits where faces meet, not where triangles meet: eight
+     corners, three faces on each, is twenty-four - one vertex per corner per
+     face. Before the shading was resolved per face rather than per triangle it
+     was thirty-six, because each triangle of a quad took its own copy. */
+  assert.equal(exp.fe_edit_build_render_split(), 24, 'a corner gets one vertex per face it belongs to');
 
   /* Flags that were written down are restored as they are, not re-derived from
      normals: a cage has shared vertices and averaged normals, so deriving would

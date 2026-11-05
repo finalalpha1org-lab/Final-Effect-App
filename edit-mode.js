@@ -91,6 +91,9 @@
 
   const state = {
     active: false,
+    /* The wireframe's line list, kept between frames (see refreshOverlay). */
+    ringSegments: null,
+    ringStamp: '',
     mode: 'vertex',
     tool: 'pick',
     category: 'select',
@@ -621,12 +624,11 @@
       const built = exp.fe_edit_build_render_split();
       const renderCount = built ? exp.fe_edit_render_vert_count() : 0;
       const renderIndexCount = built ? exp.fe_edit_render_idx_count() : 0;
-      /* The split has a vertex budget of its own. A mesh too dense for it comes
-         back with its vertices shared, which is exactly the smooth normals the
-         cage already has - so it is not used, and the shading falls back to the
-         material's flat mode below. */
-      const splitHappened = renderCount > vertexCount || shade === 2;
-      if (renderCount && renderIndexCount && splitHappened) {
+      /* Not `renderCount > vertexCount`: a bent quad needs one normal for the
+         whole face, which is a *different* normal on the same four vertices -
+         the count never grows, and the shading is still there in the buffer.
+         What the buffers hold is what the object gets. */
+      if (renderCount && renderIndexCount) {
         display = new THREE.BufferGeometry();
         display.setAttribute('position', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_pos_ptr(), renderCount * 3)), 3));
         display.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_nrm_ptr(), renderCount * 3)), 3));
@@ -701,7 +703,21 @@
   const OVERLAY_LIGHT = 0xdbe4f0;
   const OVERLAY_SELECTED = [1.0, 0.62, 0.16];
 
+  /* Wireframe shading turns the object's own surface off and leaves only the
+     lines, so the tone the overlay has to contrast with is the viewport, not a
+     material that is no longer drawn. Near-black lines on a near-black
+     background - the pale wireframe the user had been looking at gone - would
+     read as "the wireframe disappeared". */
+  function surfaceIsDrawn() {
+    const eng = core();
+    const mode = typeof eng?.getShadingMode === 'function' ? eng.getShadingMode() : 'solid';
+    return mode !== 'wireframe';
+  }
+
   function overlayTone() {
+    if (!surfaceIsDrawn()) {
+      return { wire: OVERLAY_LIGHT, point: [0.86, 0.9, 0.96] };
+    }
     const target = state.target;
     const materials = target ? (Array.isArray(target.material) ? target.material : [target.material]) : [];
     let sum = 0;
@@ -816,6 +832,46 @@
   /* Overlay buffers live for the whole session and grow by replacement: a
      BufferAttribute whose array is swapped behind its back is not something
      every driver uploads correctly, so the attribute itself is replaced. */
+  /* The wireframe of the model's faces, as line segments.
+
+     The edge table is built from triangles, so on a triangulated mesh it
+     contains the diagonal across every quad and the spokes a fan draws from the
+     middle of a cap. `fe_edit_edge_display` hides them by rule - an edge whose
+     two triangles are nearly coplanar is not drawn - and that rule is a guess
+     about the shape: a bent quad is no longer coplanar with itself, so its
+     diagonal came back the moment the face was deformed, which is the line the
+     user keeps finding in the middle of a face.
+
+     Faces are not a guess. The kernel knows exactly which triangles make up
+     which face (the declared rings first, the quad pairing after), so drawing
+     each face's corner ring draws every edge the model has and no edge it does
+     not - a quad's boundary is four lines whatever shape it has been bent into.
+     The same table Edit Mode paints the selection from, one source. */
+  function faceRingSegments(exp) {
+    if (typeof exp.fe_edit_face_count !== 'function' || typeof exp.fe_edit_face_start_ptr !== 'function') return null;
+    const faceCount = exp.fe_edit_face_count();
+    const ringCount = typeof exp.fe_edit_face_ring_count === 'function' ? exp.fe_edit_face_ring_count() : 0;
+    if (!faceCount || !ringCount) return null;
+    const starts = u32(exp.fe_edit_face_start_ptr(), faceCount + 1);
+    const ring = u32(exp.fe_edit_face_ring_ptr(), ringCount);
+    const out = [];
+    const seen = new Set();
+    for (let f = 0; f < faceCount; f++) {
+      const from = starts[f], to = starts[f + 1];
+      const n = to - from;
+      if (n < 3 || to > ringCount) continue;
+      for (let i = 0; i < n; i++) {
+        const a = ring[from + i], b = ring[from + (i + 1) % n];
+        if (a === b) continue;
+        const key = a < b ? a * 2097152 + b : b * 2097152 + a;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(a, b);
+      }
+    }
+    return out.length ? out : null;
+  }
+
   function ensureEdgeBuffer(object, needed) {
     const attribute = object.geometry.attributes.position;
     if (attribute && attribute.array.length >= needed) return attribute.array;
@@ -872,6 +928,28 @@
        share an edge and face the same way are one quad, and the diagonal
        between them is not an edge of the model, so it is not drawn. */
     const edgeShow = u8(exp.fe_edit_edge_display_ptr(), edgeCount);
+    /* ...and where the faces themselves are known, they answer it exactly: the
+       ring of a face is its boundary, so nothing inside a face can be drawn. */
+    /* Cached: this runs on every frame of a drag, and the faces only change when
+       the topology does - which the counts below pin exactly. */
+    const ringStamp = `${exp.fe_edit_face_count()}:${exp.fe_edit_face_ring_count()}:${triCount}:${vertexCount}`;
+    if (state.ringSegments && state.ringStamp === ringStamp) {
+      // reuse
+    } else {
+      state.ringSegments = faceRingSegments(exp);
+      state.ringStamp = ringStamp;
+    }
+    const ringSegments = state.ringSegments;
+    /* Edge selection lives on the edge table; a ring segment looks its own flag
+       up here so the two views of the same line agree. */
+    const edgeSelected = new Map();
+    if (state.mode === 'edge' && ringSegments) {
+      for (let e = 0; e < edgeCount; e++) {
+        if (!edgeSel[e]) continue;
+        const a = edgeA[e], b = edgeB[e];
+        edgeSelected.set(a < b ? a * 2097152 + b : b * 2097152 + a, 1);
+      }
+    }
     const faceSel = u8(exp.fe_edit_face_sel_ptr(), triCount);
     const tris = u32(exp.fe_edit_idx_ptr(), triCount * 3);
 
@@ -884,30 +962,42 @@
        the edges the user is working with. The mask decides what the surface
        has; the selection only decides the colour, except in edge mode where a
        diagonal the user picked is drawn so the tool has something to show. */
+    /* One list of segments either way: the face rings when the kernel has them,
+       the edge display mask when it does not. */
+    const segments = [];
+    if (ringSegments) {
+      for (let i = 0; i < ringSegments.length; i += 2) {
+        const a = ringSegments[i], b = ringSegments[i + 1];
+        const on = state.mode === 'edge' ? edgeSelected.has(a < b ? a * 2097152 + b : b * 2097152 + a) : (vertSel[a] && vertSel[b]);
+        segments.push(a, b, on ? 1 : 0);
+      }
+    } else {
+      for (let e = 0; e < edgeCount; e++) {
+        const a = edgeA[e];
+        const b = edgeB[e];
+        const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
+        if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
+        segments.push(a, b, on ? 1 : 0);
+      }
+    }
+
     let baseCount = 0;
     let selectedCount = 0;
-    for (let e = 0; e < edgeCount; e++) {
-      const a = edgeA[e];
-      const b = edgeB[e];
-      const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
-      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
-      if (on) selectedCount++; else baseCount++;
+    for (let i = 2; i < segments.length; i += 3) {
+      if (segments[i]) selectedCount++; else baseCount++;
     }
     const base = ensureEdgeBuffer(edges, baseCount * 6);
     const chosen = ensureEdgeBuffer(selectedEdges, selectedCount * 6);
     let baseAt = 0;
     let chosenAt = 0;
-    for (let e = 0; e < edgeCount; e++) {
-      const a = edgeA[e];
-      const b = edgeB[e];
-      const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
-      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
-      const target = on ? chosen : base;
-      let at = on ? chosenAt : baseAt;
+    for (let i = 0; i < segments.length; i += 3) {
+      const a = segments[i], b = segments[i + 1];
+      const target = segments[i + 2] ? chosen : base;
+      let at = segments[i + 2] ? chosenAt : baseAt;
       target[at] = positions[a * 3]; target[at + 1] = positions[a * 3 + 1]; target[at + 2] = positions[a * 3 + 2];
       target[at + 3] = positions[b * 3]; target[at + 4] = positions[b * 3 + 1]; target[at + 5] = positions[b * 3 + 2];
       at += 6;
-      if (on) chosenAt = at; else baseAt = at;
+      if (segments[i + 2]) chosenAt = at; else baseAt = at;
     }
     drawEdges(edges, baseCount * 2, false);
     drawEdges(selectedEdges, selectedCount * 2, true);
@@ -1226,7 +1316,12 @@
     const shade = typeof exp.fe_edit_shade_state === 'function'
       ? exp.fe_edit_shade_state()
       : (exp.fe_edit_get_shade() === 0 ? 0 : 1);
-    const flat = shade === 0;
+    /* Only when the kernel kept the indexed mesh *and* every flat face is
+       planar. A face bent out of plane is still one face - its two halves carry
+       the face's single normal so no line appears down the diagonal - and the
+       shader deriving a normal per triangle would draw exactly that line. */
+    const planar = typeof exp.fe_edit_flat_planar === 'function' ? exp.fe_edit_flat_planar() === 1 : true;
+    const flat = shade === 0 && planar;
     const materials = Array.isArray(target.material) ? target.material : [target.material];
     for (const material of materials) {
       if (!material || material.flatShading === flat) continue;
@@ -2224,6 +2319,8 @@
     disposeGizmo();
     stats.selected = 0;
     view.capacity = 0; view.index = null; view.geometry = null;
+    state.ringSegments = null;
+    state.ringStamp = '';
 
     const exp = exportsOf();
     exp.fe_edit_undo_clear();

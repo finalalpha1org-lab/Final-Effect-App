@@ -1281,6 +1281,13 @@ uint32_t g_groupOf[64];
    shading can live is inside the normals. */
 bool g_forceSplit = false;
 
+/* Every face is flat *and* planar - the one case the material can shade by
+   itself, because a derivative normal taken across a planar triangle is exactly
+   the face normal. A bent face is flat but not planar: its two halves point
+   different ways, and only the split pass, which writes one normal per face,
+   can keep the line off the diagonal. */
+bool g_flatPlanar = false;
+
 /* The shading of one face, with the stale bytes past the last written flag
    replaced by the mesh's own answer. A mesh that is smooth all over stays
    smooth through a subdivide, instead of inheriting whatever the previous,
@@ -1294,6 +1301,7 @@ uint32_t buildRenderMesh() {
   g_outVerts = 0;
   g_outIdxCount = 0;
   g_outSplit = 0;
+  g_flatPlanar = false;
   if (M.nt == 0 || M.nv == 0) return 0;
   /* Hold the flags to the triangles that exist, so everything downstream - the
      ptr the bridge copies onto the committed geometry, the next snapshot - sees
@@ -1306,6 +1314,49 @@ uint32_t buildRenderMesh() {
   static float fnx[kMaxTris], fny[kMaxTris], fnz[kMaxTris], farea[kMaxTris];
   vertexNormals(nx, ny, nz);
 
+  /* The face normals, once, for both paths: the split pass shades with them and
+     the fast path below needs to know whether any of them disagree about a face
+     they share. */
+  buildVertexFaces();
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    faceNormal(t, fnx[t], fny[t], fnz[t]);
+    triangleArea(t, farea[t]);
+  }
+
+  /* One normal per *face*, not per triangle. A face is the quad the model says
+     it has, and a bent quad is still one face: shading it flat in Blender gives
+     every one of its corners the polygon's normal, so no line appears down the
+     diagonal. Shading it per triangle - which is what the buffer holds - draws
+     exactly that line, because the two halves then point different ways. The
+     kernel already knows which triangles are one face (`g_quadOf`, built from
+     the declared rings and the quad pairing), so a flat face takes the weighted
+     normal of the whole face and every triangle in it carries it. */
+  static float snx[kMaxTris], sny[kMaxTris], snz[kMaxTris];
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    snx[t] = fnx[t]; sny[t] = fny[t]; snz[t] = fnz[t];
+  }
+  /* A face whose triangles disagree is bent, and a bent face needs its own
+     normals; a planar one is already exact and can stay on the fast path. */
+  bool bentFlatFace = false;
+  for (uint32_t g = 0; g < g_quadCount; ++g) {
+    uint32_t count = 0;
+    bool flat = true;
+    float ax = 0.0f, ay = 0.0f, az = 0.0f;
+    for (uint32_t t = g_quadFirst[g]; t != kNoFace && count < kMaxTris; t = g_quadNext[t]) {
+      ++count;
+      if (faceSmoothFlag(t)) { flat = false; break; }
+      ax += fnx[t]; ay += fny[t]; az += fnz[t];
+    }
+    if (!flat || count < 2) continue;
+    const float len = sqrtf(ax * ax + ay * ay + az * az);
+    if (!(len > 1e-20f)) continue;
+    ax /= len; ay /= len; az /= len;
+    for (uint32_t t = g_quadFirst[g]; t != kNoFace; t = g_quadNext[t]) {
+      if (fnx[t] * ax + fny[t] * ay + fnz[t] * az < 0.99999f) bentFlatFace = true;
+      snx[t] = ax; sny[t] = ay; snz[t] = az;
+    }
+  }
+
   /* Anything smooth at all, and the split pass below runs: a mesh with a flat
      face and a smooth one needs the flat face's corners broken away from the
      smooth ones, or the smoothing wins at every shared vertex. */
@@ -1314,11 +1365,16 @@ uint32_t buildRenderMesh() {
     if (faceSmoothFlag(t)) { anySmooth = true; break; }
   }
 
-  if (!anySmooth && !g_forceSplit) {
-    /* Every face is flat. Flat shading is done by the material (derivative
-       normals in the fragment shader), so the indexed mesh can be reused
-       untouched - and that is also the only way to keep a 30 000 triangle flat
-       mesh inside the render-vertex budget, which tripling corners would not. */
+  g_flatPlanar = !anySmooth && !bentFlatFace;
+  if (g_flatPlanar && !g_forceSplit) {
+    /* Every face is flat, and every one of them is planar. Flat shading is done
+       by the material (derivative normals in the fragment shader), so the
+       indexed mesh can be reused untouched - and that is also the only way to
+       keep a 30 000 triangle flat mesh inside the render-vertex budget, which
+       tripling corners would not. A *bent* flat face cannot use derivative
+       normals: the shader would give each half of it its own direction and draw
+       the diagonal the face does not have, which is why that case falls through
+       to the split pass below. */
     for (uint32_t i = 0; i < M.nv; ++i) {
       g_outPos[i * 3] = M.x[i]; g_outPos[i * 3 + 1] = M.y[i]; g_outPos[i * 3 + 2] = M.z[i];
       g_outNrm[i * 3] = nx[i]; g_outNrm[i * 3 + 1] = ny[i]; g_outNrm[i * 3 + 2] = nz[i];
@@ -1335,12 +1391,6 @@ uint32_t buildRenderMesh() {
     }
     g_outIdxCount = M.nt * 3u;
     return g_outVerts;
-  }
-
-  buildVertexFaces();
-  for (uint32_t t = 0; t < M.nt; ++t) {
-    faceNormal(t, fnx[t], fny[t], fnz[t]);
-    triangleArea(t, farea[t]);
   }
 
   /* Per (vertex, smoothing group) render vertex. Two faces at the same vertex
@@ -1393,13 +1443,20 @@ uint32_t buildRenderMesh() {
               }
             }
             if (shared == 0xFFFFFFFFu) continue;
-            /* A flat face is its own smoothing group, always: the whole point
-               of the flag is that this face does not average with its
-               neighbours. Its group is a single face, so the weighted average
-               below is exactly the face normal. */
-            if (!faceSmoothFlag(fa) || !faceSmoothFlag(fb)) continue;
-            float crease = 0.0f;
-            if (pairGet(g_sharp, v, shared, &crease)) continue;
+            /* A flat face never averages with its neighbours - that is the
+               whole point of the flag - but the triangles that make up ONE
+               face must share a vertex, or a bent quad grows a line down the
+               diagonal. Same face, same normal: one group. */
+            const bool smoothA = faceSmoothFlag(fa) != 0;
+            const bool smoothB = faceSmoothFlag(fb) != 0;
+            if (smoothA != smoothB) continue;
+            if (!smoothA) {
+              const uint32_t ga = g_quadOf[fa], gb = g_quadOf[fb];
+              if (ga == kNoFace || ga != gb) continue;
+            } else {
+              float crease = 0.0f;
+              if (pairGet(g_sharp, v, shared, &crease)) continue;
+            }
             g_groupOf[b] = g;
             grew = true;
           }
@@ -1419,9 +1476,9 @@ uint32_t buildRenderMesh() {
         for (uint32_t k = 0; k < 3; ++k) {
           if (M.tri[f * 3 + k] == v) { weight = cornerAngle(f, k); break; }
         }
-        ax += fnx[f] * weight;
-        ay += fny[f] * weight;
-        az += fnz[f] * weight;
+        ax += snx[f] * weight;
+        ay += sny[f] * weight;
+        az += snz[f] * weight;
       }
       const float len = sqrtf(ax * ax + ay * ay + az * az);
       if (len > 1e-20f) { ax /= len; ay /= len; az /= len; }
@@ -1447,10 +1504,14 @@ uint32_t buildRenderMesh() {
     }
   }
 
+  /* `cornerGroup` is written per *corner*, so it is read per corner. Reading it
+     by vertex id looked the same on a mesh whose triangle table is 0,1,2,3... -
+     which is most freshly uploaded ones - and silently picked another corner's
+     vertex on anything a tool had re-indexed. */
   for (uint32_t t = 0; t < M.nt; ++t) {
-    g_outIdx[t * 3] = cornerGroup[M.tri[t * 3]];
-    g_outIdx[t * 3 + 1] = cornerGroup[M.tri[t * 3 + 1]];
-    g_outIdx[t * 3 + 2] = cornerGroup[M.tri[t * 3 + 2]];
+    g_outIdx[t * 3] = cornerGroup[t * 3];
+    g_outIdx[t * 3 + 1] = cornerGroup[t * 3 + 1];
+    g_outIdx[t * 3 + 2] = cornerGroup[t * 3 + 2];
   }
   g_outVerts = renderCount;
   g_outIdxCount = M.nt * 3u;
@@ -2949,6 +3010,12 @@ FE_EXPORT const uint32_t* fe_edit_render_idx_ptr(void) { return g_outIdx; }
 FE_EXPORT uint32_t fe_edit_render_vert_count(void) { return g_outVerts; }
 FE_EXPORT uint32_t fe_edit_render_idx_count(void) { return g_outIdxCount; }
 FE_EXPORT uint32_t fe_edit_render_split_count(void) { return g_outSplit; }
+
+/* Whether the material can shade the last render mesh by itself: every face is
+   flat and every one of them is planar. Answering 0 for an all-flat mesh means
+   a face is bent, and the normals the render pass just wrote are the ones to
+   use - a derivative normal would draw the diagonal that face does not have. */
+FE_EXPORT uint32_t fe_edit_flat_planar(void) { return g_flatPlanar ? 1u : 0u; }
 
 /* ---- undo -------------------------------------------------------------- */
 

@@ -583,3 +583,40 @@ test('a face marked flat keeps its shading after leaving Edit Mode', () => {
     geometry.dispose?.();
   }
 });
+
+test('the cage wireframe follows the faces, so a face has no line across it', () => {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(CUBE_VERTS), 3));
+  geometry.setIndex(new BufferAttribute(new Uint32Array(CUBE_TRIS), 1));
+  const object = new THREE.Mesh(geometry, new Material());
+  object.name = 'WireCube';
+  scene.add(object);
+  const savedObject = globalThis.getActiveObjectMesh;
+  globalThis.getActiveObjectMesh = () => object;
+  try {
+    const entered = EditMode.enter();
+    assert.equal(entered, true, `enter refused the object: ${toasts[toasts.length - 1] || 'no message'}`);
+    const overlay = object.getObjectByName('EditModeOverlay');
+    const edges = overlay.getObjectByName('EditEdges');
+    assert.ok(edges, 'the wireframe was not attached');
+    /* Every corner of the cube has three faces, so the drawn segments are the
+       model's own edges: twelve of them, drawn once each (the two faces that
+       share an edge contribute the same line twice and the overlay keeps one). */
+    assert.equal(edges.geometry.attributes.position.count / 2, 12, 'a cube has twelve edges and six diagonals were drawn as well');
+
+    /* Each drawn segment really is a pair of the cage's own points - no segment
+       runs to the middle of anything, which is what a stray diagonal would look
+       like once the positions are asked for. */
+    const position = edges.geometry.attributes.position.array;
+    const corners = new Set();
+    for (let i = 0; i < edges.geometry.attributes.position.count; i++) {
+      corners.add(`${position[i * 3].toFixed(3)},${position[i * 3 + 1].toFixed(3)},${position[i * 3 + 2].toFixed(3)}`);
+    }
+    assert.equal(corners.size, 8, 'the wireframe only ever uses the eight corners of the cube');
+    assert.equal(exp.fe_edit_tri_count(), 12, 'the kernel still holds twelve triangles');
+  } finally {
+    EditMode.exit();
+    globalThis.getActiveObjectMesh = savedObject;
+    scene.remove(object);
+  }
+});
