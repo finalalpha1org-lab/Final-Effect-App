@@ -27,9 +27,9 @@ is the contract below.
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
 | `export` | `fe_export_bake`, `fe_export_bake_instanced`, `fe_zip_crc32`, `fe_volatlas_pack`, `fe_volatlas_sample`, `fe_volatlas_parse_library`, `fe_writer_obj_mesh`, `fe_writer_mtl_material` |
 | `render-maths` | `fe_taa_halton`, `fe_taa_jitter`, `fe_taa_project`, `fe_color_blackbody_rgb`, `fe_color_blackbody_lut` |
-| `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance` |
+| `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance`, `fe_edit_set_faces`, `fe_edit_face_count`, `fe_edit_tri_tag_ptr`, `fe_edit_tri_tag_count` |
 
-The shipped build is `1108705` bytes, ABI v1, **295 exports**; every group above
+The shipped build is `1202842` bytes, ABI v1, **318 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all seven benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
@@ -46,11 +46,17 @@ Eight are the Wavefront text writers (`cpp/src/fe_writer.cpp`): OBJ and MTL are
 formatted into one append buffer in engine memory, including the six-decimal
 number form the OBJ format uses, and decoded once on the JavaScript side.
 
-Three of them are the quad face of `cpp/src/fe_editmesh.cpp`: the kernel pairs
-the two triangles that make one face and hands the pairs out through
-`fe_edit_quad_pairs_ptr` / `fe_edit_quad_pair_count`, so the viewport draws six
-faces on a cube rather than twelve triangles, and `fe_edit_set_pick_tolerance`
-takes the screen-space radius a tap is judged by. See `LOCAL-PATCHES.md`.
+Eight of them are faces in `cpp/src/fe_editmesh.cpp`. The kernel groups the
+triangles that make one face and hands the table out through `fe_edit_face_*`
+(one corner ring per face: three corners for a triangle, four for a quad, n for
+an n-gon), with the edges *inside* a face - a quad's diagonal, the spokes of a
+cap - through `fe_edit_quad_pairs_ptr` / `fe_edit_quad_pair_count` (also
+`fe_edit_interior_pair_*`). A shape that cannot describe its own faces in
+triangles - a cylinder's cap is one thirty-two-gon in Blender and a fan of
+triangles in the buffer - declares them with `fe_edit_set_faces`, and
+`fe_edit_set_pick_tolerance` takes the screen-space radius a tap is judged by.
+The mesh library in `index.html` is where the declarations come from; see
+`docs/FACES.md`.
 
 Twenty of the exports are the rig (`cpp/src/fe_skin.cpp`): `fe_skin_begin`,
 `fe_skin_solve`, `fe_skin_deform`, `fe_skin_auto_weights`, the pointer getters
@@ -105,7 +111,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1108705 bytes, ABI v1, 295 exports)`.
+that passes `Validated fe_core_engine.wasm (1202842 bytes, ABI v1, 318 exports)`.
 
 ## Verification
 

@@ -134,6 +134,68 @@ test('two coplanar triangles sharing their longest edge are one quad', () => {
   }
 });
 
+test('a quad on a curved surface is one face, however far it is bent', () => {
+  const FEPoly = loadPoly();
+  const geometry = new THREE.BufferGeometry();
+  /* A square of side 1 split along its diagonal, whose fourth corner is lifted
+     so the two halves fold by about twenty degrees. A cylinder's side, a torus,
+     a knot: this is what every quad of a curved surface looks like. It is not
+     coplanar - the flat test alone would call it two triangles and draw the
+     diagonal - but the shared edge is still the longest side of both halves, so
+     it is the quad it was drawn as. */
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,   1, 0, 0,   1, 1, 0,
+    0, 0, 0,   1, 1, 0,   0, 1, 0.36
+  ], 3));
+  const stats = FEPoly.stats(geometry);
+  assert.equal(stats.faces, 1, 'one face, not two');
+  assert.equal(stats.quads, 1);
+  assert.equal(stats.triangles, 0, 'and no triangle came out of it');
+  assert.equal(stats.edges, 4, 'four sides: the diagonal is not an edge of the model');
+});
+
+test('a row of cells pairs across its own diagonals and nothing else', () => {
+  const FEPoly = loadPoly();
+  /* Sixteen cells around a circle: every cell is a warped quad (a fold of 22.5
+     degrees between the halves), and the edge each cell shares with its
+     neighbour is shorter than the diagonal inside it. Taking the longest shared
+     edge first is what keeps the pairing inside the cells; taking the shortest
+     first fuses neighbours into strips and leaves triangles behind. */
+  const side = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true);
+  const stats = FEPoly.stats(side);
+  assert.equal(stats.faces, 16, 'sixteen cells');
+  assert.equal(stats.quads, 16, 'every one of them a quad');
+  assert.equal(stats.triangles, 0, 'no cell was torn into triangles');
+  assert.equal(stats.edges, 49, 'sixteen verticals above, sixteen below, sixteen shared, one seam');
+
+  const grid = FEPoly.stats(new THREE.PlaneGeometry(2, 2, 4, 4));
+  assert.equal(grid.faces, 16, 'a four by four grid is sixteen cells');
+  assert.equal(grid.quads, 16);
+  assert.equal(grid.edges, 40, 'five rows and five columns of five vertices');
+});
+
+test('a real crease is still not a quad, and a saddle is not one either', () => {
+  const FEPoly = loadPoly();
+  const make = (lift) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      0, 0, 0,   1, 0, 0,   1, 1, 0,
+      0, 0, 0,   1, 1, 0,   0, 1, lift
+    ], 3));
+    return FEPoly.stats(geometry);
+  };
+  /* The same warped quad at three angles, measured: 27, 55 and 58 degrees of
+     fold between the halves. The first two are one face. The third is two, for
+     two reasons - the fold is closing on the sixty degrees the edit kernel
+     draws the line at (quadCreaseWithin), and the four corners have stopped
+     enclosing a convex quad, which no amount of tolerance can fix. Both rules
+     are deliberate: past this the shape is a saddle, not a bent face. */
+  assert.equal(make(0.36).faces, 1, 'a 27 degree warp is one face');
+  assert.equal(make(1.0).faces, 1, 'a 55 degree warp is still one face');
+  assert.equal(make(1.15).faces, 2, 'a 58 degree saddle is two');
+  assert.equal(make(2.5).faces, 2, 'and a right angle plus is a fold');
+});
+
 test('non-indexed geometry is welded by position before faces are paired', () => {
   const FEPoly = loadPoly();
   const indexed = new THREE.BoxGeometry(1, 1, 1);

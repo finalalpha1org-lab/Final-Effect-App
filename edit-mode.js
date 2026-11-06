@@ -78,8 +78,11 @@
 
     { id: 'recalc', cat: 'normals', label: 'Recalc Outside', icon: 'normal' },
     { id: 'flip', cat: 'normals', label: 'Flip Faces', icon: 'flip', needsSelection: true },
-    { id: 'smooth', cat: 'normals', label: 'Shade Smooth', icon: 'smooth' },
-    { id: 'flat', cat: 'normals', label: 'Shade Flat', icon: 'flat' },
+    /* The shading is a flag per face, not a switch for the object: with faces
+       taken in Face mode these two apply to those faces and leave the rest of
+       the model alone, which is how a cylinder gets round sides and flat caps. */
+    { id: 'smooth', cat: 'normals', label: 'Shade Smooth', icon: 'smooth', hint: 'Smooth the chosen faces, or the whole mesh' },
+    { id: 'flat', cat: 'normals', label: 'Shade Flat', icon: 'flat', hint: 'Hold the chosen faces flat, or the whole mesh' },
     { id: 'sharp', cat: 'normals', label: 'Mark Sharp', icon: 'sharp', needsSelection: true },
     { id: 'seam', cat: 'normals', label: 'Mark Seam', icon: 'seam', needsSelection: true }
   ];
@@ -88,6 +91,9 @@
 
   const state = {
     active: false,
+    /* The wireframe's line list, kept between frames (see refreshOverlay). */
+    ringSegments: null,
+    ringStamp: '',
     mode: 'vertex',
     tool: 'pick',
     category: 'select',
@@ -244,8 +250,19 @@
        would go on rebuilding from a cage that no longer matches what was
        edited. Edit the cage the stack is built from, as Blender does; `enter`
        puts that cage on screen for the duration so the overlay lines up with
-       the surface under the finger. */
-    const cage = object.userData?.baseGeometry;
+       the surface under the finger.
+
+       `feEditCage` is the same idea for objects with no stack: it is the
+       unsplit mesh the editor last committed, kept beside the object because
+       `object.geometry` holds the *display* mesh whenever the shading had to
+       be baked into split normals (any flat or mixed mesh). That display mesh
+       has been renumbered and split, so the face rings stashed on it would
+       name the wrong triangles - and without rings the kernel has to re-guess
+       the faces from a shape the user has since deformed, which is how a quad
+       comes back as two triangles with a diagonal across it. */
+    const cage = (object.userData?.feEditCage && object.userData.feEditCage.attributes?.position)
+      ? object.userData.feEditCage
+      : object.userData?.baseGeometry;
     const geometry = (cage && cage.attributes?.position) ? cage : object.geometry;
     const position = geometry.attributes.position;
     const index = geometry.index;
@@ -279,16 +296,34 @@
     const normal = geometry.attributes.normal;
     const normals = normal ? new Float32Array(normal.array.subarray(0, vertCount * 3)) : null;
 
+    /* The shading this mesh already carries, if it was written down. A cage has
+       shared vertices and averaged normals, so nothing can be read back off it;
+       the flags are kept beside the geometry instead, one byte per triangle. */
+    const stored = geometry.userData?.feFaceShading;
+    const flags = (stored && stored.length === triCount) ? stored : null;
+
     return withArena(null, (exp2) => {
       const posPtr = copyIn(exp2, positions, Float32Array);
       const triPtr = copyIn(exp2, triangles, Uint32Array);
       const colPtr = colours ? copyIn(exp2, colours, Float32Array) : 0;
+      const flagPtr = flags ? copyIn(exp2, new Uint8Array(flags), Uint8Array) : 0;
+      /* Normals go in with the mesh so the kernel can tell a hard surface from
+         a smooth one in the same pass that welds the shared vertices - it is
+         the only moment the split corners still exist. */
       const nrmPtr = normals ? copyIn(exp2, normals, Float32Array) : 0;
       if (!posPtr || !triPtr) { toast('The engine could not reserve memory for this mesh.'); return false; }
-      /* Asked before the upload: after it, the split vertices no longer exist. */
-      const smooth = nrmPtr ? exp2.fe_edit_detect_smooth(posPtr, nrmPtr, vertCount) : 1;
-      if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr) !== 1) return false;
-      exp2.fe_edit_set_shade(smooth ? 1 : 0);
+      if (exp2.fe_edit_upload(vertCount, posPtr, triCount, triPtr, colPtr, nrmPtr) !== 1) return false;
+      /* Written flags beat the guess: a genuinely flat face and a smooth face
+         that happens to lie flat in a coarse mesh look identical from normals
+         alone, but only one of them should merge with its neighbours. */
+      if (flagPtr && typeof exp2.fe_edit_upload_face_shade === 'function') {
+        exp2.fe_edit_upload_face_shade(flagPtr, triCount);
+      }
+      /* The faces the mesh arrived with - a cylinder cap is one thirty-two-gon
+         face in Blender and a fan of triangles in the buffer - in the
+         geometry's own vertex numbering. The kernel welds the mesh and maps
+         the rings through the weld. */
+      declareFaces(exp2, geometry, vertCount);
       return true;
     }) === true;
   }
@@ -471,6 +506,35 @@
      feBuildQuadWireGeometry) and without it a quad that the editor bent grew a
      triangle back down the middle of the face. Plain array on purpose: three's
      clone() round-trips userData through JSON. */
+  /* The faces a mesh was built with, handed to the kernel. The rings are in the
+     geometry's own vertex slots and the kernel maps them through its weld, so a
+     ring may name any of the three copies three.js gives a shared point. A mesh
+     that declares nothing leaves the kernel to its own reading of the shape. */
+  function declareFaces(exp, geometry, vertCount) {
+    if (typeof exp.fe_edit_set_faces !== 'function') return;
+    const rings = geometry && geometry.userData && geometry.userData.feFaces;
+    if (!Array.isArray(rings) || !rings.length) return;
+    if (geometry.userData.feFaceVerts !== vertCount) return;
+    let total = 0;
+    for (const ring of rings) if (Array.isArray(ring)) total += ring.length;
+    if (total < 3) return;
+    const starts = new Uint32Array(rings.length + 1);
+    const corners = new Uint32Array(total);
+    let at = 0;
+    for (let f = 0; f < rings.length; f++) {
+      starts[f] = at;
+      const ring = rings[f];
+      if (!Array.isArray(ring)) continue;
+      for (const slot of ring) if (at < corners.length) corners[at++] = slot;
+    }
+    starts[rings.length] = at;
+    try {
+      const startsPtr = copyIn(exp, starts, Uint32Array);
+      const cornersPtr = copyIn(exp, corners, Uint32Array);
+      if (startsPtr && cornersPtr) exp.fe_edit_set_faces(rings.length, startsPtr, cornersPtr);
+    } catch (_) { /* no declared faces is a fallback, not a failure */ }
+  }
+
   function stashQuadDiagonals(geometry) {
     const exp = exportsOf();
     const position = geometry?.attributes?.position;
@@ -487,6 +551,81 @@
       data.feQuadDiagonals = Array.from(u32(pointer, count * 2));
       data.feQuadDiagonalVerts = position.count;
     } catch (_) { /* a missing pairing only costs a nicer wireframe */ }
+  }
+
+  /* The faces themselves, written onto the committed geometry the same way and
+     for the same reason: the wireframe draws one line per face boundary, an
+     n-gon cap has no spokes, and a re-entry into Edit Mode hands the mesh back
+     with the faces it was drawn with instead of re-deriving them from a shape
+     that may since have been bent. */
+  function stashFaces(geometry) {
+    const exp = exportsOf();
+    const position = geometry?.attributes?.position;
+    if (!geometry || !position || !exp) return;
+    if (typeof exp.fe_edit_face_count !== 'function' || typeof exp.fe_edit_face_start_ptr !== 'function') return;
+    const data = geometry.userData || (geometry.userData = {});
+    try {
+      const count = exp.fe_edit_face_count();
+      if (!count) {
+        delete data.feFaces;
+        delete data.feFaceVerts;
+        return;
+      }
+      const starts = u32(exp.fe_edit_face_start_ptr(), count + 1);
+      const ringCount = exp.fe_edit_face_ring_count();
+      const ring = u32(exp.fe_edit_face_ring_ptr(), ringCount);
+      const faces = [];
+      for (let f = 0; f < count; f++) {
+        const from = starts[f], to = starts[f + 1];
+        if (to - from < 3 || to > ringCount) continue;
+        faces.push(Array.from(ring.subarray(from, to)));
+      }
+      if (faces.length) {
+        data.feFaces = faces;
+        data.feFaceVerts = position.count;
+      } else {
+        delete data.feFaces;
+        delete data.feFaceVerts;
+      }
+    } catch (_) { /* the shell redraws from the shape if the table is missing */ }
+  }
+
+  /* The rings, moved from the cage onto the split mesh the viewport draws.
+     Both describe the same points - the split pass copies a corner's position
+     once per smoothing group and never moves anything - so a ring translates
+     through a position lookup, and any copy of a point draws the same line.
+     Without this the Object Mode wireframe had no faces to draw for a flat or
+     mixed mesh (its rings lived on a cage the object no longer held), fell back
+     to inferring quads from the shape, and a face the user had dragged into a
+     bent quad grew its diagonal back in Wireframe shading. */
+  function transferFacesToDisplay(display, cage) {
+    const rings = cage?.userData?.feFaces;
+    const source = cage?.attributes?.position;
+    const target = display?.attributes?.position;
+    if (!Array.isArray(rings) || !rings.length || !source || !target) return;
+    if (cage.userData.feFaceVerts !== source.count) return;
+    const at = new Map();
+    for (let i = 0; i < target.count; i++) {
+      const key = `${target.array[i * 3]},${target.array[i * 3 + 1]},${target.array[i * 3 + 2]}`;
+      if (!at.has(key)) at.set(key, i);
+    }
+    const moved = [];
+    for (const ring of rings) {
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const out = [];
+      let ok = true;
+      for (const slot of ring) {
+        if (!(slot >= 0 && slot < source.count)) { ok = false; break; }
+        const key = `${source.array[slot * 3]},${source.array[slot * 3 + 1]},${source.array[slot * 3 + 2]}`;
+        const hit = at.get(key);
+        if (hit === undefined) { ok = false; break; }
+        out.push(hit);
+      }
+      if (ok && out.length >= 3) moved.push(out);
+    }
+    if (!moved.length) return;
+    display.userData.feFaces = moved;
+    display.userData.feFaceVerts = target.count;
   }
 
   function commitToObject() {
@@ -509,6 +648,63 @@
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     geometry.computeBoundingBox();
+
+    /* The per-face flags, one byte per triangle. They are the only record of
+       the shading that survives this function: the cage below has shared
+       vertices, and a shared vertex cannot hold two normals at once, so there
+       is nowhere on it for a flat face to be written down. */
+    const shade = typeof exp.fe_edit_shade_state === 'function' ? exp.fe_edit_shade_state() : (exp.fe_edit_get_shade() === 0 ? 0 : 1);
+    let flags = null;
+    if (typeof exp.fe_edit_face_shade_ptr === 'function') {
+      const count = exp.fe_edit_face_shade_count ? exp.fe_edit_face_shade_count() : triCount;
+      if (count) flags = new Uint8Array(u8(exp.fe_edit_face_shade_ptr(), count));
+    }
+    if (flags) geometry.userData.feFaceShading = flags;
+
+    /* The rings and the pairing are written onto the cage first: the display
+       mesh below takes a translated copy of them, and the next session uploads
+       this cage instead of re-deriving faces from the shape it finds. */
+    const previousCage = target.userData.feEditCage;
+    if (previousCage && previousCage !== geometry && previousCage !== target.geometry &&
+        previousCage !== target.userData.baseGeometry) {
+      previousCage.dispose?.();
+    }
+    target.userData.feEditCage = geometry;
+    stashQuadDiagonals(geometry);
+    stashFaces(geometry);
+
+    /* Flat or mixed shading has to leave here as real geometry: everything
+       downstream - the viewport's own material, the glTF exporter, whatever
+       opens the file next - only understands normals, so a face marked flat is
+       only flat if its corners are no longer shared. Ask the kernel for the
+       render mesh with its all-flat shortcut switched off and hand *that* to
+       the object, while the shared-vertex cage stays the mesh Edit Mode, the
+       modifier stack and the quad rings work on. */
+    let display = null;
+    if (shade !== 1 && typeof exp.fe_edit_build_render_split === 'function') {
+      const built = exp.fe_edit_build_render_split();
+      const renderCount = built ? exp.fe_edit_render_vert_count() : 0;
+      const renderIndexCount = built ? exp.fe_edit_render_idx_count() : 0;
+      /* Not `renderCount > vertexCount`: a bent quad needs one normal for the
+         whole face, which is a *different* normal on the same four vertices -
+         the count never grows, and the shading is still there in the buffer.
+         What the buffers hold is what the object gets. */
+      if (renderCount && renderIndexCount) {
+        display = new THREE.BufferGeometry();
+        display.setAttribute('position', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_pos_ptr(), renderCount * 3)), 3));
+        display.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_nrm_ptr(), renderCount * 3)), 3));
+        display.setIndex(new THREE.BufferAttribute(new Uint32Array(u32(exp.fe_edit_render_idx_ptr(), renderIndexCount)), 1));
+        if (exp.fe_edit_has_color()) {
+          display.setAttribute('color', new THREE.BufferAttribute(new Float32Array(f32(exp.fe_edit_render_col_ptr(), renderCount * 3)), 3));
+        }
+        display.computeBoundingSphere();
+        display.computeBoundingBox();
+        if (flags) display.userData.feFaceShading = flags;
+        /* The same faces, in the display mesh's own numbering: the viewport's
+           Object Mode wireframe reads them from whatever geometry it is given. */
+        transferFacesToDisplay(display, geometry);
+      }
+    }
     /* The edited mesh becomes the cage the modifier stack is built from. Only
        writing `target.geometry` used to lose the edit on the next stack
        update, which rebuilds from `baseGeometry` (see updateModifiersOnScene):
@@ -520,19 +716,46 @@
       if (oldBase && oldBase !== target.geometry) oldBase.dispose?.();
       target.userData.baseGeometry = geometry;
       target.geometry?.dispose?.();
-      target.geometry = geometry.clone();
+      /* A stack rebuilds the object's own geometry from the cage, and that
+         rebuild runs the same normal-split pass, so the clone is only a
+         placeholder for the frame in between. */
+      target.geometry = display || geometry.clone();
     } else {
       target.geometry?.dispose?.();
-      target.geometry = geometry;
+      target.geometry = display || geometry;
+    }
+
+    /* One mechanism in charge at a time, here as in the viewport: baked split
+       normals mean no material flattening, and a mesh that outgrew the split
+       budget keeps its look through the material instead. */
+    const baked = !!display;
+    const materials = Array.isArray(target.material) ? target.material : [target.material];
+    for (const material of materials) {
+      if (!material) continue;
+      const flat = !baked && shade === 0;
+      if (material.flatShading === flat) continue;
+      material.flatShading = flat;
+      material.needsUpdate = true;
     }
     delete target.userData.modifierError;
     target.userData.forceModUpdate = true;
     target.userData.feEdited = true;
     /* Keep the pairing with the shape it describes: anyone drawing this mesh's
        wireframe in Object Mode - or re-entering Edit Mode on it - gets the same
-       quads the editor just worked with. */
-    stashQuadDiagonals(target.userData.baseGeometry);
-    if (target.geometry && target.geometry !== target.userData.baseGeometry) stashQuadDiagonals(target.geometry);
+       quads the editor just worked with. Only a mesh whose vertices are still
+       the cage's own. The rings are
+       written in cage slots, and a split display mesh has its vertices
+       renumbered, so copying them onto it would pair a face with the wrong
+       corners; leaving them off lets the shell infer the rings from the
+       positions instead - the split corners sit exactly where the cage's did. */
+    /* The cage, kept beside the object even when no stack is listening: the
+       rings and the pairing are written on it, and it is the mesh the next
+       session uploads. Without this a flat mesh - the one case that commits a
+       split display mesh instead of the cage - lost both on the way out, and
+       coming back in re-derived its faces from the deformed shape underneath.
+       A quad that has been dragged far enough stops looking like a quad to any
+       shape test, so it came back as two triangles and the cage drew them. */
+
     if (typeof global.scheduleCoreHistory === 'function') global.scheduleCoreHistory({ target: target, type: 'change' });
   }
 
@@ -547,7 +770,21 @@
   const OVERLAY_LIGHT = 0xdbe4f0;
   const OVERLAY_SELECTED = [1.0, 0.62, 0.16];
 
+  /* Wireframe shading turns the object's own surface off and leaves only the
+     lines, so the tone the overlay has to contrast with is the viewport, not a
+     material that is no longer drawn. Near-black lines on a near-black
+     background - the pale wireframe the user had been looking at gone - would
+     read as "the wireframe disappeared". */
+  function surfaceIsDrawn() {
+    const eng = core();
+    const mode = typeof eng?.getShadingMode === 'function' ? eng.getShadingMode() : 'solid';
+    return mode !== 'wireframe';
+  }
+
   function overlayTone() {
+    if (!surfaceIsDrawn()) {
+      return { wire: OVERLAY_LIGHT, point: [0.86, 0.9, 0.96] };
+    }
     const target = state.target;
     const materials = target ? (Array.isArray(target.material) ? target.material : [target.material]) : [];
     let sum = 0;
@@ -662,6 +899,46 @@
   /* Overlay buffers live for the whole session and grow by replacement: a
      BufferAttribute whose array is swapped behind its back is not something
      every driver uploads correctly, so the attribute itself is replaced. */
+  /* The wireframe of the model's faces, as line segments.
+
+     The edge table is built from triangles, so on a triangulated mesh it
+     contains the diagonal across every quad and the spokes a fan draws from the
+     middle of a cap. `fe_edit_edge_display` hides them by rule - an edge whose
+     two triangles are nearly coplanar is not drawn - and that rule is a guess
+     about the shape: a bent quad is no longer coplanar with itself, so its
+     diagonal came back the moment the face was deformed, which is the line the
+     user keeps finding in the middle of a face.
+
+     Faces are not a guess. The kernel knows exactly which triangles make up
+     which face (the declared rings first, the quad pairing after), so drawing
+     each face's corner ring draws every edge the model has and no edge it does
+     not - a quad's boundary is four lines whatever shape it has been bent into.
+     The same table Edit Mode paints the selection from, one source. */
+  function faceRingSegments(exp) {
+    if (typeof exp.fe_edit_face_count !== 'function' || typeof exp.fe_edit_face_start_ptr !== 'function') return null;
+    const faceCount = exp.fe_edit_face_count();
+    const ringCount = typeof exp.fe_edit_face_ring_count === 'function' ? exp.fe_edit_face_ring_count() : 0;
+    if (!faceCount || !ringCount) return null;
+    const starts = u32(exp.fe_edit_face_start_ptr(), faceCount + 1);
+    const ring = u32(exp.fe_edit_face_ring_ptr(), ringCount);
+    const out = [];
+    const seen = new Set();
+    for (let f = 0; f < faceCount; f++) {
+      const from = starts[f], to = starts[f + 1];
+      const n = to - from;
+      if (n < 3 || to > ringCount) continue;
+      for (let i = 0; i < n; i++) {
+        const a = ring[from + i], b = ring[from + (i + 1) % n];
+        if (a === b) continue;
+        const key = a < b ? a * 2097152 + b : b * 2097152 + a;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(a, b);
+      }
+    }
+    return out.length ? out : null;
+  }
+
   function ensureEdgeBuffer(object, needed) {
     const attribute = object.geometry.attributes.position;
     if (attribute && attribute.array.length >= needed) return attribute.array;
@@ -718,6 +995,28 @@
        share an edge and face the same way are one quad, and the diagonal
        between them is not an edge of the model, so it is not drawn. */
     const edgeShow = u8(exp.fe_edit_edge_display_ptr(), edgeCount);
+    /* ...and where the faces themselves are known, they answer it exactly: the
+       ring of a face is its boundary, so nothing inside a face can be drawn. */
+    /* Cached: this runs on every frame of a drag, and the faces only change when
+       the topology does - which the counts below pin exactly. */
+    const ringStamp = `${exp.fe_edit_face_count()}:${exp.fe_edit_face_ring_count()}:${triCount}:${vertexCount}`;
+    if (state.ringSegments && state.ringStamp === ringStamp) {
+      // reuse
+    } else {
+      state.ringSegments = faceRingSegments(exp);
+      state.ringStamp = ringStamp;
+    }
+    const ringSegments = state.ringSegments;
+    /* Edge selection lives on the edge table; a ring segment looks its own flag
+       up here so the two views of the same line agree. */
+    const edgeSelected = new Map();
+    if (state.mode === 'edge' && ringSegments) {
+      for (let e = 0; e < edgeCount; e++) {
+        if (!edgeSel[e]) continue;
+        const a = edgeA[e], b = edgeB[e];
+        edgeSelected.set(a < b ? a * 2097152 + b : b * 2097152 + a, 1);
+      }
+    }
     const faceSel = u8(exp.fe_edit_face_sel_ptr(), triCount);
     const tris = u32(exp.fe_edit_idx_ptr(), triCount * 3);
 
@@ -730,30 +1029,42 @@
        the edges the user is working with. The mask decides what the surface
        has; the selection only decides the colour, except in edge mode where a
        diagonal the user picked is drawn so the tool has something to show. */
+    /* One list of segments either way: the face rings when the kernel has them,
+       the edge display mask when it does not. */
+    const segments = [];
+    if (ringSegments) {
+      for (let i = 0; i < ringSegments.length; i += 2) {
+        const a = ringSegments[i], b = ringSegments[i + 1];
+        const on = state.mode === 'edge' ? edgeSelected.has(a < b ? a * 2097152 + b : b * 2097152 + a) : (vertSel[a] && vertSel[b]);
+        segments.push(a, b, on ? 1 : 0);
+      }
+    } else {
+      for (let e = 0; e < edgeCount; e++) {
+        const a = edgeA[e];
+        const b = edgeB[e];
+        const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
+        if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
+        segments.push(a, b, on ? 1 : 0);
+      }
+    }
+
     let baseCount = 0;
     let selectedCount = 0;
-    for (let e = 0; e < edgeCount; e++) {
-      const a = edgeA[e];
-      const b = edgeB[e];
-      const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
-      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
-      if (on) selectedCount++; else baseCount++;
+    for (let i = 2; i < segments.length; i += 3) {
+      if (segments[i]) selectedCount++; else baseCount++;
     }
     const base = ensureEdgeBuffer(edges, baseCount * 6);
     const chosen = ensureEdgeBuffer(selectedEdges, selectedCount * 6);
     let baseAt = 0;
     let chosenAt = 0;
-    for (let e = 0; e < edgeCount; e++) {
-      const a = edgeA[e];
-      const b = edgeB[e];
-      const on = state.mode === 'edge' ? edgeSel[e] : (vertSel[a] && vertSel[b]);
-      if (!edgeShow[e] && !(state.mode === 'edge' && edgeSel[e])) continue;
-      const target = on ? chosen : base;
-      let at = on ? chosenAt : baseAt;
+    for (let i = 0; i < segments.length; i += 3) {
+      const a = segments[i], b = segments[i + 1];
+      const target = segments[i + 2] ? chosen : base;
+      let at = segments[i + 2] ? chosenAt : baseAt;
       target[at] = positions[a * 3]; target[at + 1] = positions[a * 3 + 1]; target[at + 2] = positions[a * 3 + 2];
       target[at + 3] = positions[b * 3]; target[at + 4] = positions[b * 3 + 1]; target[at + 5] = positions[b * 3 + 2];
       at += 6;
-      if (on) chosenAt = at; else baseAt = at;
+      if (segments[i + 2]) chosenAt = at; else baseAt = at;
     }
     drawEdges(edges, baseCount * 2, false);
     drawEdges(selectedEdges, selectedCount * 2, true);
@@ -1058,14 +1369,26 @@
     syncSheet();
   }
 
-  /* The kernel keeps the indexed mesh for flat shading and lets the material
-     take derivative normals, which is the only way to shade flat without
-     tripling the vertex count. So the material has to follow the flag. */
+  /* Two mechanisms, and exactly one of them is ever in charge. When every face
+     is flat the kernel hands back the indexed mesh - a dense flat mesh would
+     not fit the render budget any other way - and the material's derivative
+     normals do the shading. As soon as one face is smooth the kernel splits its
+     corners instead and writes real per-face normals, so the material has to go
+     back to smooth or the GPU would flatten the smooth faces as well. That is
+     what lets a single face stay flat while the rest of the model rounds off. */
   function applyShading() {
     const exp = exportsOf();
     const target = state.target;
     if (!exp || !target) return;
-    const flat = exp.fe_edit_get_shade() === 0;
+    const shade = typeof exp.fe_edit_shade_state === 'function'
+      ? exp.fe_edit_shade_state()
+      : (exp.fe_edit_get_shade() === 0 ? 0 : 1);
+    /* Only when the kernel kept the indexed mesh *and* every flat face is
+       planar. A face bent out of plane is still one face - its two halves carry
+       the face's single normal so no line appears down the diagonal - and the
+       shader deriving a normal per triangle would draw exactly that line. */
+    const planar = typeof exp.fe_edit_flat_planar === 'function' ? exp.fe_edit_flat_planar() === 1 : true;
+    const flat = shade === 0 && planar;
     const materials = Array.isArray(target.material) ? target.material : [target.material];
     for (const material of materials) {
       if (!material || material.flatShading === flat) continue;
@@ -1679,7 +2002,13 @@
       toast('Nothing changed for that tool on this selection.');
       return 0;
     }
-    if (id === 'smooth' || id === 'flat') toast(tool.label);
+    if (id === 'smooth' || id === 'flat') {
+      /* Say what was shaded. "Shade Flat" with a face under the finger is one
+         face going flat next to a smooth neighbour, which looks like nothing
+         happened unless the message counts them. */
+      const faces = state.mode === 'face' ? exp.fe_edit_sel_count() : 0;
+      toast(faces ? `${tool.label} · ${faces} face${faces === 1 ? '' : 's'}` : tool.label);
+    }
     return result;
   }
 
@@ -2041,7 +2370,8 @@
     /* The overlay draws the kernel mesh, so a deformed output left on screen
        would leave the wireframe floating away from the shape under the finger.
        The parked output is released on exit, after the stack is rebuilt. */
-    const cageToShow = object.userData?.baseGeometry;
+    const cageToShow = object.userData?.baseGeometry ||
+      (object.userData?.feEditCage && object.userData.feEditCage.attributes?.position ? object.userData.feEditCage : null);
     if (cageToShow?.attributes?.position && object.geometry !== cageToShow) {
       state.parkedGeometry = object.geometry;
       object.geometry = cageToShow;
@@ -2057,6 +2387,8 @@
     disposeGizmo();
     stats.selected = 0;
     view.capacity = 0; view.index = null; view.geometry = null;
+    state.ringSegments = null;
+    state.ringStamp = '';
 
     const exp = exportsOf();
     exp.fe_edit_undo_clear();

@@ -88,7 +88,12 @@ produce.
 Leaving the mode writes the **canonical mesh** back into the object — one shared
 vertex per corner, the kernel's triangles, its vertex colours — and rebuilds the
 geometry, so the exporter, the physics bridge and the scene registry all see the
-edit.
+edit. A mesh that ends the session with any flat face is written back **split**
+instead: `fe_edit_build_render_split()` runs the same render pass with the
+all-flat shortcut switched off, so the object carries real per-face normals.
+Everything downstream — the viewport's material, the glTF exporter, undo — only
+understands normals, so a face marked flat is only flat if its corners are no
+longer shared with its neighbours.
 
 Smooth normals are computed in the kernel by summing each face normal **weighted
 by the angle that face subtends at the vertex**. Area weighting - the obvious
@@ -101,19 +106,191 @@ quad's own corner angle, and a cube's eight smooth normals land exactly on
 mesh use that weight, and `cpp/tests/fe_editmesh_tests.cpp` asserts the
 symmetry.
 
-Flat shading is a material property, not extra geometry: the kernel keeps the
-indexed mesh and the bridge sets `material.flatShading` from
-`fe_edit_get_shade()`. Smooth and flat therefore differ twice over - in the
-normals the kernel emits and in the flag the material carries - so neither can
-silently do nothing.
+## Per-face shading
+
+Shading is a **flag per face**, as in Blender: `M.fsmooth[]` in the kernel, one
+byte per triangle, 1 = smooth and 0 = flat. A cylinder is round with flat caps,
+and a single face can stay flat while the whole model around it rounds off — the
+thing a whole-object `flatShading` switch can never express.
+
+* `fe_edit_set_shade(1|0)` applies to the selected faces in Face mode and to the
+  whole mesh otherwise, exactly as the two buttons read.
+* `fe_edit_shade_state()` answers **0** all flat, **1** all smooth, **2** both.
+  The viewport has exactly one mechanism in charge at a time: all-flat keeps the
+  indexed mesh and the material's derivative normals (which is also the only way
+  a dense flat mesh fits the render-vertex budget), while any smooth face makes
+  the kernel split the corners and write real per-face normals, so the material
+  goes back to smooth.
+* `fe_edit_upload_face_shade(ptr, count)` restores flags that were written down.
+  They are never re-derived: the cage the editor is handed back has shared
+  vertices and averaged normals, so deriving would forget the cube was ever
+  flat. The flags travel on the committed geometry as
+  `userData.feFaceShading` (one byte per triangle).
+* A topology tool appends triangles without touching the flags, so everything
+  past the last written flag (`M.fsmoothCount`) takes the mesh's own answer
+  instead of a stale byte; `buildRenderMesh()` settles the array before it is
+  read.
+* **The vote is settled per face, not per triangle.** Reading the shape's
+  normals gives one answer per triangle, and two triangles of one face disagree
+  often enough to matter: a quad sphere's corner rounds one half one way and its
+  neighbour the other, a thirty-two sided cap has a couple of wedges that round
+  differently from the rest. A face that is half flat and half smooth draws the
+  diagonal, because the smooth half is interpolated and the flat half is not.
+  `settleFaceShade()` runs once the faces are known - after the weld, and again
+  after the app declares its rings - and settles each face by area: the majority
+  of a face's surface decides, and a tie goes smooth, because a face that is
+  genuinely flat votes flat with all of its triangles. An explicit
+  `fe_edit_set_shade` or `fe_edit_upload_face_shade` cancels the pass, so a
+  written flag is never second-guessed.
+
+The same flags reach the modifier stack: `fe_mod_face_smooth_ptr`,
+`fe_mod_set_face_smooth`, `fe_mod_derive_face_smooth` (reads
+`fe_mod_in_nrm_ptr`) and `fe_mod_shade` (the normal-split pass on its own).
+`commit()` applies the split whenever `flagMode` is on — set by
+`fe_mod_set_counts`, cleared by solidify and decimate, whose output is new
+surface — so a subdivided flat cube stays flat instead of coming back rounded.
+
+## One normal per face, one line per edge
+
+A quad is two triangles in the buffer, and shading them separately draws a line
+down the diagonal the face does not have - the crease the model never had, and
+the one the user kept finding on a cube. Two rules keep it off:
+
+* **A flat face is one smoothing group, not two.** The render pass groups the
+  faces at a vertex; a flat face normally stands alone, but the triangles that
+  make up *one* face share a group, so every corner of the quad carries the
+  face's own normal - the weighted average of the triangles the face is made of.
+  A bent quad is still one face and is still shaded as one.
+* **The material only shades when the kernel can hand it a planar mesh.** With
+  every face flat *and* planar the indexed mesh goes to the material, whose
+  derivative normals are exact (`fe_edit_flat_planar()` answers that). A bent
+  face falls through to the split pass instead: the shader would derive a
+  different normal for each half of it.
+
+A face a tool cut up is put back together. The pairing above only recognises a
+quad - two triangles that share their longest side - and half of what an inset,
+a bevel or an extrude leaves behind is not a quad, so each piece used to survive
+as a face of its own and the cage drew all of them. Two rules close that:
+
+* **A fan is not a quad.** Two triangles of a fan always share the chord across
+  the point they pass through, and the "quad" they make has a corner at 160
+  degrees or flatter (or one at 20 degrees or sharper, which is the same failure
+  as a sliver). `quadCornersAreFaceLike()` refuses the pairing, so a fan stays
+  triangles.
+* **One flat panel is one face.** Whatever is left unpaired is grown into a
+  region across edges that do not fold (`coplanarWith`, the same 0.6 degree
+  display angle the wireframe uses), and the region's **outline** becomes the
+  face's ring. That is what turns an extruded cylinder cap back into the
+  thirty-two-gon it is, and what stops the cage from drawing the fan inside it.
+  A region whose outline is not one closed loop - a face with a hole, a pinched
+  corner - is not drawn as one face: a ring that is not a loop draws lines the
+  face does not have, so it falls back to one face per triangle.
+* A tool whose whole point is triangles says so. `fe_edit_poke` builds one
+  centre **per face**, not per triangle: a quad poked is four triangles round a
+  single point, the way Blender's poke is, instead of six round two points with
+  the quad's diagonal still running through the middle of it. Each fan triangle
+  is stamped with its own face id as it is built (see *faces are written down*
+  below), so the rebuild cannot fuse the fan back into the polygon it cut up and
+  the tool cannot look like nothing happened.
+
+A primitive's faces are written down when the shape is built. The pairing below
+has to guess a quad from two triangles, and the guess is exact only while the
+shape has not been touched; drag a cube's corner out far enough and its diagonal
+is no longer the longest side of both halves, so the quad is nothing but
+triangles and the cage draws that diagonal. `feQuadRings()` reads the shape once,
+at the moment it is built - the same rule the kernel uses, applied to a shape
+that is quads by construction - and `withQuadFaces()` stores the answer as face
+rings. Every quad primitive (cube, plane, grid, ring, torus, knot) declares its
+faces that way; a sphere's pole rows and a cone's side are left to the pairing,
+which handles real folds correctly.
+
+### Faces are written down, not guessed
+
+The two rules above read the *shape*. They are exact while the shape is what the
+model was drawn with, and they are the wrong question the moment an edit changes
+it: drag one corner of a cube out far enough and its side stops looking like a
+quad, and the diagonal it never had comes back. That is not a heuristic that can
+be tuned - it is a guess, and the answer was known all along, by whoever built
+the geometry.
+
+So every triangle carries the id of the face it belongs to (`M.ftag`, read back
+with `fe_edit_tri_tag_ptr` / `fe_edit_tri_tag_count`). The id is stamped by
+`addTri()` from `g_tagPending` while a tool is building - a rim wall is one quad, so
+both of its triangles get one id; a subdivided piece, a fan triangle and a copy
+get one each - and `buildQuadGroups()` puts the triangles of one id together as
+one face, walking their **outline** for the ring. It runs before the shape tests,
+so a written-down face is never guessed at again, and anything a tool left
+untagged is still decided by shape exactly as before.
+
+Two properties make it safe:
+
+* **A tag that does not close is not a face.** If an id's triangles do not form
+  one closed loop - two shells fused by a drag, a copy of the face somewhere else
+  - the walk fails and those triangles become faces of their own, which is the old
+  behaviour and never worse than drawing a ring that is not there.
+* **A tag never names a different mesh.** The ids are rewritten at the end of
+  every rebuild (one per face) and thrown away by `fe_edit_reset`, so a fresh
+  upload cannot inherit the previous mesh's faces, and a removal that compacts
+  the triangle table (`removeMarkedTris`, `removeDegenerateTris`, `compactMesh`)
+  moves the ids with the triangles.
+
+Tools declare what they build, because the tool is what knows: both
+`duplicateMarkedFaces` wall loops (region rim and individual), the whole-surface
+copy (one id per source face, so the copy is not twenty-four triangles), the
+individual and region inset rings, the subdivide pieces and the poke fan. A
+subdivide is the one case where "what was built" depends on what was cut: a
+triangle cut on *every* edge is cut into faces of its own, so its pieces are left
+untagged and the shape pairs them back into quads (which is why subdividing a
+cube gives twenty-four quads and not six eight-corner rings); a triangle cut on
+one or two edges is a face whose outline merely gained a corner, so its pieces
+keep the face's id and the whole side stays one ring.
+
+A tool that works "on each face" works on the *face*, not on its triangles.
+Individual mode (extrude, inset) moves one piece of geometry per face: its own
+copy of the face's vertices, its own wall round the face's **outline**, and the
+wall is found from each triangle's winding (`edgeInsideFace`, `captureFace` in
+`fe_editmesh_tools.cpp`) so an edge whose second triangle is inside the same face
+- a quad's diagonal, a fan's spoke - gets no wall at all. Working per triangle is
+what used to leave two coincident walls under the diagonal of every quad that was
+extruded or inset on its own.
+
+Bevel writes down what it builds and never separates the triangles of one face:
+the sector split unions two triangles that belong to the same face whatever is
+being beveled (the edge between them is the face's own diagonal, not a seam), each
+chamfer along an edge is one face, and each corner cut is one face - its fan's
+outline, not one triangle per spoke. A *vertex* bevel also opens a gap on every
+edge that touches a beveled corner; without it the corner patch was a lid over a
+hole and a beveled cube had forty-eight open edges. Measured on a cube: one face
+beveled is ten quads and no triangles, every face beveled is twenty-six faces
+(six sides, twelve chamfers, eight corner triangles) and the surface is closed.
+
+A face also survives leaving the mode. The rows above are written onto the
+**cage** - the unsplit mesh the editor commits - and the cage is kept beside the
+object as `userData.feEditCage`, because `object.geometry` becomes a *display*
+mesh whenever the shading had to be baked into split normals (any flat or mixed
+mesh). Before that cage was only kept when a modifier stack asked for it, so a
+flat mesh left the mode with its rings thrown away and the next session re-guessed
+its faces from a shape the user had already dragged - a bent quad stops passing
+any shape test, and it came back as two triangles with a diagonal across it. The
+rings are also translated onto the display mesh (by position, since the split
+pass only copies points), which is where the viewport's Object Mode wireframe
+reads them: without that, Wireframe shading inferred quads from the bent shape
+and drew the diagonal there instead.
+
+The overlay draws the **face rings**, not the edge table: `fe_edit_face_start_ptr`
+and `fe_edit_face_ring_ptr` are the model's own boundary, so no interior edge can
+be drawn even on a face that has been deformed. The edge table still answers
+picking and the edge selection; the drawn line list is cached against the
+topology counts so a drag does not rebuild it every frame.
 
 ## Kernel ABI
 
 Lifecycle and readback:
 
 ```
-fe_edit_reset            fe_edit_upload(vc, pos, tc, idx, colors)
+fe_edit_reset            fe_edit_upload(vc, pos, tc, idx, colors, normals)
 fe_edit_vert_count       fe_edit_tri_count        fe_edit_edge_count
+fe_edit_tri_tag_ptr      fe_edit_tri_tag_count
 fe_edit_max_verts        fe_edit_has_color
 fe_edit_pos_interleaved_ptr   fe_edit_color_interleaved_ptr
 fe_edit_idx_ptr          fe_edit_edge_ptr         fe_edit_edge_b_ptr
@@ -170,7 +347,10 @@ fe_edit_symmetrize(axis)
 Shading and history:
 
 ```
-fe_edit_set_shade   fe_edit_get_shade   fe_edit_mark_sharp   fe_edit_mark_seam
+fe_edit_set_shade   fe_edit_get_shade   fe_edit_shade_state   fe_edit_face_shade_ptr
+fe_edit_face_shade_count  fe_edit_upload_face_shade(ptr, count)
+fe_edit_build_render  fe_edit_build_render_split  fe_edit_render_weld_ptr
+fe_edit_mark_sharp   fe_edit_mark_seam
 fe_edit_sharp_count fe_edit_seam_count  fe_edit_recalc_normals(outside)
 fe_edit_flip_normals
 fe_edit_undo_push   fe_edit_undo   fe_edit_redo

@@ -119,6 +119,37 @@ test('every field a modifier card shows is read by something', () => {
   }
 });
 
+test('Subdivision Surface offers both of Blender\'s modes and levels up to ten', () => {
+  /* The card used to carry a single slider that stopped at four, and one way to
+     subdivide. Blender's modifier has two: Catmull-Clark, which rounds the shape
+     off, and Simple, which splits the mesh and leaves the silhouette exactly
+     where it was. Both are offered, and both are read by the evaluator. */
+  const entry = registryEntries().find((candidate) => candidate.name === 'Subdivision Surface');
+  assert.ok(entry, 'Subdivision Surface is in the library');
+  assert.equal(entry.labels[0], 'Subdivision Type', 'the mode selector leads the card');
+  const card = registry.slice(registry.indexOf('name:"Subdivision Surface"'));
+  assert.match(card, /\["Subdivision Type","select",\["Catmull-Clark","Simple"\]\]/);
+  assert.match(card, /\["Viewport Levels","range",0,10,2,1\]/);
+  const evaluator = evaluatorSource();
+  assert.match(evaluator, /p\["Subdivision Type"\] === "Simple"/, 'the evaluator reads the mode');
+  assert.match(evaluator, /applySubdivisionModifier\(currentGeo, lvl, simple\)/, 'and passes it to the modifier');
+  /* The object-space prefix evaluator (what a Boolean above this modifier sees)
+     reads the same two values. */
+  assert.match(html, /applySubdivisionModifier\(g,Number\(p\['Viewport Levels'\]\?\?2\),p\['Subdivision Type'\]==='Simple'\)/);
+});
+
+test('Subdivision Surface says which level it built when the slider asks for more', () => {
+  /* A level quadruples the triangles, so ten is past what the session holds for
+     any real mesh. Doing six and saying nothing would leave the slider lying;
+     the card carries a line that names the level that was built. */
+  assert.match(html, /function feSubdivisionNote\(info, element\)/);
+  const note = topLevel(html, 'feSubdivisionNote');
+  assert.match(note, /info\.levels < info\.requested/);
+  assert.match(note, /built level \$\{info\.levels\} of \$\{info\.requested\}/);
+  assert.match(html, /card\.dataset\.modifier = mod\.name/);
+  assert.match(html, /feSubdivisionNote\(subdivisionNote\)/);
+});
+
 test('the two dead sliders specifically stay gone', () => {
   assert.ok(!registry.includes('Render Levels'));
   assert.ok(!registry.includes('"Falloff"'));

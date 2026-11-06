@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { appPath } from './app-paths.mjs';
 import {
   arrayGeometry, castGeometry, decimateGeometry, displaceGeometry, mirrorGeometry,
-  smoothGeometry, solidifyGeometry, subdivideLoop, twistGeometry, waveGeometry, weldGeometry
+  shadeGeometry, smoothGeometry, solidifyGeometry, subdivideLoop, twistGeometry,
+  waveGeometry, weldGeometry
 } from '../src/modifier-geometry.mjs';
 
 /* =========================================================================
@@ -28,6 +29,19 @@ function withCore(run) {
     if (previous === undefined) delete globalThis.FECppEngine;
     else globalThis.FECppEngine = previous;
   }
+}
+
+/* The points a mesh actually occupies, ignoring the corners the shading had to
+   split. Two meshes with the same control topology have the same count even
+   when one of them is drawn faceted and therefore carries three vertices per
+   triangle in its buffer. */
+function uniquePositions(geometry) {
+  const p = geometry.attributes.position;
+  const seen = new Set();
+  for (let i = 0; i < p.count; i++) {
+    seen.add(`${p.getX(i).toFixed(5)},${p.getY(i).toFixed(5)},${p.getZ(i).toFixed(5)}`);
+  }
+  return seen.size;
 }
 
 function volume(geometry) {
@@ -113,7 +127,12 @@ test('C++ subdivision quadruples triangles per level and keeps uv coverage', () 
     const source = new THREE.BoxGeometry(2, 2, 2);
     const once = subdivideLoop(source, 1);
     assert.equal(once.index.count / 3, 48);
-    assert.equal(once.attributes.position.count, 26);
+    /* One Catmull-Clark level of a cube is 26 points: the eight corners, one on
+       every edge and one in the middle of every face. The buffer holds more
+       vertices than that because a cube is flat-shaded, so the corners are
+       split - the geometry is still those 26 points. */
+    assert.equal(uniquePositions(once), 26);
+    assert.ok(once.attributes.position.count > 26, 'a flat surface needs its corners split');
     assert.ok(finite(once));
     const uv = once.attributes.uv;
     assert.equal(uv.count, once.attributes.position.count);
@@ -121,6 +140,70 @@ test('C++ subdivision quadruples triangles per level and keeps uv coverage', () 
       assert.ok(uv.getX(i) >= -.001 && uv.getX(i) <= 1.001, `u ${uv.getX(i)}`);
       assert.ok(uv.getY(i) >= -.001 && uv.getY(i) <= 1.001, `v ${uv.getY(i)}`);
     }
+  });
+});
+
+test('C++ Simple subdivision splits the mesh and moves nothing', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const simple = subdivideLoop(source, 2, { simple: true });
+    assert.equal(simple.index.count / 3, 192, 'four triangles out of every one, twice');
+    const box = simple.boundingBox || (simple.computeBoundingBox(), simple.boundingBox);
+    assert.deepEqual(box.min.toArray().map((v) => +v.toFixed(6)), [-1, -1, -1], 'the silhouette is untouched');
+    assert.deepEqual(box.max.toArray().map((v) => +v.toFixed(6)), [1, 1, 1]);
+    /* Every corner of the box is still a corner of the subdivided mesh. */
+    const p = simple.attributes.position;
+    const corners = new Set();
+    for (let i = 0; i < p.count; i++) corners.add(`${p.getX(i).toFixed(4)},${p.getY(i).toFixed(4)},${p.getZ(i).toFixed(4)}`);
+    for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) {
+      assert.ok(corners.has(`${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}`), `corner ${x},${y},${z} survived`);
+    }
+    assert.equal(simple.userData.feSubdivision.simple, true);
+    assert.equal(simple.userData.feSubdivision.levels, 2);
+  });
+});
+
+test('C++ Catmull-Clark subdivision is the mode that changes the shape', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const smooth = subdivideLoop(source, 2);
+    const simple = subdivideLoop(source, 2, { simple: true });
+    assert.equal(smooth.index.count, simple.index.count, 'the same topology either way');
+    /* Same points, in different places. Their buffers can differ in length -
+       a coplanar face is split only where the shading needs it - so the
+       comparison is of the points themselves. */
+    assert.equal(uniquePositions(smooth), uniquePositions(simple));
+    const a = smooth.attributes.position, b = simple.attributes.position;
+    let moved = 0;
+    for (let i = 0; i < a.count; i++) if (Math.abs(a.getX(i) - b.getX(i)) > 1e-6) moved++;
+    assert.ok(moved > a.count * 0.5, `the smoothing is what moves the surface, ${moved} of ${a.count}`);
+    assert.ok(smooth.boundingBox.max.x < 0.999, `and the corners pull in, ${smooth.boundingBox.max.x}`);
+    assert.equal(simple.boundingBox.max.x, 1, 'while Simple leaves the box exactly 2 wide');
+    assert.equal(smooth.userData.feSubdivision.simple, false);
+    assert.equal(smooth.userData.feSubdivision.levels, 2);
+  });
+});
+
+test('C++ subdivision builds the levels the session holds and reports the count', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const result = subdivideLoop(source, 10);
+    const info = result.userData.feSubdivision;
+    assert.equal(info.requested, 10, 'ten is what the slider asked for');
+    assert.ok(info.levels >= 1 && info.levels < 10, `built ${info.levels}`);
+    assert.equal(info.limited, true);
+    assert.equal(result.index.count / 3, 12 * 4 ** info.levels, 'the mesh is exactly that many levels');
+    assert.ok(result.attributes.position.count <= 131072, 'and it never passes the session');
+    assert.ok(finite(result));
+  });
+});
+
+test('C++ subdivision of nothing to do leaves the mesh alone and says so', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const result = subdivideLoop(source, 0);
+    assert.equal(result.index.count / 3, 12);
+    assert.deepEqual(result.userData.feSubdivision, { requested: 0, levels: 0, simple: false, limited: false });
   });
 });
 
@@ -199,4 +282,92 @@ test('the modifier bridge falls back to JS when the core is absent', () => {
   } finally {
     if (previous !== undefined) globalThis.FECppEngine = previous;
   }
+});
+
+/* How many faces read as flat: every corner normal agrees with the face's own
+   direction. A face marked flat next to a smooth one only looks like this if
+   the corners were actually split, so this counts the shading the way any
+   viewer would - from the geometry alone. */
+function faceShading(geometry) {
+  const p = geometry.attributes.position;
+  const n = geometry.attributes.normal;
+  const idx = geometry.index.array;
+  let flat = 0, smooth = 0;
+  for (let f = 0; f < idx.length / 3; f++) {
+    const a = idx[f * 3], b = idx[f * 3 + 1], c = idx[f * 3 + 2];
+    const ax = p.getX(a), ay = p.getY(a), az = p.getZ(a);
+    const ux = p.getX(b) - ax, uy = p.getY(b) - ay, uz = p.getZ(b) - az;
+    const vx = p.getX(c) - ax, vy = p.getY(c) - ay, vz = p.getZ(c) - az;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+    let isFlat = true;
+    for (const k of [a, b, c]) {
+      if (nx * n.getX(k) + ny * n.getY(k) + nz * n.getZ(k) < 0.9995) isFlat = false;
+    }
+    if (isFlat) flat++; else smooth++;
+  }
+  return { flat, smooth, tris: idx.length / 3, verts: p.count };
+}
+
+test('per-face flags survive subdivision, so a flat cube stays flat', () => {
+  withCore(() => {
+    /* A cube arrives from three with a normal per face, which the modifier
+       bridge reads as every face flat. Subdividing it used to hand back
+       averaged normals - a rounded cube - while the editor still called the
+       mesh faceted. */
+    const box = new THREE.BoxGeometry(2, 2, 2);
+    for (const options of [{ simple: true }, { simple: false }]) {
+      const result = subdivideLoop(box, 2, options);
+      const shading = faceShading(result);
+      assert.equal(shading.tris, 192, 'two levels of a cube is 192 triangles');
+      assert.equal(shading.flat, 192, `${options.simple ? 'Simple' : 'Catmull-Clark'} must keep every face flat`);
+      assert.equal(shading.smooth, 0);
+      assert.equal(result.userData.feFaceShading.length, 192, 'and carry one flag per triangle forward');
+      assert.equal(Array.from(result.userData.feFaceShading).filter((v) => v).length, 0, 'none of them flipped to smooth');
+    }
+  });
+});
+
+test('one flagged face stays flat through subdivision while the rest round off', () => {
+  withCore(() => {
+    const sphere = new THREE.SphereGeometry(1, 16, 8);
+    const triCount = sphere.index.count / 3;
+    const flags = new Uint8Array(triCount).fill(1);
+    for (let i = 0; i < 8; i++) flags[i] = 0;
+    sphere.userData.feFaceShading = flags;
+
+    const level1 = subdivideLoop(sphere, 1);
+    const shading1 = faceShading(level1);
+    assert.equal(shading1.tris, triCount * 4);
+    assert.equal(shading1.flat, 32, 'the eight flagged triangles become four each');
+    assert.equal(shading1.smooth, triCount * 4 - 32, 'and the sphere around them stays round');
+
+    /* The flags are the truth across levels, not the normals they produced:
+       subdividing again feeds the written flags back in, so the flat patch
+       grows with the surface instead of blurring away. */
+    const level2 = subdivideLoop(sphere, 2);
+    const shading2 = faceShading(level2);
+    assert.equal(shading2.flat, 8 * 16, 'a level two patch is sixteen times the level one patch');
+    assert.ok(shading2.smooth > 0, 'and the rest of the sphere is still smooth');
+  });
+});
+
+test('the normal-split pass leaves a mesh the shading it arrived with', () => {
+  withCore(() => {
+    const sphere = new THREE.SphereGeometry(1, 16, 8);
+    const smooth = shadeGeometry(sphere.clone());
+    assert.equal(faceShading(smooth).flat, 0, 'a smooth sphere must not come back faceted');
+    assert.equal(faceShading(smooth).smooth, sphere.index.count / 3);
+    assert.equal(smooth.userData.feFaceShading.length, sphere.index.count / 3, 'and it now carries its flags');
+
+    const box = new THREE.BoxGeometry(2, 2, 2);
+    box.userData.feFaceShading = new Uint8Array(12).fill(0);
+    const flat = shadeGeometry(box.clone());
+    assert.equal(faceShading(flat).flat, 12, 'a flagged-flat cube must stay flat');
+    /* Three already hands a cube over with a corner per face, so the pass has
+       nothing to break apart here - it must not split anything twice either. */
+    assert.equal(flat.attributes.position.count, 24);
+    assert.deepEqual(Array.from(flat.attributes.position.array), Array.from(box.attributes.position.array), 'and must not move a point');
+  });
 });

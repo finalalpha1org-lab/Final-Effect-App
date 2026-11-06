@@ -17,12 +17,28 @@
        result, a decimated model and most glTF exports are non-indexed: their
        triangles carry their own copies of each vertex, so two triangles that
        share an edge share a position but not an index;
-     - two triangles that share an edge and face the same way are one quad of the
-       model, and the edge between them is not an edge of the model;
-     - the candidate pairs are taken shortest shared edge first (the diagonal of a
-       quad is longer than its sides), each triangle is used at most once, and a
-       pair is only accepted when the four corners form a convex quad, so a
-       sphere's neighbouring triangles - which differ in angle - are never fused;
+     - the faces the app declared come first (geometry.userData.feFaces): a
+       cylinder cap is one thirty-two-gon face in Blender and a fan of triangles
+       in the buffer, a cone's side is a fan around its tip, and no shape test
+       can tell either fan from a flat quad mesh built the same way. The mesh
+       library knows its own shapes, so it says which faces they have, and both
+       this module and the edit kernel (fe_edit_set_faces) take that as read.
+       Each ring claims the triangles inside it, by the same two rules below;
+     - then, for what is left, two triangles that share an edge and face the
+       same way are one quad of the model, and the edge between them is not an
+       edge of the model;
+     - "face the same way" is measured two ways, because a quad on a curved
+       surface is not flat: a pair that is coplanar to within the wireframe angle
+       is one face, and so is a pair whose shared edge is the longest side of
+       both triangles while the two of them fold by less than 60 degrees. The
+       second rule is the one the edit kernel pairs faces with, so a Quad Sphere
+       or a knot - every face of which is a slightly warped quad - draws the same
+       faces in Object Mode as it does in Edit Mode, instead of growing a
+       diagonal across each of them;
+     - the candidate pairs are taken longest shared edge first (the diagonal of a
+       quad is longer than the sides it shares with its neighbours), each
+       triangle is used at most once, and a pair is only accepted when the four
+       corners form a convex quad;
      - everything left over stays a triangle.
 
    Faces hold three or more vertices, so an n-gon that arrives from a loader is
@@ -38,6 +54,13 @@
      one surface, so the edge between them is internal structure. */
   const QUAD_ANGLE_DEG = 0.6;
   const COS_FLAT = Math.cos((QUAD_ANGLE_DEG * Math.PI) / 180);
+  /* The second pairing rule: a pair that is not flat may still be one face, up
+     to this fold. It is the edit kernel's number (see buildQuadGroups in
+     cpp/src/fe_editmesh.cpp) and for the same reason - an edit bends a face, and
+     the face must stay one face - while a real fold, a cone's or a cube's
+     ninety degrees, still shows as two. */
+  const QUAD_ANGLE_TOLERANT_DEG = 60;
+  const COS_QUAD = Math.cos((QUAD_ANGLE_TOLERANT_DEG * Math.PI) / 180);
 
   /* Vertices within a tenth of a millimetre at unit scale are the same vertex. */
   const QUANT = 1e4;
@@ -61,6 +84,38 @@
 
   /* ---------------------------------------------------------------- build --- */
 
+  /* ------------------------------------------------------- declared faces --- */
+
+  /* The faces the app authored: geometry.userData.feFaces is a list of corner
+     rings in the geometry's own vertex slots, with feFaceVerts recording the
+     vertex count they were measured against - a modifier that rewrites the
+     buffer invalidates them, and a stale ring describes a shape that is no
+     longer there. Returns null when there is nothing to take, and skips a ring
+     that has collapsed (a cone's degenerate half, which the kernel's weld
+     drops): a ring that names two vertices is not a face. */
+  function declaredFaces(geometry) {
+    const rings = geometry && geometry.userData && geometry.userData.feFaces;
+    const stamp = geometry && geometry.userData && geometry.userData.feFaceVerts;
+    const position = geometry && geometry.attributes && geometry.attributes.position;
+    if (!Array.isArray(rings) || !position || stamp !== position.count) return null;
+    const out = [];
+    const idOf = (slot) => (slot >= 0 && slot < position.count) ? slot : -1;
+    for (const ring of rings) {
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const clean = [];
+      for (const slot of ring) {
+        const v = idOf(slot);
+        if (v < 0) continue;
+        if (clean.length && clean[clean.length - 1] === v) continue;
+        clean.push(v);
+      }
+      if (clean.length > 2 && clean[0] === clean[clean.length - 1]) clean.pop();
+      if (clean.length < 3) continue;
+      out.push(clean);
+    }
+    return out.length ? out : null;
+  }
+
   function build(geometry) {
     const position = geometry.attributes && geometry.attributes.position;
     if (!position || !position.array) return null;
@@ -74,10 +129,16 @@
     /* Canonical ids: the index for an indexed mesh, welded positions for a
        non-indexed one. `rep` remembers one real vertex slot per id so positions
        can still be read from the buffer. */
+    const declared = declaredFaces(geometry);
     let cidOfSlot = null;
     let rep = null;
     let vertCount = position.count;
-    if (!index) {
+    /* A mesh whose faces were declared is welded by position even when it is
+       indexed. three gives a cylinder's cap its own copies of the rim points,
+       and the ring the app declared names one copy while the cap's triangles
+       name another: keyed by index, the ring would match nothing. The kernel
+       welds the mesh before it reads a declared face for the same reason. */
+    if (!index || declared) {
       cidOfSlot = new Int32Array(position.count);
       const first = [];
       const seen = new Map();
@@ -112,6 +173,17 @@
       normals[t * 3 + 2] = nz / length;
     }
 
+    /* Triangles the weld flattened - three builds a cone's side as a quad whose
+       top edge has no length, and half of it collapses. The kernel drops them
+       when it welds; a face list that kept them would grow faces of two corners
+       and edges that are not edges. They keep their index in the geometry (the
+       editor picks by triangle number) and are simply not part of any face. */
+    const degenerate = new Uint8Array(triCount);
+    for (let t = 0; t < triCount; t++) {
+      const a = corners[t * 3], b = corners[t * 3 + 1], c = corners[t * 3 + 2];
+      if (a === b || b === c || a === c) degenerate[t] = 1;
+    }
+
     /* Shared edges. */
     const edges = new Map();
     for (let t = 0; t < triCount; t++) {
@@ -127,11 +199,131 @@
       }
     }
 
-    /* Candidate quads: a shared edge, two coplanar triangles, a convex quad. */
     const point = (id) => {
       const s = rep ? rep[id] : id;
       return [positions[s * 3], positions[s * 3 + 1], positions[s * 3 + 2]];
     };
+    /* The plane and the 2D projection of a declared ring, and the two tests a
+       triangle must pass to be part of it. This mirrors ringFrame and
+       ringClaimsTriangle in the kernel; the tests below hold them together. */
+    const ringFrame = (ring) => {
+      const ids = ring.map((id) => cid(id));
+      let nx = 0, ny = 0, nz = 0, cx = 0, cy = 0, cz = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const p = point(ids[i]), q = point(ids[(i + 1) % ids.length]);
+        nx += (p[1] - q[1]) * (p[2] + q[2]);
+        ny += (p[2] - q[2]) * (p[0] + q[0]);
+        nz += (p[0] - q[0]) * (p[1] + q[1]);
+        cx += p[0]; cy += p[1]; cz += p[2];
+      }
+      cx /= ids.length; cy /= ids.length; cz /= ids.length;
+      const length = Math.hypot(nx, ny, nz);
+      if (!(length > 1e-9)) return null;
+      nx /= length; ny /= length; nz /= length;
+      const d = nx * cx + ny * cy + nz * cz;
+      let extent = 0;
+      for (const id of ids) {
+        const p = point(id);
+        const r = Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz);
+        if (r > extent) extent = r;
+      }
+      if (!(extent > 1e-9)) return null;
+      const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+      const axis = (az >= ax && az >= ay) ? 0 : (ay >= ax ? 1 : 2);
+      const px = ids.map((id) => {
+        const p = point(id);
+        return axis === 0 ? p[0] : axis === 1 ? p[0] : p[1];
+      });
+      const py = ids.map((id) => {
+        const p = point(id);
+        return axis === 0 ? p[1] : p[2];
+      });
+      return { ids, set: new Set(ids), nx, ny, nz, d, eps: extent * 1e-3, px, py, axis };
+    };
+    const claimsTriangle = (t, ring, frame) => {
+      if (!frame) return false;
+      const a = corners[t * 3], b = corners[t * 3 + 1], c = corners[t * 3 + 2];
+      /* 1. the triangle's corners are the ring's own corners. */
+      if (frame.set.has(a) && frame.set.has(b) && frame.set.has(c)) return true;
+      /* 2. the triangle lies in the ring's plane and inside it. */
+      for (const id of [a, b, c]) {
+        const p = point(id);
+        const side = frame.nx * p[0] + frame.ny * p[1] + frame.nz * p[2] - frame.d;
+        if (side > frame.eps || side < -frame.eps) return false;
+      }
+      const pa = point(a), pb = point(b), pc = point(c);
+      const cx = (pa[0] + pb[0] + pc[0]) / 3;
+      const cy = (pa[1] + pb[1] + pc[1]) / 3;
+      const cz = (pa[2] + pb[2] + pc[2]) / 3;
+      const u = frame.axis === 0 ? cx : frame.axis === 1 ? cx : cy;
+      const v = frame.axis === 0 ? cy : cz;
+      let inside = false;
+      for (let i = 0, j = frame.px.length - 1; i < frame.px.length; j = i++) {
+        const yi = frame.py[i], yj = frame.py[j];
+        if ((yi > v) === (yj > v)) continue;
+        const k = (v - yi) / (yj - yi);
+        if (u < frame.px[i] + k * (frame.px[j] - frame.px[i])) inside = !inside;
+      }
+      return inside;
+    };
+
+    /* ---- the faces the app declared -----------------------------------
+       A ring is the boundary of one face in the geometry's own vertex
+       numbering, and it claims triangles with the same two rules the kernel
+       uses (cpp/src/fe_editmesh.cpp, ringClaimsTriangle): every corner of the
+       triangle is a corner of the ring - exact, and true of a face that has
+       been bent - or the triangle lies in the ring's plane and its centroid is
+       inside the ring, which is the fan a cap hides behind its middle vertex.
+
+       Candidates are found through the corners: a triangle of a cap's fan has
+       two rim corners, so the ring is reachable from either of them, and a
+       mesh with a thousand faces does not cost a scan per face. */
+    const claimed = new Uint8Array(triCount);
+    const claimedBy = declared ? declared.map(() => []) : [];
+    const faces = [];
+    const faceTris = [];
+    if (declared) {
+      const touches = new Map();
+      /* Keyed by canonical id, not by the slot the ring happened to name: the
+         triangles are looked up by canonical id, and three's split vertices mean
+         the two numberings differ. */
+      const frames = declared.map((ring, f) => {
+        const frame = ringFrame(ring);
+        if (!frame) return null;
+        for (const id of frame.ids) {
+          let list = touches.get(id);
+          if (!list) { list = []; touches.set(id, list); }
+          if (list[list.length - 1] !== f) list.push(f);
+        }
+        return frame;
+      });
+      for (let t = 0; t < triCount; t++) {
+        if (degenerate[t]) continue;
+        const a = corners[t * 3], b = corners[t * 3 + 1], c = corners[t * 3 + 2];
+        const tried = new Set();
+        let group = -1;
+        for (const id of [a, b, c]) {
+          const list = touches.get(id);
+          if (!list) continue;
+          for (const f of list) {
+            if (tried.has(f)) continue;
+            tried.add(f);
+            if (claimsTriangle(t, declared[f], frames[f])) { group = f; break; }
+          }
+          if (group >= 0) break;
+        }
+        if (group < 0) continue;
+        claimed[t] = 1;
+        claimedBy[group].push(t);
+      }
+      for (let f = 0; f < declared.length; f++) {
+        if (!claimedBy[f].length || !frames[f]) continue;
+        faces.push(frames[f].ids);
+        faceTris.push(claimedBy[f]);
+      }
+    }
+
+    /* Candidate quads: a shared edge, two coplanar triangles, a convex quad. */
     const flat = (t0, t1) => {
       const dot = normals[t0 * 3] * normals[t1 * 3] +
                   normals[t0 * 3 + 1] * normals[t1 * 3 + 1] +
@@ -146,6 +338,23 @@
     /* Convexity: going round a-c-b-d, every turn must bend the same way, so the
        four corners enclose a real quad and not a folded or arrow-shaped one.
        The turn is measured against the quad's own normal. */
+    /* The shared edge is a quad's diagonal when it is the longest side of both
+       of its triangles: in a rectangle the diagonal is the hypotenuse, and the
+       sides two quads share are shorter than the diagonals that touch them. The
+       tolerance is 2%, so a deformation that brings a side close to the
+       diagonal's length does not tear the face into two. */
+    const diagonalEdge = (t0, t1, a, b) => {
+      const limit = length2(a, b) * 1.02;
+      for (const t of [t0, t1]) {
+        for (let k = 0; k < 3; k++) {
+          const v = corners[t * 3 + k];
+          const w = corners[t * 3 + ((k + 1) % 3)];
+          if ((v === a && w === b) || (v === b && w === a)) continue;
+          if (length2(v, w) > limit) return false;
+        }
+      }
+      return true;
+    };
     const convex = (a, c, b, d) => {
       const quad = [point(a), point(c), point(b), point(d)];
       const ux = quad[2][0] - quad[0][0], uy = quad[2][1] - quad[0][1], uz = quad[2][2] - quad[0][2];
@@ -171,17 +380,29 @@
     edges.forEach((record) => {
       const { a, b, t0, t1 } = record;
       if (t1 < 0) return;
-      if (!flat(t0, t1)) return;
+      if (!flat(t0, t1)) {
+        /* Not coplanar: one face only if the shared edge is the diagonal of a
+           quad and the two halves do not fold away from each other. */
+        const fold = normals[t0 * 3] * normals[t1 * 3] +
+                     normals[t0 * 3 + 1] * normals[t1 * 3 + 1] +
+                     normals[t0 * 3 + 2] * normals[t1 * 3 + 2];
+        if (fold < COS_QUAD) return;
+        if (!diagonalEdge(t0, t1, a, b)) return;
+      }
       candidates.push({ a, b, t0, t1, len: length2(a, b) });
     });
-    candidates.sort((x, y) => x.len - y.len);
+    /* Longest shared edge first, which is the order the edit kernel uses. The
+       diagonal of a drawn quad is longer than the sides it shares with its
+       neighbours, so taking the long ones first rebuilds the quads the model was
+       built from; taking the short ones first (which this did) pairs across a
+       grid's cell borders instead, and a square grid's borders are the same
+       length as its diagonals' neighbours, so faces came out the wrong way. */
+    candidates.sort((x, y) => y.len - x.len);
 
-    const faces = [];
-    const faceTris = [];
     const done = new Uint8Array(triCount);
     for (const candidate of candidates) {
       const { a, b, t0, t1 } = candidate;
-      if (done[t0] || done[t1]) continue;
+      if (done[t0] || done[t1] || claimed[t0] || claimed[t1] || degenerate[t0] || degenerate[t1]) continue;
       /* The two apexes opposite the shared edge. */
       const apex = (t) => {
         for (let k = 0; k < 3; k++) {
@@ -202,7 +423,7 @@
       faceTris.push([t0, t1]);
     }
     for (let t = 0; t < triCount; t++) {
-      if (done[t]) continue;
+      if (done[t] || claimed[t] || degenerate[t]) continue;
       faces.push([corners[t * 3], corners[t * 3 + 1], corners[t * 3 + 2]]);
       faceTris.push([t]);
     }

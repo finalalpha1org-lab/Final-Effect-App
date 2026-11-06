@@ -585,6 +585,11 @@ FE_EXPORT uint32_t fe_mod_in_uv_ptr(void);
 FE_EXPORT uint32_t fe_mod_in_idx_ptr(void);
 FE_EXPORT uint32_t fe_mod_normals_ptr(void);
 FE_EXPORT void     fe_mod_set_counts(uint32_t vert_count, uint32_t tri_count);
+FE_EXPORT uint32_t fe_mod_in_nrm_ptr(void);
+FE_EXPORT uint32_t fe_mod_face_smooth_ptr(void);
+FE_EXPORT uint32_t fe_mod_set_face_smooth(uint32_t count);
+FE_EXPORT uint32_t fe_mod_derive_face_smooth(void);
+FE_EXPORT int32_t  fe_mod_shade(void);
 FE_EXPORT int32_t  fe_mod_weld(float epsilon);
 FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode);
 FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon);
@@ -594,7 +599,9 @@ FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float tim
 FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
 FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
 FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
-FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels);
+/* Returns the number of levels built (0 = nothing to do, negative = a
+ * session error); mode 0 is Catmull-Clark, 1 is Simple. */
+FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels, uint32_t simple);
 FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
 
 /* ---- Session deformation kernels: FFD lattice, armature skinning, surface

@@ -10,10 +10,11 @@
 
 extern "C" {
 unsigned int fe_edit_reset(void);
-unsigned int fe_edit_upload(unsigned int, const float*, unsigned int, const unsigned int*, const float*);
+unsigned int fe_edit_upload(unsigned int, const float*, unsigned int, const unsigned int*, const float*, const float*);
 unsigned int fe_edit_vert_count(void);
 unsigned int fe_edit_tri_count(void);
 unsigned int fe_edit_edge_count(void);
+unsigned int fe_edit_face_count(void);
 unsigned int fe_edit_max_verts(void);
 void fe_edit_set_mode(unsigned int);
 void fe_edit_select_all(void);
@@ -106,7 +107,7 @@ static const unsigned int kCubeTris[36] = {
 
 static void loadCube(void) {
   fe_edit_reset();
-  fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0);
+  fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0, 0);
 }
 
 static float cubeVolume(void) {
@@ -152,7 +153,7 @@ static void testUpload(void) {
   CHECK(fe_edit_tri_count() == 12);
   CHECK(fe_edit_edge_count() == 18);
   CHECK_NEAR(cubeVolume(), 8.0, 1e-3);
-  CHECK(fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0) == 1);
+  CHECK(fe_edit_upload(8, kCubeVerts, 12, kCubeTris, 0, 0) == 1);
   /* more vertices than the kernel holds is refused, not truncated */
   CHECK(fe_edit_max_verts() >= 8192);
 }
@@ -260,9 +261,14 @@ static void testInset(void) {
   fe_edit_select_all();
   const unsigned int beforeTri = fe_edit_tri_count();
   const unsigned int faces = fe_edit_inset(0.2f, 1);
-  CHECK(faces == beforeTri);
-  /* one triangle becomes the inner face plus a six-triangle ring */
-  CHECK(fe_edit_tri_count() == beforeTri * 7);
+  /* Individual inset works on a *face*: a cube side is one quad, so six faces
+     are inset, not twelve triangles. Doing it per triangle put an inner triangle
+     in each half of the side and four walls on its diagonal - a line through the
+     middle of the face with two coincident walls under it. */
+  CHECK(faces == 6);
+  /* Each side: its two triangles stay inside, and four outline edges add one
+     quad of two triangles each - ten triangles where there were two. */
+  CHECK(fe_edit_tri_count() == beforeTri + 6 * 8);
   checkIntegrity("inset individual");
 
   /* Region inset needs a rim; a fully closed selection has none, and saying
@@ -344,9 +350,14 @@ static void testPokeAndDuplicate(void) {
   loadCube();
   fe_edit_set_mode(2);
   fe_edit_select_all();
-  const unsigned int tris = fe_edit_tri_count();
+  /* One centre per *face*: a cube side is two triangles here, and a poke per
+     triangle would put two centres in it and leave the side's diagonal drawn
+     through the middle of the face. Four triangles round one point is the tool
+     the user asked for, so six faces become twenty-four. */
+  const unsigned int faces = fe_edit_face_count();
   fe_edit_poke();
-  CHECK(fe_edit_tri_count() == tris * 3);
+  CHECK(fe_edit_face_count() == faces * 4);
+  CHECK(fe_edit_tri_count() == 24);
   checkIntegrity("poke");
 
   loadCube();
@@ -484,7 +495,7 @@ static void uploadSplitQuad(const float* corners, const float* normals) {
     pos[i * 3 + 2] = corners[c + 2];
   }
   fe_edit_reset();
-  CHECK(fe_edit_upload(6, pos, 2, tris, 0) == 1);
+  CHECK(fe_edit_upload(6, pos, 2, tris, 0, 0) == 1);
   (void)normals;
 }
 

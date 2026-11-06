@@ -182,3 +182,29 @@ test('the handle cannot drag a panel smaller than it already is', () => {
   assert.equal(sheet.classList.contains('sheet-expanded'), false, 'dragging down must not open the panel');
   assert.equal(sheet.style.height, '', 'and it must go back to the height its CSS asks for');
 });
+
+test('the edit panel stops at its ceiling instead of covering the model', () => {
+  const dom = makeDom();
+  load(dom);
+  const sheet = dom.sheets.get('edit-sheet');
+  assert.ok(sheet, 'the edit sheet is missing from the fixture');
+  /* Its resting height is under its own ceiling - the stylesheet caps it there
+     before the handle is ever touched. */
+  sheet.height = 240;
+
+  /* A long drag up. Every other sheet opens to 92% of the screen; this one is a
+     strip of tools and has to leave the model visible, so it settles at its own
+     ceiling - the same 40% the stylesheet caps it at. */
+  pointer(dom, sheet, 'pointerdown', { y: 400 });
+  pointer(dom, sheet, 'pointermove', { y: -400 });
+  pointer(dom, sheet, 'pointerup', { y: -400 });
+  assert.equal(sheet.classList.contains('sheet-expanded'), true, 'the panel did not open');
+  assert.equal(sheet.style.height, '272px', `the ceiling is 34% of 800px, got ${sheet.style.height}`);
+
+  /* The other sheets are unchanged: they still get the tall panel. */
+  const camera = dom.sheets.get('camera-sheet');
+  pointer(dom, camera, 'pointerdown', { y: 400 });
+  pointer(dom, camera, 'pointermove', { y: -400 });
+  pointer(dom, camera, 'pointerup', { y: -400 });
+  assert.equal(camera.style.height, '736px', 'the tall panel is still 92% everywhere else');
+});

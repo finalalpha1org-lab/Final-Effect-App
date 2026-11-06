@@ -96,7 +96,7 @@ function uploadCube(exp) {
   assert.ok(posPtr && triPtr, 'scratch arena refused the cube upload');
   new Float32Array(exp.memory.buffer, posPtr, CUBE_VERTS.length).set(CUBE_VERTS);
   new Uint32Array(exp.memory.buffer, triPtr, CUBE_TRIS.length).set(CUBE_TRIS);
-  const ok = exp.fe_edit_upload(8, posPtr, 12, triPtr, 0);
+  const ok = exp.fe_edit_upload(8, posPtr, 12, triPtr, 0, 0);
   exp.fe_arena_reset();
   assert.equal(ok, 1, 'fe_edit_upload rejected the unit cube');
 }
@@ -152,7 +152,9 @@ test('shipped wasm exposes the whole Edit Mode surface', () => {
     'fe_edit_to_sphere', 'fe_edit_bend', 'fe_edit_randomize', 'fe_edit_align', 'fe_edit_mirror',
     'fe_edit_slide', 'fe_edit_set_shade', 'fe_edit_mark_sharp', 'fe_edit_mark_seam',
     'fe_edit_recalc_normals', 'fe_edit_flip_normals',
-    'fe_edit_build_render', 'fe_edit_render_pos_ptr', 'fe_edit_render_nrm_ptr',
+    'fe_edit_build_render', 'fe_edit_build_render_split', 'fe_edit_upload_face_shade',
+    'fe_edit_shade_state', 'fe_edit_face_shade_ptr', 'fe_edit_face_shade_count',
+    'fe_edit_render_pos_ptr', 'fe_edit_render_nrm_ptr',
     'fe_edit_render_idx_ptr', 'fe_edit_render_vert_count', 'fe_edit_render_idx_count',
     'fe_edit_undo_push', 'fe_edit_undo', 'fe_edit_redo', 'fe_edit_undo_depth', 'fe_edit_redo_depth',
     'fe_edit_extrude', 'fe_edit_inset', 'fe_edit_subdivide', 'fe_edit_merge_center',
@@ -191,7 +193,7 @@ test('upload builds the expected topology and refuses oversized meshes', () => {
   exp.fe_arena_reset();
   const posPtr = exp.fe_malloc(3 * 4 * 8);
   const triPtr = exp.fe_malloc(12);
-  assert.equal(exp.fe_edit_upload(exp.fe_edit_max_verts() + 1, posPtr, 1, triPtr, 0), 0);
+  assert.equal(exp.fe_edit_upload(exp.fe_edit_max_verts() + 1, posPtr, 1, triPtr, 0, 0), 0);
   exp.fe_arena_reset();
   /* The refused upload must leave the previous mesh untouched. */
   assert.equal(exp.fe_edit_vert_count(), 8);
@@ -714,7 +716,7 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
   /* Faceted: the six faces carry six different normals, so the editor must go
      on shading the cube flat instead of rounding it. */
   assert.equal(exp.fe_edit_detect_smooth(posPtr, nrmPtr, 24), 0);
-  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0), 1);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
   exp.fe_arena_reset();
 
   assert.equal(exp.fe_edit_vert_count(), 8, 'the split corners were not welded');
@@ -730,7 +732,14 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
   for (let e = 0; e < ne; e++) drawn += shown[e] ? 1 : 0;
   assert.equal(drawn, 12, 'a cube draws twelve edges, not eighteen');
 
-  assert.equal(exp.fe_edit_get_shade(), 1, 'upload leaves the shading at smooth until the bridge decides');
+  /* Uploaded with its own normals, the cube arrives faceted: the kernel reads
+     the six different face directions off the corners it is about to weld and
+     keeps every face flat, instead of rounding a cube the user built to be
+     sharp. */
+  assert.equal(exp.fe_edit_get_shade(), 0, 'the per-face normals must arrive as flat faces');
+  assert.equal(exp.fe_edit_shade_state(), 0, 'and every one of the twelve faces is flat');
+  exp.fe_edit_set_shade(1);
+  assert.equal(exp.fe_edit_get_shade(), 1);
   exp.fe_edit_set_shade(0);
   assert.equal(exp.fe_edit_get_shade(), 0);
 
@@ -754,6 +763,274 @@ test('a viewport cube uploads as eight welded points, not twenty-four', () => {
 
 function positionsOf(mesh) { return mesh.positions; }
 
+/* The line across a face. A quad is two triangles in the buffer, and if each of
+   them takes its own normal the render draws the diagonal - the crease the user
+   keeps finding in the middle of a face that Blender, which stores quads, never
+   shows. Shading is decided per face, so both halves carry one normal, and the
+   wireframe is drawn from the face rings, so the diagonal is not an edge of the
+   model at all. */
+test('a bent face keeps one normal, and its diagonal is not a wireframe edge', () => {
+  const exp = loadEngine();
+  exp.fe_arena_reset();
+  const quad = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
+  const faces = new Uint32Array([0, 1, 2, 0, 2, 3]);
+  const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  const posPtr = exp.fe_malloc(quad.byteLength);
+  const triPtr = exp.fe_malloc(faces.byteLength);
+  const nrmPtr = exp.fe_malloc(normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, quad.length).set(quad);
+  new Uint32Array(exp.memory.buffer, triPtr, faces.length).set(faces);
+  new Float32Array(exp.memory.buffer, nrmPtr, normals.length).set(normals);
+  assert.equal(exp.fe_edit_upload(4, posPtr, 2, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  /* One face, four corners: the two triangles are the two halves of a quad. */
+  assert.equal(exp.fe_edit_face_count(), 1);
+  assert.deepEqual(
+    Array.from(new Uint32Array(exp.memory.buffer, exp.fe_edit_face_ring_ptr(), 4)),
+    [0, 1, 2, 3],
+    'the ring of the face is its four corners'
+  );
+  assert.equal(exp.fe_edit_flat_planar(), 0, 'nothing has been rendered yet');
+
+  /* Bend it: lift one corner out of the plane the quad was drawn in. */
+  exp.fe_arena_reset();
+  const selPtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, selPtr, 1)[0] = 2;
+  exp.fe_edit_select_by_index(0, 1, selPtr, 0);
+  exp.fe_arena_reset();
+  exp.fe_edit_move(0, 0, 0.6, 0);
+
+  const verts = exp.fe_edit_build_render();
+  assert.equal(verts, 4, 'a bent face still needs one vertex per corner, not per triangle');
+  assert.equal(exp.fe_edit_flat_planar(), 0, 'a bent face cannot be shaded by derivative normals');
+  const renderNormals = new Float32Array(exp.memory.buffer, exp.fe_edit_render_nrm_ptr(), verts * 3);
+  for (let v = 1; v < verts; v++) {
+    for (let c = 0; c < 3; c++) {
+      assert.ok(Math.abs(renderNormals[v * 3 + c] - renderNormals[c]) < 1e-5,
+        `corner ${v} points a different way than corner 0, which is the diagonal showing`);
+    }
+  }
+  assert.ok(Math.abs(Math.hypot(renderNormals[0], renderNormals[1], renderNormals[2]) - 1) < 1e-4, 'and it is a unit normal');
+
+  /* The wireframe is the face boundary: four lines, and the diagonal the two
+     triangles share is not one of them. */
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), 2);
+  const ring = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_ring_ptr(), exp.fe_edit_face_ring_count());
+  const drawn = new Set();
+  for (let f = 0; f + 1 < starts.length; f++) {
+    const n = starts[f + 1] - starts[f];
+    for (let i = 0; i < n; i++) {
+      const a = ring[starts[f] + i], b = ring[starts[f] + (i + 1) % n];
+      drawn.add(a < b ? `${a}:${b}` : `${b}:${a}`);
+    }
+  }
+  assert.deepEqual(Array.from(drawn).sort(), ['0:1', '0:3', '1:2', '2:3'], 'four edges around the quad, no 0:2 diagonal');
+});
+
+/* Blender keeps a flag per face. A face marked flat next to smooth neighbours
+   needs two different normals at the same point, and two normals at one point
+   is not a shared vertex - the kernel has to break the corners apart, and that
+   split is what the viewport and every exporter after it can actually read. */
+test('one face stays flat while the faces around it stay smooth', () => {
+  const exp = loadEngine();
+  const mesh = makeSplitCube();
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  const nrmPtr = exp.fe_malloc(mesh.normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  new Float32Array(exp.memory.buffer, nrmPtr, mesh.normals.length).set(mesh.normals);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  const faceCount = exp.fe_edit_face_shade_count();
+  assert.equal(faceCount, 12, 'one flag per triangle');
+  const flags = () => new Uint8Array(exp.memory.buffer, exp.fe_edit_face_shade_ptr(), faceCount);
+  assert.equal(flags().reduce((a, b) => a + b, 0), 0, 'a faceted cube starts with every face flat');
+
+  /* All flat is the one case the material still draws by itself: the indexed
+     mesh comes back untouched, so a dense flat mesh never triples its corners. */
+  assert.equal(exp.fe_edit_build_render(), 8, 'an all-flat cube keeps its shared vertices');
+
+  /* Mark one face, in Face mode: the rest of the cube must not move. */
+  exp.fe_edit_set_mode(2);
+  exp.fe_arena_reset();
+  const facePtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, facePtr, 1)[0] = 0;
+  exp.fe_edit_select_by_index(2, 1, facePtr, 0);
+  exp.fe_arena_reset();
+  exp.fe_edit_set_shade(1);
+
+  assert.equal(exp.fe_edit_shade_state(), 2, 'one smooth face in a flat cube is a mixed mesh');
+  /* The flag is per triangle - it has to be, that is what the render pass
+     reads - but the face the user picked is the quad, so both of its triangles
+     follow the tap and the five quads around it do not. */
+  assert.equal(flags().filter((v) => v).length, 2, 'exactly the selected quad went smooth');
+  assert.equal(exp.fe_edit_get_shade(), 1, 'and the mesh now has smoothing somewhere');
+
+  /* The render pass splits those corners, which is the only way one face can be
+     flat and its neighbour smooth across a point they share. */
+  const mixed = exp.fe_edit_build_render();
+  assert.ok(mixed > 8, `a mixed mesh must break its flat corners apart, got ${mixed}`);
+  assert.equal(exp.fe_edit_render_split_count(), mixed - 8, 'every extra vertex is a split corner');
+
+  /* Leaving Edit Mode has to carry the shading out as geometry, so the same
+     pass runs with the all-flat shortcut switched off. */
+  assert.equal(exp.fe_edit_build_render_split(), mixed, 'the mixed mesh is already split');
+
+  exp.fe_edit_set_mode(0);
+  exp.fe_edit_select_all();
+  exp.fe_edit_set_shade(0);
+  assert.equal(exp.fe_edit_shade_state(), 0, 'shading the whole mesh flat is still one call');
+  exp.fe_edit_select_none();
+  assert.equal(exp.fe_edit_build_render(), 8, 'and the all-flat shortcut comes back');
+  /* Forced, the cube splits where faces meet, not where triangles meet: eight
+     corners, three faces on each, is twenty-four - one vertex per corner per
+     face. Before the shading was resolved per face rather than per triangle it
+     was thirty-six, because each triangle of a quad took its own copy. */
+  assert.equal(exp.fe_edit_build_render_split(), 24, 'a corner gets one vertex per face it belongs to');
+
+  /* Flags that were written down are restored as they are, not re-derived from
+     normals: a cage has shared vertices and averaged normals, so deriving would
+     forget that the cube was ever flat. */
+  const restored = new Uint8Array(faceCount);
+  restored[3] = 1;
+  exp.fe_arena_reset();
+  const flagPtr = exp.fe_malloc(faceCount);
+  new Uint8Array(exp.memory.buffer, flagPtr, faceCount).set(restored);
+  assert.equal(exp.fe_edit_upload_face_shade(flagPtr, faceCount), faceCount);
+  exp.fe_arena_reset();
+  assert.deepEqual(Array.from(flags()), Array.from(restored), 'the flags survived the round trip');
+  assert.equal(exp.fe_edit_upload_face_shade(0, 0), 0, 'a missing buffer is refused, not guessed at');
+});
+
+/* ---------------------------------------------------------------------------
+ * A triangle inside a face
+ *
+ * Two of them exist, and both are visible for the same reason: the kernel
+ * decides something per triangle that belongs to the whole face.
+ *
+ *   1. shading - half of a quad flat and half of it smooth draws the diagonal,
+ *      because the smooth half is interpolated and the flat half is not;
+ *   2. topology - a face that a tool cut into triangles and could not pair
+ *      back into a quad is drawn as the triangles it is stored as.
+ *
+ * These tests pin both, from the shipped artifact.
+ * ------------------------------------------------------------------------- */
+
+function cloneCubeWithMixedNormals() {
+  const mesh = makeSplitCube();
+  /* The first quad's two triangles are the first two: give the second one
+     corner normals that lean away from the face. Its own vote comes out
+     smooth while its partner's comes out flat - exactly the pair that used to
+     draw a diagonal across a face whose two halves disagreed. */
+  const normals = Float32Array.from(mesh.normals);
+  const face = SPLIT_CUBE_FACES[0];
+  /* Corners 1, 2 and 3 are the quad's second triangle (0,1,2 then 0,2,3).
+     Push their normals square to the face: that half votes smooth while the
+     first half keeps voting flat. */
+  const tilted = [face.n[1] + face.n[2], face.n[2] + face.n[0], face.n[0] + face.n[1]];
+  for (let k = 1; k <= 3; k++) {
+    const at = k * 3;
+    normals[at] = tilted[0];
+    normals[at + 1] = tilted[1];
+    normals[at + 2] = tilted[2];
+  }
+  return { ...mesh, normals };
+}
+
+test('a face is shaded as one face, whichever way its triangles round', () => {
+  const exp = loadEngine();
+  const mesh = cloneCubeWithMixedNormals();
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  const nrmPtr = exp.fe_malloc(mesh.normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  new Float32Array(exp.memory.buffer, nrmPtr, mesh.normals.length).set(mesh.normals);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  const count = exp.fe_edit_face_shade_count();
+  assert.equal(count, 12, 'one flag per triangle');
+  const flags = new Uint8Array(exp.memory.buffer, exp.fe_edit_face_shade_ptr(), count);
+  assert.equal(flags[0], flags[1], 'the two triangles of one quad must agree about being flat');
+  assert.equal(flags[2], flags[3], 'and so must the next quad');
+  for (let quad = 0; quad < 6; quad++) {
+    assert.equal(
+      flags[quad * 2], flags[quad * 2 + 1],
+      `quad ${quad} is half flat and half smooth, which is the triangle the user sees`
+    );
+  }
+
+  /* The tie went smooth - a shape that really is flat votes flat with both
+     halves - so that quad is a smooth face in a flat cube. */
+  assert.equal(flags[0], 1, 'a quad whose halves disagree is smooth, not half smooth');
+  assert.equal(flags[2], 0, 'the quad next to it is still flat');
+  assert.equal(exp.fe_edit_shade_state(), 2, 'one smooth quad in a flat cube is a mixed mesh');
+  const split = exp.fe_edit_build_render();
+  assert.ok(split > 8, 'a mixed mesh splits its corners, and it starts at eight');
+});
+
+test('a fan of triangles that lie in one plane is one face, not thirty-three', () => {
+  const exp = loadEngine();
+  /* A thirty-two sided cap, triangulated the way a fan is: from corner zero.
+     No app declared this one; it is the shape a tool leaves behind. */
+  const segments = 32;
+  const positions = new Float32Array(segments * 3);
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    positions[i * 3] = Math.cos(angle);
+    positions[i * 3 + 1] = 0;
+    positions[i * 3 + 2] = Math.sin(angle);
+  }
+  const triangles = [];
+  for (let i = 1; i + 1 < segments; i++) triangles.push(0, i, i + 1);
+  const indices = new Uint32Array(triangles);
+
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(positions.byteLength);
+  const triPtr = exp.fe_malloc(indices.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, positions.length).set(positions);
+  new Uint32Array(exp.memory.buffer, triPtr, indices.length).set(indices);
+  assert.equal(exp.fe_edit_upload(segments, posPtr, triangles.length / 3, triPtr, 0, 0), 1);
+  exp.fe_arena_reset();
+
+  assert.equal(exp.fe_edit_tri_count(), 30, 'the fan is thirty triangles');
+  assert.equal(exp.fe_edit_face_count(), 1, 'one flat panel is one face');
+  assert.equal(exp.fe_edit_face_ring_count(), segments, 'and it carries the ring of the polygon');
+  assert.equal(exp.fe_edit_ngon_count(), 1, 'a thirty-two sided face is an n-gon');
+});
+
+test('a poke keeps its fan: a triangle the user asked for stays a face', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_arena_reset();
+  const facePtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, facePtr, 1)[0] = 0;
+  exp.fe_edit_select_by_index(2, 1, facePtr, 0);
+  exp.fe_arena_reset();
+
+  exp.fe_edit_poke();
+  exp.fe_arena_reset();
+  /* One centre for the whole face, not one per triangle: a quad poked becomes
+     four triangles round a single point, the way Blender's poke does, instead
+     of six round two points with the quad's own diagonal still drawn through
+     the middle of the face. The other five quads are untouched. */
+  assert.equal(exp.fe_edit_tri_count(), 12 - 2 + 4, 'the quad became four triangles');
+  assert.equal(exp.fe_edit_face_count(), 5 + 4, 'five quads plus four triangle faces');
+
+  const faces = exp.fe_edit_face_count();
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), faces + 1).slice();
+  let triangles = 0;
+  for (let f = 0; f < faces; f++) if (starts[f + 1] - starts[f] === 3) triangles++;
+  assert.equal(triangles, 4, 'the fan is four triangle faces, not one fused polygon');
+});
+
 test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   const exp = loadEngine();
   const mesh = makeSplitCube();
@@ -762,7 +1039,7 @@ test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   const triPtr = exp.fe_malloc(mesh.indices.byteLength);
   new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
   new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
-  exp.fe_edit_upload(24, posPtr, 12, triPtr, 0);
+  exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, 0);
   exp.fe_arena_reset();
   exp.fe_edit_select_all();
 
@@ -825,4 +1102,279 @@ test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   exp.fe_edit_undo();
   assertIntegrity(exp, 'gizmo drag');
   exp.fe_arena_reset();
+});
+
+/* ---- written-down faces --------------------------------------------------
+ * A face used to be guessed from the shape: two triangles that share their
+ * longest side and are nearly coplanar are one quad. That guess fails the
+ * moment an edit bends the quad - the diagonal came back and the user saw a
+ * line running through the middle of a face they had not split.
+ *
+ * Now each triangle carries the id of the face it belongs to (fe_edit_tri_tag_*),
+ * written by whatever made the geometry and kept through every edit. These
+ * tests pin that: the ids travel with the triangles, a tool says what it built,
+ * and no deformation can turn six sides into twelve triangles.
+ */
+
+function faceSizes(exp) {
+  const faces = exp.fe_edit_face_count();
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), faces + 1).slice();
+  const sizes = [];
+  for (let f = 0; f < faces; f++) sizes.push(starts[f + 1] - starts[f]);
+  return sizes;
+}
+
+function triTags(exp) {
+  const count = exp.fe_edit_tri_tag_count();
+  assert.equal(count, exp.fe_edit_tri_count(), 'every triangle has a tag slot');
+  return Array.from(new Uint32Array(exp.memory.buffer, exp.fe_edit_tri_tag_ptr(), count));
+}
+
+function tagHistogram(tags) {
+  const counts = new Map();
+  for (const tag of tags) counts.set(tag, (counts.get(tag) || 0) + 1);
+  return counts;
+}
+
+function selectFaceByIndex(exp, index) {
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_none();
+  exp.fe_arena_reset();
+  const ptr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, ptr, 1)[0] = index;
+  exp.fe_edit_select_by_index(2, 1, ptr, 0);
+  exp.fe_arena_reset();
+}
+
+test('every triangle of the cube carries the id of its face', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  const tags = triTags(exp);
+  assert.equal(new Set(tags).size, 6, 'six sides, six ids');
+  for (const [tag, count] of tagHistogram(tags)) {
+    assert.equal(count, 2, `face id ${tag} must cover both triangles of its quad`);
+  }
+});
+
+test('a corner dragged out of the cube leaves six four-corner faces', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  /* Every position-coincident slot of the corner has to move, or the box tears:
+     the upload welds, so one index per corner is enough here, but drag it far
+     enough to bend all three faces that share it. */
+  exp.fe_edit_set_mode(0);
+  exp.fe_edit_select_none();
+  exp.fe_arena_reset();
+  const ptr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, ptr, 1)[0] = 6;   /* the (+1,+1,+1) corner */
+  exp.fe_edit_select_by_index(0, 1, ptr, 0);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_move(2.2, 1.4, 1.6, 0), 1);
+
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4], 'a bent cube is still six quads');
+  const tags = triTags(exp);
+  assert.equal(new Set(tags).size, 6, 'the ids are the same six faces as before the drag');
+  for (const [, count] of tagHistogram(tags)) assert.equal(count, 2);
+
+  /* The cage wireframe draws the faces, not the triangles: only the twelve edges
+     of the box are shown, never a face's internal diagonal. */
+  const edges = exp.fe_edit_edge_count();
+  const shown = new Uint8Array(exp.memory.buffer, exp.fe_edit_edge_display_ptr(), edges);
+  let drawn = 0;
+  for (let e = 0; e < edges; e++) drawn += shown[e] ? 1 : 0;
+  assert.equal(drawn, 12, 'a cube has twelve sides, and not one of the six face diagonals is drawn');
+});
+
+test('a rim wall that a tool builds is one face, not two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  assert.equal(exp.fe_edit_inset(0.2, 0), 8, 'four rim walls of two triangles each');
+  exp.fe_arena_reset();
+  /* Five untouched sides, the inset face, and four walls - ten faces, and every
+     one of them four corners: a wall is a quad however it was triangulated. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  for (const [tag, count] of tagHistogram(triTags(exp))) {
+    assert.equal(count, 2, `face id ${tag} must be one quad, not a triangle`);
+  }
+});
+
+test('extruding a whole face keeps the walls as quads', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 2);
+  assert.equal(exp.fe_edit_extrude(0.4, 0), 8);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+});
+
+test('a poke puts one centre in a face, so the quad keeps no diagonal', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_poke();
+  exp.fe_arena_reset();
+  /* Four triangles round one point, plus the five sides that were not poked. */
+  assert.equal(exp.fe_edit_face_count(), 9);
+  const sizes = faceSizes(exp);
+  assert.equal(sizes.filter((n) => n === 3).length, 4, 'the fan is four triangles');
+  assert.equal(sizes.filter((n) => n === 4).length, 5, 'the other five sides are untouched quads');
+});
+
+test('a subdivide cuts faces into faces, not into one hidden ring', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_subdivide(0, 0);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 24, 'six sides cut into four each');
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]), 'every piece is a quad');
+});
+
+test('the ids survive the deformation tools and the undo stack', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  const before = faceSizes(exp);
+  exp.fe_edit_bend(35, 0);
+  exp.fe_edit_to_sphere(1);
+  exp.fe_edit_randomize(0.2, 11);
+  exp.fe_arena_reset();
+  assert.deepEqual(faceSizes(exp), before, 'bend, to-sphere and randomize cannot split a face');
+  exp.fe_edit_undo();
+  exp.fe_edit_undo();
+  exp.fe_edit_undo();
+  exp.fe_arena_reset();
+  assert.deepEqual(faceSizes(exp), before, 'and undo puts the same faces back');
+});
+
+test('a mesh re-uploaded with the same triangle table does not inherit the old faces', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_inset(0.2, 0);
+  exp.fe_arena_reset();
+  /* A fresh upload is a fresh mesh: the ids of the *previous* mesh must not
+     claim triangles of this one, even though the first twelve triangles are the
+     same size and in the same order. */
+  uploadCube(exp);
+  assert.equal(exp.fe_edit_face_count(), 6);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4]);
+  const fresh = triTags(exp);
+  assert.equal(new Set(fresh).size, 6, 'six ids for six sides - the reset did not hand over the old ones');
+  for (const [, count] of tagHistogram(fresh)) assert.equal(count, 2);
+});
+
+/* ---- individual mode, and a bevel that leaves faces ----------------------
+ * Individual mode means "move each face on its own". It used to mean "move each
+ * triangle on its own", which for a quad builds an inner triangle in each half
+ * and four walls on its diagonal - the diagonal still drawn, with two coincident
+ * walls under it. The face is the unit now.
+ */
+
+function openEdgeCount(exp) {
+  const tris = exp.fe_edit_tri_count();
+  const idx = new Uint32Array(exp.memory.buffer, exp.fe_edit_idx_ptr(), tris * 3).slice();
+  const uses = new Map();
+  for (let t = 0; t < tris; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    for (const [x, y] of [[a, b], [b, c], [c, a]]) {
+      const key = x < y ? `${x}:${y}` : `${y}:${x}`;
+      uses.set(key, (uses.get(key) || 0) + 1);
+    }
+  }
+  let open = 0;
+  for (const [, n] of uses) if (n === 1) open++;
+  return open;
+}
+
+test('extrude individual moves one face, not its two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_extrude(0.4, 1);
+  exp.fe_arena_reset();
+  /* Five untouched sides, the moved side and four walls: ten faces, every one a
+     quad. Per triangle it was thirteen, two of them triangles sitting on the
+     side's own diagonal. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  assert.equal(openEdgeCount(exp), 0, 'the moved side is stitched back onto the box');
+});
+
+test('inset individual insets one face, not its two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_inset(0.3, 1);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  assert.equal(openEdgeCount(exp), 0);
+});
+
+test('individual mode on every face of the cube is six faces, four corners each', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_extrude(0.3, 1);
+  exp.fe_arena_reset();
+  /* Six sides moved out on their own: the six caps plus a wall on every one of
+     the twenty-four side edges. */
+  assert.equal(exp.fe_edit_face_count(), 30);
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]));
+});
+
+test('a beveled cube face has no triangles in it, and the box stays closed', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_bevel(0.25, 0);
+  exp.fe_arena_reset();
+  /* Five sides, the shrunken side and four chamfers - ten quads, no triangle.
+     The old result was seventeen faces with ten triangles, because the bevel
+     tagged nothing and the shrunken side was torn into a quad and two
+     triangles across its own diagonal. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]));
+  assert.equal(openEdgeCount(exp), 0, 'a bevel must not open the surface');
+});
+
+test('a vertex bevel closes the corner it cuts off', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  /* Blender bevels the cube's corners into twenty-six faces: the six sides, one
+     chamfer per edge, one triangle per corner. Ours tore the surface open at
+     every corner (forty-eight open edges) because the corner patch was a lid
+     over a hole. */
+  exp.fe_edit_bevel(0.2, 1);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 26);
+  const sizes = faceSizes(exp);
+  assert.equal(sizes.filter((n) => n === 3).length, 8, 'eight corners, eight corner triangles');
+  assert.equal(sizes.filter((n) => n === 4).length, 18, 'six sides and twelve chamfers');
+  assert.equal(openEdgeCount(exp), 0, 'the corner patch is stitched to the faces round it');
+});
+
+test('no deformation or tool leaves a triangle where the model has a quad', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_subdivide(0, 0);
+  exp.fe_edit_bend(35, 0);
+  exp.fe_edit_randomize(0.1, 5);
+  exp.fe_arena_reset();
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]), 'subdivide, bend and randomize keep every face a quad');
+  const tags = triTags(exp);
+  for (const [tag, count] of tagHistogram(tags)) {
+    assert.equal(count, 2, `face id ${tag} must still be one quad`);
+  }
 });

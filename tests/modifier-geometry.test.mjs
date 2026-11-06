@@ -67,6 +67,31 @@ test('Loop subdivision increases triangle count and smooths a box with finite ou
   assert.equal(result.index.count/3,48);assertFinite(result);assert.ok(result.attributes.position.count>8);
 });
 
+test('Simple subdivision keeps the shape; Catmull-Clark is the one that rounds it', () => {
+  /* Blender's two modes: Simple splits the triangles and moves nothing, so the
+     silhouette is identical to the cube it came from; Catmull-Clark relaxes. */
+  const source = new THREE.BoxGeometry(2, 2, 2);
+  const simple = subdivideLoop(source, 2, { simple: true });
+  assertFinite(simple);
+  assert.equal(simple.index.count / 3, 192);
+  assert.deepEqual(simple.boundingBox.min.toArray().map((v) => +v.toFixed(6)), [-1, -1, -1]);
+  assert.deepEqual(simple.boundingBox.max.toArray().map((v) => +v.toFixed(6)), [1, 1, 1]);
+  const smooth = subdivideLoop(source, 2);
+  assert.ok(smooth.boundingBox.max.x < 0.95, `Catmull-Clark pulls the corners in, ${smooth.boundingBox.max.x}`);
+});
+
+test('subdivision reports the level it built, and never more than it can hold', () => {
+  const source = new THREE.BoxGeometry(2, 2, 2);
+  const capped = subdivideLoop(source, 10);
+  const info = capped.userData.feSubdivision;
+  assert.equal(info.requested, 10);
+  assert.ok(info.levels >= 1 && info.levels < 10, `built ${info.levels}`);
+  assert.equal(info.limited, true);
+  assert.equal(capped.index.count / 3, 12 * 4 ** info.levels);
+  const plain = subdivideLoop(source, 2);
+  assert.deepEqual(plain.userData.feSubdivision, { requested: 2, levels: 2, simple: false, limited: false });
+});
+
 test('Solidify adds a closed rim to a plane and creates measurable thickness', () => {
   const result=solidifyGeometry(new THREE.PlaneGeometry(2,2),.2,0);
   assert.equal(result.index.count/3,12);assert.ok(Math.abs(result.boundingBox.max.z-result.boundingBox.min.z-.2)<1e-5);assertFinite(result);

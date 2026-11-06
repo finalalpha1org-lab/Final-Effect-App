@@ -128,6 +128,15 @@
     cylinder: '<ellipse cx="12" cy="6.6" rx="6.6" ry="2.7"/><path d="M5.4 6.6V17.7c0 1.5 2.96 2.7 6.6 2.7s6.6-1.2 6.6-2.7V6.6"/>',
     cone: '<path d="M12 3.4 4.4 18.5"/><path d="M12 3.4 19.6 18.5"/><ellipse cx="12" cy="18.5" rx="7.6" ry="2.6"/>',
     plane: '<path d="M3.6 16.5 9.9 5.2l10.5 2.5-6.3 11.2z"/>',
+    /* The modelling primitives added with the Grid / Ring / Quad Sphere / Knot
+       entries. A mesh grid is drawn as a surface divided into cells (the app's
+       `grid` icon is a 2x2 of tiles and reads as an app launcher), a quad
+       sphere is a sphere with four meridians and no pinched poles, a ring is an
+       annulus seen flat, and a knot crosses itself once. */
+    meshgrid: '<path d="M3.4 8.2 12 4.3l8.6 3.9-8.6 3.9z"/><path d="M3.4 8.2v6.4l8.6 3.9 8.6-3.9V8.2"/><path d="M12 12.1v6.4M7.7 6.2 16.3 10M7.7 14.5 16.3 10.7"/>',
+    ring: '<circle cx="12" cy="12" r="8.4"/><circle cx="12" cy="12" r="4"/><path d="M12 3.6v2.2M12 18.2v2.2M3.6 12h2.2M18.2 12h2.2"/>',
+    quadsphere: '<circle cx="12" cy="12" r="8.4"/><path d="M4.3 8.6h15.4M4.3 15.4h15.4M8.6 4.3v15.4M15.4 4.3v15.4"/>',
+    knot: '<path d="M7.4 5.6c4-2.2 8.6-.6 10 3.2s-.8 8.2-4.8 9.6"/><path d="M16.6 18.4c-4 2.2-8.6.6-10-3.2s.8-8.2 4.8-9.6"/>',
     bulb: '<path d="M9.3 17.2v-1.4a5.9 5.9 0 1 1 5.4 0v1.4z"/><path d="M9.7 20.2h4.6"/>',
     broom: '<path d="M14.5 3.5 10 8"/><path d="M7.4 7.4 16.6 16.6"/><path d="M6.2 10.6 3.4 20.6l10-2.8z"/>',
     heart: '<path d="M12 20.4S3.6 15 3.6 9.4A4.6 4.6 0 0 1 12 6.6a4.6 4.6 0 0 1 8.4 2.8c0 5.6-8.4 11-8.4 11z"/>',

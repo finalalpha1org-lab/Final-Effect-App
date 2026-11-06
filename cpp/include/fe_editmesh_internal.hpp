@@ -46,6 +46,25 @@ struct Mesh {
   float weight[kMaxVerts];
   uint32_t tri[kMaxTris * 3];
   uint8_t fsel[kMaxTris];
+  /* Per-face shading, the flag every modeller keeps: 1 = smooth, 0 = flat. A
+     face is the unit of shading, not the mesh - a cylinder is round with flat
+     caps - so this lives beside `fsel` and travels with the triangles through
+     every edit, the undo stack and the committed geometry. */
+  uint8_t fsmooth[kMaxTris];
+  /* How far those flags have been written. A topology tool appends triangles
+     without touching them, so everything past this point would otherwise be a
+     stale byte left behind by the mesh that was there before the tool ran. */
+  uint32_t fsmoothCount;
+  /* Which face each triangle is part of, one id per triangle. This is what a
+     tool writes as it makes triangles, and it is the only thing that keeps a
+     face a face: the pairing below can only *guess* a quad from the shape, and
+     a guess stops being true the moment the shape is dragged - which is exactly
+     when the user sees a line appear through the middle of a face. A tag is
+     recorded when the face is made and travels with the triangles through
+     every edit, so no amount of deformation can split it. kNoTag means "this
+     triangle has not been given a face yet"; the first rebuild then derives one
+     from the shape and writes it down. */
+  uint32_t ftag[kMaxTris];
   /* No default member initialisers anywhere in these structures: an NSDMI
      turns the array into .data, and a 2 MB block of zeroes then ships inside
      the wasm file. Everything is initialised explicitly by fe_edit_reset(). */
@@ -92,14 +111,23 @@ extern float g_snapIncrement;
 /* scratch, reused by every operation */
 extern uint8_t g_triMark[kMaxTris];
 
-/* Quad faces: two triangles the wireframe joins into one face (see
-   buildQuadGroups). g_quadOf maps a triangle to its group, g_quadFirst holds
-   the group's first triangle and g_quadNext walks to its partner. */
+/* Faces: the triangles the wireframe joins into one surface (see
+   buildQuadGroups). g_quadOf maps a triangle to its face, g_quadFirst holds
+   the face's first triangle and g_quadNext walks the rest - a cube side is two
+   triangles, a cylinder cap is thirty-two, a cone's side is one. */
 extern uint32_t g_quadOf[kMaxTris];
 extern uint32_t g_quadFirst[kMaxTris];
 extern uint32_t g_quadNext[kMaxTris];
 extern uint32_t g_quadCount;
-extern uint32_t g_diagEdge[kMaxTris];
+/* Each face's corner ring, flattened (see buildQuadGroups): face f owns
+   g_grpRing[g_grpStart[f] .. g_grpStart[f + 1]). A tool that works on a face
+   rather than on a triangle - poke, for one - reads the face from here. */
+extern uint32_t g_grpStart[kMaxTris + 1];
+extern uint32_t g_grpRing[kMaxTris * 3];
+/* Constants a tool needs: no face, no vertex, and the largest ring the kernel
+   will draw. */
+constexpr uint32_t kNoFaceTool = 0xFFFFFFFFu;
+constexpr uint32_t kMaxRingCornersTool = 2048u;
 extern float g_quadAngle;
 extern uint32_t g_vertMap[kMaxVerts];
 extern uint32_t g_vertStamp[kMaxVerts];
@@ -124,6 +152,31 @@ bool quadFaceSelected(uint32_t t);
 void selectFaceVerts(uint32_t t);
 void deselectFaceVerts(uint32_t t);
 void buildQuadGroups();
+
+/* ---- face tags ----------------------------------------------------------
+   A face id per triangle (see Mesh::ftag). `g_tagPending` is the id `addTri`
+   stamps onto whatever it appends, so a tool tags a whole piece of geometry
+   with one call; `newFaceTag()` mints an id nothing has used; the tools that
+   cannot keep a face whole (a weld merges triangles of two faces) call
+   `tagInvalidate()` and let the next rebuild derive the table from the shape
+   once, which writes fresh tags. */
+constexpr uint32_t kNoTag = 0xFFFFFFFFu;
+
+extern uint32_t g_tagPending;
+extern uint32_t g_tagNext;
+extern bool g_tagValid;
+
+uint32_t newFaceTag(void);
+void tagInvalidate(void);
+/* The tag of a triangle, or kNoTag. */
+uint32_t tagOfTriangle(uint32_t t);
+
+/* A tool that leaves triangles visible on purpose (a poke's fan) declares them
+   as faces before it asks for the rebuild: beginToolFaceDeclarations clears the
+   store, toolDeclareFaceRing appends one ring in the kernel's vertex numbering,
+   and the rebuild claims them before anything is paired or merged. */
+void beginToolFaceDeclarations(void);
+bool toolDeclareFaceRing(const uint32_t* verts, uint32_t n);
 uint32_t selectedVertCount();
 uint32_t selectedEdgeCount();
 uint32_t selectedFaceCount();
@@ -190,6 +243,10 @@ extern uint32_t g_outIdx[kMaxTris * 3];
 extern uint32_t g_outVerts;
 extern uint32_t g_outIdxCount;
 extern uint32_t g_outSplit;
+/* For every render vertex, the welded (cage) vertex it was built from. A flat
+   face has its own copies, so the shell needs this to map anything expressed in
+   cage vertices - the face rings - onto the render mesh it draws. */
+extern uint32_t g_renderWeld[kMaxRenderVerts];
 
 } // namespace fe_edit
 
