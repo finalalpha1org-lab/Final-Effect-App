@@ -123,8 +123,11 @@ uint32_t duplicateMarkedFaces(const float* offset, bool individual) {
       const uint32_t oldV[3] = {a, b, c};
       const uint32_t newV[3] = {na, nb, nc};
       for (uint32_t k = 0; k < 3; ++k) {
+        /* One wall is one quad: its two triangles share a face id. */
+        g_tagPending = newFaceTag();
         addTri(oldV[k], oldV[(k + 1) % 3], newV[(k + 1) % 3]);
         addTri(oldV[k], newV[(k + 1) % 3], newV[k]);
+        g_tagPending = kNoTag;
         ++added;
       }
       M.tri[t * 3] = na;
@@ -175,8 +178,10 @@ uint32_t duplicateMarkedFaces(const float* offset, bool individual) {
     }
     const uint32_t n0 = map[v0], n1 = map[v1];
     if (n0 == kNoValue || n1 == kNoValue) continue;
+    g_tagPending = newFaceTag();     /* one rim wall is one face */
     addTri(v0, v1, n1);
     addTri(v0, n1, n0);
+    g_tagPending = kNoTag;
     added += 2;
     ++walls;
   }
@@ -187,9 +192,21 @@ uint32_t duplicateMarkedFaces(const float* offset, bool individual) {
        second shell; remapping instead would make the operation look like a
        plain move. */
     const uint32_t originalTris = M.nt;
+    /* The copy is a second shell, so its faces are new faces - one per face of
+       the shell it was copied from, not one per triangle. */
+    static uint32_t copyTag[kMaxTris];
+    for (uint32_t g = 0; g < g_quadCount && g < kMaxTris; ++g) copyTag[g] = kNoTag;
     for (uint32_t t = 0; t < originalTris; ++t) {
       if (!g_triMark[t]) continue;
+      const uint32_t group = g_quadOf[t];
+      if (group < kMaxTris) {
+        if (copyTag[group] == kNoTag) copyTag[group] = newFaceTag();
+        g_tagPending = copyTag[group];
+      } else {
+        g_tagPending = kNoTag;
+      }
       addTri(map[M.tri[t * 3]], map[M.tri[t * 3 + 1]], map[M.tri[t * 3 + 2]]);
+      g_tagPending = kNoTag;
       added += 2; /* two triangles deleted at the end keeps the count honest */
     }
     for (uint32_t i = 0; i < originalVerts; ++i) if (map[i] != kNoValue) M.vsel[i] = 0;
@@ -281,8 +298,10 @@ uint32_t toolInset(float thickness, uint32_t individual) {
       }
       if (!ok) continue;
       for (uint32_t k = 0; k < 3; ++k) {
+        g_tagPending = newFaceTag();     /* the inset ring, one quad per edge */
         addTri(v[k], v[(k + 1) % 3], inner[(k + 1) % 3]);
         addTri(v[k], inner[(k + 1) % 3], inner[k]);
+        g_tagPending = kNoTag;
       }
       M.tri[t * 3] = inner[0];
       M.tri[t * 3 + 1] = inner[1];
@@ -365,8 +384,10 @@ uint32_t toolInset(float thickness, uint32_t individual) {
       if (M.tri[owner * 3 + q] == a && M.tri[owner * 3 + (q + 1) % 3] == b) { v0 = a; v1 = b; break; }
       if (M.tri[owner * 3 + q] == b && M.tri[owner * 3 + (q + 1) % 3] == a) { v0 = b; v1 = a; break; }
     }
+    g_tagPending = newFaceTag();     /* one rim wall is one quad */
     addTri(v0, v1, map[v1]);
     addTri(v0, map[v1], map[v0]);
+    g_tagPending = kNoTag;
     added += 2;
   }
 
@@ -460,6 +481,13 @@ uint32_t toolSubdivide(uint32_t mode, uint32_t smooth) {
       else m[k] = kNoValue;
     }
     if (mask == 0) continue;
+    /* A triangle cut on every edge is cut into faces of its own: its pieces are
+       left untagged so the shape can pair them back into quads, which is what a
+       subdivide of a quad grid should look like. A triangle cut on one or two
+       edges is not a face being cut - it is a face whose outline gained a
+       corner because a neighbour was cut - so its pieces keep the face's id and
+       the whole face stays one ring. */
+    g_tagPending = (mask == 7u) ? kNoTag : M.ftag[t];
     if (mask == 7) {
       addTri(v[0], m[0], m[2]);
       addTri(m[0], v[1], m[1]);
@@ -502,6 +530,7 @@ uint32_t toolSubdivide(uint32_t mode, uint32_t smooth) {
        that the branch appended for it. */
     /* The branches above appended every piece; the original face is removed
        by rewinding the index array. */
+    g_tagPending = kNoTag;
     M.tri[t * 3] = 0;
     M.tri[t * 3 + 1] = 0;
     M.tri[t * 3 + 2] = 0;
@@ -655,29 +684,100 @@ uint32_t toolDelete(uint32_t kind) {
 
 uint32_t toolPoke(void) {
   markSelectedFaces();
-  uint32_t added = 0;
+  if (!M.nt) return 0;
   const uint32_t originalTris = M.nt;
-  /* A poke's fan is the point of the tool: the spokes are edges the user asked
-     for, so each fan triangle is declared as a face and the flat-panel pass
-     leaves it alone instead of fusing the fan back into one polygon. */
-  beginToolFaceDeclarations();
+  rebuildEdges();
+
+  /* One centre per *face*, not per triangle. A quad is two triangles here, so a
+     poke per triangle would put two centres in it and keep drawing the quad's
+     diagonal through the middle of the face; a poke per face is the four
+     triangles round one point that the tool means. A triangle that belongs to no
+     face (a sphere's pole, a cone's side) is poked on its own, which is the same
+     thing, because it is a face of its own. */
+  static uint8_t groupPoked[kMaxTris];
+  for (uint32_t g = 0; g < g_quadCount && g < kMaxTris; ++g) groupPoked[g] = 0;
+  uint32_t added = 0;
   for (uint32_t t = 0; t < originalTris; ++t) {
     if (!g_triMark[t]) continue;
-    const uint32_t a = M.tri[t * 3], b = M.tri[t * 3 + 1], c = M.tri[t * 3 + 2];
-    const uint32_t centre = addVert((M.x[a] + M.x[b] + M.x[c]) / 3.0f,
-                                    (M.y[a] + M.y[b] + M.y[c]) / 3.0f,
-                                    (M.z[a] + M.z[b] + M.z[c]) / 3.0f,
-                                    (M.cr[a] + M.cr[b] + M.cr[c]) / 3.0f,
-                                    (M.cg[a] + M.cg[b] + M.cg[c]) / 3.0f,
-                                    (M.cb[a] + M.cb[b] + M.cb[c]) / 3.0f, true);
+    const uint32_t group = g_quadOf[t];
+    uint32_t ring[3];
+    uint32_t n = 0;
+    uint32_t start = 0;
+    if (group != kNoFaceTool && group < g_quadCount) {
+      if (groupPoked[group]) continue;
+      groupPoked[group] = 1;
+      start = g_grpStart[group];
+      n = g_grpStart[group + 1] > start ? g_grpStart[group + 1] - start : 0;
+      if (n < 3 || n > kMaxRingCornersTool) n = 0;
+      if (n != 0) {
+        for (uint32_t u = 0; u < originalTris; ++u) if (g_quadOf[u] == group) g_triMark[u] = 1;
+      }
+    }
+    if (n == 0) {
+      /* No face to work from: poke the triangle itself. */
+      const uint32_t a = M.tri[t * 3], b = M.tri[t * 3 + 1], c = M.tri[t * 3 + 2];
+      const uint32_t centre = addVert((M.x[a] + M.x[b] + M.x[c]) / 3.0f,
+                                      (M.y[a] + M.y[b] + M.y[c]) / 3.0f,
+                                      (M.z[a] + M.z[b] + M.z[c]) / 3.0f,
+                                      (M.cr[a] + M.cr[b] + M.cr[c]) / 3.0f,
+                                      (M.cg[a] + M.cg[b] + M.cg[c]) / 3.0f,
+                                      (M.cb[a] + M.cb[b] + M.cb[c]) / 3.0f, true);
+      if (centre == kNoValue) break;
+      M.tri[t * 3] = a; M.tri[t * 3 + 1] = b; M.tri[t * 3 + 2] = centre;
+      M.ftag[t] = newFaceTag();
+      g_tagPending = newFaceTag();
+      addTri(b, c, centre);
+      g_tagPending = newFaceTag();
+      addTri(c, a, centre);
+      g_tagPending = kNoTag;
+      added += 2;
+      continue;
+    }
+    if (n == 3) {
+      ring[0] = g_grpRing[start];
+      ring[1] = g_grpRing[start + 1];
+      ring[2] = g_grpRing[start + 2];
+      const uint32_t a = ring[0], b = ring[1], c = ring[2];
+      const uint32_t centre = addVert((M.x[a] + M.x[b] + M.x[c]) / 3.0f,
+                                      (M.y[a] + M.y[b] + M.y[c]) / 3.0f,
+                                      (M.z[a] + M.z[b] + M.z[c]) / 3.0f,
+                                      (M.cr[a] + M.cr[b] + M.cr[c]) / 3.0f,
+                                      (M.cg[a] + M.cg[b] + M.cg[c]) / 3.0f,
+                                      (M.cb[a] + M.cb[b] + M.cb[c]) / 3.0f, true);
+      if (centre == kNoValue) break;
+      g_tagPending = newFaceTag(); addTri(a, b, centre);
+      g_tagPending = newFaceTag(); addTri(b, c, centre);
+      g_tagPending = newFaceTag(); addTri(c, a, centre);
+      g_tagPending = kNoTag;
+      added += 3;
+      continue;
+    }
+    /* The centre of a face is the average of its ring, not of one triangle. */
+    float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f, cg = 0.0f, cb = 0.0f;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t v = g_grpRing[start + i];
+      cx += M.x[v]; cy += M.y[v]; cz += M.z[v];
+      cr += M.cr[v]; cg += M.cg[v]; cb += M.cb[v];
+    }
+    const float inv = 1.0f / static_cast<float>(n);
+    const uint32_t centre = addVert(cx * inv, cy * inv, cz * inv, cr * inv, cg * inv, cb * inv, true);
     if (centre == kNoValue) break;
-    M.tri[t * 3] = a; M.tri[t * 3 + 1] = b; M.tri[t * 3 + 2] = centre;
-    addTri(b, c, centre);
-    addTri(c, a, centre);
-    const uint32_t fan[3][3] = { { a, b, centre }, { b, c, centre }, { c, a, centre } };
-    for (uint32_t k = 0; k < 3; ++k) toolDeclareFaceRing(fan[k], 3);
-    added += 2;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t a = g_grpRing[start + i], b = g_grpRing[start + (i + 1u) % n];
+      if (a == b) continue;
+      /* A fan triangle with no area is the ring closing on itself, not a face. */
+      const float ux = M.x[b] - M.x[a], uy = M.y[b] - M.y[a], uz = M.z[b] - M.z[a];
+      const float wx = M.x[centre] - M.x[a], wy = M.y[centre] - M.y[a], wz = M.z[centre] - M.z[a];
+      const float nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+      if (nx * nx + ny * ny + nz * nz < 1.0e-14f) continue;
+      g_tagPending = newFaceTag();
+      addTri(a, b, centre);
+      g_tagPending = kNoTag;
+      ++added;
+    }
   }
+  /* The poked faces' own triangles go; the fan that replaced them stays. */
+  removeMarkedTris();
   for (uint32_t t = 0; t < M.nt; ++t) g_triMark[t] = 0;
   rebuildEdges();
   syncSelFromVerts();
@@ -777,6 +877,7 @@ uint32_t traceSelectedBoundaryLoops(LoopSet& loops, uint32_t maxLoops) {
 }
 
 } // namespace
+
 
 uint32_t toolFill(void) {
   const uint32_t loopCount = traceSelectedBoundaryLoops(g_loops, 64);

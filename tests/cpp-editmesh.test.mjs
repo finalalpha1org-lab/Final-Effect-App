@@ -1017,18 +1017,18 @@ test('a poke keeps its fan: a triangle the user asked for stays a face', () => {
 
   exp.fe_edit_poke();
   exp.fe_arena_reset();
-  /* Each of the poked quad's two triangles becomes three around a new centre;
-     the other five quads are untouched. A pass that fuses flat panels would
-     swallow those six - the spokes are the whole point of the tool - so poke
-     declares them and they stay faces. */
-  assert.equal(exp.fe_edit_tri_count(), 12 + 4, 'each poked triangle became three, so four more');
-  assert.equal(exp.fe_edit_face_count(), 5 + 6, 'five quads plus six triangle faces');
+  /* One centre for the whole face, not one per triangle: a quad poked becomes
+     four triangles round a single point, the way Blender's poke does, instead
+     of six round two points with the quad's own diagonal still drawn through
+     the middle of the face. The other five quads are untouched. */
+  assert.equal(exp.fe_edit_tri_count(), 12 - 2 + 4, 'the quad became four triangles');
+  assert.equal(exp.fe_edit_face_count(), 5 + 4, 'five quads plus four triangle faces');
 
   const faces = exp.fe_edit_face_count();
   const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), faces + 1).slice();
   let triangles = 0;
   for (let f = 0; f < faces; f++) if (starts[f + 1] - starts[f] === 3) triangles++;
-  assert.equal(triangles, 6, 'the fan is six triangle faces, not one fused polygon');
+  assert.equal(triangles, 4, 'the fan is four triangle faces, not one fused polygon');
 });
 
 test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
@@ -1102,4 +1102,169 @@ test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   exp.fe_edit_undo();
   assertIntegrity(exp, 'gizmo drag');
   exp.fe_arena_reset();
+});
+
+/* ---- written-down faces --------------------------------------------------
+ * A face used to be guessed from the shape: two triangles that share their
+ * longest side and are nearly coplanar are one quad. That guess fails the
+ * moment an edit bends the quad - the diagonal came back and the user saw a
+ * line running through the middle of a face they had not split.
+ *
+ * Now each triangle carries the id of the face it belongs to (fe_edit_tri_tag_*),
+ * written by whatever made the geometry and kept through every edit. These
+ * tests pin that: the ids travel with the triangles, a tool says what it built,
+ * and no deformation can turn six sides into twelve triangles.
+ */
+
+function faceSizes(exp) {
+  const faces = exp.fe_edit_face_count();
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), faces + 1).slice();
+  const sizes = [];
+  for (let f = 0; f < faces; f++) sizes.push(starts[f + 1] - starts[f]);
+  return sizes;
+}
+
+function triTags(exp) {
+  const count = exp.fe_edit_tri_tag_count();
+  assert.equal(count, exp.fe_edit_tri_count(), 'every triangle has a tag slot');
+  return Array.from(new Uint32Array(exp.memory.buffer, exp.fe_edit_tri_tag_ptr(), count));
+}
+
+function tagHistogram(tags) {
+  const counts = new Map();
+  for (const tag of tags) counts.set(tag, (counts.get(tag) || 0) + 1);
+  return counts;
+}
+
+function selectFaceByIndex(exp, index) {
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_none();
+  exp.fe_arena_reset();
+  const ptr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, ptr, 1)[0] = index;
+  exp.fe_edit_select_by_index(2, 1, ptr, 0);
+  exp.fe_arena_reset();
+}
+
+test('every triangle of the cube carries the id of its face', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  const tags = triTags(exp);
+  assert.equal(new Set(tags).size, 6, 'six sides, six ids');
+  for (const [tag, count] of tagHistogram(tags)) {
+    assert.equal(count, 2, `face id ${tag} must cover both triangles of its quad`);
+  }
+});
+
+test('a corner dragged out of the cube leaves six four-corner faces', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  /* Every position-coincident slot of the corner has to move, or the box tears:
+     the upload welds, so one index per corner is enough here, but drag it far
+     enough to bend all three faces that share it. */
+  exp.fe_edit_set_mode(0);
+  exp.fe_edit_select_none();
+  exp.fe_arena_reset();
+  const ptr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, ptr, 1)[0] = 6;   /* the (+1,+1,+1) corner */
+  exp.fe_edit_select_by_index(0, 1, ptr, 0);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_move(2.2, 1.4, 1.6, 0), 1);
+
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4], 'a bent cube is still six quads');
+  const tags = triTags(exp);
+  assert.equal(new Set(tags).size, 6, 'the ids are the same six faces as before the drag');
+  for (const [, count] of tagHistogram(tags)) assert.equal(count, 2);
+
+  /* The cage wireframe draws the faces, not the triangles: only the twelve edges
+     of the box are shown, never a face's internal diagonal. */
+  const edges = exp.fe_edit_edge_count();
+  const shown = new Uint8Array(exp.memory.buffer, exp.fe_edit_edge_display_ptr(), edges);
+  let drawn = 0;
+  for (let e = 0; e < edges; e++) drawn += shown[e] ? 1 : 0;
+  assert.equal(drawn, 12, 'a cube has twelve sides, and not one of the six face diagonals is drawn');
+});
+
+test('a rim wall that a tool builds is one face, not two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  assert.equal(exp.fe_edit_inset(0.2, 0), 8, 'four rim walls of two triangles each');
+  exp.fe_arena_reset();
+  /* Five untouched sides, the inset face, and four walls - ten faces, and every
+     one of them four corners: a wall is a quad however it was triangulated. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  for (const [tag, count] of tagHistogram(triTags(exp))) {
+    assert.equal(count, 2, `face id ${tag} must be one quad, not a triangle`);
+  }
+});
+
+test('extruding a whole face keeps the walls as quads', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 2);
+  assert.equal(exp.fe_edit_extrude(0.4, 0), 8);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+});
+
+test('a poke puts one centre in a face, so the quad keeps no diagonal', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_poke();
+  exp.fe_arena_reset();
+  /* Four triangles round one point, plus the five sides that were not poked. */
+  assert.equal(exp.fe_edit_face_count(), 9);
+  const sizes = faceSizes(exp);
+  assert.equal(sizes.filter((n) => n === 3).length, 4, 'the fan is four triangles');
+  assert.equal(sizes.filter((n) => n === 4).length, 5, 'the other five sides are untouched quads');
+});
+
+test('a subdivide cuts faces into faces, not into one hidden ring', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_subdivide(0, 0);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 24, 'six sides cut into four each');
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]), 'every piece is a quad');
+});
+
+test('the ids survive the deformation tools and the undo stack', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  const before = faceSizes(exp);
+  exp.fe_edit_bend(35, 0);
+  exp.fe_edit_to_sphere(1);
+  exp.fe_edit_randomize(0.2, 11);
+  exp.fe_arena_reset();
+  assert.deepEqual(faceSizes(exp), before, 'bend, to-sphere and randomize cannot split a face');
+  exp.fe_edit_undo();
+  exp.fe_edit_undo();
+  exp.fe_edit_undo();
+  exp.fe_arena_reset();
+  assert.deepEqual(faceSizes(exp), before, 'and undo puts the same faces back');
+});
+
+test('a mesh re-uploaded with the same triangle table does not inherit the old faces', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_inset(0.2, 0);
+  exp.fe_arena_reset();
+  /* A fresh upload is a fresh mesh: the ids of the *previous* mesh must not
+     claim triangles of this one, even though the first twelve triangles are the
+     same size and in the same order. */
+  uploadCube(exp);
+  assert.equal(exp.fe_edit_face_count(), 6);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4]);
+  const fresh = triTags(exp);
+  assert.equal(new Set(fresh).size, 6, 'six ids for six sides - the reset did not hand over the old ones');
+  for (const [, count] of tagHistogram(fresh)) assert.equal(count, 2);
 });

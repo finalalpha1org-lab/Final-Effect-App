@@ -32,6 +32,33 @@ EdgeTable E;
 PairFlags g_seams;
 PairFlags g_sharp;
 
+/* ---- face tags ----------------------------------------------------------
+   Every triangle carries the id of the face it belongs to (M.ftag). The ids are
+   minted here, stamped by addTri while a tool builds geometry, and read back by
+   buildQuadGroups, which puts the triangles of one id together as one face. */
+uint32_t g_tagPending = kNoTag;
+uint32_t g_tagNext = 1u;
+bool g_tagValid = false;
+
+uint32_t newFaceTag(void) {
+  if (g_tagNext >= kNoTag) {
+    /* Ids ran out; the next rebuild starts over from the shape. */
+    tagInvalidate();
+    g_tagNext = 1u;
+  }
+  return g_tagNext++;
+}
+
+void tagInvalidate(void) {
+  g_tagValid = false;
+  for (uint32_t t = 0; t < M.nt; ++t) M.ftag[t] = kNoTag;
+}
+
+uint32_t tagOfTriangle(uint32_t t) {
+  if (t >= M.nt) return kNoTag;
+  return M.ftag[t];
+}
+
 uint32_t g_mode = kModeVertex;
 float g_propRadius = 1.0f;
 uint32_t g_propFalloff = kFallSmooth;
@@ -641,6 +668,91 @@ bool boundaryOfRegion(uint32_t t, uint32_t a, uint32_t b) {
   return true;
 }
 
+/* Turn a set of triangles into one face.
+
+   The set is the triangles already marked kPanelMark; they are written into
+   g_quadOf/g_quadNext and their *outline* - every edge whose other triangle is
+   not in the set - becomes the face's ring, walked corner to corner. Returns
+   false when that outline is not one closed loop (a face with a hole, a pinched
+   corner): a ring that is not a loop draws lines the face does not have, so the
+   caller falls back to a face per triangle. */
+bool commitMarkedRegion(uint32_t* tris, uint32_t count) {
+  if (count == 0 || g_quadCount >= kMaxTris) return false;
+  static uint32_t boundA[kMaxRingCorners], boundB[kMaxRingCorners];
+  static uint8_t boundUsed[kMaxRingCorners];
+  uint32_t corners = 0;
+  bool ringOk = count > 1;
+  for (uint32_t q = 0; q < count && ringOk; ++q) {
+    const uint32_t t = tris[q];
+    for (uint32_t k = 0; k < 3; ++k) {
+      const uint32_t a = M.tri[t * 3 + k], b = M.tri[t * 3 + (k + 1) % 3];
+      if (!boundaryOfRegion(t, a, b)) continue;
+      if (corners >= kMaxRingCorners) { ringOk = false; break; }
+      boundA[corners] = a;
+      boundB[corners] = b;
+      boundUsed[corners] = 0;
+      ++corners;
+    }
+  }
+  const uint32_t ringStart = g_grpRingCount;
+  if (ringOk && corners >= 3) {
+    if (ringStart + corners > kMaxTris * 3u) ringOk = false;
+    else {
+      const uint32_t start = boundA[0];
+      uint32_t cur = boundB[0];
+      boundUsed[0] = 1;
+      g_grpRing[g_grpRingCount++] = start;
+      uint32_t walked = 1;
+      while (cur != start) {
+        uint32_t next = kNoFace;
+        for (uint32_t i = 1; i < corners; ++i) {
+          if (boundUsed[i]) continue;
+          if (boundA[i] == cur) { next = boundB[i]; boundUsed[i] = 1; break; }
+          if (boundB[i] == cur) { next = boundA[i]; boundUsed[i] = 1; break; }
+        }
+        if (next == kNoFace || walked >= corners) { ringOk = false; break; }
+        g_grpRing[g_grpRingCount++] = cur;
+        ++walked;
+        cur = next;
+      }
+      if (ringOk && walked != corners) ringOk = false;
+    }
+  }
+  if (!ringOk || corners < 3) {
+    g_grpRingCount = ringStart;
+    return false;
+  }
+  const uint32_t group = g_quadCount++;
+  g_quadFirst[group] = tris[0];
+  for (uint32_t q = 0; q < count; ++q) {
+    g_quadOf[tris[q]] = group;
+    g_quadPaired[tris[q]] = 1;
+    g_quadNext[tris[q]] = (q + 1 < count) ? tris[q + 1] : kNoFace;
+  }
+  g_grpStart[group] = ringStart;
+  g_grpStart[group + 1] = g_grpRingCount;
+  if (corners > 4) ++g_ngonCount;
+  return true;
+}
+
+/* One face per triangle, for a set whose outline could not be walked. */
+void commitSingles(uint32_t* tris, uint32_t count) {
+  for (uint32_t q = 0; q < count; ++q) {
+    const uint32_t t = tris[q];
+    if (g_quadCount >= kMaxTris) break;
+    if (g_grpRingCount + 3u > kMaxTris * 3u) break;
+    const uint32_t group = g_quadCount++;
+    g_quadOf[t] = group;
+    g_quadPaired[t] = 1;
+    g_quadFirst[group] = t;
+    g_grpStart[group] = g_grpRingCount;
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3];
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 1];
+    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 2];
+    g_grpStart[group + 1] = g_grpRingCount;
+  }
+}
+
 /* Take the inside of every face out of the wireframe. A face's *interior*
    edges are the ones its own triangles share: a quad's diagonal, the spokes a
    fan draws from the middle of a cap. They are structure the face does not
@@ -879,7 +991,83 @@ void buildQuadGroups() {
   g_declFaces = 0;                 /* consumed: a topology change invalidates it */
   g_declPending = false;
 
-  /* 2. Candidate diagonals, longest first: in a triangulated quad mesh the
+
+  /* 2. Faces that were *written down*: every triangle carries the id of its
+     face (M.ftag), so the triangles of one id are one face whatever shape they
+     have been dragged into. This is the path that keeps a cube's six sides
+     six-sided after a corner has been pulled out of it, and that keeps a
+     cylinder's cap one thirty-two-gon after the cap has been extruded.
+
+     The tags come from the app's declaration, from the pairing below, or from
+     a tool that made the geometry and said what it was - never from a fresh
+     reading of the shape, once one of those has happened. A tag whose triangles
+     form several loops (a copy of the same face elsewhere, two shells fused by
+     a drag) is not one face: the walk fails and those triangles become faces
+     of their own, which is the old behaviour and never worse than drawing a
+     ring that is not there.
+
+     This runs *before* the shape tests: a face that has been written down is not
+     something to be guessed at again, and a triangle this pass has claimed must
+     not be taken by the pairing below. */
+  static uint32_t tagTris[kMaxTris];
+  static uint32_t groupOfTag[kMaxTris];
+  static uint32_t tagCounts[kMaxTris];
+  static uint32_t tagStarts[kMaxTris + 1];
+  static uint32_t tagCursor[kMaxTris];
+  /* The outline walk asks "which triangles touch this corner", and the table it
+     asks is the vertex table: it has to be current before the tags are grouped,
+     because the geometry a tool just built is in it. */
+  buildVertexFaces();
+  if (g_tagValid) {
+    for (uint32_t i = 0; i < g_tagNext && i < kMaxTris; ++i) groupOfTag[i] = kNoFace;
+    uint32_t tagCount = 0;
+    /* One pass: each id's first sighting takes the next slot, and the slot
+       counts its triangles. The count lives in its own array - folding it into
+       the starts as we go would let the next new id wipe the count before it was
+       ever read. */
+    for (uint32_t t = 0; t < M.nt; ++t) {
+      if (g_quadOf[t] != kNoFace) continue;     /* a declared face already has it */
+      const uint32_t tag = M.ftag[t];
+      if (tag == kNoTag || tag == 0 || tag >= kMaxTris || tag >= g_tagNext) continue;
+      uint32_t& slot = groupOfTag[tag];
+      if (slot == kNoFace) {
+        slot = tagCount;
+        tagCounts[tagCount] = 0;
+        ++tagCount;
+      }
+      ++tagCounts[slot];
+    }
+    uint32_t running = 0;
+    for (uint32_t i = 0; i < tagCount; ++i) {
+      tagStarts[i] = running;
+      tagCursor[i] = running;
+      running += tagCounts[i];
+    }
+    tagStarts[tagCount] = running;
+    for (uint32_t t = 0; t < M.nt; ++t) {
+      if (g_quadOf[t] != kNoFace) continue;
+      const uint32_t tag = M.ftag[t];
+      if (tag == kNoTag || tag == 0 || tag >= kMaxTris || tag >= g_tagNext) continue;
+      const uint32_t slot = groupOfTag[tag];
+      if (slot == kNoFace) continue;
+      tagTris[tagCursor[slot]++] = t;
+    }
+    for (uint32_t i = 0; i < tagCount; ++i) {
+      const uint32_t first = tagStarts[i], last = tagStarts[i + 1];
+      if (last <= first) continue;
+      for (uint32_t q = first; q < last; ++q) g_quadOf[tagTris[q]] = kPanelMark;
+      if (!commitMarkedRegion(&tagTris[first], last - first)) {
+        /* A tag whose triangles do not form one closed loop is not one face,
+           and a face per triangle is what it was before the tag existed. */
+        for (uint32_t q = first; q < last; ++q) g_quadOf[tagTris[q]] = kNoFace;
+        commitSingles(&tagTris[first], last - first);
+      }
+    }
+    /* Everything the tags did not cover keeps g_quadOf == kNoFace and is left
+       to the shape tests below. */
+  }
+
+  /* 3. Candidate diagonals, longest first: in a triangulated quad mesh the
      diagonal of a drawn quad is the longest edge of both of its triangles,
      while the edges two quads share are the shortest - taking the long ones
      rebuilds the quads the model was drawn with instead of pairing across
@@ -949,22 +1137,19 @@ void buildQuadGroups() {
     g_grpStart[group + 1] = g_grpRingCount;
   }
 
-  /* 3. What is left is either a face of its own - a sphere's pole, a cone's
-     side, a tetrahedron's face, all of them real folds - or a flat panel a tool
-     cut into triangles. The flat ones are grown back into one region each
-     (see coplanarWith); the ones whose outline is not a loop keep a face per
-     triangle, because a ring that is not a loop draws lines that are not
+  /* 4. What is still nameless: either a face of its own - a sphere's pole, a
+     cone's side, a tetrahedron's face, all of them real folds - or a flat panel
+     a tool cut into triangles. The flat ones are grown back into one region
+     each (see coplanarWith); the ones whose outline is not a loop keep a face
+     per triangle, because a ring that is not a loop draws lines that are not
      there.
 
      "In this region" is marked in g_quadOf itself, with a value no group can
      have: every triangle starts at kNoFace, the ones grown in this pass carry
-     kPanelMark, and the commit below writes the real group index over them.
-     That keeps the pass from needing another kMaxTris-sized table. */
+     kPanelMark, and the commit writes the real group index over them. */
   buildVertexFaces();
   const float cosFlat = fe::cosf(g_displayAngle * fe::kDeg2Rad);
   static uint32_t regionTris[kMaxPanelTris];
-  static uint32_t boundA[kMaxRingCorners], boundB[kMaxRingCorners];
-  static uint8_t boundUsed[kMaxRingCorners];
 
   for (uint32_t seed = 0; seed < M.nt; ++seed) {
     if (g_quadOf[seed] != kNoFace) continue;
@@ -986,84 +1171,25 @@ void buildQuadGroups() {
       }
     }
 
-    /* The region's outline: every edge of it whose other triangle is not in
-       it. Taken from the corner table because a triangle's valence is small. */
-    uint32_t corners = 0;
-    bool ringOk = tail > 1;
-    for (uint32_t q = 0; q < tail && ringOk; ++q) {
-      const uint32_t t = regionTris[q];
-      for (uint32_t k = 0; k < 3; ++k) {
-        const uint32_t a = M.tri[t * 3 + k], b = M.tri[t * 3 + (k + 1) % 3];
-        if (!boundaryOfRegion(t, a, b)) continue;
-        if (corners >= kMaxRingCorners) { ringOk = false; break; }
-        boundA[corners] = a;
-        boundB[corners] = b;
-        boundUsed[corners] = 0;
-        ++corners;
-      }
-    }
-
-    /* Walk the outline corner to corner. At each corner exactly one unused
-       edge may be left, and the walk has to come back to where it started
-       after exactly as many steps as there are edges: that is one closed loop,
-       which is the only outline a ring can be drawn from. */
-    const uint32_t ringStart = g_grpRingCount;
-    if (ringOk && corners >= 3) {
-      const uint32_t start = boundA[0];
-      uint32_t cur = boundB[0];
-      boundUsed[0] = 1;
-      if (ringStart + corners > kMaxTris * 3u) ringOk = false;
-      else {
-        g_grpRing[g_grpRingCount++] = start;
-        uint32_t walked = 1;
-        while (cur != start) {
-          uint32_t next = kNoFace;
-          for (uint32_t i = 1; i < corners; ++i) {
-            if (boundUsed[i]) continue;
-            if (boundA[i] == cur) { next = boundB[i]; boundUsed[i] = 1; break; }
-            if (boundB[i] == cur) { next = boundA[i]; boundUsed[i] = 1; break; }
-          }
-          if (next == kNoFace || walked >= corners) { ringOk = false; break; }
-          g_grpRing[g_grpRingCount++] = cur;
-          ++walked;
-          cur = next;
-        }
-        if (ringOk && walked != corners) ringOk = false;
-      }
-    }
-
-    if (ringOk && corners >= 3) {
-      if (g_quadCount >= kMaxTris) break;
-      const uint32_t group = g_quadCount++;
-      g_quadFirst[group] = regionTris[0];
-      for (uint32_t q = 0; q < tail; ++q) {
-        g_quadOf[regionTris[q]] = group;
-        g_quadPaired[regionTris[q]] = 1;
-        g_quadNext[regionTris[q]] = (q + 1 < tail) ? regionTris[q + 1] : kNoFace;
-      }
-      g_grpStart[group] = ringStart;
-      g_grpStart[group + 1] = g_grpRingCount;
-      if (corners > 4) ++g_ngonCount;
-      continue;
-    }
+    if (commitMarkedRegion(regionTris, tail)) continue;
 
     /* Not a panel: the triangles are faces of their own, as they always were. */
-    g_grpRingCount = ringStart;
-    for (uint32_t q = 0; q < tail; ++q) {
-      const uint32_t t = regionTris[q];
-      if (g_quadCount >= kMaxTris) break;
-      if (g_grpRingCount + 3u > kMaxTris * 3u) break;
-      const uint32_t group = g_quadCount++;
-      g_quadOf[t] = group;
-      g_quadPaired[t] = 1;
-      g_quadFirst[group] = t;
-      g_grpStart[group] = g_grpRingCount;
-      g_grpRing[g_grpRingCount++] = M.tri[t * 3];
-      g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 1];
-      g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 2];
-      g_grpStart[group + 1] = g_grpRingCount;
-    }
+    for (uint32_t q = 0; q < tail; ++q) g_quadOf[regionTris[q]] = kNoFace;
+    commitSingles(regionTris, tail);
   }
+
+  /* 5. Write the answer down as tags, so the next rebuild - after a drag that
+     changed nothing but positions - does not have to read the shape again, and
+     so a tool that appends triangles knows what it is appending to. */
+  g_tagNext = 1u;
+  for (uint32_t g = 0; g < g_quadCount; ++g) {
+    const uint32_t tag = newFaceTag();
+    for (uint32_t t = g_quadFirst[g]; t != kNoFace && t < M.nt; t = g_quadNext[t]) M.ftag[t] = tag;
+  }
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (g_quadOf[t] == kNoFace) M.ftag[t] = kNoTag;
+  }
+  g_tagValid = true;
 
   g_quadSignature = quadTopologySignature();
   g_quadBuilt = true;
@@ -1276,6 +1402,11 @@ bool addTri(uint32_t a, uint32_t b, uint32_t c) {
   M.tri[M.nt * 3] = a;
   M.tri[M.nt * 3 + 1] = b;
   M.tri[M.nt * 3 + 2] = c;
+  /* An untagged triangle is one the shape tests decide about - the tag table is
+     not thrown away because of it: the rebuild groups the tagged triangles and
+     leaves the rest to the pairing, so a tool that builds plain triangles costs
+     those triangles, not every face on the mesh. */
+  M.ftag[M.nt] = g_tagPending;
   ++M.nt;
   return true;
 }
@@ -1299,6 +1430,7 @@ uint32_t removeDegenerateTris() {
       M.tri[out * 3] = a;
       M.tri[out * 3 + 1] = b;
       M.tri[out * 3 + 2] = c;
+      M.ftag[out] = M.ftag[t];
     }
     ++out;
   }
@@ -1331,6 +1463,7 @@ void compactMesh(bool keepUnusedVerts) {
     const uint32_t c = g_vertMap[M.tri[t * 3 + 2]];
     if (a == 0xFFFFFFFFu || b == 0xFFFFFFFFu || c == 0xFFFFFFFFu) continue;
     M.tri[nt * 3] = a; M.tri[nt * 3 + 1] = b; M.tri[nt * 3 + 2] = c;
+    M.ftag[nt] = M.ftag[t];
     ++nt;
   }
   M.nv = nv;
@@ -1347,6 +1480,10 @@ void removeMarkedTris() {
       M.tri[out * 3] = M.tri[t * 3];
       M.tri[out * 3 + 1] = M.tri[t * 3 + 1];
       M.tri[out * 3 + 2] = M.tri[t * 3 + 2];
+      /* The tags are in the same order as the triangles, so they move with
+         them: a tag left behind on a removed triangle would name the wrong
+         face on the next rebuild. */
+      M.ftag[out] = M.ftag[t];
     }
     ++out;
   }
@@ -2394,6 +2531,12 @@ FE_EXPORT void fe_edit_reset(void) {
   g_quadCount = 0;
   g_quadPairCount = 0;
   g_quadSignature = 0u;
+  /* The face tags are the *old* mesh's faces: the triangle table may be the
+     same size and the ids would then name triangles that are now something
+     else. A reset starts without tags, and the first rebuild writes them. */
+  g_tagValid = false;
+  g_tagNext = 1u;
+  g_tagPending = kNoTag;
   g_grpRingCount = 0;
   g_ngonCount = 0;
   g_declFaces = 0;
@@ -3107,6 +3250,12 @@ FE_EXPORT uint32_t fe_edit_upload_face_shade(const uint8_t* flags, uint32_t coun
   g_shadeFacePass = false;      /* written flags beat the guess */
   return n;
 }
+
+/* The face id of every triangle: what the tools wrote down. Exposed so a test
+   can check that a face stayed one face through an operation instead of
+   inferring it from the ring table, which is what the editor draws. */
+FE_EXPORT const uint32_t* fe_edit_tri_tag_ptr(void) { return M.ftag; }
+FE_EXPORT uint32_t fe_edit_tri_tag_count(void) { return M.nt; }
 
 /* The per-face flags, one byte per triangle in the mesh's own triangle order:
    what the viewport writes onto the committed geometry so the modifier stack

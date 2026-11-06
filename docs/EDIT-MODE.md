@@ -185,11 +185,13 @@ as a face of its own and the cage drew all of them. Two rules close that:
   A region whose outline is not one closed loop - a face with a hole, a pinched
   corner - is not drawn as one face: a ring that is not a loop draws lines the
   face does not have, so it falls back to one face per triangle.
-* A tool whose whole point is triangles says so: `fe_edit_poke` declares each
-  fan triangle with `beginToolFaceDeclarations` / `toolDeclareFaceRing`, in the
-  kernel's own vertex numbering, and the rebuild claims those rings before
-  anything is paired or merged. Without it the pass would fuse the poke back
-  into the polygon it cut up and the tool would look like nothing happened.
+* A tool whose whole point is triangles says so. `fe_edit_poke` builds one
+  centre **per face**, not per triangle: a quad poked is four triangles round a
+  single point, the way Blender's poke is, instead of six round two points with
+  the quad's diagonal still running through the middle of it. Each fan triangle
+  is stamped with its own face id as it is built (see *faces are written down*
+  below), so the rebuild cannot fuse the fan back into the polygon it cut up and
+  the tool cannot look like nothing happened.
 
 A primitive's faces are written down when the shape is built. The pairing below
 has to guess a quad from two triangles, and the guess is exact only while the
@@ -201,6 +203,47 @@ that is quads by construction - and `withQuadFaces()` stores the answer as face
 rings. Every quad primitive (cube, plane, grid, ring, torus, knot) declares its
 faces that way; a sphere's pole rows and a cone's side are left to the pairing,
 which handles real folds correctly.
+
+### Faces are written down, not guessed
+
+The two rules above read the *shape*. They are exact while the shape is what the
+model was drawn with, and they are the wrong question the moment an edit changes
+it: drag one corner of a cube out far enough and its side stops looking like a
+quad, and the diagonal it never had comes back. That is not a heuristic that can
+be tuned - it is a guess, and the answer was known all along, by whoever built
+the geometry.
+
+So every triangle carries the id of the face it belongs to (`M.ftag`, read back
+with `fe_edit_tri_tag_ptr` / `fe_edit_tri_tag_count`). The id is stamped by
+`addTri()` from `g_tagPending` while a tool is building - a rim wall is one quad, so
+both of its triangles get one id; a subdivided piece, a fan triangle and a copy
+get one each - and `buildQuadGroups()` puts the triangles of one id together as
+one face, walking their **outline** for the ring. It runs before the shape tests,
+so a written-down face is never guessed at again, and anything a tool left
+untagged is still decided by shape exactly as before.
+
+Two properties make it safe:
+
+* **A tag that does not close is not a face.** If an id's triangles do not form
+  one closed loop - two shells fused by a drag, a copy of the face somewhere else
+  - the walk fails and those triangles become faces of their own, which is the old
+  behaviour and never worse than drawing a ring that is not there.
+* **A tag never names a different mesh.** The ids are rewritten at the end of
+  every rebuild (one per face) and thrown away by `fe_edit_reset`, so a fresh
+  upload cannot inherit the previous mesh's faces, and a removal that compacts
+  the triangle table (`removeMarkedTris`, `removeDegenerateTris`, `compactMesh`)
+  moves the ids with the triangles.
+
+Tools declare what they build, because the tool is what knows: both
+`duplicateMarkedFaces` wall loops (region rim and individual), the whole-surface
+copy (one id per source face, so the copy is not twenty-four triangles), the
+individual and region inset rings, the subdivide pieces and the poke fan. A
+subdivide is the one case where "what was built" depends on what was cut: a
+triangle cut on *every* edge is cut into faces of its own, so its pieces are left
+untagged and the shape pairs them back into quads (which is why subdividing a
+cube gives twenty-four quads and not six eight-corner rings); a triangle cut on
+one or two edges is a face whose outline merely gained a corner, so its pieces
+keep the face's id and the whole side stays one ring.
 
 A face also survives leaving the mode. The rows above are written onto the
 **cage** - the unsplit mesh the editor commits - and the cage is kept beside the
@@ -228,6 +271,7 @@ Lifecycle and readback:
 ```
 fe_edit_reset            fe_edit_upload(vc, pos, tc, idx, colors, normals)
 fe_edit_vert_count       fe_edit_tri_count        fe_edit_edge_count
+fe_edit_tri_tag_ptr      fe_edit_tri_tag_count
 fe_edit_max_verts        fe_edit_has_color
 fe_edit_pos_interleaved_ptr   fe_edit_color_interleaved_ptr
 fe_edit_idx_ptr          fe_edit_edge_ptr         fe_edit_edge_b_ptr

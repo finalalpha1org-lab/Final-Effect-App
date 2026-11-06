@@ -14,6 +14,7 @@ unsigned int fe_edit_upload(unsigned int, const float*, unsigned int, const unsi
 unsigned int fe_edit_vert_count(void);
 unsigned int fe_edit_tri_count(void);
 unsigned int fe_edit_edge_count(void);
+unsigned int fe_edit_face_count(void);
 unsigned int fe_edit_max_verts(void);
 void fe_edit_set_mode(unsigned int);
 void fe_edit_select_all(void);
@@ -344,9 +345,14 @@ static void testPokeAndDuplicate(void) {
   loadCube();
   fe_edit_set_mode(2);
   fe_edit_select_all();
-  const unsigned int tris = fe_edit_tri_count();
+  /* One centre per *face*: a cube side is two triangles here, and a poke per
+     triangle would put two centres in it and leave the side's diagonal drawn
+     through the middle of the face. Four triangles round one point is the tool
+     the user asked for, so six faces become twenty-four. */
+  const unsigned int faces = fe_edit_face_count();
   fe_edit_poke();
-  CHECK(fe_edit_tri_count() == tris * 3);
+  CHECK(fe_edit_face_count() == faces * 4);
+  CHECK(fe_edit_tri_count() == 24);
   checkIntegrity("poke");
 
   loadCube();
