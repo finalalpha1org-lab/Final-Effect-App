@@ -261,9 +261,14 @@ static void testInset(void) {
   fe_edit_select_all();
   const unsigned int beforeTri = fe_edit_tri_count();
   const unsigned int faces = fe_edit_inset(0.2f, 1);
-  CHECK(faces == beforeTri);
-  /* one triangle becomes the inner face plus a six-triangle ring */
-  CHECK(fe_edit_tri_count() == beforeTri * 7);
+  /* Individual inset works on a *face*: a cube side is one quad, so six faces
+     are inset, not twelve triangles. Doing it per triangle put an inner triangle
+     in each half of the side and four walls on its diagonal - a line through the
+     middle of the face with two coincident walls under it. */
+  CHECK(faces == 6);
+  /* Each side: its two triangles stay inside, and four outline edges add one
+     quad of two triangles each - ten triangles where there were two. */
+  CHECK(fe_edit_tri_count() == beforeTri + 6 * 8);
   checkIntegrity("inset individual");
 
   /* Region inset needs a rim; a fully closed selection has none, and saying

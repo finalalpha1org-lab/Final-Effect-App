@@ -100,6 +100,60 @@ void fanFromCentroid(uint32_t firstVert, uint32_t ringCount) {
 
 namespace {
 
+/* ---- one face at a time --------------------------------------------------
+   Individual mode works on a face, not on a triangle: a quad has to move as
+   one piece, with a wall round its outline and nothing on its own diagonal.
+   These two arrays are the face being worked on, captured before anything is
+   appended - every loop below reads the triangle and vertex tables while it is
+   still writing to them, and reading them live is how a wall lands on a
+   diagonal. File scope rather than a struct on the stack: a face may hold
+   thirty-two thousand triangles. */
+static uint32_t g_faceTris[kMaxTris];
+static uint32_t g_faceVerts[kMaxTris * 3];
+static uint32_t g_faceTriCount = 0;
+static uint32_t g_faceVertCount = 0;
+
+/* Collect the face `seed` belongs to. A triangle with no face is a face of its
+   own. Returns false when the face is empty (nothing was captured). */
+bool captureFace(uint32_t seed, uint32_t triLimit) {
+  g_faceTriCount = 0;
+  g_faceVertCount = 0;
+  if (seed >= triLimit) return false;
+  const uint32_t group = g_quadOf[seed];
+  const bool grouped = group != kNoFaceTool && group < g_quadCount;
+  uint32_t head = seed;
+  if (grouped) {
+    head = g_quadFirst[group];
+    if (head >= triLimit) head = seed;
+  }
+  for (uint32_t u = head; u != kNoFaceTool && u < triLimit && g_faceTriCount < kMaxTris;
+       u = grouped ? g_quadNext[u] : kNoFaceTool) {
+    g_faceTris[g_faceTriCount++] = u;
+    if (!grouped) break;
+  }
+  for (uint32_t i = 0; i < g_faceTriCount; ++i) {
+    for (uint32_t k = 0; k < 3; ++k) {
+      const uint32_t v = M.tri[g_faceTris[i] * 3 + k];
+      bool known = false;
+      for (uint32_t q = 0; q < g_faceVertCount; ++q) if (g_faceVerts[q] == v) { known = true; break; }
+      if (!known && g_faceVertCount < kMaxTris * 3u) g_faceVerts[g_faceVertCount++] = v;
+    }
+  }
+  return g_faceTriCount != 0;
+}
+
+/* Is the edge `u`-`a`-`b` shared with another triangle of the same face? Then
+   it is the face's own interior - a quad's diagonal, a fan's spoke - and it
+   gets no wall when the face is moved on its own. */
+bool edgeInsideFace(uint32_t u, uint32_t a, uint32_t b, uint32_t group, bool grouped) {
+  const uint32_t e = findEdge(a, b);
+  if (e >= E.n) return false;
+  const uint32_t other = E.f0[e] == u ? E.f1[e] : E.f0[e];
+  if (other == kNoValue || other >= M.nt) return false;
+  if (!grouped) return false;
+  return g_quadOf[other] == group;
+}
+
 /* Copies every vertex used by the marked faces, remaps the marked faces onto
    the copies, and stitches the boundary between old and new. Returns the
    number of new faces, or 0 when nothing was marked.
@@ -110,30 +164,73 @@ uint32_t duplicateMarkedFaces(const float* offset, bool individual) {
   rebuildEdges();
 
   if (individual) {
+    /* Individual mode moves each *face* on its own, with its own copy of the
+       vertices and its own wall round its own outline - which is what the mode
+       means. Doing it per triangle built a wall on a quad's own diagonal: two
+       coincident walls inside the face, and the diagonal still drawn as the
+       line the user keeps finding. A triangle that belongs to no face is a face
+       of its own, so it takes exactly the old path.
+       The face is walked through g_quadFirst/g_quadNext (the triangles of one
+       face) and the wall is found from the triangle's own winding, so the wall
+       faces out whether the outline came from a ring or from a triangle. */
+    static uint32_t faceMap[kMaxVerts];
+    static uint8_t faceDone[kMaxTris];
     uint32_t added = 0;
     const uint32_t originalTris = M.nt;
+    const uint32_t originalVerts = M.nv;
+    for (uint32_t g = 0; g < originalVerts && g < kMaxVerts; ++g) faceMap[g] = kNoValue;
+    for (uint32_t g = 0; g < g_quadCount && g < kMaxTris; ++g) faceDone[g] = 0;
+
     for (uint32_t t = 0; t < originalTris; ++t) {
       if (!g_triMark[t]) continue;
-      const uint32_t a = M.tri[t * 3], b = M.tri[t * 3 + 1], c = M.tri[t * 3 + 2];
-      const uint32_t na = addVert(M.x[a] + offset[0], M.y[a] + offset[1], M.z[a] + offset[2], M.cr[a], M.cg[a], M.cb[a], true);
-      const uint32_t nb = addVert(M.x[b] + offset[0], M.y[b] + offset[1], M.z[b] + offset[2], M.cr[b], M.cg[b], M.cb[b], true);
-      const uint32_t nc = addVert(M.x[c] + offset[0], M.y[c] + offset[1], M.z[c] + offset[2], M.cr[c], M.cg[c], M.cb[c], true);
-      if (na == kNoValue || nb == kNoValue || nc == kNoValue) continue;
-      /* side walls around all three edges */
-      const uint32_t oldV[3] = {a, b, c};
-      const uint32_t newV[3] = {na, nb, nc};
-      for (uint32_t k = 0; k < 3; ++k) {
-        /* One wall is one quad: its two triangles share a face id. */
-        g_tagPending = newFaceTag();
-        addTri(oldV[k], oldV[(k + 1) % 3], newV[(k + 1) % 3]);
-        addTri(oldV[k], newV[(k + 1) % 3], newV[k]);
-        g_tagPending = kNoTag;
-        ++added;
+      const uint32_t group = g_quadOf[t];
+      const bool grouped = group != kNoFaceTool && group < g_quadCount;
+      if (grouped) {
+        if (faceDone[group]) continue;
+        faceDone[group] = 1;
       }
-      M.tri[t * 3] = na;
-      M.tri[t * 3 + 1] = nb;
-      M.tri[t * 3 + 2] = nc;
-      ++added;
+      if (!captureFace(t, originalTris)) continue;
+      /* 1. one copy per vertex of this face. */
+      bool copied = true;
+      for (uint32_t i = 0; i < g_faceVertCount; ++i) {
+        const uint32_t v = g_faceVerts[i];
+        faceMap[v] = addVert(M.x[v] + offset[0], M.y[v] + offset[1], M.z[v] + offset[2],
+                             M.cr[v], M.cg[v], M.cb[v], true);
+        if (faceMap[v] == kNoValue) copied = false;
+      }
+      if (!copied) {
+        for (uint32_t i = 0; i < g_faceVertCount; ++i) faceMap[g_faceVerts[i]] = kNoValue;
+        if (grouped) faceDone[group] = 0;
+        continue;
+      }
+      /* 2. a wall on the face's outline, and nothing on its interior. Reading
+         the winding off the triangle itself is what keeps the wall facing out;
+         a ring's order is enough to draw but not to build from. */
+      for (uint32_t i = 0; i < g_faceTriCount; ++i) {
+        const uint32_t u = g_faceTris[i];
+        for (uint32_t k = 0; k < 3; ++k) {
+          const uint32_t a = M.tri[u * 3 + k], b = M.tri[u * 3 + (k + 1) % 3];
+          const uint32_t na = faceMap[a], nb = faceMap[b];
+          if (na == kNoValue || nb == kNoValue) continue;
+          if (edgeInsideFace(u, a, b, group, grouped)) continue;
+          g_tagPending = newFaceTag();     /* one wall is one quad */
+          addTri(a, b, nb);
+          addTri(a, nb, na);
+          g_tagPending = kNoTag;
+          ++added;
+        }
+      }
+      /* 3. the face moves onto its copies; its tag comes with it, so the cap
+         stays one face however many triangles it is made of. */
+      for (uint32_t i = 0; i < g_faceTriCount; ++i) {
+        const uint32_t u = g_faceTris[i];
+        for (uint32_t k = 0; k < 3; ++k) {
+          const uint32_t v = M.tri[u * 3 + k];
+          if (faceMap[v] != kNoValue) M.tri[u * 3 + k] = faceMap[v];
+        }
+      }
+      for (uint32_t i = 0; i < g_faceVertCount; ++i) faceMap[g_faceVerts[i]] = kNoValue;
+      added += g_faceTriCount;
     }
     rebuildEdges();
     syncSelFromVerts();
@@ -272,40 +369,100 @@ uint32_t toolInset(float thickness, uint32_t individual) {
   rebuildEdges();
 
   if (individual) {
+    /* One inset per *face*: the face's own ring moves toward the face's own
+       middle, and the gap between where it was and where it is becomes one
+       wall per outline edge. Done per triangle (what this used to do) a quad
+       got two inner triangles and four walls on its diagonal, which is a line
+       through the middle of the face with two coincident walls under it. */
+    static uint32_t inMap[kMaxVerts];
+    static uint8_t inDone[kMaxTris];
     uint32_t count = 0;
     const uint32_t originalTris = M.nt;
+    const uint32_t originalVerts = M.nv;
+    for (uint32_t i = 0; i < originalVerts && i < kMaxVerts; ++i) inMap[i] = kNoValue;
+    for (uint32_t g = 0; g < g_quadCount && g < kMaxTris; ++g) inDone[g] = 0;
+
     for (uint32_t t = 0; t < originalTris; ++t) {
       if (!g_triMark[t]) continue;
-      const uint32_t v[3] = { M.tri[t * 3], M.tri[t * 3 + 1], M.tri[t * 3 + 2] };
-      float cx = (M.x[v[0]] + M.x[v[1]] + M.x[v[2]]) / 3.0f;
-      float cy = (M.y[v[0]] + M.y[v[1]] + M.y[v[2]]) / 3.0f;
-      float cz = (M.z[v[0]] + M.z[v[1]] + M.z[v[2]]) / 3.0f;
-      /* thickness is a distance; convert to a fraction of the corner offset */
+      const uint32_t group = g_quadOf[t];
+      const bool grouped = group != kNoFaceTool && group < g_quadCount;
+      if (grouped) {
+        if (inDone[group]) continue;
+        inDone[group] = 1;
+      }
+      if (!captureFace(t, originalTris)) continue;
+      /* The face's middle: the average of the corners of its outline, which is
+         what the inset is toward. A ring is the outline; without one the
+         triangle's own centroid is. */
+      float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+      uint32_t ringN = 0;
+      if (grouped) {
+        const uint32_t rs = g_grpStart[group], re = g_grpStart[group + 1];
+        ringN = re > rs ? re - rs : 0;
+        for (uint32_t i = 0; i < ringN; ++i) {
+          const uint32_t v = g_grpRing[rs + i];
+          cx += M.x[v]; cy += M.y[v]; cz += M.z[v];
+        }
+      }
+      if (ringN == 0) {
+        for (uint32_t i = 0; i < g_faceVertCount; ++i) {
+          const uint32_t v = g_faceVerts[i];
+          cx += M.x[v]; cy += M.y[v]; cz += M.z[v];
+        }
+        ringN = g_faceVertCount;
+      }
+      if (!ringN) { if (grouped) inDone[group] = 0; continue; }
+      const float inv = 1.0f / static_cast<float>(ringN);
+      cx *= inv; cy *= inv; cz *= inv;
+      /* thickness is a distance; convert it to a fraction of the face's own
+         size, so the same slider means the same thing on a big face and a
+         small one. */
       float avg = 0.0f;
-      for (uint32_t k = 0; k < 3; ++k) {
-        avg += sqrtf((M.x[v[k]] - cx) * (M.x[v[k]] - cx) + (M.y[v[k]] - cy) * (M.y[v[k]] - cy) + (M.z[v[k]] - cz) * (M.z[v[k]] - cz));
+      for (uint32_t i = 0; i < g_faceVertCount; ++i) {
+        const uint32_t v = g_faceVerts[i];
+        avg += sqrtf((M.x[v] - cx) * (M.x[v] - cx) + (M.y[v] - cy) * (M.y[v] - cy) + (M.z[v] - cz) * (M.z[v] - cz));
       }
-      avg = avg > 1e-6f ? avg / 3.0f : 1e-6f;
+      avg = g_faceVertCount ? avg / static_cast<float>(g_faceVertCount) : 0.0f;
+      avg = avg > 1e-6f ? avg : 1e-6f;
       const float f = clampf(thickness / avg, 0.0f, 0.95f);
-      uint32_t inner[3];
+
       bool ok = true;
-      for (uint32_t k = 0; k < 3; ++k) {
-        inner[k] = addVert(M.x[v[k]] + (cx - M.x[v[k]]) * f,
-                           M.y[v[k]] + (cy - M.y[v[k]]) * f,
-                           M.z[v[k]] + (cz - M.z[v[k]]) * f,
-                           M.cr[v[k]], M.cg[v[k]], M.cb[v[k]], true);
-        if (inner[k] == kNoValue) ok = false;
+      for (uint32_t i = 0; i < g_faceVertCount; ++i) {
+        const uint32_t v = g_faceVerts[i];
+        inMap[v] = addVert(M.x[v] + (cx - M.x[v]) * f,
+                           M.y[v] + (cy - M.y[v]) * f,
+                           M.z[v] + (cz - M.z[v]) * f,
+                           M.cr[v], M.cg[v], M.cb[v], true);
+        if (inMap[v] == kNoValue) ok = false;
       }
-      if (!ok) continue;
-      for (uint32_t k = 0; k < 3; ++k) {
-        g_tagPending = newFaceTag();     /* the inset ring, one quad per edge */
-        addTri(v[k], v[(k + 1) % 3], inner[(k + 1) % 3]);
-        addTri(v[k], inner[(k + 1) % 3], inner[k]);
-        g_tagPending = kNoTag;
+      if (!ok) {
+        for (uint32_t i = 0; i < g_faceVertCount; ++i) inMap[g_faceVerts[i]] = kNoValue;
+        if (grouped) inDone[group] = 0;
+        continue;
       }
-      M.tri[t * 3] = inner[0];
-      M.tri[t * 3 + 1] = inner[1];
-      M.tri[t * 3 + 2] = inner[2];
+      /* The ring between the old outline and the new one: one wall per edge. */
+      for (uint32_t i = 0; i < g_faceTriCount; ++i) {
+        const uint32_t u = g_faceTris[i];
+        for (uint32_t k = 0; k < 3; ++k) {
+          const uint32_t a = M.tri[u * 3 + k], b = M.tri[u * 3 + (k + 1) % 3];
+          const uint32_t na = inMap[a], nb = inMap[b];
+          if (na == kNoValue || nb == kNoValue) continue;
+          if (edgeInsideFace(u, a, b, group, grouped)) continue;
+          g_tagPending = newFaceTag();     /* the inset ring, one quad per edge */
+          addTri(a, b, nb);
+          addTri(a, nb, na);
+          g_tagPending = kNoTag;
+        }
+      }
+      /* The face itself shrinks onto its inner ring; its tag comes with it. */
+      for (uint32_t i = 0; i < g_faceTriCount; ++i) {
+        const uint32_t u = g_faceTris[i];
+        for (uint32_t k = 0; k < 3; ++k) {
+          const uint32_t v = M.tri[u * 3 + k];
+          if (inMap[v] != kNoValue) M.tri[u * 3 + k] = inMap[v];
+        }
+      }
+      for (uint32_t i = 0; i < g_faceVertCount; ++i) inMap[g_faceVerts[i]] = kNoValue;
       ++count;
     }
     for (uint32_t t = 0; t < M.nt; ++t) g_triMark[t] = 0;
@@ -1119,12 +1276,20 @@ uint32_t toolBevel(float width, uint32_t aroundVertices) {
         if (a != v && b != v) continue;
         const uint32_t e = findEdge(a, b);
         if (e >= E.n) continue;
-        /* Faces stay welded across this edge unless the bevel separates them.
-           A vertex bevel separates every face, an edge bevel only the
-           selected edges. */
-        if (aroundVertices || edgeBevel[e]) continue;
         const uint32_t other = E.f0[e] == f ? E.f1[e] : E.f0[e];
         if (other == kNoValue || other >= M.nt) continue;
+        /* Two triangles of one face are never separated, whatever is being
+           beveled: the edge they share is the face's own diagonal, not a seam
+           of the surface. Splitting it there is what used to leave a quad as
+           two triangles with the diagonal drawn through the middle of it. */
+        if (g_quadOf[f] != kNoFaceTool && g_quadOf[f] == g_quadOf[other]) {
+          ufUnion(f, other);
+          continue;
+        }
+        /* Otherwise faces stay welded across this edge unless the bevel
+           separates them. A vertex bevel separates every face, an edge bevel
+           only the selected edges. */
+        if (aroundVertices || edgeBevel[e]) continue;
         bool inSet = false;
         for (uint32_t z = start; z < end; ++z) if (g_faceList[z] == other) inSet = true;
         if (!inSet) continue;
@@ -1215,7 +1380,13 @@ uint32_t toolBevel(float width, uint32_t aroundVertices) {
   };
 
   for (uint32_t e = 0; e < E.n; ++e) {
-    if (!edgeBevel[e]) continue;
+    /* Which edges get a gap. An edge bevel opens only the edges it was asked
+       to. A *vertex* bevel opens every edge that touches a beveled corner,
+       because the faces round that corner no longer meet there: without the
+       gap the corner patch is a lid over a hole, and the mesh is torn (which
+       is what a cube's corners did - forty-four open edges after one bevel). */
+    const bool gap = aroundVertices ? (vertBevel[E.a[e]] || vertBevel[E.b[e]]) : edgeBevel[e] != 0;
+    if (!gap) continue;
     const uint32_t a = E.a[e], b = E.b[e];
     const uint32_t f0 = E.f0[e], f1 = E.f1[e];
     if (f0 == kNoValue || f1 == kNoValue) continue;
@@ -1223,8 +1394,14 @@ uint32_t toolBevel(float width, uint32_t aroundVertices) {
     const uint32_t a1 = sectorCorner(f1, a), b1 = sectorCorner(f1, b);
     if (a0 == kNoValue || b0 == kNoValue || a1 == kNoValue || b1 == kNoValue) continue;
     if (a0 == a1 && b0 == b1) continue;
+    /* The gap along one beveled edge is one face - the chamfer - so both of its
+       triangles carry one id. Untagged they were two triangles the shape had to
+       guess about, and past a certain width it guessed "two triangles" and drew
+       the chamfer's diagonal. */
+    g_tagPending = newFaceTag();
     addTri(a0, b0, b1);
     addTri(a0, b1, a1);
+    g_tagPending = kNoTag;
     added += 2;
   }
 
@@ -1291,10 +1468,15 @@ uint32_t toolBevel(float width, uint32_t aroundVertices) {
     }
     const uint32_t centre = addVert(vx, vy, vz, M.cr[v], M.cg[v], M.cb[v], false);
     if (centre == kNoValue) continue;
+    /* The corner patch is one polygon - the corner cut off - so its fan carries
+       one id and the outline walk draws one ring round it, not one triangle per
+       spoke. */
+    g_tagPending = newFaceTag();
     for (uint32_t i = 0; i < count; ++i) {
       addTri(sectors[i], sectors[(i + 1) % count], centre);
       ++added;
     }
+    g_tagPending = kNoTag;
   }
 
   for (uint32_t t = 0; t < M.nt; ++t) g_triMark[t] = 0;

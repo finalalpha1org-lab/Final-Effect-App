@@ -29,7 +29,7 @@ is the contract below.
 | `render-maths` | `fe_taa_halton`, `fe_taa_jitter`, `fe_taa_project`, `fe_color_blackbody_rgb`, `fe_color_blackbody_lut` |
 | `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance`, `fe_edit_set_faces`, `fe_edit_face_count`, `fe_edit_tri_tag_ptr`, `fe_edit_tri_tag_count` |
 
-The shipped build is `1190038` bytes, ABI v1, **318 exports**; every group above
+The shipped build is `1202842` bytes, ABI v1, **318 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all seven benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
@@ -111,7 +111,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1190038 bytes, ABI v1, 318 exports)`.
+that passes `Validated fe_core_engine.wasm (1202842 bytes, ABI v1, 318 exports)`.
 
 ## Verification
 

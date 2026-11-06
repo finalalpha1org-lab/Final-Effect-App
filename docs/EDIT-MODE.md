@@ -245,6 +245,25 @@ cube gives twenty-four quads and not six eight-corner rings); a triangle cut on
 one or two edges is a face whose outline merely gained a corner, so its pieces
 keep the face's id and the whole side stays one ring.
 
+A tool that works "on each face" works on the *face*, not on its triangles.
+Individual mode (extrude, inset) moves one piece of geometry per face: its own
+copy of the face's vertices, its own wall round the face's **outline**, and the
+wall is found from each triangle's winding (`edgeInsideFace`, `captureFace` in
+`fe_editmesh_tools.cpp`) so an edge whose second triangle is inside the same face
+- a quad's diagonal, a fan's spoke - gets no wall at all. Working per triangle is
+what used to leave two coincident walls under the diagonal of every quad that was
+extruded or inset on its own.
+
+Bevel writes down what it builds and never separates the triangles of one face:
+the sector split unions two triangles that belong to the same face whatever is
+being beveled (the edge between them is the face's own diagonal, not a seam), each
+chamfer along an edge is one face, and each corner cut is one face - its fan's
+outline, not one triangle per spoke. A *vertex* bevel also opens a gap on every
+edge that touches a beveled corner; without it the corner patch was a lid over a
+hole and a beveled cube had forty-eight open edges. Measured on a cube: one face
+beveled is ten quads and no triangles, every face beveled is twenty-six faces
+(six sides, twelve chamfers, eight corner triangles) and the surface is closed.
+
 A face also survives leaving the mode. The rows above are written onto the
 **cage** - the unsplit mesh the editor commits - and the cage is kept beside the
 object as `userData.feEditCage`, because `object.geometry` becomes a *display*

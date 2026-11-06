@@ -1268,3 +1268,113 @@ test('a mesh re-uploaded with the same triangle table does not inherit the old f
   assert.equal(new Set(fresh).size, 6, 'six ids for six sides - the reset did not hand over the old ones');
   for (const [, count] of tagHistogram(fresh)) assert.equal(count, 2);
 });
+
+/* ---- individual mode, and a bevel that leaves faces ----------------------
+ * Individual mode means "move each face on its own". It used to mean "move each
+ * triangle on its own", which for a quad builds an inner triangle in each half
+ * and four walls on its diagonal - the diagonal still drawn, with two coincident
+ * walls under it. The face is the unit now.
+ */
+
+function openEdgeCount(exp) {
+  const tris = exp.fe_edit_tri_count();
+  const idx = new Uint32Array(exp.memory.buffer, exp.fe_edit_idx_ptr(), tris * 3).slice();
+  const uses = new Map();
+  for (let t = 0; t < tris; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    for (const [x, y] of [[a, b], [b, c], [c, a]]) {
+      const key = x < y ? `${x}:${y}` : `${y}:${x}`;
+      uses.set(key, (uses.get(key) || 0) + 1);
+    }
+  }
+  let open = 0;
+  for (const [, n] of uses) if (n === 1) open++;
+  return open;
+}
+
+test('extrude individual moves one face, not its two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_extrude(0.4, 1);
+  exp.fe_arena_reset();
+  /* Five untouched sides, the moved side and four walls: ten faces, every one a
+     quad. Per triangle it was thirteen, two of them triangles sitting on the
+     side's own diagonal. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  assert.equal(openEdgeCount(exp), 0, 'the moved side is stitched back onto the box');
+});
+
+test('inset individual insets one face, not its two triangles', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_inset(0.3, 1);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(faceSizes(exp), [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+  assert.equal(openEdgeCount(exp), 0);
+});
+
+test('individual mode on every face of the cube is six faces, four corners each', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_extrude(0.3, 1);
+  exp.fe_arena_reset();
+  /* Six sides moved out on their own: the six caps plus a wall on every one of
+     the twenty-four side edges. */
+  assert.equal(exp.fe_edit_face_count(), 30);
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]));
+});
+
+test('a beveled cube face has no triangles in it, and the box stays closed', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  selectFaceByIndex(exp, 0);
+  exp.fe_edit_bevel(0.25, 0);
+  exp.fe_arena_reset();
+  /* Five sides, the shrunken side and four chamfers - ten quads, no triangle.
+     The old result was seventeen faces with ten triangles, because the bevel
+     tagged nothing and the shrunken side was torn into a quad and two
+     triangles across its own diagonal. */
+  assert.equal(exp.fe_edit_face_count(), 10);
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]));
+  assert.equal(openEdgeCount(exp), 0, 'a bevel must not open the surface');
+});
+
+test('a vertex bevel closes the corner it cuts off', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  /* Blender bevels the cube's corners into twenty-six faces: the six sides, one
+     chamfer per edge, one triangle per corner. Ours tore the surface open at
+     every corner (forty-eight open edges) because the corner patch was a lid
+     over a hole. */
+  exp.fe_edit_bevel(0.2, 1);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_face_count(), 26);
+  const sizes = faceSizes(exp);
+  assert.equal(sizes.filter((n) => n === 3).length, 8, 'eight corners, eight corner triangles');
+  assert.equal(sizes.filter((n) => n === 4).length, 18, 'six sides and twelve chamfers');
+  assert.equal(openEdgeCount(exp), 0, 'the corner patch is stitched to the faces round it');
+});
+
+test('no deformation or tool leaves a triangle where the model has a quad', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_edit_select_all();
+  exp.fe_edit_subdivide(0, 0);
+  exp.fe_edit_bend(35, 0);
+  exp.fe_edit_randomize(0.1, 5);
+  exp.fe_arena_reset();
+  assert.deepEqual(new Set(faceSizes(exp)), new Set([4]), 'subdivide, bend and randomize keep every face a quad');
+  const tags = triTags(exp);
+  for (const [tag, count] of tagHistogram(tags)) {
+    assert.equal(count, 2, `face id ${tag} must still be one quad`);
+  }
+});
