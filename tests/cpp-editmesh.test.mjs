@@ -906,6 +906,131 @@ test('one face stays flat while the faces around it stay smooth', () => {
   assert.equal(exp.fe_edit_upload_face_shade(0, 0), 0, 'a missing buffer is refused, not guessed at');
 });
 
+/* ---------------------------------------------------------------------------
+ * A triangle inside a face
+ *
+ * Two of them exist, and both are visible for the same reason: the kernel
+ * decides something per triangle that belongs to the whole face.
+ *
+ *   1. shading - half of a quad flat and half of it smooth draws the diagonal,
+ *      because the smooth half is interpolated and the flat half is not;
+ *   2. topology - a face that a tool cut into triangles and could not pair
+ *      back into a quad is drawn as the triangles it is stored as.
+ *
+ * These tests pin both, from the shipped artifact.
+ * ------------------------------------------------------------------------- */
+
+function cloneCubeWithMixedNormals() {
+  const mesh = makeSplitCube();
+  /* The first quad's two triangles are the first two: give the second one
+     corner normals that lean away from the face. Its own vote comes out
+     smooth while its partner's comes out flat - exactly the pair that used to
+     draw a diagonal across a face whose two halves disagreed. */
+  const normals = Float32Array.from(mesh.normals);
+  const face = SPLIT_CUBE_FACES[0];
+  /* Corners 1, 2 and 3 are the quad's second triangle (0,1,2 then 0,2,3).
+     Push their normals square to the face: that half votes smooth while the
+     first half keeps voting flat. */
+  const tilted = [face.n[1] + face.n[2], face.n[2] + face.n[0], face.n[0] + face.n[1]];
+  for (let k = 1; k <= 3; k++) {
+    const at = k * 3;
+    normals[at] = tilted[0];
+    normals[at + 1] = tilted[1];
+    normals[at + 2] = tilted[2];
+  }
+  return { ...mesh, normals };
+}
+
+test('a face is shaded as one face, whichever way its triangles round', () => {
+  const exp = loadEngine();
+  const mesh = cloneCubeWithMixedNormals();
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(mesh.positions.byteLength);
+  const triPtr = exp.fe_malloc(mesh.indices.byteLength);
+  const nrmPtr = exp.fe_malloc(mesh.normals.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, mesh.positions.length).set(mesh.positions);
+  new Uint32Array(exp.memory.buffer, triPtr, mesh.indices.length).set(mesh.indices);
+  new Float32Array(exp.memory.buffer, nrmPtr, mesh.normals.length).set(mesh.normals);
+  assert.equal(exp.fe_edit_upload(24, posPtr, 12, triPtr, 0, nrmPtr), 1);
+  exp.fe_arena_reset();
+
+  const count = exp.fe_edit_face_shade_count();
+  assert.equal(count, 12, 'one flag per triangle');
+  const flags = new Uint8Array(exp.memory.buffer, exp.fe_edit_face_shade_ptr(), count);
+  assert.equal(flags[0], flags[1], 'the two triangles of one quad must agree about being flat');
+  assert.equal(flags[2], flags[3], 'and so must the next quad');
+  for (let quad = 0; quad < 6; quad++) {
+    assert.equal(
+      flags[quad * 2], flags[quad * 2 + 1],
+      `quad ${quad} is half flat and half smooth, which is the triangle the user sees`
+    );
+  }
+
+  /* The tie went smooth - a shape that really is flat votes flat with both
+     halves - so that quad is a smooth face in a flat cube. */
+  assert.equal(flags[0], 1, 'a quad whose halves disagree is smooth, not half smooth');
+  assert.equal(flags[2], 0, 'the quad next to it is still flat');
+  assert.equal(exp.fe_edit_shade_state(), 2, 'one smooth quad in a flat cube is a mixed mesh');
+  const split = exp.fe_edit_build_render();
+  assert.ok(split > 8, 'a mixed mesh splits its corners, and it starts at eight');
+});
+
+test('a fan of triangles that lie in one plane is one face, not thirty-three', () => {
+  const exp = loadEngine();
+  /* A thirty-two sided cap, triangulated the way a fan is: from corner zero.
+     No app declared this one; it is the shape a tool leaves behind. */
+  const segments = 32;
+  const positions = new Float32Array(segments * 3);
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    positions[i * 3] = Math.cos(angle);
+    positions[i * 3 + 1] = 0;
+    positions[i * 3 + 2] = Math.sin(angle);
+  }
+  const triangles = [];
+  for (let i = 1; i + 1 < segments; i++) triangles.push(0, i, i + 1);
+  const indices = new Uint32Array(triangles);
+
+  exp.fe_arena_reset();
+  const posPtr = exp.fe_malloc(positions.byteLength);
+  const triPtr = exp.fe_malloc(indices.byteLength);
+  new Float32Array(exp.memory.buffer, posPtr, positions.length).set(positions);
+  new Uint32Array(exp.memory.buffer, triPtr, indices.length).set(indices);
+  assert.equal(exp.fe_edit_upload(segments, posPtr, triangles.length / 3, triPtr, 0, 0), 1);
+  exp.fe_arena_reset();
+
+  assert.equal(exp.fe_edit_tri_count(), 30, 'the fan is thirty triangles');
+  assert.equal(exp.fe_edit_face_count(), 1, 'one flat panel is one face');
+  assert.equal(exp.fe_edit_face_ring_count(), segments, 'and it carries the ring of the polygon');
+  assert.equal(exp.fe_edit_ngon_count(), 1, 'a thirty-two sided face is an n-gon');
+});
+
+test('a poke keeps its fan: a triangle the user asked for stays a face', () => {
+  const exp = loadEngine();
+  uploadCube(exp);
+  exp.fe_edit_set_mode(2);
+  exp.fe_arena_reset();
+  const facePtr = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, facePtr, 1)[0] = 0;
+  exp.fe_edit_select_by_index(2, 1, facePtr, 0);
+  exp.fe_arena_reset();
+
+  exp.fe_edit_poke();
+  exp.fe_arena_reset();
+  /* Each of the poked quad's two triangles becomes three around a new centre;
+     the other five quads are untouched. A pass that fuses flat panels would
+     swallow those six - the spokes are the whole point of the tool - so poke
+     declares them and they stay faces. */
+  assert.equal(exp.fe_edit_tri_count(), 12 + 4, 'each poked triangle became three, so four more');
+  assert.equal(exp.fe_edit_face_count(), 5 + 6, 'five quads plus six triangle faces');
+
+  const faces = exp.fe_edit_face_count();
+  const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), faces + 1).slice();
+  let triangles = 0;
+  for (let f = 0; f < faces; f++) if (starts[f + 1] - starts[f] === 3) triangles++;
+  assert.equal(triangles, 6, 'the fan is six triangle faces, not one fused polygon');
+});
+
 test('the gizmo turns a finger drag into a kernel move, in one axis', () => {
   const exp = loadEngine();
   const mesh = makeSplitCube();

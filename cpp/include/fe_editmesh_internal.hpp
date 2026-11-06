@@ -133,6 +133,13 @@ bool quadFaceSelected(uint32_t t);
 void selectFaceVerts(uint32_t t);
 void deselectFaceVerts(uint32_t t);
 void buildQuadGroups();
+
+/* A tool that leaves triangles visible on purpose (a poke's fan) declares them
+   as faces before it asks for the rebuild: beginToolFaceDeclarations clears the
+   store, toolDeclareFaceRing appends one ring in the kernel's vertex numbering,
+   and the rebuild claims them before anything is paired or merged. */
+void beginToolFaceDeclarations(void);
+bool toolDeclareFaceRing(const uint32_t* verts, uint32_t n);
 uint32_t selectedVertCount();
 uint32_t selectedEdgeCount();
 uint32_t selectedFaceCount();

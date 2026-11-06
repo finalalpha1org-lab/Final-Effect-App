@@ -102,6 +102,10 @@ constexpr uint32_t kMaxDeclCorners = kMaxTris * 3u;
 uint32_t g_declStart[kMaxDeclFaces + 1];
 uint32_t g_declRing[kMaxDeclCorners];
 uint32_t g_declFaces = 0;
+/* How much of g_declRing the current declaration uses. The app's call fills it
+   from the start; a tool appends to it, so a poke's fan can be declared face by
+   face while the op runs. */
+uint32_t g_declRingUsed = 0;
 bool g_declPending = false;
 /* Upload slot -> welded vertex, so a face declared in the geometry's own
    numbering still names the right vertex after three's split corners have been
@@ -164,6 +168,16 @@ constexpr uint32_t kNoFace = 0xFFFFFFFFu;
 constexpr uint32_t kMaxRingCorners = 2048u;
 
 uint32_t g_hash[kHashSize];
+
+/* True while the per-face shading has been *derived* from the normals the mesh
+   arrived with and has not yet been read as a whole face. Two triangles of one
+   face vote differently often - a quad sphere's corners round one corner normal
+   one way and its neighbour's the other - and a face that is half flat and half
+   smooth draws the diagonal: the smooth half is interpolated, the flat half is
+   not, and the line between them is exactly the triangle the user keeps
+   finding. The vote is settled once the faces are known, which is after the
+   weld, and after the app has declared its rings. */
+bool g_shadeFacePass = false;
 
 /* The undo pool. Six megabytes of snapshots that only exist once the studio is
    in Edit Mode, so it is taken from the lazy heap on the first snapshot rather
@@ -542,12 +556,89 @@ bool isQuadDiagonal(const uint32_t e) {
   return true;
 }
 
+/* Two triangles that share their longest side are the two halves of a quad -
+   unless the "quad" they make has a corner that is nearly straight. Two
+   triangles of a fan always make one: the corner at the point where the fan
+   passes through sits at 180 degrees, so what came out is a triangle carrying a
+   point on its edge, not a face anybody drew. Those stay triangles, and the
+   flat-panel pass in buildQuadGroups puts the fan back together as the n-gon it
+   was. A quad with a corner under five degrees is the same failure the other
+   way round: a sliver. */
+bool quadCornersAreFaceLike(uint32_t a, uint32_t c, uint32_t b, uint32_t d) {
+  const uint32_t ring[4] = { a, c, b, d };
+  for (uint32_t i = 0; i < 4; ++i) {
+    const uint32_t p = ring[(i + 3) % 4], v = ring[i], q = ring[(i + 1) % 4];
+    const float ux = M.x[p] - M.x[v], uy = M.y[p] - M.y[v], uz = M.z[p] - M.z[v];
+    const float wx = M.x[q] - M.x[v], wy = M.y[q] - M.y[v], wz = M.z[q] - M.z[v];
+    const float lu = sqrtf(ux * ux + uy * uy + uz * uz);
+    const float lw = sqrtf(wx * wx + wy * wy + wz * wz);
+    if (lu < 1e-9f || lw < 1e-9f) return false;
+    const float cosCorner = (ux * wx + uy * wy + uz * wz) / (lu * lw);
+    if (cosCorner < -0.9397f) return false;    /* 160 degrees or flatter */
+    if (cosCorner > 0.9397f) return false;     /* 20 degrees or sharper */
+  }
+  return true;
+}
+
 /* The two faces may fold towards each other this far and still be one face. */
 bool quadCreaseWithin(const uint32_t e, const float cosLimit) {
   float ax, ay, az, bx, by, bz;
   faceNormal(E.f0[e], ax, ay, az);
   faceNormal(E.f1[e], bx, by, bz);
   return (ax * bx + ay * by + az * bz) >= cosLimit;
+}
+
+/* ---- one flat panel is one face -----------------------------------------
+   A tool cuts a face into triangles and leaves the triangles in the buffer: an
+   inset's inner n-gon, a bevel's ribbon, the strip a subdivision leaves along a
+   cap. The pairing above cannot put those back together, because its rule is
+   the shape of a quad and half of these pieces are not quads; so each piece
+   survived as a face of its own, and the cage drew every one of its edges -
+   which is why the inside of a flat face came back as a fan of triangles the
+   moment a tool touched it.
+
+   The pieces of one flat panel are, by definition, the triangles that meet
+   without folding. Growing a region across edges that do not fold and taking
+   its boundary loop as the face's ring rebuilds the panel the user sees, with
+   no line anywhere but its outline. That is the same fact the app declares for
+   a cylinder cap; this recovers it for the faces a tool made.
+
+   A region whose boundary is not one closed loop - a face with a hole, a pinched
+   corner - is not drawn as one face: a ring that is not a loop would draw
+   lines the face does not have, so it falls back to one face per triangle. */
+
+/* The most triangles one panel is grown from. A cap fan is thirty-two; an
+   inset ring a few dozen; this is past any panel a tool makes, and a region
+   that hits it simply stops growing (its boundary is still a loop). */
+constexpr uint32_t kMaxPanelTris = 1024u;
+
+/* "Part of the region being grown, no group index yet". Larger than any group
+   index, so it can never collide with one. */
+constexpr uint32_t kPanelMark = 0xFFFFFFFEu;
+
+bool coplanarWith(uint32_t a, uint32_t b, float cosLimit) {
+  float ax, ay, az, bx, by, bz;
+  faceNormal(a, ax, ay, az);
+  faceNormal(b, bx, by, bz);
+  return (ax * bx + ay * by + az * bz) >= cosLimit;
+}
+
+/* Is the edge `a`-`b` of triangle `t` on the outline of the region being grown?
+   It is when the triangle on the other side is not in the region - the region
+   is every triangle carrying kPanelMark. Asked through the corner table rather
+   than the edge table: the corner already has the list of triangles that touch
+   it, and a triangle's valence is small. */
+bool boundaryOfRegion(uint32_t t, uint32_t a, uint32_t b) {
+  for (uint32_t i = g_faceStart[a]; i < g_faceStart[a + 1]; ++i) {
+    const uint32_t u = g_faceList[i];
+    if (u == t || g_quadOf[u] != kPanelMark) continue;
+    bool hasB = false;
+    for (uint32_t k = 0; k < 3; ++k) {
+      if (M.tri[u * 3 + k] == b) { hasB = true; break; }
+    }
+    if (hasB) return false;
+  }
+  return true;
 }
 
 /* Take the inside of every face out of the wireframe. A face's *interior*
@@ -560,7 +651,7 @@ void hideFaceInteriors() {
   for (uint32_t e = 0; e < E.n; ++e) {
     if (E.f0[e] == kNoFace || E.f1[e] == kNoFace) continue;
     const uint32_t g = g_quadOf[E.f0[e]];
-    if (g == kNoFace || g != g_quadOf[E.f1[e]]) continue;
+    if (g == kNoFace || g == kPanelMark || g != g_quadOf[E.f1[e]]) continue;
     g_edgeDisplay[e] = 0;
   }
 }
@@ -732,6 +823,41 @@ void claimDeclaredFaces() {
    back in the middle of the face. It is decided from the shape of the two
    triangles now, and kept as long as the triangle table is unchanged, so an
    edit can bend a quad without tearing it into triangles. */
+/* A face is one unit of shading, so its triangles have to agree. The votes
+   come from the shape (deriveFaceShade); this settles them per face by area,
+   because a 32-gon cap is thirty-two triangles of which a couple may have
+   rounded the other way, and the face they belong to is still flat. A tie -
+   the two halves of a quad that disagree - is smooth, because a shape that is
+   genuinely flat votes flat with both of them. */
+void settleFaceShade() {
+  if (!g_shadeFacePass) return;
+  g_shadeFacePass = false;
+  for (uint32_t g = 0; g < g_quadCount; ++g) {
+    float flatArea = 0.0f, totalArea = 0.0f;
+    for (uint32_t t = g_quadFirst[g]; t != kNoFace && t < M.nt; t = g_quadNext[t]) {
+      float area = 0.0f;
+      triangleArea(t, area);
+      totalArea += area;
+      /* The same rule faceSmoothFlag applies, spelled out here: past the last
+         written flag the mesh's own answer stands in. */
+      const bool smooth = (t < M.fsmoothCount) ? (M.fsmooth[t] != 0) : (M.smooth != 0);
+      if (!smooth) flatArea += area;
+    }
+    if (!(totalArea > 0.0f)) continue;
+    const uint8_t value = (flatArea * 2.0f > totalArea) ? 0u : 1u;
+    for (uint32_t t = g_quadFirst[g]; t != kNoFace && t < M.nt; t = g_quadNext[t]) {
+      M.fsmooth[t] = value;
+    }
+  }
+  M.fsmoothCount = M.nt;
+  M.smooth = false;
+  for (uint32_t t = 0; t < M.nt; ++t) {
+    if (!M.fsmooth[t]) continue;
+    M.smooth = true;
+    break;
+  }
+}
+
 void buildQuadGroups() {
   if (g_quadBuilt && g_quadSignature == quadTopologySignature()) {
     hideFaceInteriors();
@@ -770,6 +896,11 @@ void buildQuadGroups() {
   for (uint32_t e = 0; e < E.n; ++e) {
     if (!isQuadDiagonal(e)) continue;
     if (!quadCreaseWithin(e, cosQuad)) continue;
+    const uint32_t a = E.a[e], b = E.b[e];
+    const uint32_t c = triangleApex(E.f0[e], a, b);
+    const uint32_t d = triangleApex(E.f1[e], a, b);
+    if (c == kNoFace || d == kNoFace) continue;
+    if (!quadCornersAreFaceLike(a, c, b, d)) continue;
     order[candidates++] = e;
   }
   for (uint32_t i = 1; i < candidates; ++i) {
@@ -818,23 +949,125 @@ void buildQuadGroups() {
     g_grpStart[group + 1] = g_grpRingCount;
   }
 
-  /* 3. Every triangle that found no partner is a face of its own. */
-  for (uint32_t t = 0; t < M.nt; ++t) {
-    if (g_quadPaired[t]) continue;
-    if (g_quadCount >= kMaxTris) break;
-    if (g_grpRingCount + 3u > kMaxTris * 3u) break;
-    const uint32_t group = g_quadCount++;
-    g_quadOf[t] = group;
-    g_quadFirst[group] = t;
-    g_grpStart[group] = g_grpRingCount;
-    g_grpRing[g_grpRingCount++] = M.tri[t * 3];
-    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 1];
-    g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 2];
-    g_grpStart[group + 1] = g_grpRingCount;
+  /* 3. What is left is either a face of its own - a sphere's pole, a cone's
+     side, a tetrahedron's face, all of them real folds - or a flat panel a tool
+     cut into triangles. The flat ones are grown back into one region each
+     (see coplanarWith); the ones whose outline is not a loop keep a face per
+     triangle, because a ring that is not a loop draws lines that are not
+     there.
+
+     "In this region" is marked in g_quadOf itself, with a value no group can
+     have: every triangle starts at kNoFace, the ones grown in this pass carry
+     kPanelMark, and the commit below writes the real group index over them.
+     That keeps the pass from needing another kMaxTris-sized table. */
+  buildVertexFaces();
+  const float cosFlat = fe::cosf(g_displayAngle * fe::kDeg2Rad);
+  static uint32_t regionTris[kMaxPanelTris];
+  static uint32_t boundA[kMaxRingCorners], boundB[kMaxRingCorners];
+  static uint8_t boundUsed[kMaxRingCorners];
+
+  for (uint32_t seed = 0; seed < M.nt; ++seed) {
+    if (g_quadOf[seed] != kNoFace) continue;
+    uint32_t head = 0, tail = 1;
+    regionTris[0] = seed;
+    g_quadOf[seed] = kPanelMark;
+    while (head < tail) {
+      const uint32_t t = regionTris[head++];
+      for (uint32_t c = 0; c < 3; ++c) {
+        const uint32_t v = M.tri[t * 3 + c];
+        for (uint32_t i = g_faceStart[v]; i < g_faceStart[v + 1]; ++i) {
+          const uint32_t u = g_faceList[i];
+          if (u == t || g_quadOf[u] != kNoFace) continue;
+          if (!coplanarWith(t, u, cosFlat)) continue;
+          if (tail >= kMaxPanelTris) break;
+          g_quadOf[u] = kPanelMark;
+          regionTris[tail++] = u;
+        }
+      }
+    }
+
+    /* The region's outline: every edge of it whose other triangle is not in
+       it. Taken from the corner table because a triangle's valence is small. */
+    uint32_t corners = 0;
+    bool ringOk = tail > 1;
+    for (uint32_t q = 0; q < tail && ringOk; ++q) {
+      const uint32_t t = regionTris[q];
+      for (uint32_t k = 0; k < 3; ++k) {
+        const uint32_t a = M.tri[t * 3 + k], b = M.tri[t * 3 + (k + 1) % 3];
+        if (!boundaryOfRegion(t, a, b)) continue;
+        if (corners >= kMaxRingCorners) { ringOk = false; break; }
+        boundA[corners] = a;
+        boundB[corners] = b;
+        boundUsed[corners] = 0;
+        ++corners;
+      }
+    }
+
+    /* Walk the outline corner to corner. At each corner exactly one unused
+       edge may be left, and the walk has to come back to where it started
+       after exactly as many steps as there are edges: that is one closed loop,
+       which is the only outline a ring can be drawn from. */
+    const uint32_t ringStart = g_grpRingCount;
+    if (ringOk && corners >= 3) {
+      const uint32_t start = boundA[0];
+      uint32_t cur = boundB[0];
+      boundUsed[0] = 1;
+      if (ringStart + corners > kMaxTris * 3u) ringOk = false;
+      else {
+        g_grpRing[g_grpRingCount++] = start;
+        uint32_t walked = 1;
+        while (cur != start) {
+          uint32_t next = kNoFace;
+          for (uint32_t i = 1; i < corners; ++i) {
+            if (boundUsed[i]) continue;
+            if (boundA[i] == cur) { next = boundB[i]; boundUsed[i] = 1; break; }
+            if (boundB[i] == cur) { next = boundA[i]; boundUsed[i] = 1; break; }
+          }
+          if (next == kNoFace || walked >= corners) { ringOk = false; break; }
+          g_grpRing[g_grpRingCount++] = cur;
+          ++walked;
+          cur = next;
+        }
+        if (ringOk && walked != corners) ringOk = false;
+      }
+    }
+
+    if (ringOk && corners >= 3) {
+      if (g_quadCount >= kMaxTris) break;
+      const uint32_t group = g_quadCount++;
+      g_quadFirst[group] = regionTris[0];
+      for (uint32_t q = 0; q < tail; ++q) {
+        g_quadOf[regionTris[q]] = group;
+        g_quadPaired[regionTris[q]] = 1;
+        g_quadNext[regionTris[q]] = (q + 1 < tail) ? regionTris[q + 1] : kNoFace;
+      }
+      g_grpStart[group] = ringStart;
+      g_grpStart[group + 1] = g_grpRingCount;
+      if (corners > 4) ++g_ngonCount;
+      continue;
+    }
+
+    /* Not a panel: the triangles are faces of their own, as they always were. */
+    g_grpRingCount = ringStart;
+    for (uint32_t q = 0; q < tail; ++q) {
+      const uint32_t t = regionTris[q];
+      if (g_quadCount >= kMaxTris) break;
+      if (g_grpRingCount + 3u > kMaxTris * 3u) break;
+      const uint32_t group = g_quadCount++;
+      g_quadOf[t] = group;
+      g_quadPaired[t] = 1;
+      g_quadFirst[group] = t;
+      g_grpStart[group] = g_grpRingCount;
+      g_grpRing[g_grpRingCount++] = M.tri[t * 3];
+      g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 1];
+      g_grpRing[g_grpRingCount++] = M.tri[t * 3 + 2];
+      g_grpStart[group + 1] = g_grpRingCount;
+    }
   }
 
   g_quadSignature = quadTopologySignature();
   g_quadBuilt = true;
+  settleFaceShade();
   hideFaceInteriors();
 }
 
@@ -2094,6 +2327,36 @@ uint32_t transformAxis(int32_t handle, uint32_t space) {
   return handle == 0 ? 1u : handle == 1 ? 2u : 3u;
 }
 
+/* ---- faces a tool makes on purpose --------------------------------------
+   The ops work on triangles, so a tool that means to leave triangles visible -
+   a poke's fan is the one - has to say so, or the flat-panel pass in
+   buildQuadGroups puts the fan back together into the polygon it cut up and the
+   poke looks like nothing happened. The rings are in the kernel's own vertex
+   numbering because a tool has no upload slots to translate. */
+
+void beginToolFaceDeclarations(void) {
+  g_declFaces = 0;
+  g_declStart[0] = 0;
+  g_declRingUsed = 0;
+}
+
+bool toolDeclareFaceRing(const uint32_t* verts, uint32_t n) {
+  if (!verts || n < 3 || n > kMaxRingCorners) return false;
+  if (g_declFaces >= kMaxDeclFaces) return false;
+  if (g_declRingUsed + n > kMaxDeclCorners) return false;
+  for (uint32_t i = 0; i < n; ++i) {
+    if (verts[i] >= M.nv) return false;
+  }
+  for (uint32_t i = 0; i < n; ++i) g_declRing[g_declRingUsed + i] = verts[i];
+  g_declRingUsed += n;
+  g_declStart[g_declFaces + 1] = g_declRingUsed;
+  ++g_declFaces;
+  g_declPending = true;
+  g_quadBuilt = false;
+  g_quadSignature = 0u;
+  return true;
+}
+
 } // namespace fe_edit
 
 using namespace fe_edit;
@@ -2213,6 +2476,7 @@ FE_EXPORT uint32_t fe_edit_upload(uint32_t vertCount, const float* positions,
   }
   deriveFaceShade(positions, M.tri, triCount, normals);
   M.fsmoothCount = triCount;
+  g_shadeFacePass = true;
   for (uint32_t t = 0; t < M.nt; ++t) M.fsel[t] = 0;
   /* Weld before the edge table exists: an edge list built over duplicates
      would describe a mesh that is not the one being edited. */
@@ -2806,6 +3070,8 @@ FE_EXPORT void fe_edit_set_shade(uint32_t smooth) {
     break;
   }
   M.fsmoothCount = M.nt;
+  /* An explicit choice overrides the reading of the shape's normals. */
+  g_shadeFacePass = false;
 }
 
 FE_EXPORT uint32_t fe_edit_get_shade(void) { return M.smooth ? 1u : 0u; }
@@ -2838,6 +3104,7 @@ FE_EXPORT uint32_t fe_edit_upload_face_shade(const uint8_t* flags, uint32_t coun
   }
   M.smooth = anySmooth;
   M.fsmoothCount = n;
+  g_shadeFacePass = false;      /* written flags beat the guess */
   return n;
 }
 
@@ -3058,7 +3325,7 @@ FE_EXPORT const uint32_t* fe_edit_interior_pairs_ptr(void) {
   for (uint32_t e = 0; e < E.n && g_quadPairCount < kMaxEdges; ++e) {
     if (E.f0[e] == kNoFace || E.f1[e] == kNoFace) continue;
     const uint32_t g = g_quadOf[E.f0[e]];
-    if (g == kNoFace || g != g_quadOf[E.f1[e]]) continue;
+    if (g == kNoFace || g == kPanelMark || g != g_quadOf[E.f1[e]]) continue;
     g_quadPairs[g_quadPairCount * 2u] = E.a[e];
     g_quadPairs[g_quadPairCount * 2u + 1u] = E.b[e];
     ++g_quadPairCount;
@@ -3139,9 +3406,11 @@ FE_EXPORT uint32_t fe_edit_set_faces(uint32_t faceCount, const uint32_t* starts,
   if (faces == 0) return 0;
   g_declStart[0] = 0;
   g_declFaces = faces;
+  g_declRingUsed = total;
   g_declPending = true;
   g_quadBuilt = false;
   g_quadSignature = 0u;
+  g_shadeFacePass = true;     /* the rings decide which triangles share a face */
   buildQuadGroups();
   return 1;
 }

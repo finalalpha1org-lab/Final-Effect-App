@@ -657,6 +657,10 @@ uint32_t toolPoke(void) {
   markSelectedFaces();
   uint32_t added = 0;
   const uint32_t originalTris = M.nt;
+  /* A poke's fan is the point of the tool: the spokes are edges the user asked
+     for, so each fan triangle is declared as a face and the flat-panel pass
+     leaves it alone instead of fusing the fan back into one polygon. */
+  beginToolFaceDeclarations();
   for (uint32_t t = 0; t < originalTris; ++t) {
     if (!g_triMark[t]) continue;
     const uint32_t a = M.tri[t * 3], b = M.tri[t * 3 + 1], c = M.tri[t * 3 + 2];
@@ -670,6 +674,8 @@ uint32_t toolPoke(void) {
     M.tri[t * 3] = a; M.tri[t * 3 + 1] = b; M.tri[t * 3 + 2] = centre;
     addTri(b, c, centre);
     addTri(c, a, centre);
+    const uint32_t fan[3][3] = { { a, b, centre }, { b, c, centre }, { c, a, centre } };
+    for (uint32_t k = 0; k < 3; ++k) toolDeclareFaceRing(fan[k], 3);
     added += 2;
   }
   for (uint32_t t = 0; t < M.nt; ++t) g_triMark[t] = 0;

@@ -130,6 +130,18 @@ thing a whole-object `flatShading` switch can never express.
   past the last written flag (`M.fsmoothCount`) takes the mesh's own answer
   instead of a stale byte; `buildRenderMesh()` settles the array before it is
   read.
+* **The vote is settled per face, not per triangle.** Reading the shape's
+  normals gives one answer per triangle, and two triangles of one face disagree
+  often enough to matter: a quad sphere's corner rounds one half one way and its
+  neighbour the other, a thirty-two sided cap has a couple of wedges that round
+  differently from the rest. A face that is half flat and half smooth draws the
+  diagonal, because the smooth half is interpolated and the flat half is not.
+  `settleFaceShade()` runs once the faces are known - after the weld, and again
+  after the app declares its rings - and settles each face by area: the majority
+  of a face's surface decides, and a tie goes smooth, because a face that is
+  genuinely flat votes flat with all of its triangles. An explicit
+  `fe_edit_set_shade` or `fe_edit_upload_face_shade` cancels the pass, so a
+  written flag is never second-guessed.
 
 The same flags reach the modifier stack: `fe_mod_face_smooth_ptr`,
 `fe_mod_set_face_smooth`, `fe_mod_derive_face_smooth` (reads
@@ -154,6 +166,30 @@ the one the user kept finding on a cube. Two rules keep it off:
   derivative normals are exact (`fe_edit_flat_planar()` answers that). A bent
   face falls through to the split pass instead: the shader would derive a
   different normal for each half of it.
+
+A face a tool cut up is put back together. The pairing above only recognises a
+quad - two triangles that share their longest side - and half of what an inset,
+a bevel or an extrude leaves behind is not a quad, so each piece used to survive
+as a face of its own and the cage drew all of them. Two rules close that:
+
+* **A fan is not a quad.** Two triangles of a fan always share the chord across
+  the point they pass through, and the "quad" they make has a corner at 160
+  degrees or flatter (or one at 20 degrees or sharper, which is the same failure
+  as a sliver). `quadCornersAreFaceLike()` refuses the pairing, so a fan stays
+  triangles.
+* **One flat panel is one face.** Whatever is left unpaired is grown into a
+  region across edges that do not fold (`coplanarWith`, the same 0.6 degree
+  display angle the wireframe uses), and the region's **outline** becomes the
+  face's ring. That is what turns an extruded cylinder cap back into the
+  thirty-two-gon it is, and what stops the cage from drawing the fan inside it.
+  A region whose outline is not one closed loop - a face with a hole, a pinched
+  corner - is not drawn as one face: a ring that is not a loop draws lines the
+  face does not have, so it falls back to one face per triangle.
+* A tool whose whole point is triangles says so: `fe_edit_poke` declares each
+  fan triangle with `beginToolFaceDeclarations` / `toolDeclareFaceRing`, in the
+  kernel's own vertex numbering, and the rebuild claims those rings before
+  anything is paired or merged. Without it the pass would fuse the poke back
+  into the polygon it cut up and the tool would look like nothing happened.
 
 The overlay draws the **face rings**, not the edge table: `fe_edit_face_start_ptr`
 and `fe_edit_face_ring_ptr` are the model's own boundary, so no interior edge can
