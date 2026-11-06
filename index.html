@@ -5751,6 +5751,134 @@ function withFaces(geometry, rings) {
   return geometry;
 }
 
+/* A triangle buffer cannot say "these two triangles are one quad", and the
+   editor's pairing has to guess it from the shape. That guess is exact on a
+   shape that has not been touched yet - which is precisely when a primitive is
+   built - and it stops being exact the moment a corner is dragged far enough
+   out that the quad's diagonal is no longer its longest edge. A cube with one
+   corner pulled out is then a heap of triangles, and the cage draws the
+   diagonal the user keeps finding in the middle of a face.
+
+   So the shape is read once, at the moment it is built, and the answer is
+   written down as face rings: from then on the face is a fact and no drag can
+   take it away. The rule is the editor's own (a quad's two triangles share
+   their longest side, the fold is under 60 degrees, and the quad has no corner
+   flatter than 160 or sharper than 5), applied here to the geometry as three
+   built it, whose faces are quads by construction.
+
+   `null` when the shape is not a quad mesh (a sphere's pole rows, a cone's
+   side): the caller then declares nothing and the editor pairs what it can. */
+function feQuadRings(geometry) {
+  const position = geometry && geometry.attributes && geometry.attributes.position;
+  const index = geometry && geometry.index;
+  if (!position || !index) return null;
+  const count = position.count;
+  /* Weld by position: three gives a box's corner four copies, one per side. */
+  const weld = new Int32Array(count);
+  const keyOf = (i) => position.getX(i) + ',' + position.getY(i) + ',' + position.getZ(i);
+  const seen = new Map();
+  const rep = [];
+  for (let i = 0; i < count; i++) {
+    const key = keyOf(i);
+    let id = seen.get(key);
+    if (id === undefined) { id = rep.length; seen.set(key, id); rep.push(i); }
+    weld[i] = id;
+  }
+  const triCount = Math.floor(index.count / 3);
+  const corners = new Uint32Array(triCount * 3);
+  for (let t = 0; t < triCount * 3; t++) corners[t] = weld[index.getX(t)];
+
+  const point = (id) => [position.getX(rep[id]), position.getY(rep[id]), position.getZ(rep[id])];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const len2 = (a) => dot(a, a);
+  const normalOf = (t) => {
+    const a = point(corners[t * 3]), b = point(corners[t * 3 + 1]), c = point(corners[t * 3 + 2]);
+    const n = [
+      (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]),
+      (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+      (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    ];
+    const length = Math.hypot(n[0], n[1], n[2]);
+    return length > 1e-12 ? [n[0] / length, n[1] / length, n[2] / length] : null;
+  };
+
+  const edges = new Map();
+  for (let t = 0; t < triCount; t++) {
+    for (let k = 0; k < 3; k++) {
+      const a = corners[t * 3 + k], b = corners[t * 3 + (k + 1) % 3];
+      const key = a < b ? a * 2097152 + b : b * 2097152 + a;
+      let list = edges.get(key);
+      if (!list) { list = []; edges.set(key, list); }
+      list.push(t);
+    }
+  }
+  const apexOf = (t, a, b) => {
+    for (let k = 0; k < 3; k++) {
+      const v = corners[t * 3 + k];
+      if (v !== a && v !== b) return v;
+    }
+    return -1;
+  };
+  const faceLike = (a, c, b, d) => {
+    const ring = [a, c, b, d];
+    for (let i = 0; i < 4; i++) {
+      const p = point(ring[(i + 3) % 4]), v = point(ring[i]), q = point(ring[(i + 1) % 4]);
+      const u = sub(p, v), w = sub(q, v);
+      const lu = Math.hypot(u[0], u[1], u[2]), lw = Math.hypot(w[0], w[1], w[2]);
+      if (lu < 1e-9 || lw < 1e-9) return false;
+      const cos = dot(u, w) / (lu * lw);
+      if (cos < -0.9397 || cos > 0.9962) return false;
+    }
+    return true;
+  };
+
+  const candidates = [];
+  for (const [key, list] of edges) {
+    if (list.length !== 2) continue;
+    const [t0, t1] = list;
+    const n0 = normalOf(t0), n1 = normalOf(t1);
+    if (!n0 || !n1 || dot(n0, n1) < 0.5) continue;
+    const a = Math.floor(key / 2097152), b = key % 2097152;
+    const pa = point(a), pb = point(b);
+    const diagonal = len2(sub(pa, pb));
+    if (!(diagonal > 1e-12)) continue;
+    let longest = true;
+    for (const t of [t0, t1]) {
+      for (let k = 0; k < 3; k++) {
+        const v = corners[t * 3 + k], w = corners[t * 3 + (k + 1) % 3];
+        if ((v === a && w === b) || (v === b && w === a)) continue;
+        if (len2(sub(point(v), point(w))) > diagonal * 1.02) { longest = false; break; }
+      }
+      if (!longest) break;
+    }
+    if (!longest) continue;
+    const c = apexOf(t0, a, b), d = apexOf(t1, a, b);
+    if (c < 0 || d < 0 || !faceLike(a, c, b, d)) continue;
+    candidates.push({ t0, t1, a, b, c, d, diagonal });
+  }
+  candidates.sort((x, y) => y.diagonal - x.diagonal);
+  const paired = new Uint8Array(triCount);
+  const rings = [];
+  for (const pair of candidates) {
+    if (paired[pair.t0] || paired[pair.t1]) continue;
+    paired[pair.t0] = 1;
+    paired[pair.t1] = 1;
+    rings.push([rep[pair.a], rep[pair.c], rep[pair.b], rep[pair.d]]);
+  }
+  /* Only a shape that came out as quads all the way through gets a table: half
+     a table would draw some faces and guess the rest. */
+  if (!rings.length || paired.some((value) => !value)) return null;
+  return rings;
+}
+
+/* A primitive whose shape is quads, with its faces written down as it is
+   built (see feQuadRings). */
+function withQuadFaces(geometry) {
+  const rings = feQuadRings(geometry);
+  return rings ? withFaces(geometry, rings) : geometry;
+}
+
 /* ---- The mesh library behind the Add 3D Element sheet --------------------
    Every primitive is listed once here: the sheet names it, this builds it, and
    `tests/primitives-quads.test.mjs` runs each one through the real edit kernel
@@ -5761,7 +5889,10 @@ function withFaces(geometry, rings) {
    on the grid instead of half sunk into it. `flat` turns a shape that is drawn
    in the XY plane (a plane, a grid, a ring) to lie on the ground. */
 const PRIMITIVE_MESHES = {
-  cube:     { label: 'Cube',      lift: 0.70, build: () => new THREE.BoxGeometry(1.4, 1.4, 1.4) },
+  /* The faces are written down as the shape is built: a box's six sides are
+     quads by definition, and a corner dragged out of shape must not turn them
+     back into triangles (see feQuadRings). */
+  cube:     { label: 'Cube',      lift: 0.70, build: () => withQuadFaces(new THREE.BoxGeometry(1.4, 1.4, 1.4)) },
   /* A UV sphere's two pole rows are triangles, and Blender's are too; declaring
      them keeps the pairing from turning each pair into a pie slice. three
      writes each pole quad with two coincident corners, so the triangles that
@@ -5798,12 +5929,12 @@ const PRIMITIVE_MESHES = {
       return withFaces(geometry, [...(geometry.userData.feFaces || []), ...(feFanRingsAroundY(geometry, 0.7) || [])]);
     }
   },
-  torus:    { label: 'Torus',     lift: 0.70, build: () => new THREE.TorusGeometry(0.7, 0.25, 16, 32) },
-  plane:    { label: 'Plane',     lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2) },
-  grid:     { label: 'Grid',      lift: 0.01, flat: true, build: () => new THREE.PlaneGeometry(2, 2, 8, 8) },
-  ring:     { label: 'Ring',      lift: 0.01, flat: true, build: () => new THREE.RingGeometry(0.5, 0.9, 48) },
+  torus:    { label: 'Torus',     lift: 0.70, build: () => withQuadFaces(new THREE.TorusGeometry(0.7, 0.25, 16, 32)) },
+  plane:    { label: 'Plane',     lift: 0.01, flat: true, build: () => withQuadFaces(new THREE.PlaneGeometry(2, 2)) },
+  grid:     { label: 'Grid',      lift: 0.01, flat: true, build: () => withQuadFaces(new THREE.PlaneGeometry(2, 2, 8, 8)) },
+  ring:     { label: 'Ring',      lift: 0.01, flat: true, build: () => withQuadFaces(new THREE.RingGeometry(0.5, 0.9, 48)) },
   quadsphere: { label: 'Quad Sphere', lift: 0.85, build: () => createQuadSphereGeometry(0.85, 12) },
-  knot:     { label: 'Knot',      lift: 0.78, build: () => new THREE.TorusKnotGeometry(0.6, 0.18, 96, 12) }
+  knot:     { label: 'Knot',      lift: 0.78, build: () => withQuadFaces(new THREE.TorusKnotGeometry(0.6, 0.18, 96, 12)) }
 };
 
 /* A sphere out of quads.

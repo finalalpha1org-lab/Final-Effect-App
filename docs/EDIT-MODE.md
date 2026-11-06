@@ -191,6 +191,17 @@ as a face of its own and the cage drew all of them. Two rules close that:
   anything is paired or merged. Without it the pass would fuse the poke back
   into the polygon it cut up and the tool would look like nothing happened.
 
+A primitive's faces are written down when the shape is built. The pairing below
+has to guess a quad from two triangles, and the guess is exact only while the
+shape has not been touched; drag a cube's corner out far enough and its diagonal
+is no longer the longest side of both halves, so the quad is nothing but
+triangles and the cage draws that diagonal. `feQuadRings()` reads the shape once,
+at the moment it is built - the same rule the kernel uses, applied to a shape
+that is quads by construction - and `withQuadFaces()` stores the answer as face
+rings. Every quad primitive (cube, plane, grid, ring, torus, knot) declares its
+faces that way; a sphere's pole rows and a cone's side are left to the pairing,
+which handles real folds correctly.
+
 A face also survives leaving the mode. The rows above are written onto the
 **cage** - the unsplit mesh the editor commits - and the cage is kept beside the
 object as `userData.feEditCage`, because `object.geometry` becomes a *display*

@@ -58,6 +58,8 @@ function loadPrimitives() {
     sourceOf(html, 'function feDropDegenerateTriangles('),
     sourceOf(html, 'function feFanRingsAroundY('),
     sourceOf(html, 'function withFaces('),
+    sourceOf(html, 'function feQuadRings('),
+    sourceOf(html, 'function withQuadFaces('),
     sourceOf(html, 'function createQuadSphereGeometry('),
     sourceOf(html, 'const PRIMITIVE_MESHES ='),
     'globalThis.PRIMITIVE_MESHES = PRIMITIVE_MESHES;',
@@ -400,6 +402,184 @@ test('the shell hands the declaration in and the table back out', () => {
     'the commit side keeps the cage the rings belong to');
   assert.match(bridge, /stashFaces\(geometry\)/, 'and writes them onto it');
   assert.ok(bridge.includes('feFaceVerts'), 'stamped, so a rewritten buffer invalidates it');
+});
+
+/* ---------------------------------------------------------------------------
+ * No line through the middle of a face
+ *
+ * This is the complaint in the user's own words: "the face is split down the
+ * middle, diagonally, into two pieces". A quad is two triangles in every buffer
+ * this app draws from, so there are exactly two ways that split can show, and
+ * both are measurable:
+ *
+ *   1. the cage draws the diagonal - an edge that is inside a face;
+ *   2. the two halves are shaded apart - their corners end up on different
+ *      render vertices, so the smooth half and the flat half meet along a line
+ *      the face does not have.
+ *
+ * The test checks both on every primitive, and again on a cube that has been
+ * dragged out of shape - the case in the screenshots.
+ * ------------------------------------------------------------------------- */
+
+const PACK = 2097152;
+const edgeKey = (a, b) => (a < b ? a * PACK + b : b * PACK + a);
+
+/* Reads the cage the kernel would draw and the render mesh it shades with. */
+function faceReport() {
+  const faceCount = KERNEL.fe_edit_face_count();
+  const ringCount = KERNEL.fe_edit_face_ring_count();
+  const starts = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_face_start_ptr(), faceCount + 1).slice();
+  const ring = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_face_ring_ptr(), ringCount).slice();
+  const rings = [];
+  const boundary = new Set();
+  for (let f = 0; f < faceCount; f++) {
+    const n = starts[f + 1] - starts[f];
+    const corners = Array.from(ring.subarray(starts[f], starts[f + 1]));
+    rings.push(corners);
+    for (let i = 0; i < n; i++) boundary.add(edgeKey(corners[i], corners[(i + 1) % n]));
+  }
+
+  const edgeCount = KERNEL.fe_edit_edge_count();
+  const ea = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_edge_ptr(), edgeCount).slice();
+  const eb = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_edge_b_ptr(), edgeCount).slice();
+  const ef0 = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_edge_face_ptr(), edgeCount).slice();
+  const shown = new Uint8Array(KERNEL.memory.buffer, KERNEL.fe_edit_edge_display_ptr(), edgeCount).slice();
+
+  KERNEL.fe_edit_build_render();
+  const vertexCount = KERNEL.fe_edit_render_vert_count();
+  const indexCount = KERNEL.fe_edit_render_idx_count();
+  const renderIndex = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_render_idx_ptr(), indexCount).slice();
+  const weld = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_render_weld_ptr(), vertexCount).slice();
+
+  /* For a triangle and a mesh vertex, the render slot that carries it. */
+  const slotOf = (triangle, vertex) => {
+    for (let k = 0; k < 3; k++) {
+      const slot = renderIndex[triangle * 3 + k];
+      if (weld[slot] === vertex) return slot;
+    }
+    return -1;
+  };
+
+  return { rings, boundary, ea, eb, ef0, shown, edgeCount, slotOf, vertexCount, faceCount };
+}
+
+/* Every line the cage draws has to be a line of some face. */
+function interiorLines() {
+  const report = faceReport();
+  const inside = [];
+  for (let e = 0; e < report.edgeCount; e++) {
+    if (!report.shown[e]) continue;
+    if (!report.boundary.has(edgeKey(report.ea[e], report.eb[e]))) {
+      inside.push([report.ea[e], report.eb[e]]);
+    }
+  }
+  return inside;
+}
+
+/* Every edge that is *inside* a face (the diagonal of a quad, the spokes of a
+   fan) has to be shaded across: the triangle on each side must reach the same
+   render vertex at both of its ends, or the two halves are shaded separately. */
+function splitInteriors() {
+  const report = faceReport();
+  const broken = [];
+  const other = new Uint32Array(KERNEL.memory.buffer, KERNEL.fe_edit_edge_ptr(), report.edgeCount).slice();
+  for (let e = 0; e < report.edgeCount; e++) {
+    const key = edgeKey(report.ea[e], report.eb[e]);
+    if (report.boundary.has(key)) continue;      /* a face boundary: a split is correct */
+    const f0 = report.ef0[e];
+    /* f1 is not exported on its own; the second triangle is found by asking
+       which other triangle has both endpoints. */
+    let f1 = -1;
+    for (let t = 0; t < report.edgeCount && f1 < 0; t++) void t;
+    for (let t = 0; t < KERNEL.fe_edit_tri_count() && f1 < 0; t++) {
+      if (t === f0) continue;
+      const s0 = report.slotOf(t, report.ea[e]);
+      const s1 = report.slotOf(t, report.eb[e]);
+      if (s0 >= 0 && s1 >= 0) f1 = t;
+    }
+    if (f1 < 0) continue;
+    const a0 = report.slotOf(f0, report.ea[e]);
+    const a1 = report.slotOf(f1, report.ea[e]);
+    const b0 = report.slotOf(f0, report.eb[e]);
+    const b1 = report.slotOf(f1, report.eb[e]);
+    if (a0 !== a1 || b0 !== b1) broken.push({ edge: [report.ea[e], report.eb[e]], f0, f1, a0, a1, b0, b1 });
+  }
+  void other;
+  return broken;
+}
+
+/* Uploads a geometry and declares its faces, the way the bridge does. */
+function uploadDeclared(geometry) {
+  const position = geometry.attributes.position;
+  const index = geometry.index ? geometry.index.array : null;
+  const vertexCount = position.count;
+  const triangles = new Uint32Array(index ? index.length : vertexCount);
+  if (index) triangles.set(index);
+  else for (let i = 0; i < vertexCount; i++) triangles[i] = i;
+  const triCount = triangles.length / 3;
+  const positionPtr = KERNEL.fe_malloc(vertexCount * 3 * 4);
+  const triPtr = KERNEL.fe_malloc(triCount * 3 * 4);
+  new Float32Array(KERNEL.memory.buffer, positionPtr, vertexCount * 3)
+    .set(position.array.subarray(0, vertexCount * 3));
+  new Uint32Array(KERNEL.memory.buffer, triPtr, triCount * 3).set(triangles);
+  assert.equal(KERNEL.fe_edit_upload(vertexCount, positionPtr, triCount, triPtr, 0, 0), 1);
+  const declared = declaredFaceArrays(geometry, vertexCount);
+  if (declared) {
+    const startsPtr = KERNEL.fe_malloc(declared.starts.length * 4);
+    const cornersPtr = KERNEL.fe_malloc(declared.corners.length * 4);
+    new Uint32Array(KERNEL.memory.buffer, startsPtr, declared.starts.length).set(declared.starts);
+    new Uint32Array(KERNEL.memory.buffer, cornersPtr, declared.corners.length).set(declared.corners);
+    KERNEL.fe_edit_set_faces(declared.count, startsPtr, cornersPtr);
+    KERNEL.fe_free(startsPtr);
+    KERNEL.fe_free(cornersPtr);
+  }
+  KERNEL.fe_free(positionPtr);
+  KERNEL.fe_free(triPtr);
+}
+
+test('no primitive draws a line through the middle of a face', () => {
+  for (const [name, spec] of Object.entries(PRIMITIVES)) {
+    const geometry = spec.build();
+    uploadDeclared(geometry);
+    assert.deepEqual(interiorLines(), [], `${name}: the cage drew a line inside a face`);
+    assert.deepEqual(splitInteriors(), [], `${name}: the two halves of a face were shaded apart`);
+    KERNEL.fe_edit_reset();
+  }
+});
+
+test('a cube dragged out of shape keeps its faces whole', () => {
+  const geometry = PRIMITIVES.cube.build();
+  const position = geometry.attributes.position;
+  /* One corner out by more than its own edge length: the faces around it are
+     no longer planar quads by any shape test. three gives a box's corner one
+     copy per side, and the editor's cage has one, so every copy moves - which
+     is what a drag in Edit Mode does. */
+  const corner = 6;
+  const home = [position.getX(corner), position.getY(corner), position.getZ(corner)];
+  for (let i = 0; i < position.count; i++) {
+    if (position.getX(i) !== home[0] || position.getY(i) !== home[1] || position.getZ(i) !== home[2]) continue;
+    position.setXYZ(i, home[0] + 1.9, home[1] + 1.2, home[2] + 1.4);
+  }
+  position.needsUpdate = true;
+  uploadDeclared(geometry);
+
+  const report = faceReport();
+  assert.equal(report.faceCount, 6, 'a drag must not cost the faces it bends');
+  assert.deepEqual(report.rings.map((ring) => ring.length), [4, 4, 4, 4, 4, 4], 'six quads');
+  assert.deepEqual(interiorLines(), [], 'the dragged cube grew a diagonal in its cage');
+  assert.deepEqual(splitInteriors(), [], 'the dragged cube shaded its two halves apart');
+
+  /* The Object Mode wireframe reads the same faces from the geometry. */
+  const window = { THREE };
+  window.window = window;
+  const context = vm.createContext({ window, THREE, Map, Set, Math, Number, Int32Array, Float32Array, Uint8Array, Object, Array });
+  vm.runInContext(readFileSync('fe-poly.js', 'utf8'), context);
+  const poly = window.FEPoly;
+  const faces = poly.faceList(geometry);
+  assert.equal(faces.faces.length, 6, 'Object Mode must see six faces too');
+  const wire = poly.buildWireGeometry(geometry);
+  assert.equal(wire.getAttribute('position').count / 2, 12, 'twelve lines: the cube edges, no diagonals');
+  KERNEL.fe_edit_reset();
 });
 
 test('a cap has no vertex in the middle of it', () => {
