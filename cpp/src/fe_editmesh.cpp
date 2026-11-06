@@ -575,7 +575,7 @@ bool quadCornersAreFaceLike(uint32_t a, uint32_t c, uint32_t b, uint32_t d) {
     if (lu < 1e-9f || lw < 1e-9f) return false;
     const float cosCorner = (ux * wx + uy * wy + uz * wz) / (lu * lw);
     if (cosCorner < -0.9397f) return false;    /* 160 degrees or flatter */
-    if (cosCorner > 0.9397f) return false;     /* 20 degrees or sharper */
+    if (cosCorner > 0.9962f) return false;     /* 5 degrees or sharper */
   }
   return true;
 }

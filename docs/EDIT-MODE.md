@@ -191,6 +191,19 @@ as a face of its own and the cage drew all of them. Two rules close that:
   anything is paired or merged. Without it the pass would fuse the poke back
   into the polygon it cut up and the tool would look like nothing happened.
 
+A face also survives leaving the mode. The rows above are written onto the
+**cage** - the unsplit mesh the editor commits - and the cage is kept beside the
+object as `userData.feEditCage`, because `object.geometry` becomes a *display*
+mesh whenever the shading had to be baked into split normals (any flat or mixed
+mesh). Before that cage was only kept when a modifier stack asked for it, so a
+flat mesh left the mode with its rings thrown away and the next session re-guessed
+its faces from a shape the user had already dragged - a bent quad stops passing
+any shape test, and it came back as two triangles with a diagonal across it. The
+rings are also translated onto the display mesh (by position, since the split
+pass only copies points), which is where the viewport's Object Mode wireframe
+reads them: without that, Wireframe shading inferred quads from the bent shape
+and drew the diagonal there instead.
+
 The overlay draws the **face rings**, not the edge table: `fe_edit_face_start_ptr`
 and `fe_edit_face_ring_ptr` are the model's own boundary, so no interior edge can
 be drawn even on a face that has been deformed. The edge table still answers

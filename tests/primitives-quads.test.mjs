@@ -392,10 +392,13 @@ test('the shell hands the declaration in and the table back out', () => {
   assert.ok(/function stashFaces\(/.test(bridge), 'the shell has the commit side');
   assert.ok(bridge.includes('fe_edit_face_start_ptr'), 'which reads the kernel table back');
   /* Onto the cage - the mesh whose vertex slots the rings are written in - not
-     onto a split display mesh, whose vertices are renumbered by the shading. */
-  assert.match(bridge, /const ringHost = target\.userData\.baseGeometry \|\| target\.geometry;/,
-    'the commit side picks the mesh the rings belong to');
-  assert.match(bridge, /stashFaces\(ringHost\)/, 'and writes them there');
+     onto a split display mesh, whose vertices are renumbered by the shading.
+     The cage is now kept beside the object on every commit (`feEditCage`),
+     because a flat mesh has no modifier stack to hold one for it, and without
+     the rings the next session re-guesses the faces from a bent shape. */
+  assert.match(bridge, /target\.userData\.feEditCage = geometry;/,
+    'the commit side keeps the cage the rings belong to');
+  assert.match(bridge, /stashFaces\(geometry\)/, 'and writes them onto it');
   assert.ok(bridge.includes('feFaceVerts'), 'stamped, so a rewritten buffer invalidates it');
 });
 

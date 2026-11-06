@@ -430,6 +430,101 @@ test('Shade Smooth and Shade Flat reach the material the viewport draws with', a
   EditMode.exit();
 });
 
+/* The one that made a cube look like a fan of triangles again: leaving Edit
+   Mode and coming back in.
+
+   A flat or mixed mesh leaves as a *split* display mesh - the shading has to be
+   baked into normals, because nothing downstream understands a flat face - so
+   `object.geometry` is no longer the cage. The face rings were only written
+   when the object's own geometry was the cage, so they were dropped, and the
+   next session re-derived the faces from a shape the user had already deformed.
+   A quad that has been dragged far enough stops passing any shape test, and it
+   came back as two triangles: the diagonal the user kept finding inside a face. */
+test('a deformed cube keeps its six faces when Edit Mode is left and entered again', async () => {
+  const EditMode = await loadBridge();
+  const { api, FE } = makeShell();
+  FE.current = 'core';
+  const select = makeModeSelect(api, FE);
+
+  const faceSizes = () => {
+    const count = exp.fe_edit_face_count();
+    const starts = new Uint32Array(exp.memory.buffer, exp.fe_edit_face_start_ptr(), count + 1).slice();
+    const sizes = [];
+    for (let f = 0; f < count; f++) sizes.push(starts[f + 1] - starts[f]);
+    return sizes.sort((a, b) => a - b);
+  };
+
+  select.value = 'edit';
+  select.onchange();
+  assert.equal(EditMode.isActive(), true, 'the bridge did not enter Edit Mode');
+  assert.equal(exp.fe_edit_vert_count(), 8, 'the cube never reached the kernel');
+  assert.deepEqual(faceSizes(), [4, 4, 4, 4, 4, 4], 'a cube is six quads');
+
+  /* Drag one corner far enough out that the geometry alone no longer reads the
+     faces as quads - this is the shape in the screenshots. */
+  exp.fe_edit_set_mode(0);
+  exp.fe_arena_reset();
+  const selection = exp.fe_malloc(4);
+  new Uint32Array(exp.memory.buffer, selection, 1)[0] = 6;
+  exp.fe_edit_select_by_index(0, 1, selection, 0);
+  exp.fe_arena_reset();
+  assert.equal(exp.fe_edit_move(-2, 0.9, 0.4, 0), 1, 'the corner did not move');
+  assert.deepEqual(faceSizes(), [4, 4, 4, 4, 4, 4], 'a drag must not cost the faces it bends');
+
+  EditMode.exit();
+  assert.equal(EditMode.isActive(), false);
+
+  /* What the object kept: the display mesh the viewport draws (the shading had
+     to be baked into split normals), carrying the faces in its own numbering.
+     Without them the Object Mode wireframe guesses quads from a bent shape and
+     draws the diagonal back. */
+  const committed = cube.geometry;
+  const rings = committed.userData.feFaces;
+  assert.ok(Array.isArray(rings) && rings.length === 6, 'the committed mesh lost the six faces');
+  for (const ring of rings) {
+    assert.equal(ring.length, 4, 'a cube has four corners per face');
+    for (const slot of ring) {
+      assert.ok(Number.isInteger(slot) && slot >= 0 && slot < committed.attributes.position.count,
+        'a ring must name a vertex the committed mesh has');
+    }
+  }
+
+  select.value = 'edit';
+  select.onchange();
+  assert.equal(EditMode.isActive(), true, 'the second entry failed');
+  assert.equal(exp.fe_edit_vert_count(), 8, 'the cage is what Edit Mode uploads, not the split display');
+  assert.deepEqual(
+    faceSizes(), [4, 4, 4, 4, 4, 4],
+    'the rings travel with the cage, so a bent quad comes back as one face'
+  );
+
+  /* And the two triangles of the bent quad are shaded as the one face they
+     are: same normal on both, which is the property the user reads as "no
+     triangle inside the face". */
+  exp.fe_edit_build_render();
+  const renderVerts = exp.fe_edit_render_vert_count();
+  const renderIndices = exp.fe_edit_render_idx_count();
+  const normals = new Float32Array(exp.memory.buffer, exp.fe_edit_render_nrm_ptr(), renderVerts * 3).slice();
+  const indices = new Uint32Array(exp.memory.buffer, exp.fe_edit_render_idx_ptr(), renderIndices).slice();
+  const normalOf = (triangle) => {
+    const at = indices[triangle * 3] * 3;
+    return [normals[at], normals[at + 1], normals[at + 2]];
+  };
+  const [ax, ay, az] = normalOf(0);
+  const [bx, by, bz] = normalOf(1);
+  assert.ok(
+    Math.abs(ax - bx) < 1e-5 && Math.abs(ay - by) < 1e-5 && Math.abs(az - bz) < 1e-5,
+    `the two halves of a face must carry one normal, got ${[ax, ay, az]} and ${[bx, by, bz]}`
+  );
+  /* A bent face cannot use the material's derivative normals - the shader
+     would derive one direction per triangle and draw the diagonal - so the
+     split mesh and the baked normals have to be what is on screen. */
+  assert.equal(exp.fe_edit_flat_planar(), 0, 'a bent face is not planar');
+  assert.equal(cube.material.flatShading, false, 'the material must not shade a bent face per triangle');
+
+  EditMode.exit();
+});
+
 test('a build without the Edit Mode module says so instead of doing nothing', () => {
   const { api, FE } = makeShell();
   globalThis.FEEditMode = undefined;

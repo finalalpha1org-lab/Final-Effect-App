@@ -250,8 +250,19 @@
        would go on rebuilding from a cage that no longer matches what was
        edited. Edit the cage the stack is built from, as Blender does; `enter`
        puts that cage on screen for the duration so the overlay lines up with
-       the surface under the finger. */
-    const cage = object.userData?.baseGeometry;
+       the surface under the finger.
+
+       `feEditCage` is the same idea for objects with no stack: it is the
+       unsplit mesh the editor last committed, kept beside the object because
+       `object.geometry` holds the *display* mesh whenever the shading had to
+       be baked into split normals (any flat or mixed mesh). That display mesh
+       has been renumbered and split, so the face rings stashed on it would
+       name the wrong triangles - and without rings the kernel has to re-guess
+       the faces from a shape the user has since deformed, which is how a quad
+       comes back as two triangles with a diagonal across it. */
+    const cage = (object.userData?.feEditCage && object.userData.feEditCage.attributes?.position)
+      ? object.userData.feEditCage
+      : object.userData?.baseGeometry;
     const geometry = (cage && cage.attributes?.position) ? cage : object.geometry;
     const position = geometry.attributes.position;
     const index = geometry.index;
@@ -579,6 +590,44 @@
     } catch (_) { /* the shell redraws from the shape if the table is missing */ }
   }
 
+  /* The rings, moved from the cage onto the split mesh the viewport draws.
+     Both describe the same points - the split pass copies a corner's position
+     once per smoothing group and never moves anything - so a ring translates
+     through a position lookup, and any copy of a point draws the same line.
+     Without this the Object Mode wireframe had no faces to draw for a flat or
+     mixed mesh (its rings lived on a cage the object no longer held), fell back
+     to inferring quads from the shape, and a face the user had dragged into a
+     bent quad grew its diagonal back in Wireframe shading. */
+  function transferFacesToDisplay(display, cage) {
+    const rings = cage?.userData?.feFaces;
+    const source = cage?.attributes?.position;
+    const target = display?.attributes?.position;
+    if (!Array.isArray(rings) || !rings.length || !source || !target) return;
+    if (cage.userData.feFaceVerts !== source.count) return;
+    const at = new Map();
+    for (let i = 0; i < target.count; i++) {
+      const key = `${target.array[i * 3]},${target.array[i * 3 + 1]},${target.array[i * 3 + 2]}`;
+      if (!at.has(key)) at.set(key, i);
+    }
+    const moved = [];
+    for (const ring of rings) {
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const out = [];
+      let ok = true;
+      for (const slot of ring) {
+        if (!(slot >= 0 && slot < source.count)) { ok = false; break; }
+        const key = `${source.array[slot * 3]},${source.array[slot * 3 + 1]},${source.array[slot * 3 + 2]}`;
+        const hit = at.get(key);
+        if (hit === undefined) { ok = false; break; }
+        out.push(hit);
+      }
+      if (ok && out.length >= 3) moved.push(out);
+    }
+    if (!moved.length) return;
+    display.userData.feFaces = moved;
+    display.userData.feFaceVerts = target.count;
+  }
+
   function commitToObject() {
     const exp = exportsOf();
     const target = state.target;
@@ -612,6 +661,18 @@
     }
     if (flags) geometry.userData.feFaceShading = flags;
 
+    /* The rings and the pairing are written onto the cage first: the display
+       mesh below takes a translated copy of them, and the next session uploads
+       this cage instead of re-deriving faces from the shape it finds. */
+    const previousCage = target.userData.feEditCage;
+    if (previousCage && previousCage !== geometry && previousCage !== target.geometry &&
+        previousCage !== target.userData.baseGeometry) {
+      previousCage.dispose?.();
+    }
+    target.userData.feEditCage = geometry;
+    stashQuadDiagonals(geometry);
+    stashFaces(geometry);
+
     /* Flat or mixed shading has to leave here as real geometry: everything
        downstream - the viewport's own material, the glTF exporter, whatever
        opens the file next - only understands normals, so a face marked flat is
@@ -639,6 +700,9 @@
         display.computeBoundingSphere();
         display.computeBoundingBox();
         if (flags) display.userData.feFaceShading = flags;
+        /* The same faces, in the display mesh's own numbering: the viewport's
+           Object Mode wireframe reads them from whatever geometry it is given. */
+        transferFacesToDisplay(display, geometry);
       }
     }
     /* The edited mesh becomes the cage the modifier stack is built from. Only
@@ -684,11 +748,14 @@
        renumbered, so copying them onto it would pair a face with the wrong
        corners; leaving them off lets the shell infer the rings from the
        positions instead - the split corners sit exactly where the cage's did. */
-    const ringHost = target.userData.baseGeometry || target.geometry;
-    if (ringHost === geometry) {
-      stashQuadDiagonals(ringHost);
-      stashFaces(ringHost);
-    }
+    /* The cage, kept beside the object even when no stack is listening: the
+       rings and the pairing are written on it, and it is the mesh the next
+       session uploads. Without this a flat mesh - the one case that commits a
+       split display mesh instead of the cage - lost both on the way out, and
+       coming back in re-derived its faces from the deformed shape underneath.
+       A quad that has been dragged far enough stops looking like a quad to any
+       shape test, so it came back as two triangles and the cage drew them. */
+
     if (typeof global.scheduleCoreHistory === 'function') global.scheduleCoreHistory({ target: target, type: 'change' });
   }
 
@@ -2303,7 +2370,8 @@
     /* The overlay draws the kernel mesh, so a deformed output left on screen
        would leave the wireframe floating away from the shape under the finger.
        The parked output is released on exit, after the stack is rebuilt. */
-    const cageToShow = object.userData?.baseGeometry;
+    const cageToShow = object.userData?.baseGeometry ||
+      (object.userData?.feEditCage && object.userData.feEditCage.attributes?.position ? object.userData.feEditCage : null);
     if (cageToShow?.attributes?.position && object.geometry !== cageToShow) {
       state.parkedGeometry = object.geometry;
       object.geometry = cageToShow;
