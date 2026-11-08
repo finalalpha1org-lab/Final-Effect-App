@@ -1246,7 +1246,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   position: fixed;
   top: auto;
   right: 0;
-  bottom: 0;
+  /* The Move / Rotate / Scale sheet used to sit flush on the bottom edge and
+     cover the model, the gizmo and the floor the object was being moved onto.
+     It is lifted by a thumb's width above the home indicator instead, small
+     enough that the sheet keeps its place, so what the finger is moving stays
+     in sight while the tool is open. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 42px);
   left: 0;
   z-index: 1000;
   display: flex;
@@ -1262,9 +1267,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   background: rgba(17, 20, 28, 0.98);
   backdrop-filter: blur(12px);
   border: 1px solid #34394d;
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55), 0 14px 34px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1296,7 +1300,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  /* The sheet no longer touches the bottom edge, so the home-indicator inset
+     belongs to the container above and not twice inside the body. */
+  padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1318,6 +1324,31 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   padding: 5px 8px;
   color: #edf1ff;
   font-size: 11px;
+}
+/* The per-axis rows put their number box beside the slider rather than inside
+   a .panel-field, so the rule above never reached it: iOS fell back to its own
+   white field and the value was pale-on-white on a dark sheet. Scoped to the
+   number boxes only - the slider beside it keeps its own .axis-slider look. */
+.panel-field-row input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  background: #202432;
+  border: 1px solid #353b50;
+  border-radius: 6px;
+  padding: 5px 4px;
+  color: #edf1ff;
+  -webkit-text-fill-color: #edf1ff;
+  font-size: 11px;
+  text-align: center;
+  opacity: 1;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.panel-field-row input[type="number"]::-webkit-inner-spin-button,
+.panel-field-row input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .panel-field-row {
   display: grid;
@@ -2127,6 +2158,9 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 }
 .sheet-grip:hover span,
 .sheet-grip:active span { background: #93a0b8; width: 54px; }
+/* The transform cards are not docked to an edge, so their handle sits above the
+   title bar and takes the header's colour rather than the sheet's. */
+.floating-panel > .sheet-grip { background: #1e2230; margin: 0 0 2px; }
 .sheet-dragging { cursor: grabbing; }
 .sheet-dragging .sheet-grip span { background: var(--ac, #6366f1); width: 54px; }
 .sheet-snap { transition: height .2s cubic-bezier(.22, .61, .36, 1); }
@@ -7051,7 +7085,12 @@ window.addEventListener('DOMContentLoaded', () => {
 (function installSheetGrips() {
   const SHEET_IDS = [
     'camera-sheet', 'light-sheet', 'add-3d-sheet',
-    'modifiers-sheet', 'animation-sheet', 'edit-sheet'
+    'modifiers-sheet', 'animation-sheet', 'edit-sheet',
+    /* The Move / Rotate / Scale sheets of the Edit sub-toolbar are the panels
+       the user is looking at the model through while moving it. They are short
+       cards with no way to grow, so a row of tools could sit over the very
+       object being placed; the same handle gives them a little more room. */
+    'panel-move', 'panel-rotate', 'panel-scale', 'panel-transform'
   ];
   const MAX_FRACTION = 0.92;
   /* Some panels are a strip of tools rather than a workspace: dragged open they
@@ -7059,6 +7098,12 @@ window.addEventListener('DOMContentLoaded', () => {
      panel at the bottom of Edit Mode has to do. Kept in step with the sheet's
      own max-height in the stylesheet. */
   const SHEET_CEILING = { 'edit-sheet': 0.34 };
+  /* The transform cards only need enough travel to lift their rows off the
+     model, so they are given a fixed headroom rather than a share of the
+     screen: "a little higher", not a full-screen sheet. */
+  const SHEET_HEADROOM = {
+    'panel-move': 150, 'panel-rotate': 150, 'panel-scale': 150, 'panel-transform': 190
+  };
   const naturals = new WeakMap();
   let drag = null;
 
@@ -7096,6 +7141,8 @@ window.addEventListener('DOMContentLoaded', () => {
   /* How tall this sheet is allowed to get. A capped sheet still has to open
      wider than it rests, or the handle would do nothing at all. */
   function ceilingFor(sheet, natural) {
+    const headroom = SHEET_HEADROOM[sheet.id];
+    if (headroom) return Math.min(tallHeight(), natural + headroom);
     const cap = SHEET_CEILING[sheet.id];
     if (!cap) return Math.max(tallHeight(), natural + 80);
     return Math.max(Math.round(viewHeight() * cap), natural);
@@ -8289,7 +8336,41 @@ FE.register('core',{
     grid.material.transparent = true;
     grid.material.opacity = 0.85;
     grid.material.depthWrite = false;
+    /* ---- Floor you can see through -------------------------------------
+       Seen from just above it, the far half of a 50 m grid compresses into a
+       band of lines a few pixels deep. That band is drawn in front of every
+       pixel below y = 0, so an object moved under the grid sank into a wall of
+       lines and read as gone - the model was still there, it was the floor
+       that had closed over it. Blender fades its grid with distance for this
+       reason; the same fade is applied in the grid's own shader, and the two
+       uniforms follow the camera every frame (see the viewport loop) so the
+       floor under the user stays solid while the far field dissolves. If the
+       shader anchors ever move in a three.js upgrade the patch is skipped and
+       the grid keeps its old look - a grid without a fade is still a grid. */
+    const gridFade = { start: { value: 22 }, end: { value: 36 } };
+    grid.material.userData.feGridFade = gridFade;
+    try {
+      const fadeVert = '#include <project_vertex>', fadeFrag = '#include <dithering_fragment>';
+      if (THREE.ShaderLib?.basic?.vertexShader?.includes(fadeVert) && THREE.ShaderLib?.basic?.fragmentShader?.includes(fadeFrag)) {
+        grid.material.onBeforeCompile = (shader) => {
+          shader.uniforms.feGridFadeStart = gridFade.start;
+          shader.uniforms.feGridFadeEnd = gridFade.end;
+          shader.vertexShader = 'varying float vFeGridDepth;\n' + shader.vertexShader.replace(
+            fadeVert,
+            fadeVert + '\n\tvFeGridDepth = - mvPosition.z;'
+          );
+          shader.fragmentShader =
+            'uniform float feGridFadeStart;\nuniform float feGridFadeEnd;\nvarying float vFeGridDepth;\n' +
+            shader.fragmentShader.replace(
+              fadeFrag,
+              fadeFrag + '\n\tgl_FragColor.a *= 1.0 - smoothstep( feGridFadeStart, feGridFadeEnd, vFeGridDepth );'
+            );
+        };
+        grid.material.needsUpdate = true;
+      }
+    } catch (_) { /* leave the plain grid in place */ }
     grid.visible = GLOBAL_SETTINGS.grid;
+    this.grid = grid;
 
     const cursor3d = createBlender3DCursorObject();
     sc.add(grid, cursor3d, amb, hemiLight, d, fillLight);
@@ -8888,6 +8969,18 @@ FE.register('core',{
       }
 
       const activeCam = isCameraView ? this.sceneCamera : this.viewportCamera;
+      /* Grid fade follows the camera (see where the grid is built): the floor
+         stays solid underfoot and dissolves before its far edge can pile up
+         into a wall of lines in front of anything below y = 0. */
+      const gridFade = this.grid?.material?.userData?.feGridFade;
+      if (gridFade && activeCam) {
+        const camDist = Math.hypot(activeCam.position.x, activeCam.position.y, activeCam.position.z);
+        const fadeStart = Math.max(10, camDist + 8);
+        if (gridFade.start.value !== fadeStart) {
+          gridFade.start.value = fadeStart;
+          gridFade.end.value = fadeStart + 16;
+        }
+      }
       const renderStart=performance.now();
       /* Temporal AA: jittered scene pass + reprojected history. Created lazily
          and always guarded - any failure falls back to a direct render. */
