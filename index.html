@@ -1287,6 +1287,27 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   font-weight: 600;
   font-size: 12px;
 }
+/* Which axis the gizmo is locked to, in the title bar. The restriction is a
+   property of the gizmo, and a user who cannot see it anywhere but in a select
+   that may be scrolled out of a short sheet reads the locked axes as broken
+   ones. Tap = back to all axes. */
+.panel-axis-chip {
+  margin-left: auto;
+  margin-right: 10px;
+  flex: none;
+  background: #2a2110;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 999px;
+  color: #fcd34d;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  padding: 3px 9px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.panel-axis-chip[hidden] { display: none; }
+.panel-axis-chip:active { background: #3a2d14; }
 .panel-close {
   background: none;
   border: none;
@@ -3520,6 +3541,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-move" style="display:none;">
           <div class="panel-header">
             <span>✋ Move Axis Tool</span>
+            <button class="panel-axis-chip" type="button" id="move-axis-chip" hidden onclick="releaseAxisRestriction('move')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('move')">✕</button>
           </div>
           <div class="panel-body">
@@ -3546,6 +3568,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-rotate" style="display:none;">
           <div class="panel-header">
             <span>🔄 Rotate Axis Tool</span>
+            <button class="panel-axis-chip" type="button" id="rotate-axis-chip" hidden onclick="releaseAxisRestriction('rotate')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('rotate')">✕</button>
           </div>
           <div class="panel-body">
@@ -3572,6 +3595,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-scale" style="display:none;">
           <div class="panel-header">
             <span>🔍 Scale Tool</span>
+            <button class="panel-axis-chip" type="button" id="scale-axis-chip" hidden onclick="releaseAxisRestriction('scale')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('scale')">✕</button>
           </div>
           <div class="panel-body">
@@ -6291,42 +6315,60 @@ function closeAllFloatingPanels() {
 }
 window.closeAllFloatingPanels = closeAllFloatingPanels;
 
+/* The axis restriction is a property of the GIZMO, not of the numbers.
+ *
+ * It used to disable the other two rows outright - slider, number box and key
+ * button - so picking "X Axis Only" left a panel where Y and Z could not move
+ * the object at all, and the select that caused it scrolls out of a short
+ * sheet. That is what "some axes won't move it" was. Blender draws the same
+ * line in the same place: an axis constraint applies to the interactive grab
+ * (here, the gizmo handles), while the numeric fields stay absolute and keep
+ * working on every axis.
+ *
+ * So the rows are never disabled. The locked state is shown where it cannot be
+ * missed - a chip in the panel's own title bar - and the chip unlocks the
+ * gizmo with one tap. `releaseAxisRestriction` is the other half of that. */
 function updateAxisRestrictionUI(type, value) {
   const panel = getPanel(type);
   if (!panel) return;
-  const inputX = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-x');
-  const inputY = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-y');
-  const inputZ = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-z');
+  const prefix = type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move';
+  const locked = value === 'x' || value === 'y' || value === 'z' ? value : 'all';
 
-  const showX = (value === 'all' || value === 'x');
-  const showY = (value === 'all' || value === 'y');
-  const showZ = (value === 'all' || value === 'z');
+  /* Whatever an earlier build (or a restored session) left behind, the rows of
+     this panel are usable right now. */
+  const rows = panel.querySelectorAll('.panel-field-row');
+  if (rows && rows.forEach) {
+    rows.forEach(row => {
+      if (!row || !row.querySelectorAll) return;
+      row.style.opacity = '';
+      row.querySelectorAll('input, button').forEach(el => { el.disabled = false; });
+    });
+  }
+  ['x', 'y', 'z'].forEach(axis => {
+    const box = panel.querySelector('#num-' + prefix + '-' + axis);
+    if (box) box.disabled = false;
+  });
 
-  if (inputX) {
-    inputX.disabled = !showX;
-    const row = inputX.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showX ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showX; });
-    }
+  const chip = panel.querySelector('.panel-axis-chip');
+  if (chip) {
+    chip.hidden = locked === 'all';
+    chip.textContent = locked === 'all' ? '' : locked.toUpperCase() + ' axis';
+    chip.setAttribute('aria-label', locked === 'all'
+      ? 'Gizmo unlocked'
+      : 'Gizmo locked to the ' + locked.toUpperCase() + ' axis - tap for all axes');
   }
-  if (inputY) {
-    inputY.disabled = !showY;
-    const row = inputY.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showY ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showY; });
-    }
-  }
-  if (inputZ) {
-    inputZ.disabled = !showZ;
-    const row = inputZ.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showZ ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showZ; });
-    }
-  }
+  panel.dataset.gizmoAxis = locked;
 }
+
+/* One tap on the chip: the gizmo gets its three axes back, the select follows,
+   and the panel stays open. */
+function releaseAxisRestriction(type) {
+  const id = '#' + type + '-axis-select';
+  const select = getScreenElement(id) || getPanel(type)?.querySelector(id);
+  if (select) select.value = 'all';
+  updateAxisRestriction(type, 'all');
+}
+window.releaseAxisRestriction = releaseAxisRestriction;
 
 function updateAxisRestriction(type, value) {
   const eng = FE.engines?.core;
@@ -6818,13 +6860,42 @@ function keyAxisGroup(kind) {
 window.keyAxisGroup = keyAxisGroup;
 
 /* Keep the sliders on the object's real transform, the same way the number
-   boxes are kept, and never fight the control the finger is on. */
+   boxes are kept, and never fight the control the finger is on.
+   A slider's range is a working range, not a limit on the object. The Move
+   sliders run over +-20 m and the Scale sliders over 0.05-5x; a model that is
+   already further out than that (typed in, animated, or imported) pins the
+   thumb against the end of the track, and the next drag on that axis snaps the
+   object back to the limit instead of moving it - which reads as "this axis
+   does not work". So the track widens to hold the object's real value, and
+   goes back to the range the markup declares once the object returns to it. */
+const feSliderRanges = new WeakMap();
+function feSliderFitValue(el, value) {
+  let design = feSliderRanges.get(el);
+  if (!design) {
+    design = { min: parseFloat(el.min), max: parseFloat(el.max) };
+    if (!isFinite(design.min)) design.min = 0;
+    if (!isFinite(design.max)) design.max = 1;
+    feSliderRanges.set(el, design);
+  }
+  const step = parseFloat(el.step) || 0.1;
+  const pad = Math.max((design.max - design.min) * 0.1, Math.abs(value) * 0.1, step * 10);
+  const round = (n) => Math.round(n / step) * step;
+  const lowFloor = design.min < 0 ? -Infinity : Math.max(0.01, Number.MIN_VALUE);
+  let min = design.min, max = design.max;
+  if (value < design.min) min = Math.max(lowFloor, round(value - pad));
+  if (value > design.max) max = round(value + pad);
+  if (el.min !== String(min)) el.min = String(min);
+  if (el.max !== String(max)) el.max = String(max);
+}
+
 function syncAxisSliders(name) {
   const target = getActiveObjectMesh();
   if (!target) return;
   const set = (id, value) => {
     const el = document.getElementById(id);
-    if (el && document.activeElement !== el && isFinite(value)) el.value = String(value);
+    if (!el || document.activeElement === el || !isFinite(value)) return;
+    feSliderFitValue(el, value);
+    el.value = String(value);
   };
   if (name === 'move') {
     set('slider-move-x', target.position.x);

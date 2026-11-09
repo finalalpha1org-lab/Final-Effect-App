@@ -522,9 +522,10 @@ Asked for in the Edit tool's panels — the Object Tools bar opened by `Edit` /
     and never fights the control the finger is on;
   - ranges: move −20…20 (0.1), rotate −180…180 (1°), scale 0.05…5 (0.05); the
     number boxes stay unbounded, so an out-of-range value still types in;
-  - the Scale panel gets a slider for `Uniform:` as well, and
-    `updateAxisRestrictionUI()` now greys out *and* disables the whole row
-    (slider, box, key button), not only the number box;
+  - the Scale panel gets a slider for `Uniform:` as well. (This entry first
+    greyed out *and* disabled every row the axis restriction excluded; see
+    "Local fix: the axis restriction belongs to the gizmo" below for why that
+    had to go.);
   - `◆` on a row keys **one channel**: location X/Y/Z = channels 0/1/2,
     rotation 3/4/5, scale 6/7/8 — so one axis animates while the other two keep
     their values at other frames (Blender/Maya style). `◆ Key X·Y·Z` at the
@@ -540,6 +541,38 @@ Asked for in the Edit tool's panels — the Object Tools bar opened by `Edit` /
 
 The root copies of both files stay upstream-pure: the deployment reads `public/`
 (the build's `hasPublicDir` branch).
+
+## Local fix: the axis restriction belongs to the gizmo, not to the numbers
+
+Reported as "when I move the object, some axes cannot move it". Two causes, both
+in the Move / Rotate / Scale panels:
+
+1. **A restriction disabled two thirds of the panel.** `updateAxisRestrictionUI()`
+   set `disabled` on the slider, the number box and the ◆ button of every row the
+   restriction excluded. Picking "X Axis Only" therefore left a panel where Y and
+   Z could not move the object at all — and the `<select>` that caused it is the
+   first row of a sheet that scrolls, so on a phone it is often out of sight. The
+   restriction now drives the gizmo only (`showX/showY/showZ`, which already
+   hid the handles) exactly as Blender's axis constraint applies to the
+   interactive grab and not to the numeric fields: the rows stay live. A chip in
+   the panel's title bar names the locked axis and unlocks it in one tap
+   (`releaseAxisRestriction()`), so the state cannot be hidden behind a scrolled
+   select again.
+
+2. **A slider pinned an object that was outside its range.** The Move sliders run
+   over ±20 m and the Scale sliders over 0.05–5×. An object typed, animated or
+   imported past those limits sat at the end of the track, and the next drag on
+   that axis snapped it back to the limit instead of moving it. `feSliderFitValue()`
+   widens the track to hold the object's real value and returns to the range the
+   markup declares once the object is back inside it; `syncAxisSliders()` still
+   never writes to the control the finger is holding.
+
+Tests: `tests/axis-controls.test.mjs` runs the shipped functions against a DOM
+stub — every axis is driven through every restriction for all three panels, an
+out-of-range object is placed on its slider, and the gizmo lock itself is still
+checked. The other half was measured outside the suite against the vendored
+`TransformControls` with a real camera: each of X, Y and Z is grabbable, moves the
+object along its own axis, and a handle hidden with `showX/Y/Z` is not pickable.
 
 ## Pulling the next revision (the GitHub channel)
 
