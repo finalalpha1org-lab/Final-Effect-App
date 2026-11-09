@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 260 887 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 379 615 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:
@@ -114,7 +114,7 @@ A depth-first walk of the include graph from the bevel alone had already reached
 `malloc`, `printf` or `std::`. That is not "copy a function". It is: bring a
 malloc, a threading layer and Blender's own data model into the wasm, compile a
 large part of BMesh and BLI with it, and carry the result on a phone - against a
-suite that today boots in 53 MiB with 0 imports and a 1.26 MB artifact.
+suite that today boots in 53 MiB with 0 imports and a 1.38 MB artifact.
 
 The same holds for the other tempting pieces: the Exact boolean solver is built
 on GMP and MPFR (both need a real allocator and 64-bit arithmetic), EEVEE wants
