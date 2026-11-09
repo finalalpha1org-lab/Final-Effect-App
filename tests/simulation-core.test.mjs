@@ -78,3 +78,61 @@ test('deformables use stable fixed substeps, rotated-world gravity, floor contac
   assert.match(source,/number\(params, 'Volume Preservation', 0\.85\)/);
   assert.match(source,/number\(params, 'Bending Resistance', 0\.5\)/);
 });
+
+test('a liquid domain binds the FLIP grid the engine ships and steps it instead of PBF',()=>{
+  const wasmBytes=readFileSync(appPath('wasm/fe_core_engine.wasm'));
+  const exp=new WebAssembly.Instance(new WebAssembly.Module(wasmBytes),{}).exports;
+  const arena={
+    f32:(ptr,len)=>new Float32Array(exp.memory.buffer,ptr,len),
+    u8:(ptr,len)=>new Uint8Array(exp.memory.buffer,ptr,len),
+    writeF32:(ptr,data)=>new Float32Array(exp.memory.buffer,ptr,data.length).set(data)
+  };
+  const engine=makeEngine();
+  engine.wasm=exp;engine.arena=arena;engine.isCppBackend=true;engine.flipOwner=null;
+  const boundsPtr=exp.fe_malloc(24);
+  /* A 2 x 2 x 1 box, the shape of a default liquid domain. */
+  const box=[-1,0,-0.5,1,2,0.5];
+  arena.writeF32(boundsPtr,new Float32Array(box));
+  const record={useFlip:true,boundsPtr,flipCellTarget:0.08,flipGridKey:''};
+
+  assert.equal(engine.bindFlipGrid(record),true,'the grid binds');
+  assert.ok(record.flipResolution>=8&&record.flipResolution<=48,'the grid is inside the solver cap');
+  assert.equal(record.flipResolution,Math.round(2/0.08),'the cell target sets the resolution from the longest axis');
+  assert.ok(Math.abs(record.flipCellSize-0.08)<0.006,'the cell lands on the particle spacing');
+  assert.equal(exp.fe_flip_grid_nx(),record.flipResolution);
+  assert.equal(exp.fe_flip_grid_nz(),Math.round(1/record.flipCellSize),'the short axis takes the same cell size');
+  assert.equal(exp.fe_flip_cell_count(),exp.fe_flip_grid_nx()*exp.fe_flip_grid_ny()*exp.fe_flip_grid_nz());
+  assert.equal(engine.flipOwner,record,'the bound domain owns the grid');
+
+  /* Binding twice is free; binding a different box re-inits. */
+  assert.equal(engine.bindFlipGrid(record),true);
+  const other=exp.fe_malloc(24);
+  arena.writeF32(other,new Float32Array([-2,0,-2,2,4,2]));
+  const second={useFlip:true,boundsPtr:other,flipCellTarget:0.16,flipGridKey:''};
+  assert.equal(engine.bindFlipGrid(second),true);
+  assert.equal(engine.flipOwner,second);
+  assert.equal(record.useFlip,true);
+  assert.equal(typeof exp.fe_flip_step,'function','the step kernel the domain calls exists');
+});
+
+test('liquid presets map onto a FLIP ratio and a viscosity',()=>{
+  const engine=makeEngine();
+  const water=engine.liquidPresetPhysics('Water');
+  const honey=engine.liquidPresetPhysics('Honey');
+  const oil=engine.liquidPresetPhysics('Oil');
+  assert.ok(water.ratio>honey.ratio,'water keeps more of the particle velocity than honey');
+  assert.ok(honey.viscosity>oil.viscosity&&oil.viscosity>water.viscosity,'honey is the thickest');
+  for (const p of [water,honey,oil,engine.liquidPresetPhysics('Slime')]) {
+    assert.ok(p.ratio>=0&&p.ratio<=1);
+    assert.ok(p.viscosity>=0);
+  }
+});
+
+test('the fluid step prefers FLIP for a liquid domain and keeps PBF as the fallback',()=>{
+  assert.match(source,/record\.kind === 'sph' && record\.useFlip && this\.bindFlipGrid\(record\)/);
+  assert.match(source,/this\.wasm\.fe_flip_step\(/);
+  assert.match(source,/record\.flowBehavior === 'Outflow' \? 1 : 0,\s*\n\s*record\.flipMetricsPtr/);
+  assert.match(source,/record\.useFlip = flipReady && count <= 65536/);
+  assert.match(source,/const FLIP_MAX_PARTICLES = 16384;/,'the FLIP lattice budget is stated, not implied');
+  assert.ok(source.indexOf('fe_flip_step(')<source.indexOf('fe_sim_liquid_pbf_step(\n'),'FLIP is tried before the PBF path');
+});
