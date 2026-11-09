@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import fs from 'node:fs';
 
 /* The licence is a decision, not a comment. It was changed from CC0-1.0 to
    GPL-3.0-or-later on 2026-10-24 so the project can use GPL components from
@@ -54,4 +55,56 @@ test('files this project wrote carry an SPDX line where it matters', () => {
   for (const file of ['render-capture.js', 'render-preview.js']) {
     assert.match(readFileSync(file, 'utf8').slice(0, 80), /SPDX-License-Identifier: GPL-3\.0-or-later/);
   }
+});
+
+/* ---------------------------------------------------------------- pasted code --
+   The licence changed so GPL components *can* be taken from the Blender tree.
+   That permission is only safe while it is honest: a copied file keeps its
+   original copyright header, and the same commit records it in NOTICE. These
+   checks keep the door open without letting code walk through it unrecorded. */
+
+function sourceFiles(dir, extensions) {
+  const { readdirSync } = fs;
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...sourceFiles(path, extensions));
+    else if (extensions.some((extension) => entry.name.endsWith(extension))) out.push(path);
+  }
+  return out;
+}
+
+test('a file that came from the Blender tree is credited in NOTICE', () => {
+  const candidates = [
+    ...sourceFiles('cpp', ['.cpp', '.hpp', '.c', '.h']),
+    ...sourceFiles('src', ['.mjs', '.js']),
+    ...fs.readdirSync('.').filter((name) => name.endsWith('.js')).map((name) => `./${name}`)
+  ];
+  const copied = [];
+  for (const file of candidates) {
+    const head = readFileSync(file, 'utf8').slice(0, 1200);
+    const fromBlender = /Blender Foundation/.test(head) ||
+      /SPDX-License-Identifier:.*GPL-2\.0/.test(head);
+    if (fromBlender) copied.push(file);
+  }
+  /* Nothing is copied today. If that changes, the file has to be named in the
+     NOTICE section that exists for exactly this. */
+  for (const file of copied) {
+    assert.ok(
+      notice.includes(file.replace(/^\.\//, '')),
+      `${file} carries a Blender copyright header but is not listed under "Copied Blender source" in NOTICE`
+    );
+  }
+});
+
+test('the licensing document keeps the measured cost of pasting a Blender file', () => {
+  /* The decision "reference, not paste" is only defensible while the numbers
+     behind it are written down and still true of our build. */
+  assert.match(doc, /bmesh_bevel\.cc/, 'the bevel is the worked example');
+  assert.match(doc, /8 485 lines/, 'with its measured size');
+  assert.match(doc, /nostdlib/, 'and the reason it cannot simply be compiled in');
+  assert.match(doc, /0 imports/, 'the freestanding contract is stated');
+  const artifact = statSync('wasm/fe_core_engine.wasm').size;
+  assert.ok(doc.includes(`${artifact}`) || doc.includes(artifact.toLocaleString('en-US').replace(/,/g, ' ')),
+    `the document must quote the shipped artifact size (${artifact} bytes)`);
 });
