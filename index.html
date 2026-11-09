@@ -10382,134 +10382,19 @@ function feWireframeKeepsTriangleWireframe(mesh) {
 
 /* The wireframe of one mesh, with the diagonal of every quad left out.
 
-   Edit Mode hides a quad's diagonal by *topology* (buildQuadGroups() in
-   cpp/src/fe_editmesh.cpp) because an angle is the one thing a deformation
-   changes: bend a quad by ten degrees and an angle rule calls its diagonal a
-   crease, which is why wireframe mode grew triangles across faces the moment
-   the mesh was edited. The object-mode overlay has to agree with what Edit Mode
-   draws, so it pairs triangles the same way - the shared edge is a diagonal
-   when it is the longest side of both triangles and the two triangles fold by
-   less than 45 degrees - and keeps the old coplanar rule for everything else. */
+   The faces come from the engine (`fe_poly_build`, cpp/src/fe_poly.cpp) - the
+   same measurement Edit Mode's cage is built from (buildQuadGroups in
+   cpp/src/fe_editmesh.cpp). This function used to carry a second, JavaScript
+   measurement of the same law as a fallback, and two measurements of one law
+   drift: a quad that had been bent stopped looking like a quad to one of them
+   and grew a diagonal down the middle of the face, which is exactly the bug the
+   face law exists to prevent. So there is one measurement now, and a mesh the
+   engine declines (over its triangle budget, or with no engine at all) falls
+   through to three.js' own angle-based EdgesGeometry at the call site - a coarser
+   answer, but not a second definition of the law. */
 function feBuildQuadWireGeometry(geometry) {
-  /* The polygon model answers first: it holds the mesh's actual faces (quads and
-     n-gons), so the lines it draws are the model's own edges and nothing else -
-     no diagonal down the middle of a face, whether the geometry is indexed or
-     not. The table below is the older measurement of the same thing and stays as
-     a fallback for shapes the face builder declines (over its triangle budget). */
-  if (window.FEPoly && typeof window.FEPoly.buildWireGeometry === 'function') {
-    try {
-      const fromFaces = window.FEPoly.buildWireGeometry(geometry);
-      if (fromFaces) return fromFaces;
-    } catch (_) { /* fall through to the edge table */ }
-  }
-  const position = geometry?.attributes?.position;
-  if (!position) return null;
-  const index = geometry.index;
-  const triCount = index ? Math.floor(index.count / 3) : Math.floor(position.count / 3);
-  if (triCount < 1 || triCount > 60000) return null;     /* a phone does not need this for a sculpture */
-  const positions = position.array;
-  const indices = index ? index.array : null;
-  const corner = (t, k) => (indices ? indices[t * 3 + k] : t * 3 + k);
-
-  /* A mesh can be non-indexed - a Boolean or modifier result, a decimated model,
-     most glTF exports: every triangle carries its own three vertices, so two
-     triangles that share an edge share a *position* but not an index. Keyed by
-     index, no edge is ever found shared, no pair is ever called coplanar, and
-     the whole triangulation gets drawn - the diagonal down the middle of a flat
-     face the user pointed at, a line that is not an edge of the model at all.
-     Canonical ids by position fix that for the table below only: indexed meshes
-     keep their indices, non-indexed ones are welded by position. */
-  let canon = null;
-  let rep = null;
-  if (!indices) {
-    canon = new Int32Array(position.count);
-    const first = [];
-    const seen = new Map();
-    for (let i = 0; i < position.count; i++) {
-      const key = positions[i * 3].toFixed(4) + ',' + positions[i * 3 + 1].toFixed(4) + ',' + positions[i * 3 + 2].toFixed(4);
-      let id = seen.get(key);
-      if (id === undefined) { id = first.length; first.push(i); seen.set(key, id); }
-      canon[i] = id;
-    }
-    rep = Int32Array.from(first);
-  }
-  const cid = (i) => (canon ? canon[i] : i);
-  const slot = (id) => (rep ? rep[id] : id);
-
-  const normals = new Float32Array(triCount * 3);
-  for (let t = 0; t < triCount; t++) {
-    const a = corner(t, 0), b = corner(t, 1), c = corner(t, 2);
-    const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
-    const ux = positions[b * 3] - ax, uy = positions[b * 3 + 1] - ay, uz = positions[b * 3 + 2] - az;
-    const vx = positions[c * 3] - ax, vy = positions[c * 3 + 1] - ay, vz = positions[c * 3 + 2] - az;
-    normals[t * 3] = uy * vz - uz * vy;
-    normals[t * 3 + 1] = uz * vx - ux * vz;
-    normals[t * 3 + 2] = ux * vy - uy * vx;
-  }
-  const length2 = (i, j) => {
-    const dx = positions[i * 3] - positions[j * 3];
-    const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
-    const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
-    return dx * dx + dy * dy + dz * dz;
-  };
-
-  /* edge key: vertex indices are well under 2^21, so this stays exact. */
-  const edges = new Map();
-  for (let t = 0; t < triCount; t++) {
-    for (let k = 0; k < 3; k++) {
-      const a = cid(corner(t, k)), b = cid(corner(t, (k + 1) % 3));
-      const lo = a < b ? a : b, hi = a < b ? b : a;
-      const key = lo * 2097152 + hi;
-      let record = edges.get(key);
-      if (!record) { record = { a: lo, b: hi, t0: t, t1: -1 }; edges.set(key, record); }
-      else if (record.t1 === -1 && record.t0 !== t) record.t1 = t;
-      else if (record.t0 !== t && record.t1 !== t) record.t1 = -2;   /* non-manifold: keep it */
-    }
-  }
-
-  /* Which edges are internal structure. Two sources, both measured rather than
-     guessed:
-       1. the quad pairing the kernel made from this mesh when it first had it,
-          handed over in `userData` (see edit-mode.js, stashQuadDiagonals);
-       2. the edges two faces share that are within FE_WIREFRAME_EDGE_ANGLE of
-          each other, i.e. the flat interior of a surface.
-     Deriving quads from the *current* shape - the longest side of both
-     triangles - was the wrong trade twice over: a quad that has been bent stops
-     looking like a quad and grew a triangle down the middle of the face again,
-     while a sphere's own adjacent triangles look exactly like quads, so its
-     wireframe lost a third of its edges. The pairing is trusted only where it
-     was measured. */
-  function keyOf(a, b) { return a < b ? a * 2097152 + b : b * 2097152 + a; }
-  const hidden = new Set();
-  const stash = geometry.userData?.feQuadDiagonals;
-  if (Array.isArray(stash) && stash.length && geometry.userData?.feQuadDiagonalVerts === position.count) {
-    for (let i = 0; i + 1 < stash.length; i += 2) {
-      const ra = stash[i], rb = stash[i + 1];
-      if (ra >= position.count || rb >= position.count) continue;
-      const a = cid(ra), b = cid(rb);
-      hidden.add(keyOf(a, b));
-    }
-  }
-
-  const cosFlat = Math.cos((FE_WIREFRAME_EDGE_ANGLE * Math.PI) / 180);
-  const out = [];
-  edges.forEach(record => {
-    const { a, b, t0, t1 } = record;
-    if (hidden.has(keyOf(a, b))) return;
-    if (t1 >= 0) {
-      const dot = normals[t0 * 3] * normals[t1 * 3] + normals[t0 * 3 + 1] * normals[t1 * 3 + 1] + normals[t0 * 3 + 2] * normals[t1 * 3 + 2];
-      const l0 = normals[t0 * 3] ** 2 + normals[t0 * 3 + 1] ** 2 + normals[t0 * 3 + 2] ** 2;
-      const l1 = normals[t1 * 3] ** 2 + normals[t1 * 3 + 1] ** 2 + normals[t1 * 3 + 2] ** 2;
-      const length0 = Math.sqrt(length2(slot(a), slot(b)));
-      if (length0 <= 1e-7) return;
-      if (l0 > 0 && l1 > 0 && dot / Math.sqrt(l0 * l1) >= cosFlat) return;   /* coplanar: internal structure */
-    }
-    out.push(positions[slot(a) * 3], positions[slot(a) * 3 + 1], positions[slot(a) * 3 + 2], positions[slot(b) * 3], positions[slot(b) * 3 + 1], positions[slot(b) * 3 + 2]);
-  });
-  if (!out.length) return null;
-  const built = new THREE.BufferGeometry();
-  built.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  return built;
+  if (!window.FEPoly || typeof window.FEPoly.buildWireGeometry !== 'function') return null;
+  try { return window.FEPoly.buildWireGeometry(geometry) || null; } catch (_) { return null; }
 }
 
 function feSyncWireframeOverlay(mesh, record) {

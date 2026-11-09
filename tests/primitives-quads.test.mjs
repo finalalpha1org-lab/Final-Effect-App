@@ -154,12 +154,15 @@ function declaredFaceArrays(geometry, vertCount) {
   return { count: rings.length, starts, corners };
 }
 
+/* fe-poly asks the engine for the face list (cpp/src/fe_poly.cpp), so the module
+   is loaded with the shipped artifact behind it, the way the page loads it. */
 function loadPoly() {
-  const window = { THREE };
+  const engine = { ready: true, exports: KERNEL };
+  const window = { THREE, FECppEngine: engine };
   window.window = window;
   const context = vm.createContext({
-    window, THREE, Map, Set, Math, Number, Object, Array,
-    Int32Array, Float32Array, Uint8Array
+    window, THREE, FECppEngine: engine, Map, Set, Math, Number, Object, Array,
+    Int32Array, Uint32Array, Float32Array, Uint8Array
   });
   vm.runInContext(readFileSync('fe-poly.js', 'utf8'), context);
   return window.FEPoly;
@@ -570,9 +573,13 @@ test('a cube dragged out of shape keeps its faces whole', () => {
   assert.deepEqual(splitInteriors(), [], 'the dragged cube shaded its two halves apart');
 
   /* The Object Mode wireframe reads the same faces from the geometry. */
-  const window = { THREE };
+  const engine = { ready: true, exports: KERNEL };
+  const window = { THREE, FECppEngine: engine };
   window.window = window;
-  const context = vm.createContext({ window, THREE, Map, Set, Math, Number, Int32Array, Float32Array, Uint8Array, Object, Array });
+  const context = vm.createContext({
+    window, THREE, FECppEngine: engine, Map, Set, Math, Number,
+    Int32Array, Uint32Array, Float32Array, Uint8Array, Object, Array
+  });
   vm.runInContext(readFileSync('fe-poly.js', 'utf8'), context);
   const poly = window.FEPoly;
   const faces = poly.faceList(geometry);

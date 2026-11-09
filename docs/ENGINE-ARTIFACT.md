@@ -28,9 +28,10 @@ is the contract below.
 | `export` | `fe_export_bake`, `fe_export_bake_instanced`, `fe_zip_crc32`, `fe_volatlas_pack`, `fe_volatlas_sample`, `fe_volatlas_parse_library`, `fe_writer_obj_mesh`, `fe_writer_mtl_material` |
 | `render-maths` | `fe_taa_halton`, `fe_taa_jitter`, `fe_taa_project`, `fe_color_blackbody_rgb`, `fe_color_blackbody_lut` |
 | `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance`, `fe_edit_set_faces`, `fe_edit_face_count`, `fe_edit_tri_tag_ptr`, `fe_edit_tri_tag_count` |
+| `faces` | `fe_poly_begin`, `fe_poly_build`, `fe_poly_face_count`, `fe_poly_face_start_ptr`, `fe_poly_face_ring_ptr`, `fe_poly_edge_ptr`, `fe_poly_kind_counts_ptr`, `fe_poly_weld_rep_ptr` |
 
-The shipped build is `1202842` bytes, ABI v1, **318 exports**; every group above
-is satisfied, so `artifact.complete` is `true` and all seven benchmark rows pass.
+The shipped build is `1260887` bytes, ABI v1, **338 exports**; every group above
+is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
 CRC (`cpp/src/fe_export.cpp`, `cpp/src/fe_volatlas.cpp`): the exporters and the
@@ -61,6 +62,18 @@ The mesh library in `index.html` is where the declarations come from; see
 Twenty of the exports are the rig (`cpp/src/fe_skin.cpp`): `fe_skin_begin`,
 `fe_skin_solve`, `fe_skin_deform`, `fe_skin_auto_weights`, the pointer getters
 and `fe_skin_bind_from_pose`. They are documented in `docs/SKELETON.md`.
+
+Twenty of them are the face law (`cpp/src/fe_poly.cpp`): `fe_poly_begin` takes a
+mesh in (positions, triangle indices, and the faces the app declared), and
+`fe_poly_build` returns the model's faces, the triangles behind each face, the
+model's edges and the weld table. Edit Mode has measured its own faces in C++ for
+a long time (`buildQuadGroups`); Object Mode's wireframe, See through view and
+selection outline used to measure them again in JavaScript (`fe-poly.js`), and
+two measurements of one law drift - a fix in one showed up as a diagonal Object
+Mode drew and Edit Mode did not. `fe-poly.js` is now the marshaller only: it
+copies the buffers in, copies the tables out and caches them on the geometry.
+`tests/fe-poly.test.mjs` and `tests/primitives-quads.test.mjs` run the module
+against the shipped artifact and pin the same face counts for both views.
 
 ## Memory: you pay for the studios you open
 
@@ -111,7 +124,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1202842 bytes, ABI v1, 318 exports)`.
+that passes `Validated fe_core_engine.wasm (1260887 bytes, ABI v1, 338 exports)`.
 
 ## Verification
 

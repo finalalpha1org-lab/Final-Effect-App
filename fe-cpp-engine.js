@@ -53,7 +53,14 @@
       'fe_volatlas_frame_at', 'fe_volatlas_parse_library',
       'fe_writer_obj_mesh', 'fe_writer_mtl_material'],
     renderMaths: ['fe_taa_halton', 'fe_taa_jitter', 'fe_taa_project',
-      'fe_color_blackbody_rgb', 'fe_color_blackbody_lut']
+      'fe_color_blackbody_rgb', 'fe_color_blackbody_lut'],
+    /* The face law (cpp/src/fe_poly.cpp): what Object Mode's wireframe, See
+       through and the selection outline are built from. Edit Mode has asked the
+       engine for its faces for a while; an artifact without these is the one
+       where the two views disagree, so the benchmark names it. */
+    faces: ['fe_poly_begin', 'fe_poly_build', 'fe_poly_face_count',
+      'fe_poly_face_start_ptr', 'fe_poly_face_ring_ptr', 'fe_poly_edge_ptr',
+      'fe_poly_kind_counts_ptr', 'fe_poly_weld_rep_ptr']
   });
 
   function describeArtifact(exportsObject, byteLength = 0) {

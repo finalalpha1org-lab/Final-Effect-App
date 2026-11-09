@@ -12,10 +12,19 @@ import * as THREE from 'three';
 
 const source = readFileSync('fe-poly.js', 'utf8');
 
+/* The face list is measured by the engine now (cpp/src/fe_poly.cpp), so the
+   module is loaded with the shipped artifact behind it exactly as the page loads
+   it. A test that stubbed the kernel would test a stub. */
+const wasmBytes = readFileSync('wasm/fe_core_engine.wasm');
+const KERNEL = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {}).exports;
+
 function loadPoly() {
-  const window = { THREE };
+  const window = { THREE, FECppEngine: { ready: true, exports: KERNEL } };
   window.window = window;
-  const ctx = vm.createContext({ window, THREE, Map, Set, Math, Number, Int32Array, Float32Array, Uint8Array, Object, Array });
+  const ctx = vm.createContext({
+    window, THREE, FECppEngine: window.FECppEngine,
+    Map, Set, Math, Number, Int32Array, Uint32Array, Float32Array, Uint8Array, Object, Array
+  });
   vm.runInContext(source, ctx);
   return window.FEPoly;
 }

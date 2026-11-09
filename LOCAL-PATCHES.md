@@ -1134,3 +1134,58 @@ hands one over:
   data.
 - The old `.final3d` writer is gone, not disabled; the export sheet no longer
   offers it.
+
+## Local change: the face law moved into the engine
+
+A quad is a face; a GPU only draws triangles. Every view that has to show the
+face rather than the triangulation - the Object Mode wireframe, See through, the
+selection outline, the exported face table - has to recover the faces from a
+triangle buffer, and that recovery is a law: weld coincident corners, take the
+faces the app declared, pair two triangles that share their longest edge and
+fold by less than sixty degrees, keep what is left as triangles.
+
+The law was written twice. Edit Mode had it in C++ (`buildQuadGroups` in
+`cpp/src/fe_editmesh.cpp`) and Object Mode had it again in JavaScript
+(`fe-poly.js`, about 340 lines). Two implementations drift, and this one had
+already drifted into a visible bug: a quad that had been bent stopped looking
+like a quad to the JavaScript copy and grew a diagonal down the middle of the
+face, while Edit Mode drew the same face whole.
+
+So the measurement now lives once, in `cpp/src/fe_poly.cpp`:
+
+```
+fe_poly_begin(verts, tris, declaredFaceCount, declaredCornerCount, indexed)
+  -> write positions / triangle indices / declared rings through the pointers
+fe_poly_build()                 -> face count, or a negative reason
+  -> fe_poly_face_start_ptr / fe_poly_face_ring_ptr       (the faces)
+     fe_poly_face_tri_start_ptr / fe_poly_face_tri_ptr    (the triangles behind each)
+     fe_poly_edge_ptr / fe_poly_edge_count               (the model's edges, once each)
+     fe_poly_kind_counts_ptr                             (3-, 4-, 5+-corner faces)
+     fe_poly_weld_rep_ptr / fe_poly_weld_of_slot_ptr     (welded id <-> vertex slot)
+```
+
+`fe-poly.js` is now the boundary only: it tidies the declared rings out of
+`geometry.userData.feFaces`, copies the buffers into the session arena, copies
+the tables back out, caches them on the geometry under the position attribute's
+version, and builds the three.js objects - a `BufferGeometry` is a three.js
+object and three.js is the JavaScript half of this editor. Nothing in it decides
+what a face is.
+
+What was measured:
+
+- `tests/fe-poly.test.mjs`, 11 tests, now loads `fe-poly.js` with the shipped
+  artifact behind it and asserts the same properties as before (a cube is six
+  quads and twelve edges; a fold is not a quad; a warped quad is one face; the
+  sixteen cells of a cylinder pair inside themselves; a saddle is two faces; a
+  triangle soup is welded before it is paired; the list is cached and rebuilt
+  when the buffer changes).
+- `tests/primitives-quads.test.mjs`, 34 tests, pins the face counts of the ten
+  primitives for both views and asserts they agree mesh for mesh.
+- `index.html`'s `feBuildQuadWireGeometry` lost its own JavaScript edge table
+  (121 lines). It asks the engine and nothing else; a mesh the engine declines
+  falls through to three.js' angle-based `EdgesGeometry` at the call site, which
+  is a coarser answer but not a second definition of the law.
+- The artifact grew by 58 045 bytes and 20 exports:
+  `1260887 bytes, ABI v1, 338 exports`. `fe-cpp-engine.js` gained a `faces`
+  kernel group so a stale artifact is named by the benchmark instead of silently
+  losing the Object Mode wireframe.

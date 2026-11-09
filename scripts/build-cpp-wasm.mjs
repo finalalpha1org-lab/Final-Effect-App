@@ -18,7 +18,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_modifiers.cpp',
   'cpp/src/fe_skin.cpp',
   'cpp/src/fe_editmesh.cpp',
-  'cpp/src/fe_editmesh_tools.cpp'
+  'cpp/src/fe_editmesh_tools.cpp',
+  'cpp/src/fe_poly.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -124,7 +125,15 @@ const REQUIRED_EXPORTS = [
   'fe_edit_clip_idx_ptr',
   'fe_edit_extrude','fe_edit_inset','fe_edit_subdivide','fe_edit_merge_center','fe_edit_merge_distance',
   'fe_edit_delete','fe_edit_duplicate','fe_edit_poke','fe_edit_fill','fe_edit_bridge','fe_edit_bisect',
-  'fe_edit_bevel','fe_edit_symmetrize','fe_edit_split','fe_edit_collapse'
+  'fe_edit_bevel','fe_edit_symmetrize','fe_edit_split','fe_edit_collapse',
+  /* The face law (fe_poly.cpp): the face list of a mesh that has no edit
+     session, measured once in the engine instead of twice in two languages. */
+  'fe_poly_begin','fe_poly_positions_ptr','fe_poly_indices_ptr',
+  'fe_poly_declared_start_ptr','fe_poly_declared_ring_ptr','fe_poly_set_declared_corners',
+  'fe_poly_build','fe_poly_face_count','fe_poly_face_start_ptr','fe_poly_face_ring_ptr',
+  'fe_poly_face_ring_count','fe_poly_face_tri_start_ptr','fe_poly_face_tri_ptr',
+  'fe_poly_face_tri_count','fe_poly_weld_count','fe_poly_weld_rep_ptr','fe_poly_weld_of_slot_ptr',
+  'fe_poly_edge_count','fe_poly_edge_ptr','fe_poly_kind_counts_ptr'
 ];
 
 /* Zig can be installed as a binary (brew/ziglang pip shim) or only as the
@@ -255,6 +264,18 @@ if (zig) {
     '-Wl,--export=fe_edit_duplicate','-Wl,--export=fe_edit_poke','-Wl,--export=fe_edit_fill',
     '-Wl,--export=fe_edit_bridge','-Wl,--export=fe_edit_bisect','-Wl,--export=fe_edit_bevel',
     '-Wl,--export=fe_edit_symmetrize','-Wl,--export=fe_edit_split','-Wl,--export=fe_edit_collapse',
+    /* The face law: Object Mode asks the engine what the faces of a mesh are. */
+    '-Wl,--export=fe_poly_begin','-Wl,--export=fe_poly_positions_ptr',
+    '-Wl,--export=fe_poly_indices_ptr','-Wl,--export=fe_poly_declared_start_ptr',
+    '-Wl,--export=fe_poly_declared_ring_ptr','-Wl,--export=fe_poly_set_declared_corners',
+    '-Wl,--export=fe_poly_build','-Wl,--export=fe_poly_face_count',
+    '-Wl,--export=fe_poly_face_start_ptr','-Wl,--export=fe_poly_face_ring_ptr',
+    '-Wl,--export=fe_poly_face_ring_count','-Wl,--export=fe_poly_face_tri_start_ptr',
+    '-Wl,--export=fe_poly_face_tri_ptr','-Wl,--export=fe_poly_face_tri_count',
+    '-Wl,--export=fe_poly_weld_count','-Wl,--export=fe_poly_weld_rep_ptr',
+    '-Wl,--export=fe_poly_weld_of_slot_ptr',
+    '-Wl,--export=fe_poly_edge_count','-Wl,--export=fe_poly_edge_ptr',
+    '-Wl,--export=fe_poly_kind_counts_ptr',
     ...CPP_SOURCES,
     '-o', 'wasm/fe_core_engine.wasm'
   ], { stdio: 'inherit' });
