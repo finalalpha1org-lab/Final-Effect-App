@@ -3176,6 +3176,89 @@ Vec3 rotateAboutAxis(const Vec3& p, uint32_t axis, float angle) {
   return {p.x * c - p.y * sn, p.x * sn + p.y * c, p.z};
 }
 
+/* =========================================================================
+ * Build - ported from MOD_build.cc
+ *
+ *   source/blender/modifiers/intern/MOD_build.cc   (build_face_mesh)
+ *
+ * Upstream turns a frame into a fraction of the mesh to reveal:
+ *
+ *   frac = (scene_time - start) / length, clamped to 0..1, reversed on demand
+ *   faces kept = faces * frac
+ *
+ * and then keeps that many faces either in order or from a seeded shuffle,
+ * compacting the vertices that survive. Nothing moves: the mesh grows by
+ * revealing faces.
+ *
+ * This stack is evaluated on demand rather than per frame, so the slider is
+ * the fraction itself instead of a frame number - the same frac, from the
+ * other end. The shuffle is splitmix64 seeded the way BLI_array_randomize is
+ * seeded, not bit-identical to it.
+ * ========================================================================= */
+FE_EXPORT int32_t fe_mod_build(float progress, int32_t reverse, int32_t randomize, int32_t seed) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+
+  float frac = clampf(progress, 0.0f, 1.0f);
+  if (reverse) frac = 1.0f - frac;
+  const uint32_t keep = static_cast<uint32_t>(frac * static_cast<float>(t));
+  if (keep == 0u) return -4;
+
+  uint32_t* order = modArray<uint32_t>(t);
+  uint32_t* remap = modArray<uint32_t>(v);
+  if (!order || !remap) return -2;
+  for (uint32_t i = 0; i < t; ++i) order[i] = i;
+  for (uint32_t i = 0; i < v; ++i) remap[i] = 0xFFFFFFFFu;
+
+  if (randomize) {
+    /* Fisher-Yates with a splitmix64 stream, seeded like BLI_array_randomize. */
+    uint64_t state = 0x9e3779b97f4a7c15ull ^ static_cast<uint64_t>(static_cast<uint32_t>(seed));
+    auto next = [&]() {
+      state += 0x9e3779b97f4a7c15ull;
+      uint64_t z = state;
+      z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+      z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+      return z ^ (z >> 31);
+    };
+    for (uint32_t i = t; i > 1u; --i) {
+      const uint32_t j = static_cast<uint32_t>(next() % i);
+      const uint32_t tmp = order[i - 1u];
+      order[i - 1u] = order[j];
+      order[j] = tmp;
+    }
+  }
+
+  uint32_t outV = 0u;
+  for (uint32_t i = 0; i < keep; ++i) {
+    const uint32_t f = order[i];
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t src = g_s.inIdx[f * 3 + k];
+      if (remap[src] == 0xFFFFFFFFu) {
+        if (outV >= g_s.vcap) return -2;
+        remap[src] = outV;
+        writePos(g_s.outPos, outV, readPos(g_s.inPos, src));
+        if (g_s.hasUv) {
+          g_s.outUv[outV * 2] = g_s.inUv[src * 2];
+          g_s.outUv[outV * 2 + 1] = g_s.inUv[src * 2 + 1];
+        }
+        ++outV;
+      }
+    }
+  }
+
+  g_s.flagMode = 1;
+  for (uint32_t i = 0; i < keep; ++i) {
+    const uint32_t f = order[i];
+    for (uint32_t k = 0; k < 3u; ++k) {
+      g_s.outIdx[i * 3 + k] = remap[g_s.inIdx[f * 3 + k]];
+    }
+    if (g_s.inSmooth && g_s.outSmooth) g_s.outSmooth[i] = g_s.inSmooth[f];
+  }
+  if (!outV) return -4;
+  return commit(outV, keep);
+}
+
 FE_EXPORT int32_t fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
                                int32_t axis, int32_t use_merge, float merge_dist,
                                int32_t normal_flip) {

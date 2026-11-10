@@ -11516,6 +11516,7 @@ const modifiersData = {
     {name:"Array", fields:[["Fit Type","select",["Fixed Count","Fit Length","Fit Curve"]],["Count","range",1,10,2,1],["Length","range",0,50,10,.5,{advanced:true}],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}],["Merge","check",false,{advanced:true}],["Merge Distance","range",0,.5,.001,.001,{advanced:true}],["UV Offset U","range",-1,1,0,.05,{advanced:true}],["UV Offset V","range",-1,1,0,.05,{advanced:true}]]},
     {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
+    {name:"Build", fields:[["Progress","range",0,1,.5,.01],["Reverse","check",false,{advanced:true}],["Randomize","check",true],["Seed","range",0,999,0,1,{advanced:true}]]},
     {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
@@ -11721,6 +11722,10 @@ function applySimpleDeformModifier(geometry, options) { return modifierGeometryA
 function applyEdgeSplitModifier(geometry, splitAngle, useAngle=true, useSharp=false) { return modifierGeometryApi().edgeSplitGeometry(geometry, { splitAngle, useAngle, useSharp }); }
 function applyLaplacianSmoothModifier(geometry, options) { return modifierGeometryApi().laplacianSmoothGeometry(geometry, options); }
 function applyScrewModifier(geometry, options) { return modifierGeometryApi().screwGeometry(geometry, options); }
+function applyBuildModifier(geometry, options) { return modifierGeometryApi().buildGeometry(geometry, options); }
+function buildOptions(p) {
+  return { progress:Number(p["Progress"]??0.5), reverse:p["Reverse"]===true, randomize:p["Randomize"]!==false, seed:Number(p["Seed"]??0) };
+}
 function screwOptions(p) {
   return { angle:Number(p["Angle"]??360), screwOffset:Number(p["Screw"]??0), iterations:Number(p["Iterations"]??1),
     steps:Number(p["Steps"]??16), axis:{X:0,Y:1,Z:2}[p["Axis"]??"Z"] ?? 2, useMerge:p["Merge"]===true,
@@ -12100,6 +12105,8 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+    } else if (mod.name === "Build") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyBuildModifier(currentGeo, buildOptions(p)));
     } else if (mod.name === "Screw") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyScrewModifier(currentGeo, screwOptions(p)));
     } else if (mod.name === "Laplacian Smooth") {
@@ -12614,6 +12621,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Edge Split')stage(g=>applyEdgeSplitModifier(g,Number(p['Split Angle']??30),p['Use Angle']!==false,p['Sharp Edges']===true));
       else if(mod.name==='Laplacian Smooth')stage(g=>applyLaplacianSmoothModifier(g,laplacianSmoothOptions(p)));
       else if(mod.name==='Screw')stage(g=>applyScrewModifier(g,screwOptions(p)));
+      else if(mod.name==='Build')stage(g=>applyBuildModifier(g,buildOptions(p)));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));

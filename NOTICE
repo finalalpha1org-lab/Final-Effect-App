@@ -134,6 +134,19 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
 
+cpp/src/fe_modifiers.cpp - fe_mod_build()
+  Ported from  source/blender/modifiers/intern/MOD_build.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         build_face_mesh(): the frac = (time - start) / length clamp and
+               its reversal, "keep faces * frac faces", the seeded shuffle
+               (splitmix64 here, BLI_array_randomize upstream - not bit for
+               bit identical) and the vertex/face compaction. The frame is
+               replaced by the fraction itself, because this modifier stack is
+               evaluated on demand rather than per frame.
+
 cpp/src/fe_modifiers.cpp - fe_mod_screw()
   Ported from  source/blender/modifiers/intern/MOD_screw.cc
   Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449

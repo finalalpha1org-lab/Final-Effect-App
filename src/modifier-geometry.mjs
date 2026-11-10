@@ -837,6 +837,56 @@ export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis
     const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
     if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+/* Build, ported from MOD_build.cc. Upstream derives a fraction from the frame
+   and keeps that many faces, in order or from a seeded shuffle; this stack is
+   evaluated on demand, so progress is the fraction itself. */
+export function buildGeometry(geometry, { progress = 0.5, reverse = false, randomize = true, seed = 0 } = {}) {
+  const src = geometry;
+  const tris = Math.floor(sourceIndices(src).length / 3);
+  const frac = Math.max(1 / Math.max(1, tris), Math.min(1, Number(progress)));
+  const viaCpp = runCppKernel(src, (v, t) => [v, t],
+    exp => exp.fe_mod_build(frac, reverse ? 1 : 0, randomize ? 1 : 0, Math.round(Number(seed) || 0)));
+  if (viaCpp) return viaCpp;
+
+  /* JS fallback: the same selection and compaction. */
+  const p = assertPositions(src), idx = sourceIndices(src);
+  const keep = Math.max(1, Math.floor(tris * (reverse ? 1 - frac : frac)));
+  const order = Array.from({ length: tris }, (_, i) => i);
+  if (randomize) {
+    let state = (0x9e3779b9 ^ Math.round(Number(seed) || 0)) >>> 0;
+    const next = () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let z = state;
+      z = Math.imul(z ^ (z >>> 15), z | 1) >>> 0;
+      z ^= (z + Math.imul(z ^ (z >>> 7), z | 61)) >>> 0;
+      return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let i = tris - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+  }
+  const remap = new Map(), outPos = [], outUv = [], outIdx = [];
+  const uv = src.attributes.uv;
+  for (let i = 0; i < keep && i < tris; i++) {
+    for (let k = 0; k < 3; k++) {
+      const src_i = idx[order[i] * 3 + k];
+      if (!remap.has(src_i)) {
+        remap.set(src_i, outPos.length / 3);
+        outPos.push(p.getX(src_i), p.getY(src_i), p.getZ(src_i));
+        outUv.push(uv ? uv.getX(src_i) : 0, uv ? uv.getY(src_i) : 0);
+      }
+      outIdx.push(remap.get(src_i));
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+  g.setIndex(outIdx);
+  g.computeVertexNormals();
+  return updateBounds(g);
+}
+
 /* Screw, ported from MOD_screw.cc. The mesh's edges are the profile: each step
    adds a rotated copy of it, and consecutive copies are joined by quads. A full
    turn with no screw offset closes the loop instead of duplicating a ring. */
