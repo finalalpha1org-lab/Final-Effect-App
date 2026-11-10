@@ -11519,6 +11519,7 @@ const modifiersData = {
     {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
+    {name:"Screw", fields:[["Angle","range",0,720,360,5],["Screw","range",-2,2,0,.05],["Iterations","range",1,10,1,1],["Steps","range",2,64,16,1],["Axis","select",["X","Y","Z"]],["Merge","check",true],["Merge Distance","range",0,.1,.001,.001,{advanced:true}],["Normal Flip","check",false,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
     {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
     {name:"Triangulate", fields:[["Quad Method","select",["Beauty","Shortest Diagonal","Ear Clip","Fixed"]],["Ngon Method","select",["Beauty","Ear Clip","Fan"]],["Keep Normals","check",true]]},
@@ -11719,6 +11720,12 @@ function applyWeldModifier(geometry, distance) { return modifierGeometryApi().we
 function applySimpleDeformModifier(geometry, options) { return modifierGeometryApi().simpleDeformGeometry(geometry, options); }
 function applyEdgeSplitModifier(geometry, splitAngle, useAngle=true, useSharp=false) { return modifierGeometryApi().edgeSplitGeometry(geometry, { splitAngle, useAngle, useSharp }); }
 function applyLaplacianSmoothModifier(geometry, options) { return modifierGeometryApi().laplacianSmoothGeometry(geometry, options); }
+function applyScrewModifier(geometry, options) { return modifierGeometryApi().screwGeometry(geometry, options); }
+function screwOptions(p) {
+  return { angle:Number(p["Angle"]??360), screwOffset:Number(p["Screw"]??0), iterations:Number(p["Iterations"]??1),
+    steps:Number(p["Steps"]??16), axis:{X:0,Y:1,Z:2}[p["Axis"]??"Z"] ?? 2, useMerge:p["Merge"]===true,
+    mergeDistance:Number(p["Merge Distance"]??0.001), normalFlip:p["Normal Flip"]===true };
+}
 function laplacianSmoothOptions(p) {
   return { repeat:Number(p["Repeat"]??1), lambda:Number(p["Lambda"]??0.3), lambdaBorder:Number(p["Lambda Border"]??0.3),
     axes:[p["X"]!==false, p["Y"]!==false, p["Z"]!==false], preserveVolume:p["Preserve Volume"]===true, normalized:p["Normalized"]===true };
@@ -12093,6 +12100,8 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+    } else if (mod.name === "Screw") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyScrewModifier(currentGeo, screwOptions(p)));
     } else if (mod.name === "Laplacian Smooth") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyLaplacianSmoothModifier(currentGeo, laplacianSmoothOptions(p)));
     } else if (mod.name === "Edge Split") {
@@ -12604,6 +12613,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Simple Deform')stage(g=>applySimpleDeformModifier(g,simpleDeformOptions(p)));
       else if(mod.name==='Edge Split')stage(g=>applyEdgeSplitModifier(g,Number(p['Split Angle']??30),p['Use Angle']!==false,p['Sharp Edges']===true));
       else if(mod.name==='Laplacian Smooth')stage(g=>applyLaplacianSmoothModifier(g,laplacianSmoothOptions(p)));
+      else if(mod.name==='Screw')stage(g=>applyScrewModifier(g,screwOptions(p)));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));

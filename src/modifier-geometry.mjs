@@ -837,6 +837,82 @@ export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis
     const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
     if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+/* Screw, ported from MOD_screw.cc. The mesh's edges are the profile: each step
+   adds a rotated copy of it, and consecutive copies are joined by quads. A full
+   turn with no screw offset closes the loop instead of duplicating a ring. */
+export function screwGeometry(geometry, { angle = 360, screwOffset = 0, iterations = 1, steps = 16,
+                                           axis = 1, useMerge = false, mergeDistance = 1e-4,
+                                           normalFlip = false } = {}) {
+  const iter = Math.max(1, Math.min(100, Math.round(Number(iterations) || 1)));
+  const stepIn = Math.max(1, Math.min(512, Math.round(Number(steps) || 1)));
+  const ax = Math.max(0, Math.min(2, Math.round(Number(axis) || 0)));
+  const totalSteps = Math.max(2, ((stepIn + 1) * iter) - (iter - 1));
+  const viaCpp = runCppKernel(geometry,
+    (v, t) => [Math.min(131072, v * totalSteps), Math.min(262144, t * 3 * totalSteps * 2)],
+    exp => exp.fe_mod_screw((Number(angle) || 0) * Math.PI / 180, Number(screwOffset) || 0, iter, stepIn,
+      ax, useMerge ? 1 : 0, Number(mergeDistance) || 0, normalFlip ? 1 : 0));
+  if (viaCpp) return viaCpp;
+
+  /* JS fallback: the same rings and quads, built in place. */
+  const src = geometry, p = assertPositions(src), idx = sourceIndices(src);
+  const v = p.count;
+  const edges = new Map();
+  for (let f = 0; f < idx.length / 3; f++) {
+    for (let k = 0; k < 3; k++) {
+      const a = idx[f * 3 + k], b = idx[f * 3 + (k + 1) % 3];
+      if (a === b) continue;
+      const key = Math.min(a, b) + ':' + Math.max(a, b);
+      if (!edges.has(key)) edges.set(key, [Math.min(a, b), Math.max(a, b)]);
+    }
+  }
+  const edgeList = [...edges.values()];
+  let total = (Number(angle) || 0) * iter;
+  let ofs = (Number(screwOffset) || 0) * iter;
+  let rings = totalSteps;
+  let close = false;
+  const eps = 1.1920929e-5;
+  if (Math.abs(ofs) <= eps && Math.abs(Math.abs(total) - Math.PI * 2) <= eps && rings > 3) {
+    close = true; rings--; ofs = 0;
+  }
+  const rot = (x, y, z, ang) => {
+    const c = Math.cos(ang), sn = Math.sin(ang);
+    if (ax === 0) return [x, y * c - z * sn, y * sn + z * c];
+    if (ax === 1) return [x * c + z * sn, y, -x * sn + z * c];
+    return [x * c - y * sn, x * sn + y * c, z];
+  };
+  const denom = rings - (close ? 0 : 1);
+  const outPos = [], outUv = [], outIdx = [];
+  const uv = src.attributes.uv;
+  for (let st = 0; st < rings; st++) {
+    const ang = (total / denom) * st;
+    const shift = ofs ? ofs * (st / (rings - 1)) : 0;
+    for (let j = 0; j < v; j++) {
+      let q = st === 0 ? [p.getX(j), p.getY(j), p.getZ(j)] : rot(p.getX(j), p.getY(j), p.getZ(j), ang);
+      if (shift) q = [q[0] + (ax === 0 ? shift : 0), q[1] + (ax === 1 ? shift : 0), q[2] + (ax === 2 ? shift : 0)];
+      outPos.push(q[0], q[1], q[2]);
+      outUv.push(st / rings, uv ? uv.getY(j) : 0);
+    }
+  }
+  const quad = (a, b, c, d) => {
+    if (!normalFlip) outIdx.push(a, b, c, a, c, d);
+    else outIdx.push(a, c, b, a, d, c);
+  };
+  for (let st = 1; st < rings; st++) {
+    const prev = (st - 1) * v, cur = st * v;
+    for (const [a, b] of edgeList) quad(prev + a, prev + b, cur + b, cur + a);
+  }
+  if (close) {
+    const last = (rings - 1) * v;
+    for (const [a, b] of edgeList) quad(last + a, last + b, b, a);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+  g.setIndex(outIdx);
+  g.computeVertexNormals();
+  return updateBounds(g);
+}
+
 /* Laplacian Smooth, ported from MOD_laplaciansmooth.cc. repeat passes of the
    cotangent Laplacian, solved as a least-squares problem the way upstream's
    Eigen solver solves it. lambda weights interior (ring) vertices, lambdaBorder

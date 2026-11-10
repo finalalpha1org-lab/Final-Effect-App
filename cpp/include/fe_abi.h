@@ -607,6 +607,12 @@ FE_EXPORT int32_t  fe_mod_edge_split(float split_angle, int32_t use_angle, int32
    repeat passes of the cotangent Laplacian system, solved as a least-squares
    problem. axis_mask is 1|2|4 for X|Y|Z; lambda is the ring weight and
    lambda_border the boundary one, exactly the two sliders upstream shows. */
+/* Screw, ported from modifiers/intern/MOD_screw.cc: the mesh's edges are the
+   profile, swept into a surface of revolution. angle and screw_ofs are per
+   iteration, steps is the sub-step count and axis is 0/1/2 for X/Y/Z. */
+FE_EXPORT int32_t  fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
+                                int32_t axis, int32_t use_merge, float merge_dist,
+                                int32_t normal_flip);
 FE_EXPORT int32_t  fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
                                            int32_t axis_mask, int32_t preserve_volume,
                                            int32_t normalized);

@@ -134,6 +134,20 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
 
+cpp/src/fe_modifiers.cpp - fe_mod_screw()
+  Ported from  source/blender/modifiers/intern/MOD_screw.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         screwModifier_do(): the profile sweep, the step_tot arithmetic
+               ((steps + 1) * iterations - (iterations - 1)), the step_angle
+               and per-step screw offset, the `close` branch that joins the
+               last ring back to the first, and the mesh_remove_doubles() the
+               Merge option performs. Not ported: the object-as-axis transform
+               and upstream's per-loop UV layout - this pipeline carries one UV
+               per vertex.
+
 cpp/src/fe_modifiers.cpp - fe_mod_laplacian_smooth()
   Ported from  source/blender/modifiers/intern/MOD_laplaciansmooth.cc
   Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449

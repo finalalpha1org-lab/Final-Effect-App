@@ -3147,6 +3147,188 @@ bool csrTranspose(const Csr& a, Csr& out) {
   }
   return true;
 }
+/* =========================================================================
+ * Screw - ported from MOD_screw.cc
+ *
+ *   source/blender/modifiers/intern/MOD_screw.cc   (screwModifier_do)
+ *
+ * The profile is the mesh's edges - upstream sweeps edges, not faces, so a
+ * mesh that arrives with faces has them replaced by the surface of revolution
+ * of its wire - and every step adds a rotated copy of the whole profile:
+ *
+ *   step_tot = ((steps + 1) * iterations) - (iterations - 1)
+ *   step_angle = angle / (step_tot - (!close)) * step
+ *   screw_ofs * (step / (step_tot - 1)) added along the axis
+ *
+ * A full turn with no screw offset closes: step_tot loses one ring and the
+ * last step is joined back to the first instead of duplicating it, which is
+ * upstream's `close` branch. Merge welds the result by distance afterwards,
+ * like mesh_remove_doubles() does at the end of screwModifier_do().
+ *
+ * Not ported: the object-as-axis transform, and upstream's per-loop UV
+ * layout - this pipeline carries one UV per vertex, so the generated UVs are
+ * the step (u) and the distance along the profile (v).
+ * ========================================================================= */
+Vec3 rotateAboutAxis(const Vec3& p, uint32_t axis, float angle) {
+  const float c = cosf(angle), sn = sinf(angle);
+  if (axis == 0u) return {p.x, p.y * c - p.z * sn, p.y * sn + p.z * c};
+  if (axis == 1u) return {p.x * c + p.z * sn, p.y, -p.x * sn + p.z * c};
+  return {p.x * c - p.y * sn, p.x * sn + p.y * c, p.z};
+}
+
+FE_EXPORT int32_t fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
+                               int32_t axis, int32_t use_merge, float merge_dist,
+                               int32_t normal_flip) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const int32_t iter = iterations < 1 ? 1 : (iterations > 100 ? 100 : iterations);
+  int32_t step_in = steps < 1 ? 1 : (steps > 512 ? 512 : steps);
+  const uint32_t ax = static_cast<uint32_t>(axis < 0 ? 0 : (axis > 2 ? 2 : axis));
+  g_s.flagMode = 0;
+
+  float total_angle = angle * static_cast<float>(iter);
+  float total_ofs = screw_ofs * static_cast<float>(iter);
+  uint32_t step_tot = static_cast<uint32_t>(((step_in + 1) * iter) - (iter - 1));
+
+  bool close = false;
+  const float eps = 1.1920929e-7f * 100.0f;
+  if (absf(total_ofs) <= eps && absf(absf(total_angle) - kTwoPi) <= eps && step_tot > 3u) {
+    close = true;
+    --step_tot;
+    total_ofs = 0.0f;
+  } else if (step_tot < 2u) {
+    step_tot = 2u;
+  }
+
+  /* ---- the profile: every edge of the mesh, as upstream sweeps them ---- */
+  SplitEdges es;
+  if (!splitEdgesInit(es, t)) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t a = g_s.inIdx[f * 3 + k], b = g_s.inIdx[f * 3 + (k + 1u) % 3u];
+      if (a != b) splitEdgeSlot(es, a, b, true, f, nullptr);
+    }
+  }
+  uint32_t ec = 0;
+  for (uint32_t i = 0; i <= es.mask; ++i) if (es.nf[i]) ++ec;
+  if (!ec) return -4;
+
+  uint32_t* eu = modArray<uint32_t>(ec);
+  uint32_t* ev = modArray<uint32_t>(ec);
+  if (!eu || !ev) return -2;
+  {
+    uint32_t w = 0;
+    for (uint32_t i = 0; i <= es.mask; ++i) {
+      if (!es.nf[i]) continue;
+      eu[w] = es.a[i]; ev[w] = es.b[i]; ++w;
+    }
+  }
+
+  const uint64_t outV64 = static_cast<uint64_t>(v) * step_tot;
+  const uint64_t rings = close ? step_tot : (step_tot - 1u);
+  const uint64_t outT64 = static_cast<uint64_t>(ec) * rings * 2u;
+  if (outV64 > g_s.vcap || outT64 > g_s.tcap || outV64 > MOD_MAX_VERTS) return -2;
+  uint32_t outV = static_cast<uint32_t>(outV64), outT = static_cast<uint32_t>(outT64);
+
+  /* ring 0 is the profile itself, untouched - upstream copies it verbatim */
+  for (uint32_t i = 0; i < v; ++i) writePos(g_s.outPos, i, readPos(g_s.inPos, i));
+
+  const float denom = static_cast<float>(step_tot) - (close ? 0.0f : 1.0f);
+  for (uint32_t step = 1; step < step_tot; ++step) {
+    const float step_angle = (total_angle / denom) * static_cast<float>(step);
+    Vec3 shift(0.0f, 0.0f, 0.0f);
+    if (total_ofs != 0.0f) {
+      const float along = total_ofs * (static_cast<float>(step) / static_cast<float>(step_tot - 1u));
+      if (ax == 0u) shift.x = along; else if (ax == 1u) shift.y = along; else shift.z = along;
+    }
+    for (uint32_t j = 0; j < v; ++j) {
+      writePos(g_s.outPos, step * v + j, rotateAboutAxis(readPos(g_s.inPos, j), ax, step_angle) + shift);
+    }
+  }
+
+  /* ---- faces: one quad per edge per ring gap ---- */
+  uint32_t face = 0;
+  auto quad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+    if (!normal_flip) {
+      g_s.outIdx[face * 3] = a; g_s.outIdx[face * 3 + 1] = b; g_s.outIdx[face * 3 + 2] = c; ++face;
+      g_s.outIdx[face * 3] = a; g_s.outIdx[face * 3 + 1] = c; g_s.outIdx[face * 3 + 2] = d; ++face;
+    } else {
+      g_s.outIdx[face * 3] = a; g_s.outIdx[face * 3 + 1] = c; g_s.outIdx[face * 3 + 2] = b; ++face;
+      g_s.outIdx[face * 3] = a; g_s.outIdx[face * 3 + 1] = d; g_s.outIdx[face * 3 + 2] = c; ++face;
+    }
+  };
+  for (uint32_t step = 1; step < step_tot; ++step) {
+    const uint32_t prev = (step - 1u) * v, cur = step * v;
+    for (uint32_t e = 0; e < ec; ++e) quad(prev + eu[e], prev + ev[e], cur + ev[e], cur + eu[e]);
+  }
+  if (close) {
+    const uint32_t last = (step_tot - 1u) * v;
+    for (uint32_t e = 0; e < ec; ++e) quad(last + eu[e], last + ev[e], ev[e], eu[e]);
+  }
+  if (face != outT) return -4;
+
+  /* ---- UVs: the step across, the distance along the profile along ---- */
+  if (g_s.hasUv) {
+    float totalLen = 0.0f;
+    for (uint32_t e = 0; e < ec; ++e) {
+      totalLen += (readPos(g_s.inPos, ev[e]) - readPos(g_s.inPos, eu[e])).length();
+    }
+    if (totalLen <= 0.0f) totalLen = 1.0f;
+    /* The profile is a graph only along a path; use the ring index for u and
+       each vertex's cumulative edge length along the profile for v. */
+    float* acc = modArray<float>(v);
+    uint32_t* seen = modArray<uint32_t>(v);
+    if (!acc || !seen) return -2;
+    for (uint32_t i = 0; i < v; ++i) { acc[i] = 0.0f; seen[i] = 0u; }
+    float running = 0.0f;
+    for (uint32_t e = 0; e < ec; ++e) {
+      const float len = (readPos(g_s.inPos, ev[e]) - readPos(g_s.inPos, eu[e])).length();
+      if (!seen[eu[e]]) { acc[eu[e]] = running; seen[eu[e]] = 1u; }
+      running += len;
+      if (!seen[ev[e]]) { acc[ev[e]] = running; seen[ev[e]] = 1u; }
+    }
+    for (uint32_t step = 0; step < step_tot; ++step) {
+      const float u = step_tot > 1u ? static_cast<float>(step) / static_cast<float>(step_tot) : 0.0f;
+      for (uint32_t j = 0; j < v; ++j) {
+        g_s.outUv[(step * v + j) * 2] = u;
+        g_s.outUv[(step * v + j) * 2 + 1] = acc[j] / totalLen;
+      }
+    }
+  }
+
+  for (uint32_t i = 0; i < outV * 3u; ++i) g_s.inPos[i] = g_s.outPos[i];
+  if (g_s.hasUv) for (uint32_t i = 0; i < outV * 2u; ++i) g_s.inUv[i] = g_s.outUv[i];
+  for (uint32_t i = 0; i < outT * 3u; ++i) g_s.inIdx[i] = g_s.outIdx[i];
+  g_s.vc = outV;
+  g_s.tc = outT;
+
+  if (use_merge && merge_dist > 0.0f) {
+    /* mesh_remove_doubles(), the call upstream makes when the screw leaves a
+       seam: weld by distance, then drop the triangles that collapse onto a
+       line. */
+    uint32_t* remap = modArray<uint32_t>(outV);
+    if (!remap) return -2;
+    uint32_t newV = outV, newT = outT;
+    if (weldSession(merge_dist, &newV, &newT, remap) == 0) {
+      for (uint32_t i = 0; i < newV * 3u; ++i) g_s.inPos[i] = g_s.outPos[i];
+      if (g_s.hasUv) for (uint32_t i = 0; i < newV * 2u; ++i) g_s.inUv[i] = g_s.outUv[i];
+      for (uint32_t i = 0; i < newT * 3u; ++i) g_s.inIdx[i] = g_s.outIdx[i];
+      outV = newV;
+      outT = newT;
+    }
+  }
+
+  for (uint32_t i = 0; i < outV * 2u; ++i) if (g_s.hasUv) g_s.inUv[i] = g_s.outUv[i];
+  for (uint32_t i = 0; i < outT * 3u; ++i) g_s.inIdx[i] = g_s.outIdx[i];
+  g_s.vc = outV;
+  g_s.tc = outT;
+  computeNormals(g_s.inPos, g_s.inIdx, outV, outT, g_s.nrm);
+  g_s.counts[0] = outV;
+  g_s.counts[1] = outT;
+  return 0;
+}
+
 FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
                                           int32_t axis_mask, int32_t preserve_volume,
                                           int32_t normalized) {
