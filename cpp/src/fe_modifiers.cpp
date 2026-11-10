@@ -2956,10 +2956,10 @@ FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
-  (void)use_sharp;
 
   const bool do_split_angle = use_angle != 0 && split_angle < 3.14159265f;
-  if (!do_split_angle) {
+  const bool do_split_sharp = use_sharp != 0 && g_s.inSmooth != nullptr;
+  if (!do_split_angle && !do_split_sharp) {
     /* Nothing tagged: upstream hands the mesh straight back. */
     for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
     for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
@@ -2967,7 +2967,12 @@ FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_
     if (g_s.inSmooth && g_s.outSmooth) { g_s.flagMode = 1; for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i]; }
     return commit(v, t);
   }
-  g_s.flagMode = 0;
+  /* The split keeps every face where it was, so the shading flags ride along
+     one-to-one and flat faces stay flat. */
+  g_s.flagMode = 1;
+  if (g_s.inSmooth && g_s.outSmooth) {
+    for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+  }
 
   const float threshold = cosf(split_angle + 0.000000175f);
   const bool do_split_all = split_angle < 1.1920929e-7f;   /* FLT_EPSILON */
@@ -2997,14 +3002,24 @@ FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_
   /* ---- tag the seams ---- */
   for (uint32_t i = 0; i <= e.mask; ++i) {
     if (e.nf[i] == 0u) continue;
-    bool split = do_split_all || e.nf[i] >= 3u;
-    if (!split && e.nf[i] == 2u) {
-      const uint32_t fa = e.f0[i], fb = e.f1[i];
-      if (fa < t && fb < t && fa != fb) {
+    bool split = false;
+    const uint32_t fa = e.f0[i], fb = e.f1[i];
+    const bool pair = e.nf[i] == 2u && fa < t && fb < t && fa != fb;
+
+    if (do_split_angle) {
+      split = do_split_all || e.nf[i] >= 3u;
+      if (!split && pair) {
         const float d = fn[fa * 3] * fn[fb * 3] + fn[fa * 3 + 1] * fn[fb * 3 + 1] +
                         fn[fa * 3 + 2] * fn[fb * 3 + 2];
         if (d < threshold) split = true;
       }
+    }
+    /* Sharp Edges: a sharp edge is one the two sides disagree about. This
+       pipeline stores one smooth flag per face, not per edge, so the edge
+       between a flat face and a smooth one - or between two faces that were
+       shaded separately - is the sharp edge the model actually carries. */
+    if (!split && pair && do_split_sharp && g_s.inSmooth[fa] != g_s.inSmooth[fb]) {
+      split = true;
     }
     e.split[i] = split ? 1u : 0u;
   }

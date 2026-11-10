@@ -147,5 +147,8 @@ cpp/src/fe_modifiers.cpp - fe_mod_edge_split()
                the form a triangle buffer needs: the faces around each vertex
                are grouped into the fans still joined by unsplit edges, and
                every fan gets its own copy of that vertex and its UV. Not
-               ported: sharp-edge tagging (MOD_EDGESPLIT_FROMFLAG), because
-               this pipeline stores one smooth flag per face, not per edge.
+               ported literally: MOD_EDGESPLIT_FROMFLAG's sharp edges, because
+               this pipeline stores one smooth flag per face, not per edge. The
+               Sharp Edges option splits at the shading boundary instead - the
+               edge between a flat face and a smooth one - which is the sharp
+               edge such a mesh actually carries.

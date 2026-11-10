@@ -848,7 +848,9 @@ export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, 
   if (viaCpp) return viaCpp;
   /* JS fallback: the same union-find over the faces around every vertex. */
   const src = geometry, p = assertPositions(src), idx = sourceIndices(src);
-  if (!useAngle) return updateBounds(src.clone());
+  const stored = storedFaceShading(src, idx.length / 3);
+  const useSharpReal = !!(useSharp && stored);
+  if (!useAngle && !useSharpReal) return updateBounds(src.clone());
   const faces = idx.length / 3;
   const fn = new Float32Array(faces * 3);
   for (let f = 0; f < faces; f++) {
@@ -859,7 +861,7 @@ export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, 
     fn[f*3]=n.x; fn[f*3+1]=n.y; fn[f*3+2]=n.z;
   }
   const threshold = Math.cos(angle * Math.PI / 180 + 0.000000175);
-  const splitAll = angle < 1e-6;
+  const splitAll = useAngle && angle < 1e-6;
   const edges = new Map();
   for (let f = 0; f < faces; f++) {
     for (let k = 0; k < 3; k++) {
@@ -872,11 +874,16 @@ export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, 
     }
   }
   for (const e of edges.values()) {
-    let split = splitAll || e.count >= 3;
-    if (!split && e.count === 2) {
-      const [fa, fb] = e.faces;
-      if (fn[fa*3]*fn[fb*3] + fn[fa*3+1]*fn[fb*3+1] + fn[fa*3+2]*fn[fb*3+2] < threshold) split = true;
+    let split = false;
+    const pair = e.count === 2 && e.faces[0] !== e.faces[1];
+    if (useAngle) {
+      split = splitAll || e.count >= 3;
+      if (!split && pair) {
+        const [fa, fb] = e.faces;
+        if (fn[fa*3]*fn[fb*3] + fn[fa*3+1]*fn[fb*3+1] + fn[fa*3+2]*fn[fb*3+2] < threshold) split = true;
+      }
     }
+    if (!split && pair && useSharpReal && !!stored[e.faces[0]] !== !!stored[e.faces[1]]) split = true;
     e.split = split;
   }
   const byVert = Array.from({ length: p.count }, () => []);
@@ -921,6 +928,7 @@ export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, 
   g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
   g.setIndex(Array.from(cornerOut));
   g.computeVertexNormals();
+  if (stored) g.userData.feFaceShading = Array.from(stored);
   return updateBounds(g);
 }
 

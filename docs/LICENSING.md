@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 565 335 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 566 122 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:

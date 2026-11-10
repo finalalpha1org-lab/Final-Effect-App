@@ -98,6 +98,50 @@ test('useAngle false leaves the mesh alone', () => {
   assert.deepEqual([...out.index.array], [...src.index.array]);
 });
 
+/* ---- Sharp Edges ----
+   The pipeline stores one smooth flag per face, never one per edge, so a sharp
+   edge is one the two sides disagree about: it separates a flat face from a
+   smooth one. These tests pin that rule to the face flags the mesh carries. */
+function shadedCube(flatFaces) {
+  const mesh = cube();
+  mesh.userData.feFaceShading = Array.from({ length: 12 }, (_, i) => (flatFaces.includes(i) ? 0 : 1));
+  return mesh;
+}
+
+test('sharp edges split where a flat face meets a smooth one', () => {
+  const src = shadedCube([0, 1]);          /* the first quad is flat */
+  const out = edgeSplitGeometry(src, { splitAngle: 180, useAngle: false, useSharp: true });
+  assert.ok(out.attributes.position.count > 8, 'the flat face broke away from the smooth shell');
+  assert.equal(out.index.count, 36, 'topology is never reordered');
+  assert.deepEqual(sortedUniquePositions(out).length, 8, 'still the same eight corners in space');
+});
+
+test('sharp edges do nothing when every face is shaded the same way', () => {
+  for (const mesh of [shadedCube([]), shadedCube([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])]) {
+    const out = edgeSplitGeometry(mesh, { splitAngle: 180, useAngle: false, useSharp: true });
+    assert.equal(out.attributes.position.count, 8);
+    assert.deepEqual([...out.index.array], [...mesh.index.array]);
+  }
+});
+
+test('the two rules are independent: angle off, sharp on still splits', () => {
+  const src = shadedCube([0, 1]);
+  const angleOnly = edgeSplitGeometry(src, { splitAngle: 180, useAngle: true, useSharp: false });
+  const sharpOnly = edgeSplitGeometry(src, { splitAngle: 180, useAngle: false, useSharp: true });
+  const both = edgeSplitGeometry(src, { splitAngle: 180, useAngle: true, useSharp: true });
+  assert.equal(angleOnly.attributes.position.count, 8, '180 degrees splits nothing by angle');
+  assert.equal(sharpOnly.attributes.position.count, both.attributes.position.count, 'sharpness is not an angle');
+});
+
+test('the face flags survive the split', () => {
+  const src = shadedCube([0, 1]);
+  const out = edgeSplitGeometry(src, { splitAngle: 180, useAngle: false, useSharp: true });
+  assert.ok(Array.isArray(out.userData.feFaceShading), 'the next modifier still knows what is flat');
+  assert.equal(out.userData.feFaceShading.length, 12);
+  assert.equal(out.userData.feFaceShading[0], 0, 'the flat quad is still flat');
+  assert.equal(out.userData.feFaceShading[2], 1, 'and the smooth one is still smooth');
+});
+
 test('a shared edge between two faces folds open, an open boundary never splits', () => {
   const src = foldedQuad();
   const split = edgeSplitGeometry(src, { splitAngle: 30 });
