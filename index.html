@@ -11520,7 +11520,7 @@ const modifiersData = {
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
     {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
-    {name:"Triangulate", fields:[["Keep Normals","check",true]]},
+    {name:"Triangulate", fields:[["Quad Method","select",["Shortest Diagonal","Ear Clip","Fixed"]],["Ngon Method","select",["Ear Clip","Fan"]],["Keep Normals","check",true]]},
     {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
     {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
   ],
@@ -11704,7 +11704,7 @@ function applyBooleanModifier(targetObj, geometry, params) {
 function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep }); }
 function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e-6) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping, mergeDistance }); }
 function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
-function applyTriangulateModifier(geometry, keepNormals=true) { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals }); }
+function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip') { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
 function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal }); }
 function applyDisplaceModifier(geometry, strength, midlevel, frequency=1, options={}) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency, ...options }); }
@@ -12054,7 +12054,7 @@ function updateModifiersOnScene(targetOverride) {
       const ratio = parseFloat(p["Ratio"] || 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio, p["Preserve Boundaries"] !== false));
     } else if (mod.name === "Triangulate") {
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false, p["Quad Method"] || "Shortest Diagonal", p["Ngon Method"] || "Ear Clip"));
     } else if (mod.name === "Weld") {
       const dist = parseFloat(p["Distance"] || 0.02);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyWeldModifier(currentGeo, dist));
@@ -12561,7 +12561,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0)));
       else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true,Number(p['Merge Distance']??1e-6)));
       else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false));
-      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false));
+      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false,p['Quad Method']||'Shortest Diagonal',p['Ngon Method']||'Ear Clip'));
       else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
       else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false));
       else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),{direction:p.Direction||'Normal',octaves:Number(p.Octaves??2),seed:Number(p.Seed??0)}));

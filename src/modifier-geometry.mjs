@@ -266,9 +266,82 @@ export function weldGeometry(geometry, distance = 1e-5) {
   out.computeVertexNormals(); return updateBounds(out);
 }
 
-export function triangulateGeometry(geometry, { keepNormals = true } = {}) {
+/* Triangulate, from Blender's tessellator.
+
+   The n-gons are cut by `BLI_polyfill_calc` (ported to cpp/src/fe_polyfill.cpp,
+   see NOTICE). A quad is cut on its shorter diagonal by default - Blender's
+   SHORTEST_DIAGONAL - because it is the one choice that looks the same from
+   both sides of the face; "Ear Clip" hands quads to the tessellator as well,
+   and "Fixed" fans from the first corner, which is Blender's FIXED.
+
+   The kernel keeps the vertex buffer exactly as it was and only rewrites the
+   index, which is what the modifier is: the corners stay where they are and
+   only the way the face is stitched changes. */
+const TRIANGULATE_QUAD = { 'Ear Clip': 0, 'Shortest Diagonal': 1, 'Fixed': 2 };
+const TRIANGULATE_NGON = { 'Ear Clip': 0, 'Fan': 1 };
+
+function triangulateWithKernel(geometry, quadMethod, ngonMethod) {
+  const exp = cppExports();
+  if (!exp || typeof exp.fe_polyfill_build !== 'function') return null;
+  const faces = globalThis.FEPoly?.facesInSlots?.(geometry);
+  if (!Array.isArray(faces) || !faces.length) return null;
+  const position = geometry.attributes.position;
+  const verts = position.count;
+  let corners = 0;
+  for (const face of faces) corners += face.length;
+  if (!corners) return null;
+  if (verts > exp.fe_polyfill_max_vertices() || corners > exp.fe_polyfill_max_corners() || faces.length > exp.fe_polyfill_max_faces()) return null;
+  /* Allocate before taking a view: the first call grows the memory and every
+     view made before it would be detached. */
+  if (exp.fe_polyfill_begin() !== 0) return null;
+  const buf = exp.memory.buffer;
+  new Float32Array(buf, exp.fe_polyfill_positions_ptr(), verts * 3).set(position.array.subarray(0, verts * 3));
+  const ring = new Uint32Array(buf, exp.fe_polyfill_ring_ptr(), corners);
+  const start = new Uint32Array(buf, exp.fe_polyfill_start_ptr(), faces.length + 1);
+  let at = 0;
+  for (let f = 0; f < faces.length; f++) {
+    start[f] = at;
+    const face = faces[f];
+    for (let i = 0; i < face.length; i++) ring[at++] = face[i];
+  }
+  start[faces.length] = at;
+  const count = exp.fe_polyfill_build(verts, faces.length, corners, quadMethod, ngonMethod);
+  if (count <= 0) return null;
+  const tris = new Uint32Array(exp.memory.buffer, exp.fe_polyfill_tris_ptr(), count * 3).slice();
+
+  /* Coverage check: the triangles have to account for the same surface the
+     mesh did. A face ring the tessellator refused would show up here as lost
+     area, and a silent hole is worse than the fallback. */
+  const src = sourceIndices(geometry);
+  const triArea = (a, b, c) => {
+    const ax = position.getX(a), ay = position.getY(a), az = position.getZ(a);
+    const bx = position.getX(b) - ax, by = position.getY(b) - ay, bz = position.getZ(b) - az;
+    const cx = position.getX(c) - ax, cy = position.getY(c) - ay, cz = position.getZ(c) - az;
+    return Math.hypot(by * cz - bz * cy, bz * cx - bx * cz, bx * cy - by * cx) * 0.5;
+  };
+  let before = 0, after = 0;
+  for (let i = 0; i + 2 < src.length; i += 3) before += triArea(src[i], src[i + 1], src[i + 2]);
+  for (let i = 0; i < count; i++) after += triArea(tris[i * 3], tris[i * 3 + 1], tris[i * 3 + 2]);
+  if (before > 0 && Math.abs(after - before) > before * 1e-4) return null;
+  return tris;
+}
+
+export function triangulateGeometry(geometry, { keepNormals = true, quadMethod = 'Shortest Diagonal', ngonMethod = 'Ear Clip' } = {}) {
   const idx=sourceIndices(geometry);if(idx.length%3)throw new Error('Triangulate needs complete triangles');
-  const out=geometry.index?geometry.toNonIndexed():geometry.clone();
+  const indexed=geometry.clone();
+  const tris = triangulateWithKernel(geometry,
+    TRIANGULATE_QUAD[quadMethod] ?? TRIANGULATE_QUAD['Shortest Diagonal'],
+    TRIANGULATE_NGON[ngonMethod] ?? TRIANGULATE_NGON['Ear Clip']);
+  if (tris) indexed.setIndex(new THREE.BufferAttribute(tris, 1));
+  else if (!geometry.index) indexed.setIndex(new THREE.BufferAttribute(Uint32Array.from({ length: idx.length }, (_, i) => idx[i]), 1));
+
+  /* The modifier's output is a triangle soup: every corner gets its own vertex,
+     so a face can carry its own normal and the face list the model had no
+     longer describes it. This is the same shape the modifier has always
+     returned - what changed is which triangles are in it. */
+  const out=indexed.index?indexed.toNonIndexed():indexed;
+  if(indexed!==out)indexed.dispose();
+  if(out.userData){delete out.userData.feFaces;delete out.userData.feFaceVerts;delete out.userData.fePoly;}
   if(!keepNormals&&out.attributes.normal)out.deleteAttribute('normal');
   if(!out.attributes.normal)out.computeVertexNormals();
   return updateBounds(out);

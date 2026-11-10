@@ -721,6 +721,21 @@ FE_EXPORT int32_t fe_color_blackbody_rgb(double kelvin, double* out3);
 FE_EXPORT int32_t fe_color_blackbody_lut(double min_k, double max_k, uint32_t count,
                                          uint8_t* out_rgba);
 
+/* ---- Triangulate (BLI_polyfill port, cpp/src/fe_polyfill.cpp) ---- */
+FE_EXPORT int32_t fe_polyfill_begin(void);
+FE_EXPORT uint32_t fe_polyfill_max_vertices(void);
+FE_EXPORT uint32_t fe_polyfill_max_corners(void);
+FE_EXPORT uint32_t fe_polyfill_max_faces(void);
+FE_EXPORT uint32_t fe_polyfill_max_face_verts(void);
+FE_EXPORT float* fe_polyfill_positions_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_ring_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_start_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_tris_ptr(void);
+FE_EXPORT uint32_t fe_polyfill_quad_count(void);
+FE_EXPORT uint32_t fe_polyfill_ngon_count(void);
+FE_EXPORT int32_t fe_polyfill_build(uint32_t vertex_count, uint32_t face_count, uint32_t corner_count,
+                                    uint32_t quad_method, uint32_t ngon_method);
+
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 #ifdef __cplusplus
 }

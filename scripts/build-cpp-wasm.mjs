@@ -20,7 +20,8 @@ const CPP_SOURCES = [
   'cpp/src/fe_skin.cpp',
   'cpp/src/fe_editmesh.cpp',
   'cpp/src/fe_editmesh_tools.cpp',
-  'cpp/src/fe_poly.cpp'
+  'cpp/src/fe_poly.cpp',
+  'cpp/src/fe_polyfill.cpp'
 ];
 
 const REQUIRED_EXPORTS = [
@@ -131,6 +132,9 @@ const REQUIRED_EXPORTS = [
   'fe_edit_bevel','fe_edit_symmetrize','fe_edit_split','fe_edit_collapse',
   /* The face law (fe_poly.cpp): the face list of a mesh that has no edit
      session, measured once in the engine instead of twice in two languages. */
+  'fe_polyfill_begin','fe_polyfill_build','fe_polyfill_positions_ptr','fe_polyfill_ring_ptr',
+  'fe_polyfill_start_ptr','fe_polyfill_tris_ptr','fe_polyfill_quad_count','fe_polyfill_ngon_count',
+  'fe_polyfill_max_vertices','fe_polyfill_max_corners','fe_polyfill_max_faces','fe_polyfill_max_face_verts',
   'fe_poly_begin','fe_poly_positions_ptr','fe_poly_indices_ptr',
   'fe_poly_declared_start_ptr','fe_poly_declared_ring_ptr','fe_poly_set_declared_corners',
   'fe_poly_build','fe_poly_face_count','fe_poly_face_start_ptr','fe_poly_face_ring_ptr',

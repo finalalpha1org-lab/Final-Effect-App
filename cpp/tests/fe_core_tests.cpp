@@ -211,6 +211,66 @@ int main() {
   assert(fe_sim_bake_compress(sim_frames, 3, 2, 0.01f, kept_frames, 8) == 2);
   assert(kept_frames[0] == 0 && kept_frames[1] == 2);
 
+  /* 11. Triangulate: Blender's tessellator, ported (cpp/src/fe_polyfill.cpp) */
+  assert(fe_polyfill_begin() == 0);
+  assert(fe_polyfill_max_vertices() == 65536u);
+  {
+    /* A regular 12-gon must come back as exactly 10 triangles that cover the
+       polygon: n-2 is the guarantee the upstream function documents. */
+    const uint32_t n = 12u;
+    float verts[12 * 3];
+    uint32_t ring[12];
+    for (uint32_t i = 0; i < n; ++i) {
+      const float a = static_cast<float>(i) * 6.2831853f / static_cast<float>(n);
+      verts[i * 3] = fe::cosf(a);
+      verts[i * 3 + 1] = fe::sinf(a);
+      verts[i * 3 + 2] = 0.0f;
+      ring[i] = i;
+    }
+    float* pos = fe_polyfill_positions_ptr();
+    uint32_t* r = fe_polyfill_ring_ptr();
+    uint32_t* start = fe_polyfill_start_ptr();
+    for (uint32_t i = 0; i < n * 3u; ++i) pos[i] = verts[i];
+    for (uint32_t i = 0; i < n; ++i) r[i] = ring[i];
+    start[0] = 0u;
+    start[1] = n;
+    assert(fe_polyfill_build(n, 1u, n, 0u, 0u) == static_cast<int32_t>(n - 2u));
+    assert(fe_polyfill_ngon_count() == 1u);
+
+    const uint32_t* tris = fe_polyfill_tris_ptr();
+    float area = 0.0f;
+    for (uint32_t t = 0; t < n - 2u; ++t) {
+      const float* a = pos + tris[t * 3 + 0] * 3;
+      const float* b = pos + tris[t * 3 + 1] * 3;
+      const float* c = pos + tris[t * 3 + 2] * 3;
+      const float ux = b[0] - a[0], uy = b[1] - a[1];
+      const float vx = c[0] - a[0], vy = c[1] - a[1];
+      area += fe::absf(ux * vy - uy * vx) * 0.5f;
+    }
+    const float exact = 0.5f * static_cast<float>(n) * fe::sinf(6.2831853f / static_cast<float>(n));
+    assert(nearf(area, exact, 1e-4f));
+
+    /* A quad is cut on the shorter diagonal (Blender's SHORTEST_DIAGONAL). */
+    const float quad[12] = {0, 0, 0,  4, 0, 0,  1, 1, 0,  0, 1, 0};
+    for (uint32_t i = 0; i < 12u; ++i) pos[i] = quad[i];
+    r[0] = 0; r[1] = 1; r[2] = 2; r[3] = 3;
+    start[0] = 0u;
+    start[1] = 4u;
+    assert(fe_polyfill_build(4u, 1u, 4u, 1u, 0u) == 2);
+    assert(fe_polyfill_quad_count() == 1u);
+    assert(tris[0] == 0u && tris[1] == 1u && tris[2] == 2u);
+    assert(tris[3] == 0u && tris[4] == 2u && tris[5] == 3u);
+
+    /* A degenerate five-corner ring still yields n-2 (Blender bug #103913). */
+    const float line[15] = {0, 0, 0,  1, 0, 0,  2, 0, 0,  3, 0, 0,  4, 0, 0};
+    for (uint32_t i = 0; i < 15u; ++i) pos[i] = line[i];
+    for (uint32_t i = 0; i < 5u; ++i) r[i] = i;
+    start[0] = 0u;
+    start[1] = 5u;
+    assert(fe_polyfill_build(5u, 1u, 5u, 0u, 0u) == 3);
+  }
+  assert(fe_polyfill_build(fe_polyfill_max_vertices() + 1u, 1u, 3u, 0u, 0u) == -3);
+
   printf("All Final Effect C++20 Core Engine tests passed!\n");
   return 0;
 }

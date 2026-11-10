@@ -25,13 +25,14 @@ is the contract below.
 | `volumetrics` | `fe_vol_init`, `fe_vol_step`, `fe_vol_surface`, `fe_vol_stats_ptr`, `fe_vol_density_ptr`, `fe_vol_grid_size` |
 | `modifiers` | `fe_mod_begin`, `fe_mod_subdivide`, `fe_mod_lattice_apply`, `fe_mod_shrinkwrap` |
 | `simulation` | `fe_sim_bake_compress`, `fe_sim_xpbd_deformable_step`, `fe_sim_liquid_pbf_step`, `fe_sim_pyro_step` |
+| `triangulate` | `fe_polyfill_begin`, `fe_polyfill_build`, `fe_polyfill_positions_ptr`, `fe_polyfill_ring_ptr`, `fe_polyfill_start_ptr`, `fe_polyfill_tris_ptr`, `fe_polyfill_quad_count`, `fe_polyfill_ngon_count`, `fe_polyfill_max_vertices`, `fe_polyfill_max_corners`, `fe_polyfill_max_faces`, `fe_polyfill_max_face_verts` |
 | `flip-liquid` | `fe_flip_begin`, `fe_flip_step`, `fe_flip_grid_nx`, `fe_flip_grid_ny`, `fe_flip_grid_nz`, `fe_flip_cell_size`, `fe_flip_cell_count` |
 | `export` | `fe_export_bake`, `fe_export_bake_instanced`, `fe_zip_crc32`, `fe_volatlas_pack`, `fe_volatlas_sample`, `fe_volatlas_parse_library`, `fe_writer_obj_mesh`, `fe_writer_mtl_material` |
 | `render-maths` | `fe_taa_halton`, `fe_taa_jitter`, `fe_taa_project`, `fe_color_blackbody_rgb`, `fe_color_blackbody_lut` |
 | `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance`, `fe_edit_set_faces`, `fe_edit_face_count`, `fe_edit_tri_tag_ptr`, `fe_edit_tri_tag_count` |
 | `faces` | `fe_poly_begin`, `fe_poly_build`, `fe_poly_face_count`, `fe_poly_face_start_ptr`, `fe_poly_face_ring_ptr`, `fe_poly_edge_ptr`, `fe_poly_kind_counts_ptr`, `fe_poly_weld_rep_ptr` |
 
-The shipped build is `1379615` bytes, ABI v1, **345 exports**; every group above
+The shipped build is `1402608` bytes, ABI v1, **357 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
@@ -125,7 +126,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1379615 bytes, ABI v1, 345 exports)`.
+that passes `Validated fe_core_engine.wasm (1402608 bytes, ABI v1, 357 exports)`.
 
 ## Verification
 
