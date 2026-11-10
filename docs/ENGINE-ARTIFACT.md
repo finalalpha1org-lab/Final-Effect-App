@@ -32,7 +32,7 @@ is the contract below.
 | `edit-mode` | `fe_edit_upload`, `fe_edit_build_render`, `fe_edit_pick`, `fe_edit_quad_pairs_ptr`, `fe_edit_quad_pair_count`, `fe_edit_set_pick_tolerance`, `fe_edit_set_faces`, `fe_edit_face_count`, `fe_edit_tri_tag_ptr`, `fe_edit_tri_tag_count` |
 | `faces` | `fe_poly_begin`, `fe_poly_build`, `fe_poly_face_count`, `fe_poly_face_start_ptr`, `fe_poly_face_ring_ptr`, `fe_poly_edge_ptr`, `fe_poly_kind_counts_ptr`, `fe_poly_weld_rep_ptr` |
 
-The shipped build is `1508947` bytes, ABI v1, **360 exports**; every group above
+The shipped build is `1534331` bytes, ABI v1, **361 exports**; every group above
 is satisfied, so `artifact.complete` is `true` and all eight benchmark rows pass.
 
 Twenty-two of the exports are world-space baking, the volume atlas and the ZIP
@@ -126,7 +126,7 @@ the missing exports and the **Repair Engine** button:
 re-runs the benchmark in place.
 
 If the banner survives a repair, the deployed file is old - redeploy the build
-that passes `Validated fe_core_engine.wasm (1508947 bytes, ABI v1, 360 exports)`.
+that passes `Validated fe_core_engine.wasm (1534331 bytes, ABI v1, 361 exports)`.
 
 ## Verification
 

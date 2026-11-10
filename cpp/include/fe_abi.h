@@ -604,6 +604,16 @@ FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float tim
 FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
 FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
 FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
+/* Array, ported from modifiers/intern/MOD_array.cc: the cumulative offset
+ * matrix, the Fit Length / Fit Curve count arithmetic, the UV offset per copy
+ * and the seam merge. offset_type bit 0 = constant offset, bit 1 = relative. */
+FE_EXPORT int32_t  fe_mod_array_ex(uint32_t count, uint32_t fit_type, float fit_length,
+                                   uint32_t offset_type,
+                                   float cx, float cy, float cz,
+                                   float rx, float ry, float rz,
+                                   float rot_x_deg, float rot_y_deg, float rot_z_deg,
+                                   uint32_t merge, float merge_dist,
+                                   float uv_u, float uv_v);
 /* Returns the number of levels built (0 = nothing to do, negative = a
  * session error); mode 0 is Catmull-Clark, 1 is Simple. */
 FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels, uint32_t simple);

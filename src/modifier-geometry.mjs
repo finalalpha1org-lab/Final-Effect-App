@@ -217,11 +217,45 @@ export function booleanGeometry(targetGeometry, operandGeometry, operandMatrixEl
   }
 }
 
-export function arrayGeometry(geometry, { count = 2, offset = [1.8,0,0], relative = [0,0,0], rotationPerStep = 0 } = {}) {
-  const copies = clamp(Math.round(count), 1, 100);
+export function arrayGeometry(geometry, {
+  count = 2, offset = [1.8,0,0], relative = [0,0,0], rotationPerStep = 0,
+  fitType = 'Fixed Count', fitLength = 10,
+  merge = false, mergeDistance = 0.001, uvOffset = [0,0],
+  rotation = [0,0,0]
+} = {}) {
+  /* Blender's Array (MOD_array.cc): one offset matrix multiplied into a running
+     matrix per copy, so a rotated or scaled offset compounds. Fit Length and
+     Fit Curve replace Count with (length + 1e-6) / |offset| + 1 - the same
+     arithmetic as arrayModifier_doArray - and Merge welds the seam between each
+     copy and the one before it. */
+  const fit = fitType === 'Fit Length' || fitType === 'Fit Curve';
+  const asNumber = (v) => Number(v) || 0;
+  /* The same estimate the kernel makes, only to size the buffers. */
+  let copies;
+  if (fit) {
+    const box = geometry.boundingBox || (geometry.computeBoundingBox(), geometry.boundingBox);
+    const size = box ? box.getSize(new THREE.Vector3()) : new THREE.Vector3();
+    const step = [0,1,2].map(i => asNumber(offset[i]) + asNumber(relative[i]) * size.getComponent(i));
+    const dist = Math.hypot(step[0], step[1], step[2]);
+    copies = dist > 1e-6 ? Math.floor((asNumber(fitLength) + 1e-6) / dist) + 1 : 1;
+  } else {
+    copies = Math.round(count);
+  }
+  copies = clamp(copies, 1, 4096);
   const viaCpp = copies > 1 ? runCppKernel(geometry, (v,t)=>[v*copies, t*copies],
-    exp => exp.fe_mod_array(copies, Number(offset[0])||0, Number(offset[1])||0, Number(offset[2])||0,
-                            Number(relative[0])||0, Number(relative[1])||0, Number(relative[2])||0, Number(rotationPerStep)||0)) : null;
+    exp => {
+      const rot = [asNumber(rotation[0]), asNumber(rotation[1]), asNumber(rotation[2])];
+      if (rotationPerStep && !rot[1]) rot[1] = asNumber(rotationPerStep);
+      if (typeof exp.fe_mod_array_ex === 'function') {
+        return exp.fe_mod_array_ex(copies, fit ? (fitType === 'Fit Curve' ? 2 : 1) : 0, asNumber(fitLength), 3,
+          ...offset.map(asNumber), ...relative.map(asNumber),
+          rot[0], rot[1], rot[2],
+          merge ? 1 : 0, Math.max(asNumber(mergeDistance), 0),
+          asNumber(uvOffset[0]), asNumber(uvOffset[1]));
+      }
+      return exp.fe_mod_array(copies, asNumber(offset[0]), asNumber(offset[1]), asNumber(offset[2]),
+        asNumber(relative[0]), asNumber(relative[1]), asNumber(relative[2]), asNumber(rotationPerStep));
+    }) : null;
   if (viaCpp) return viaCpp;
   const src = geometry.clone(), p = assertPositions(src);
   if (copies === 1) return src;

@@ -11513,7 +11513,7 @@ window.addEventListener('keydown', (e) => {
    ========================================================= */
 const modifiersData = {
   Generate: [
-    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}]]},
+    {name:"Array", fields:[["Fit Type","select",["Fixed Count","Fit Length","Fit Curve"]],["Count","range",1,10,2,1],["Length","range",0,50,10,.5,{advanced:true}],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}],["Merge","check",false,{advanced:true}],["Merge Distance","range",0,.5,.001,.001,{advanced:true}],["UV Offset U","range",-1,1,0,.05,{advanced:true}],["UV Offset V","range",-1,1,0,.05,{advanced:true}]]},
     {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
@@ -11701,7 +11701,14 @@ function applyBooleanModifier(targetObj, geometry, params) {
   const relative = modifierRelativeMatrix(targetObj, operand);
   return modifierGeometryApi().booleanGeometry(geometry, operand.geometry, relative.elements, params.Operation || 'Difference');
 }
-function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep }); }
+function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0, extra={}) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep, ...extra }); }
+function arrayModifierOptions(p) {
+  return {
+    fitType: p["Fit Type"] || "Fixed Count", fitLength: Number(p.Length ?? 10),
+    merge: p.Merge === true, mergeDistance: Number(p["Merge Distance"] ?? 0.001),
+    uvOffset: [Number(p["UV Offset U"] ?? 0), Number(p["UV Offset V"] ?? 0)]
+  };
+}
 function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e-6) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping, mergeDistance }); }
 function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
 function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip') { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod }); }
@@ -12044,7 +12051,7 @@ function updateModifiersOnScene(targetOverride) {
       const ox = parseFloat(p["Offset X"] ?? 1.8);
       const oy = parseFloat(p["Offset Y"] ?? 0);
       const oz = parseFloat(p["Offset Z"] ?? 0);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0), parseFloat(p["Rotation Per Step"] ?? 0)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0), parseFloat(p["Rotation Per Step"] ?? 0), arrayModifierOptions(p)));
     } else if (mod.name === "Mirror") {
       const xA = p["X Axis"] ?? true;
       const yA = p["Y Axis"] ?? false;
@@ -12560,7 +12567,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2),p['Subdivision Type']==='Simple'));
       else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1),p['Rim Fill']!==false,p['Even Thickness']!==false));
       else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));
-      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0)));
+      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0),arrayModifierOptions(p)));
       else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true,Number(p['Merge Distance']??1e-6)));
       else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false));
       else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false,p['Quad Method']||'Beauty',p['Ngon Method']||'Beauty'));

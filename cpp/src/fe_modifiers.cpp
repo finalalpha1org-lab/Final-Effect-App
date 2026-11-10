@@ -1475,6 +1475,261 @@ FE_EXPORT int32_t fe_mod_twist(float strength, uint32_t axis) {
   return commit(v, t);
 }
 
+/* =========================================================================
+ * Array - ported from modifiers/intern/MOD_array.cc
+ *
+ *   source/blender/modifiers/intern/MOD_array.cc (arrayModifier_doArray)
+ *
+ * The old kernel translated copy c by step * c and spun it about the object
+ * origin, which is not what Blender does. Blender builds one offset matrix and
+ * keeps multiplying it into a running matrix:
+ *
+ *   unit_m4(offset);
+ *   if (OFF_CONST)   offset[3] += constant;
+ *   if (OFF_RELATIVE) offset[3][j] += scale[j] * (bounds_max[j] - bounds_min[j]);
+ *   if (OFF_OBJ)     offset = offset * inverse(object) * offset_object;
+ *   ...
+ *   mul_m4_m4m4(current_offset, current_offset, offset);   per copy
+ *
+ * so a rotated offset makes the copies spiral around each other, and a scaled
+ * offset grows the spacing, both of which fall out of the matrix for free here.
+ * This kernel carries that structure: constant and relative offsets build the
+ * translation, a per-step rotation (our stand-in for Blender's offset empty,
+ * which this app has no way to give the modifier) is composed on top, and the
+ * running matrix is multiplied out copy by copy.
+ *
+ * Fit Type is arrayModifier_doArray's own arithmetic:
+ *
+ *   count = (length + 1e-6f) / len_v3(offset[3]) + 1
+ *
+ * with a single copy when the offset is degenerate. Fit Curve in Blender reads
+ * the length off a curve object's evaluated path; there are no curve objects
+ * here, so the same number is supplied directly as Length and the arithmetic is
+ * identical.
+ *
+ * Merge is the seam weld: Blender's dm_mvert_map_doubles() maps the vertices of
+ * chunk c onto chunk c-1 within the merge distance, and a mapping chain is
+ * followed transitively. That is a union-find over the copies, done here with a
+ * grid keyed by the merge distance so it stays linear.
+ *
+ * Not ported: the start/end cap objects, material index offsets, and the
+ * per-attribute interpolation (position, normal, UV and the face smoothing flag
+ * are carried; nothing else exists on this pipeline).
+ * ========================================================================= */
+FE_EXPORT int32_t fe_mod_array_ex(uint32_t count, uint32_t fit_type, float fit_length,
+                                  uint32_t offset_type,
+                                  float cx, float cy, float cz,
+                                  float rx, float ry, float rz,
+                                  float rot_x_deg, float rot_y_deg, float rot_z_deg,
+                                  uint32_t merge, float merge_dist,
+                                  float uv_u, float uv_v) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  if (g_s.inSmooth && g_s.outSmooth) g_s.flagMode = 1;   /* one flag per copy per face */
+
+  const Box box = meshBounds(g_s.inPos, v);
+  const Vec3 ext = box.size();
+
+  /* The offset matrix's translation, exactly as upstream accumulates it. */
+  Vec3 translation(0.0f, 0.0f, 0.0f);
+  if (offset_type & 1u) translation = translation + Vec3(cx, cy, cz);
+  if (offset_type & 2u) translation = translation + Vec3(rx * ext.x, ry * ext.y, rz * ext.z);
+
+  /* Per-step rotation, the offset-empty stand-in: R = Rz * Ry * Rx. */
+  const float ax = rot_x_deg * kDeg2Rad, ay = rot_y_deg * kDeg2Rad, az = rot_z_deg * kDeg2Rad;
+  const bool anySpin = rot_x_deg != 0.0f || rot_y_deg != 0.0f || rot_z_deg != 0.0f;
+  /* fe::cosf is a fast approximation (about 3e-6 at zero), and this matrix is
+     multiplied into itself once per copy - at forty copies that error would be
+     visible. A step with no rotation is exactly the identity, so it never goes
+     near the trigonometry. */
+  const float cxs = anySpin ? cosf(ax) : 1.0f, sxs = anySpin ? sinf(ax) : 0.0f;
+  const float cys = anySpin ? cosf(ay) : 1.0f, sys = anySpin ? sinf(ay) : 0.0f;
+  const float czs = anySpin ? cosf(az) : 1.0f, szs = anySpin ? sinf(az) : 0.0f;
+  /* Column-major 4x4: element (row r, column c) lives at m[c * 4 + r]. */
+  float R[16] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+  };
+  {
+    /* Rx */
+    float mx[16] = { 1, 0, 0, 0,  0, cxs, sxs, 0,  0, -sxs, cxs, 0,  0, 0, 0, 1 };
+    /* Ry */
+    float my[16] = { cys, 0, -sys, 0,  0, 1, 0, 0,  sys, 0, cys, 0,  0, 0, 0, 1 };
+    /* Rz */
+    float mz[16] = { czs, szs, 0, 0,  -szs, czs, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
+    auto mul = [](const float* a, const float* b, float* out) {
+      for (uint32_t col = 0; col < 4u; ++col) {
+        for (uint32_t row = 0; row < 4u; ++row) {
+          float acc = 0.0f;
+          for (uint32_t k = 0; k < 4u; ++k) acc += a[k * 4u + row] * b[col * 4u + k];
+          out[col * 4u + row] = acc;
+        }
+      }
+    };
+    float tmp[16];
+    mul(my, mx, tmp);      /* Ry * Rx */
+    mul(mz, tmp, R);       /* Rz * (Ry * Rx) */
+  }
+  /* The offset matrix: rotate, then translate. */
+  float M[16];
+  for (uint32_t i = 0; i < 16u; ++i) M[i] = R[i];
+  M[12] = translation.x; M[13] = translation.y; M[14] = translation.z;
+
+  const float eps = 1e-6f;
+  const float dist = length(translation);
+  uint32_t copies = count < 1u ? 1u : count;
+  if (fit_type == 1u || fit_type == 2u) {
+    /* arrayModifier_doArray: (length + epsilon) / dist + 1, truncated. */
+    copies = dist > eps ? static_cast<uint32_t>((fit_length + eps) / dist) + 1u : 1u;
+  }
+  if (copies > 4096u) copies = 4096u;
+  if (copies > 1u && (v * copies > g_s.vcap || t * copies > g_s.tcap)) {
+    /* Fit Length can ask for more copies than the session holds; build as many
+       as fit instead of losing the whole modifier. */
+    const uint32_t byVerts = g_s.vcap / v, byTris = g_s.tcap / t;
+    copies = byVerts < byTris ? byVerts : byTris;
+    if (copies < 1u) copies = 1u;
+  }
+  if (copies == 1u) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    if (g_s.flagMode && g_s.inSmooth && g_s.outSmooth) for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+    return commit(v, t);
+  }
+
+  const uint32_t totalV = v * copies;
+  float* cur = modArray<float>(16u);   /* the running offset matrix */
+  uint32_t* parent = nullptr;
+  if (merge) {
+    parent = modArray<uint32_t>(totalV);
+    if (!parent) return -2;
+    for (uint32_t i = 0; i < totalV; ++i) parent[i] = i;
+  }
+  if (!cur) return -2;
+  for (uint32_t i = 0; i < 16u; ++i) cur[i] = (i % 5u == 0u) ? 1.0f : 0.0f;
+
+  for (uint32_t c = 0; c < copies; ++c) {
+    if (c > 0u) {
+      float next[16];
+      for (uint32_t col = 0; col < 4u; ++col) {
+        for (uint32_t row = 0; row < 4u; ++row) {
+          float acc = 0.0f;
+          for (uint32_t k = 0; k < 4u; ++k) acc += cur[k * 4u + row] * M[col * 4u + k];
+          next[col * 4u + row] = acc;
+        }
+      }
+      for (uint32_t i = 0; i < 16u; ++i) cur[i] = next[i];
+    }
+    const uint32_t base = c * v;
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(g_s.inPos, i);
+      const Vec3 q(p.x * cur[0] + p.y * cur[4] + p.z * cur[8] + cur[12],
+                   p.x * cur[1] + p.y * cur[5] + p.z * cur[9] + cur[13],
+                   p.x * cur[2] + p.y * cur[6] + p.z * cur[10] + cur[14]);
+      writePos(g_s.outPos, base + i, q);
+      if (g_s.hasUv) {
+        g_s.outUv[(base + i) * 2] = g_s.inUv[i * 2] + uv_u * static_cast<float>(c);
+        g_s.outUv[(base + i) * 2 + 1] = g_s.inUv[i * 2 + 1] + uv_v * static_cast<float>(c);
+      }
+    }
+    for (uint32_t f = 0; f < t; ++f) {
+      const uint32_t o = (c * t + f) * 3;
+      g_s.outIdx[o] = base + g_s.inIdx[f * 3];
+      g_s.outIdx[o + 1] = base + g_s.inIdx[f * 3 + 1];
+      g_s.outIdx[o + 2] = base + g_s.inIdx[f * 3 + 2];
+      if (g_s.flagMode && g_s.inSmooth && g_s.outSmooth) g_s.outSmooth[c * t + f] = g_s.inSmooth[f];
+    }
+  }
+
+  /* ---- merge: weld the seam between each copy and the one before it ---- */
+  if (merge && merge_dist > 0.0f) {
+    auto findRoot = [&](uint32_t i) {
+      while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+      return i;
+    };
+    /* Chain c -> c-1 through a grid keyed by the merge distance. */
+    const float cell = merge_dist;
+    const float inv = 1.0f / cell;
+    const uint32_t cap = nextPow2(v * 2u + 8u);
+    int32_t* head = modArray<int32_t>(cap);
+    int32_t* next = modArray<int32_t>(v);
+    int32_t* gx = modArray<int32_t>(v);
+    int32_t* gy = modArray<int32_t>(v);
+    int32_t* gz = modArray<int32_t>(v);
+    if (!head || !next || !gx || !gy || !gz) return -2;
+    for (uint32_t c = 1; c < copies; ++c) {
+      for (uint32_t i = 0; i < cap; ++i) head[i] = -1;
+      for (uint32_t i = 0; i < v; ++i) {
+        const Vec3 p = readPos(g_s.outPos, (c - 1u) * v + i);
+        const int32_t qx = quantize(p.x, inv), qy = quantize(p.y, inv), qz = quantize(p.z, inv);
+        const uint32_t slot = hashU32(static_cast<uint32_t>(qx) * 73856093u ^
+                                      static_cast<uint32_t>(qy) * 19349663u ^
+                                      static_cast<uint32_t>(qz) * 83492791u) & (cap - 1u);
+        gx[i] = qx; gy[i] = qy; gz[i] = qz;
+        next[i] = head[slot];
+        head[slot] = static_cast<int32_t>(i);
+      }
+      for (uint32_t i = 0; i < v; ++i) {
+        const uint32_t here = c * v + i;
+        const Vec3 p = readPos(g_s.outPos, here);
+        const int32_t qx = quantize(p.x, inv), qy = quantize(p.y, inv), qz = quantize(p.z, inv);
+        bool matched = false;
+        for (int32_t dz = -1; dz <= 1 && !matched; ++dz) {
+          for (int32_t dy = -1; dy <= 1 && !matched; ++dy) {
+            for (int32_t dx = -1; dx <= 1 && !matched; ++dx) {
+              const uint32_t slot = hashU32(static_cast<uint32_t>(qx + dx) * 73856093u ^
+                                            static_cast<uint32_t>(qy + dy) * 19349663u ^
+                                            static_cast<uint32_t>(qz + dz) * 83492791u) & (cap - 1u);
+              for (int32_t j = head[slot]; j >= 0; j = next[j]) {
+                if (gx[j] != qx + dx || gy[j] != qy + dy || gz[j] != qz + dz) continue;
+                const Vec3 other = readPos(g_s.outPos, (c - 1u) * v + static_cast<uint32_t>(j));
+                if (length(p - other) > merge_dist) continue;
+                const uint32_t ra = findRoot(here);
+                const uint32_t rb = findRoot((c - 1u) * v + static_cast<uint32_t>(j));
+                if (ra != rb) parent[ra] = rb;
+                matched = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    /* Compact: one vertex per root, keeping the first copy's position. */
+    uint32_t* remap = modArray<uint32_t>(totalV);
+    if (!remap) return -2;
+    uint32_t outV = 0u;
+    for (uint32_t i = 0; i < totalV; ++i) {
+      if (findRoot(i) != i) { remap[i] = 0xFFFFFFFFu; continue; }
+      remap[i] = outV;
+      writePos(g_s.outPos, outV, readPos(g_s.outPos, i));
+      if (g_s.hasUv) {
+        g_s.outUv[outV * 2] = g_s.outUv[i * 2];
+        g_s.outUv[outV * 2 + 1] = g_s.outUv[i * 2 + 1];
+      }
+      ++outV;
+    }
+    for (uint32_t i = 0; i < totalV; ++i) if (remap[i] != 0xFFFFFFFFu) remap[i] = remap[findRoot(i)];
+    uint32_t outT = 0u;
+    for (uint32_t f = 0; f < t * copies; ++f) {
+      const uint32_t a = remap[g_s.outIdx[f * 3]], b = remap[g_s.outIdx[f * 3 + 1]], c2 = remap[g_s.outIdx[f * 3 + 2]];
+      if (a == 0xFFFFFFFFu || b == 0xFFFFFFFFu || c2 == 0xFFFFFFFFu) continue;
+      if (a == b || b == c2 || c2 == a) continue;
+      g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c2;
+      if (g_s.flagMode && g_s.inSmooth && g_s.outSmooth) g_s.outSmooth[outT] = g_s.outSmooth[f];
+      ++outT;
+    }
+    if (outT == 0u || outV == 0u) return -4;
+    return commit(outV, outT);
+  }
+
+  return commit(totalV, t * copies);
+}
+
 FE_EXPORT int32_t fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
