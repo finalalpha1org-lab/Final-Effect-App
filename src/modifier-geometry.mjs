@@ -353,12 +353,18 @@ export function triangulateGeometry(geometry, { keepNormals = true, quadMethod =
 }
 
 export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000, { preserveBoundary = true } = {}) {
-  /* Small meshes keep the higher-quality QEM collapse; the C++ clustering pass
-     takes over once QEM would block the main thread. */
+  /* The C++ collapse (ported from bmesh_decimate_collapse.cc) is the real
+     implementation now, at every size - there is nothing the JS path does
+     better. The JS below is a fallback for when the wasm engine is unavailable
+     (a stripped build), and the clustering kernel fe_mod_decimate is kept for
+     callers that ask for it by name. */
   const current = kernelCapacities(geometry);
-  const viaCpp = current && current.t > 12000
-    ? runCppKernel(geometry, null, exp => exp.fe_mod_decimate(clamp(Number(ratio)||.5, .01, 1), preserveBoundary ? 1 : 0))
-    : null;
+  const viaCpp = current && runCppKernel(geometry, null, exp => {
+    const ratioNow = clamp(Number(ratio) || .5, .01, 1);
+    const flag = preserveBoundary ? 1 : 0;
+    if (typeof exp.fe_mod_decimate_collapse === 'function') return exp.fe_mod_decimate_collapse(ratioNow, flag);
+    return exp.fe_mod_decimate(ratioNow, flag);
+  });
   if (viaCpp) return viaCpp;
   const g=weldGeometry(geometry,1e-7),p=g.attributes.position,idx=g.index.array;
   const initialFaces=idx.length/3;

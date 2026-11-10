@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 415 181 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 458 297 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:
@@ -138,28 +138,31 @@ Concretely:
 | --- | --- |
 | Face law (quads, n-gons, wireframe, outlines) | Ours, `cpp/src/fe_poly.cpp`, measured against Blender's semantics |
 | Edit tools (extrude, inset, bevel, loop cut, slide, pole fill) | Ours, `cpp/src/fe_editmesh*.cpp` |
-| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp` |
+| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse (below) |
 | Boolean | Ours (the mesh-arrangement approach); **not** `three-csg-ts` in JavaScript |
 | Path tracing | Ours, `cpp/src/fe_renderer.cpp` |
 | Small pure-data tables (a colour-space matrix, a socket enum, a curve preset) | Copied from Blender where it is genuinely a table: keep the header, add the `NOTICE` entry |
 
 ### What has actually been pasted
 
-One upstream pair so far, and the reason it compiles is the same reason anything
-qualifies: it is an **algorithm over plain data**, not a slice of Blender's
-application. `cpp/src/fe_polyfill.cpp` carries the ear-clipping loop from
-`blenlib/intern/polyfill_2d.cc` and the beauty pass from
-`polyfill_2d_beautify.cc`. Neither links `BLI_*`, `BKE_*` or BMesh - where the
-original calls one of those, the call is replaced by the smallest thing that does
-the same job, and the file's own header comment says which:
+Three upstream files so far, and the reason each one compiles is the same: it is
+an **algorithm over plain data**, not a slice of Blender's application. None of
+them links `BLI_*`, `BKE_*` or BMesh; where the original calls one of those, the
+call is replaced by the smallest thing that does the same job, and the file's own
+header comment says which.
 
 | Ours | Upstream | Copied | Licence |
 | --- | --- | --- | --- |
 | `cpp/src/fe_polyfill.cpp` | `blenlib/intern/polyfill_2d.cc` + `polyfill_2d_beautify.cc` | the ear-clipping loop, `BLI_polyfill_beautify_quad_rotate_calc_ex` and its rotation | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_decimate_collapse()` | `bmesh/tools/bmesh_decimate_collapse.cc` | quadric build (including the boundary-plane weighting), target-coordinate optimisation, edge cost, link condition, degenerate-flip test | GPL-2.0-or-later |
 
-What is *not* copied is what would have pulled BLI in: `BLI_edgehash` and
-`BLI_heap` become an open-addressing table and a binary heap in the same file,
-and the MemArena is the caller's own buffer.
+What was *not* copied in each case is the thing that would have pulled BMesh in:
+`BLI_edgehash`/`BLI_heap` become an open-addressing table and a binary heap in
+the same file, `BMesh`'s custom-data interpolation is dropped (the decimator
+keeps the surviving vertex's UV and lets the shading be recomputed), and the
+symmetry KD-tree pass is not ported. The decimator works on a flat
+`(position, index)` buffer, which is what the modifier stack already sends to
+every kernel.
 
 That is the boundary this repository holds: a file qualifies if it can be lifted
 on its own and still be correct. Bevel (8 485 lines pulling in `BLI_Map`,

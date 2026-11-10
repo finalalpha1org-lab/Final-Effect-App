@@ -1249,7 +1249,7 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
       const Vec3 pa = readPos(g_s.inPos, a), pb = readPos(g_s.inPos, b);
       const Vec3 na = readPos(g_s.nrm, a), nb = readPos(g_s.nrm, b);
       const Vec3 oa = pa + na * outer, ob = pb + nb * outer;
-      const Vec3 ia = pa + na * inner, ib = pb + nb * inner;
+      const Vec3 ib = pb + nb * inner;
       const uint32_t f = edges.tri ? edges.tri[s] : 0u;
       const Vec3 fa = readPos(g_s.inPos, g_s.inIdx[f * 3]);
       const Vec3 fb = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
@@ -1619,6 +1619,437 @@ FE_EXPORT int32_t fe_mod_decimate(float ratio, int32_t preserve_boundary) {
   const uint32_t outV = static_cast<uint32_t>(cellsOut);
   const uint32_t outT = g_s.counts[1];
   if (outV == 0 || outT == 0) return -4;
+  return commit(outV, outT);
+}
+
+/* =========================================================================
+ * Collapse decimation - ported from bmesh_decimate_collapse.cc
+ *
+ *   source/blender/bmesh/tools/bmesh_decimate_collapse.cc (GPL-2.0-or-later)
+ *
+ * The kernel that used to sit behind the Decimate modifier was a vertex
+ * clusterer: it snapped vertices to a grid, so a face that spanned two cells
+ * became a shape that never existed. Fine at 50 %, a lumpy box at 10 %.
+ *
+ * This is Blender's collapse instead, kept as close to the original as a flat
+ * triangle buffer allows. What is carried over:
+ *
+ *   - bm_decim_build_quadrics(): one 10-float symmetric quadric per vertex,
+ *     summed from the plane through each incident face's centre, then a plane
+ *     perpendicular to every boundary edge (cross(edge, face normal), through
+ *     the edge midpoint) scaled by BOUNDARY_PRESERVE_WEIGHT = 100 so a rim
+ *     stays a rim;
+ *   - bm_decim_calc_target_co_db(): the collapse target is the quadric
+ *     minimum when BLI_quadric_optimize() finds one (determinant above
+ *     OPTIMIZE_EPS = 1e-8), otherwise the edge midpoint;
+ *   - bm_decim_build_edge_cost_single(): cost = |eval(q1) + eval(q2)| at that
+ *     target, and an edge that cannot collapse right now gets COST_INVALID
+ *     rather than being dropped, so it is retried once its surroundings move;
+ *   - the degenerate-topology test (the link condition): the two vertex
+ *     neighbourhoods may only overlap in the vertices of the faces the edge
+ *     itself joins;
+ *   - bm_edge_collapse_is_degenerate_flip(), inequality included:
+ *     dot(cross_exist, cross_optim) <= (|cross_exist|^2 + |cross_optim|^2) * 0.01
+ *     So a face is never allowed to fold flat, only to shrink.
+ *
+ * Not carried over, and stated plainly: BMesh's custom-data interpolation
+ * (vertex weights, shape keys, UV corners, vertex groups - the kernel keeps
+ * the surviving vertex's UV), the symmetry KD-tree pass, and Blender's
+ * dissolve-based mode. What runs here is the collapse path, which is what the
+ * modifier does at every ratio.
+ * ========================================================================= */
+
+/* BLI_quadric: symmetric 4x4, stored as the upper triangle. */
+struct Quadric {
+  float m[10];  /* a2 ab ac ad  b2 bc bd  c2 cd  d2 */
+};
+
+inline void quadricZero(Quadric& q) { for (uint32_t i = 0; i < 10u; ++i) q.m[i] = 0.0f; }
+
+/* BLI_quadric_from_plane(): outer product of the plane. */
+inline void quadricAddPlane(Quadric& q, const Vec3& n, float d, float w) {
+  q.m[0] += w * n.x * n.x;
+  q.m[1] += w * n.x * n.y;
+  q.m[2] += w * n.x * n.z;
+  q.m[3] += w * n.x * d;
+  q.m[4] += w * n.y * n.y;
+  q.m[5] += w * n.y * n.z;
+  q.m[6] += w * n.y * d;
+  q.m[7] += w * n.z * n.z;
+  q.m[8] += w * n.z * d;
+  q.m[9] += w * d * d;
+}
+
+inline void quadricAdd(Quadric& a, const Quadric& b) { for (uint32_t i = 0; i < 10u; ++i) a.m[i] += b.m[i]; }
+
+/* BLI_quadric_evaluate(): v' * Q * v. */
+inline float quadricError(const Quadric& q, const Vec3& v) {
+  const float x = v.x, y = v.y, z = v.z;
+  return q.m[0] * x * x + 2.0f * q.m[1] * x * y + 2.0f * q.m[2] * x * z + 2.0f * q.m[3] * x
+       + q.m[4] * y * y + 2.0f * q.m[5] * y * z + 2.0f * q.m[6] * y
+       + q.m[7] * z * z + 2.0f * q.m[8] * z
+       + q.m[9];
+}
+
+/* BLI_quadric_optimize(): the point minimising the quadric, if the system is
+ * well conditioned. Returns false (the caller then uses the midpoint) exactly
+ * when the 3x3 determinant is not above eps. */
+inline bool quadricOptimize(const Quadric& q, float eps, Vec3& out) {
+  const float a2 = q.m[0], ab = q.m[1], ac = q.m[2], ad = q.m[3];
+  const float b2 = q.m[4], bc = q.m[5], bd = q.m[6];
+  const float c2 = q.m[7], cd = q.m[8];
+  const float det = a2 * (b2 * c2 - bc * bc) - ab * (ab * c2 - bc * ac) + ac * (ab * bc - b2 * ac);
+  if (!isfinitef(det) || absf(det) <= eps) return false;
+  const float inv = 1.0f / det;
+  out.x = -(ad * (b2 * c2 - bc * bc) - ab * (bd * c2 - bc * cd) + ac * (bd * bc - b2 * cd)) * inv;
+  out.y = -(a2 * (bd * c2 - bc * cd) - ad * (ab * c2 - bc * ac) + ac * (ab * cd - bd * ac)) * inv;
+  out.z = -(a2 * (b2 * cd - bd * bc) - ab * (ab * cd - bd * ac) + ad * (ab * bc - b2 * ac)) * inv;
+  return isfinitef(out.x + out.y + out.z);
+}
+
+#define DECIM_BOUNDARY_PRESERVE_WEIGHT 100.0f
+#define DECIM_OPTIMIZE_EPS 1e-8f
+#define DECIM_TOPOLOGY_FALLBACK_EPS 1e-12f
+#define DECIM_COST_INVALID 3.402823466e+38f
+
+/* A binary min-heap of (cost, edge). An entry is re-checked against the live
+ * quadrics when it is popped: if the numbers moved it is re-pushed with the
+ * fresh cost, which is Blender's heap-update without a per-edge node table. */
+struct CollapseHeap {
+  float* cost = nullptr;
+  uint64_t* key = nullptr;   /* (uint64)a | ((uint64)b << 32) */
+  uint32_t size = 0, capacity = 0;
+};
+
+inline void heapSwap(CollapseHeap& h, uint32_t i, uint32_t j) {
+  const float c = h.cost[i]; h.cost[i] = h.cost[j]; h.cost[j] = c;
+  const uint64_t k = h.key[i]; h.key[i] = h.key[j]; h.key[j] = k;
+}
+
+bool heapPush(CollapseHeap& h, float cost, uint32_t a, uint32_t b) {
+  if (h.size >= h.capacity) return false;
+  uint32_t i = h.size++;
+  h.cost[i] = cost;
+  h.key[i] = static_cast<uint64_t>(a) | (static_cast<uint64_t>(b) << 32);
+  while (i > 0u) {
+    const uint32_t p = (i - 1u) >> 1u;
+    if (h.cost[p] <= h.cost[i]) break;
+    heapSwap(h, p, i);
+    i = p;
+  }
+  return true;
+}
+
+bool heapPop(CollapseHeap& h, float& cost, uint32_t& a, uint32_t& b) {
+  if (h.size == 0u) return false;
+  cost = h.cost[0];
+  const uint64_t k = h.key[0];
+  a = static_cast<uint32_t>(k & 0xFFFFFFFFu);
+  b = static_cast<uint32_t>(k >> 32);
+  --h.size;
+  if (h.size > 0u) {
+    h.cost[0] = h.cost[h.size];
+    h.key[0] = h.key[h.size];
+    uint32_t i = 0;
+    for (;;) {
+      const uint32_t l = i * 2u + 1u, r = l + 1u;
+      uint32_t best = i;
+      if (l < h.size && h.cost[l] < h.cost[best]) best = l;
+      if (r < h.size && h.cost[r] < h.cost[best]) best = r;
+      if (best == i) break;
+      heapSwap(h, i, best);
+      i = best;
+    }
+  }
+  return true;
+}
+
+/* bm_decim_build_edge_cost_single(), triangle-buffer form. Full edge list is
+ * walked once for the quadrics; afterwards an edge's cost only changes when
+ * one of its two vertices moves. */
+FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary) {
+  if (!g_s.ready) return -1;
+  g_s.flagMode = 0;                 /* a collapsed mesh has no 1:1 face mapping */
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const float r = clampf(ratio, 0.01f, 1.0f);
+  const uint32_t targetT = static_cast<uint32_t>(maxf(1.0f, floorf(static_cast<float>(t) * r)));
+  if (targetT >= t) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    return commit(v, t);
+  }
+
+  float* pos = modArray<float>(v * 3u);
+  uint32_t* faces = modArray<uint32_t>(t * 3u);
+  uint8_t* aliveV = modArray<uint8_t>(v);
+  uint8_t* aliveF = modArray<uint8_t>(t);
+  Quadric* quad = modArray<Quadric>(v);
+  int32_t* head = modArray<int32_t>(v);
+  int32_t* nextFace = modArray<int32_t>(t * 3u);
+  float* foldNormal = modArray<float>(t * 3u);
+  uint32_t* remap = modArray<uint32_t>(v);
+  CollapseHeap heap;
+  const uint32_t heapCap = t * 3u + 64u;
+  heap.cost = modArray<float>(heapCap);
+  heap.key = modArray<uint64_t>(heapCap);
+  heap.capacity = heapCap;
+  if (!pos || !faces || !aliveV || !aliveF || !quad || !head || !nextFace || !foldNormal ||
+      !remap || !heap.cost || !heap.key) return -2;
+
+  for (uint32_t i = 0; i < v * 3u; ++i) pos[i] = g_s.inPos[i];
+  for (uint32_t i = 0; i < t * 3u; ++i) faces[i] = g_s.inIdx[i];
+  for (uint32_t i = 0; i < v; ++i) { aliveV[i] = 1; head[i] = -1; quadricZero(quad[i]); }
+  for (uint32_t f = 0; f < t; ++f) {
+    aliveF[f] = 1;
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t vi = faces[f * 3u + k];
+      nextFace[f * 3u + k] = head[vi];
+      head[vi] = static_cast<int32_t>(f * 3u + k);
+    }
+  }
+
+  auto faceHas = [&](uint32_t f, uint32_t vi) {
+    return faces[f * 3u] == vi || faces[f * 3u + 1u] == vi || faces[f * 3u + 2u] == vi;
+  };
+  auto safeNormal = [&](uint32_t f) {
+    const Vec3 a = readPos(pos, faces[f * 3u]), b = readPos(pos, faces[f * 3u + 1u]);
+    const Vec3 c = readPos(pos, faces[f * 3u + 2u]);
+    const Vec3 n = cross(b - a, c - a);
+    const float len = length(n);
+    foldNormal[f * 3u] = len > 0.0f ? n.x / len : 0.0f;
+    foldNormal[f * 3u + 1u] = len > 0.0f ? n.y / len : 0.0f;
+    foldNormal[f * 3u + 2u] = len > 0.0f ? n.z / len : 0.0f;
+  };
+
+  /* ---- bm_decim_build_quadrics() ---- */
+  for (uint32_t f = 0; f < t; ++f) {
+    safeNormal(f);
+    const Vec3 a = readPos(pos, faces[f * 3u]), b = readPos(pos, faces[f * 3u + 1u]);
+    const Vec3 c = readPos(pos, faces[f * 3u + 2u]);
+    const Vec3 centre = (a + b + c) * (1.0f / 3.0f);
+    const Vec3 n(foldNormal[f * 3u], foldNormal[f * 3u + 1u], foldNormal[f * 3u + 2u]);
+    if (length_sq(n) == 0.0f) continue;
+    const float d = -dot(n, centre);
+    quadricAddPlane(quad[faces[f * 3u]], n, d, 1.0f);
+    quadricAddPlane(quad[faces[f * 3u + 1u]], n, d, 1.0f);
+    quadricAddPlane(quad[faces[f * 3u + 2u]], n, d, 1.0f);
+  }
+
+  /* Boundary edges, at BOUNDARY_PRESERVE_WEIGHT. A rim vertex is pulled
+   * towards the plane through its edge rather than anywhere on the surface. */
+  if (preserve_boundary) {
+    EdgeTable edges;
+    if (edgeTableInit(edges, t, true)) {
+      for (uint32_t f = 0; f < t; ++f) {
+        edgeTableAdd(edges, faces[f * 3u], faces[f * 3u + 1u], f);
+        edgeTableAdd(edges, faces[f * 3u + 1u], faces[f * 3u + 2u], f);
+        edgeTableAdd(edges, faces[f * 3u + 2u], faces[f * 3u], f);
+      }
+      for (uint32_t s = 0; s <= edges.mask; ++s) {
+        if (edges.count[s] != 1u || edges.a[s] == 0xFFFFFFFFu) continue;
+        const uint32_t a = edges.a[s], b = edges.b[s], f = edges.tri[s];
+        if (f >= t) continue;
+        const Vec3 pa = readPos(pos, a), pb = readPos(pos, b);
+        const Vec3 edgeVec = pb - pa;
+        const Vec3 fn(foldNormal[f * 3u], foldNormal[f * 3u + 1u], foldNormal[f * 3u + 2u]);
+        Vec3 plane = cross(edgeVec, fn);
+        const float len = length(plane);
+        if (len <= 1e-7f) continue;              /* FLT_EPSILON guard, as upstream */
+        plane = plane * (1.0f / len);
+        const Vec3 centre = (pa + pb) * 0.5f;
+        const float d = -dot(plane, centre);
+        quadricAddPlane(quad[a], plane, d, DECIM_BOUNDARY_PRESERVE_WEIGHT);
+        quadricAddPlane(quad[b], plane, d, DECIM_BOUNDARY_PRESERVE_WEIGHT);
+      }
+    }
+  }
+
+  auto targetCo = [&](uint32_t a, uint32_t b, Vec3& out) {
+    Quadric q = quad[a];
+    quadricAdd(q, quad[b]);
+    if (quadricOptimize(q, DECIM_OPTIMIZE_EPS, out)) return;
+    out = (readPos(pos, a) + readPos(pos, b)) * 0.5f;
+  };
+
+  auto edgeCost = [&](uint32_t a, uint32_t b, Vec3& merged) -> float {
+    if (!aliveV[a] || !aliveV[b] || a == b) return DECIM_COST_INVALID;
+    uint32_t shared = 0u;
+    for (int32_t e = head[a]; e >= 0; e = nextFace[e]) {
+      const uint32_t f = static_cast<uint32_t>(e) / 3u;
+      if (aliveF[f] && faceHas(f, a) && faceHas(f, b)) ++shared;
+    }
+    if (shared == 0u || shared > 2u) return DECIM_COST_INVALID;   /* not manifold/boundary */
+    targetCo(a, b, merged);
+    /* Same as upstream: sum the two vertex quadrics at the target, then take
+     * the magnitude so a small negative error cannot outrank a real one. */
+    return absf(quadricError(quad[a], merged) + quadricError(quad[b], merged));
+  };
+
+  uint32_t pushed = 0u;
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t c[3] = { faces[f * 3u], faces[f * 3u + 1u], faces[f * 3u + 2u] };
+    for (uint32_t k = 0; k < 3u; ++k) {
+      uint32_t a = c[k], b = c[(k + 1u) % 3u];
+      if (a > b) { const uint32_t s = a; a = b; b = s; }
+      Vec3 merged;
+      if (heapPush(heap, edgeCost(a, b, merged), a, b)) ++pushed;
+    }
+  }
+
+  uint32_t neighbourA[128], neighbourB[128];
+  auto collectNeighbours = [&](uint32_t vi, uint32_t* out, uint32_t& count) {
+    count = 0u;
+    for (int32_t e = head[vi]; e >= 0; e = nextFace[e]) {
+      const uint32_t f = static_cast<uint32_t>(e) / 3u;
+      if (!aliveF[f] || !faceHas(f, vi)) continue;
+      for (uint32_t k = 0; k < 3u; ++k) {
+        const uint32_t other = faces[f * 3u + k];
+        if (other == vi) continue;
+        bool seen = false;
+        for (uint32_t i = 0; i < count; ++i) if (out[i] == other) { seen = true; break; }
+        if (!seen && count < 128u) out[count++] = other;
+      }
+    }
+  };
+
+  uint32_t faceCount = t;
+  uint32_t pops = 0u;
+  const uint32_t popBudget = t * 24u + 1024u;   /* hard stop; a stale entry costs one pop */
+
+  while (faceCount > targetT && pops < popBudget) {
+    float cost;
+    uint32_t a, b;
+    if (!heapPop(heap, cost, a, b)) break;
+    ++pops;
+    if (!aliveV[a] || !aliveV[b]) continue;
+    Vec3 merged;
+    const float fresh = edgeCost(a, b, merged);
+    if (fresh == DECIM_COST_INVALID) continue;
+    /* The stored cost is only a hint: if the quadrics moved since it was
+     * pushed, put the honest number back and let the heap re-order. */
+    if (absf(fresh - cost) > 1e-5f * (1.0f + absf(fresh) + absf(cost))) {
+      heapPush(heap, fresh, a, b);
+      continue;
+    }
+
+    /* Degenerate topology (bm_edge_collapse_is_degenerate_topology): the two
+     * vertex neighbourhoods may overlap only in the faces along this edge. */
+    uint32_t shared = 0u;
+    for (int32_t e = head[a]; e >= 0; e = nextFace[e]) {
+      const uint32_t f = static_cast<uint32_t>(e) / 3u;
+      if (aliveF[f] && faceHas(f, a) && faceHas(f, b)) ++shared;
+    }
+    uint32_t na = 0u, nb = 0u;
+    collectNeighbours(a, neighbourA, na);
+    collectNeighbours(b, neighbourB, nb);
+    uint32_t common = 0u;
+    for (uint32_t i = 0; i < na; ++i) {
+      if (neighbourA[i] == b) continue;
+      for (uint32_t j = 0; j < nb; ++j) {
+        if (neighbourB[j] == a) continue;
+        if (neighbourA[i] == neighbourB[j]) { ++common; break; }
+      }
+    }
+    if (common != shared) continue;
+
+    /* bm_edge_collapse_is_degenerate_flip(), per surrounding vertex. */
+    bool flip = false;
+    for (uint32_t pass = 0; pass < 2u && !flip; ++pass) {
+      const uint32_t pivot = pass == 0u ? a : b;
+      for (int32_t e = head[pivot]; e >= 0 && !flip; e = nextFace[e]) {
+        const uint32_t f = static_cast<uint32_t>(e) / 3u;
+        if (!aliveF[f] || !faceHas(f, pivot)) continue;
+        if (faceHas(f, a) && faceHas(f, b)) continue;   /* the faces the edge joins */
+        uint32_t prev = 0u, next = 0u;
+        for (uint32_t k = 0; k < 3u; ++k) {
+          const uint32_t u = faces[f * 3u + (k + 2u) % 3u];
+          const uint32_t w = faces[f * 3u + (k + 1u) % 3u];
+          if (faces[f * 3u + k] == pivot) { prev = u; next = w; break; }
+        }
+        if (prev == next) continue;
+        const Vec3 coPrev = readPos(pos, prev), coNext = readPos(pos, next);
+        const Vec3 vecOther = coPrev - coNext;
+        const Vec3 crossExist = cross(vecOther, coPrev - readPos(pos, pivot));
+        const Vec3 crossOptim = cross(vecOther, coPrev - merged);
+        const float exist2 = length_sq(crossExist), optim2 = length_sq(crossOptim);
+        if (dot(crossExist, crossOptim) <= (exist2 + optim2) * 0.01f) flip = true;
+      }
+    }
+    if (flip) continue;
+
+    /* ---- the collapse: b merges into a, at the target position ---- */
+    writePos(pos, a, merged);
+    quadricAdd(quad[a], quad[b]);
+    aliveV[b] = 0;
+
+    for (int32_t e = head[b]; e >= 0; ) {
+      const int32_t eNext = nextFace[e];
+      const uint32_t f = static_cast<uint32_t>(e) / 3u;
+      if (aliveF[f] && faceHas(f, b)) {
+        /* The node has to keep belonging to the corner it was filed under, or
+         * a chain would be spliced into another vertex's list. */
+        uint32_t corner = 3u;
+        for (uint32_t k = 0; k < 3u; ++k) {
+          if (faces[f * 3u + k] == b) { faces[f * 3u + k] = a; corner = k; }
+        }
+        const bool degenerate = faces[f * 3u] == faces[f * 3u + 1u] || faces[f * 3u + 1u] == faces[f * 3u + 2u] ||
+                                faces[f * 3u + 2u] == faces[f * 3u];
+        if (degenerate || corner == 3u) {
+          aliveF[f] = 0;
+          --faceCount;
+        } else {
+          /* Re-file the face under its new corner and refresh its plane so
+           * later flip tests compare against the face as it is now. */
+          const int32_t node = static_cast<int32_t>(f * 3u + corner);
+          nextFace[node] = head[a];
+          head[a] = node;
+          safeNormal(f);
+        }
+      }
+      e = eNext;
+    }
+    /* Both ends of everything that touched b now have a new cost; the stale
+     * entries already in the heap re-price themselves when they surface. */
+    if (heap.size + 8u < heap.capacity) {
+      for (int32_t e = head[a]; e >= 0; ) {
+        const int32_t eNext = nextFace[e];
+        const uint32_t f = static_cast<uint32_t>(e) / 3u;
+        if (aliveF[f] && faceHas(f, a)) {
+          for (uint32_t k = 0; k < 3u; ++k) {
+            uint32_t u = faces[f * 3u + k], w = faces[f * 3u + (k + 1u) % 3u];
+            if (u == a || w == a) {
+              if (u > w) { const uint32_t s2 = u; u = w; w = s2; }
+              Vec3 m2;
+              heapPush(heap, edgeCost(u, w, m2), u, w);
+            }
+          }
+        }
+        e = eNext;
+      }
+    }
+  }
+
+  /* ---- compact ---- */
+  uint32_t outV = 0u;
+  for (uint32_t i = 0; i < v; ++i) {
+    if (!aliveV[i]) { remap[i] = 0xFFFFFFFFu; continue; }
+    remap[i] = outV;
+    writePos(g_s.outPos, outV, readPos(pos, i));
+    if (g_s.hasUv) { g_s.outUv[outV * 2] = g_s.inUv[i * 2]; g_s.outUv[outV * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+    ++outV;
+  }
+  uint32_t outT = 0u;
+  for (uint32_t f = 0; f < t; ++f) {
+    if (!aliveF[f]) continue;
+    const uint32_t a = remap[faces[f * 3u]], b = remap[faces[f * 3u + 1u]], c = remap[faces[f * 3u + 2u]];
+    if (a == 0xFFFFFFFFu || b == 0xFFFFFFFFu || c == 0xFFFFFFFFu || a == b || b == c || c == a) continue;
+    g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c;
+    ++outT;
+  }
+  if (outT == 0u || outV == 0u) return -4;
+  (void)pushed;
   return commit(outV, outT);
 }
 

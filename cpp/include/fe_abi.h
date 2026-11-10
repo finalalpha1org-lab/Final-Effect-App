@@ -603,6 +603,10 @@ FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, fl
  * session error); mode 0 is Catmull-Clark, 1 is Simple. */
 FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels, uint32_t simple);
 FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
+/* Collapse decimation, ported from bmesh/tools/bmesh_decimate_collapse.cc:
+ * quadric error, boundary-preserving planes, link-condition and flip checks.
+ * Same signature and return codes as fe_mod_decimate above. */
+FE_EXPORT int32_t  fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary);
 
 /* ---- Session deformation kernels: FFD lattice, armature skinning, surface
  * deform and shrinkwrap. JS only copies buffers; all vertex maths runs here.
