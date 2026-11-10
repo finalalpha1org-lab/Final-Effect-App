@@ -11529,6 +11529,7 @@ const modifiersData = {
     {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0.1,4,1,.05,{advanced:true}]]},
     {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
+    {name:"Simple Deform", fields:[["Mode","select",["Twist","Bend","Taper","Stretch"]],["Deform Axis","select",["X","Y","Z"]],["Angle","range",-720,720,45,1],["Factor","range",-2,2,.5,.01],["Limit Lower","range",0,1,0,.01,{advanced:true}],["Limit Upper","range",0,1,1,.01,{advanced:true}],["Lock X","check",false,{advanced:true}],["Lock Y","check",false,{advanced:true}],["Lock Z","check",false,{advanced:true}]]},
     {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}]]},
     {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01]]},
@@ -11713,6 +11714,15 @@ function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e
 function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
 function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip') { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
+function applySimpleDeformModifier(geometry, options) { return modifierGeometryApi().simpleDeformGeometry(geometry, options); }
+function simpleDeformOptions(p) {
+  return {
+    mode: p.Mode || "Twist", axis: p["Deform Axis"] || "Z",
+    angle: Number(p.Angle ?? 45), factor: Number(p.Factor ?? 0.5),
+    limitLower: Number(p["Limit Lower"] ?? 0), limitUpper: Number(p["Limit Upper"] ?? 1),
+    lockX: p["Lock X"] === true, lockY: p["Lock Y"] === true, lockZ: p["Lock Z"] === true
+  };
+}
 function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true, options={}) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal, ...options }); }
 function applyDisplaceModifier(geometry, strength, midlevel, frequency=1, options={}) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency, ...options }); }
 function applyWaveModifier(geometry, speed, height, width, time=0, options={}) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time, ...options }); }
@@ -12075,6 +12085,8 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+    } else if (mod.name === "Simple Deform") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySimpleDeformModifier(currentGeo, simpleDeformOptions(p)));
     } else if (mod.name === "Wave") {
       const speed = parseFloat(p["Speed"] ?? 1.5);
       const height = parseFloat(p["Height"] ?? 0.6);
@@ -12576,6 +12588,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),{direction:p.Direction||'Normal',octaves:Number(p.Octaves??2),seed:Number(p.Seed??0)}));
       else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0),{axis:p.Axis||'Y',phase:Number(p.Phase??0)}));
       else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));
+      else if(mod.name==='Simple Deform')stage(g=>applySimpleDeformModifier(g,simpleDeformOptions(p)));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));

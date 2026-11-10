@@ -837,6 +837,60 @@ export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis
     const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
     if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+/* Simple Deform, ported from MOD_simpledeform.cc (cpp/src/fe_modifiers.cpp).
+   Blender's panel shows angles for Twist and Bend, so degrees come in here and
+   are converted to the radians the modifier actually stores. */
+export function simpleDeformGeometry(geometry, {
+  mode = 'Twist', axis = 'Z', angle = 45, factor = 0.5,
+  limitLower = 0, limitUpper = 1, lockX = false, lockY = false, lockZ = false
+} = {}) {
+  const modeIndex = { Twist: 0, Bend: 1, Taper: 2, Stretch: 3 }[mode] ?? 0;
+  const axisIndex = { X: 0, Y: 1, Z: 2 }[axis] ?? 2;
+  /* Twist and Bend take an angle (Blender stores it in radians); Taper and
+     Stretch take a plain factor. */
+  const value = (modeIndex === 0 || modeIndex === 1) ? (Number(angle) || 0) * Math.PI / 180 : (Number(factor) || 0);
+  const lock = (lockX ? 1 : 0) | (lockY ? 2 : 0) | (lockZ ? 4 : 0);
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_simple_deform(modeIndex, axisIndex, value,
+      Math.min(Number(limitLower) || 0, 1), Math.max(Math.min(Number(limitUpper) ?? 1, 1), 0), lock));
+  if (viaCpp) return viaCpp;
+  /* JS fallback: the same four formulas. */
+  const g = geometry.clone(), p = assertPositions(g);
+  g.computeBoundingBox();
+  const box = g.boundingBox;
+  const lo = [box.min.x, box.min.y, box.min.z], hi = [box.max.x, box.max.y, box.max.z];
+  const limitAxis = modeIndex === 1 ? ((axisIndex === 0 || axisIndex === 1) ? 2 : 0) : axisIndex;
+  const span = hi[limitAxis] - lo[limitAxis];
+  const lower = Math.min(Number(limitLower) || 0, 1), upper = Math.max(Math.min(Number(limitUpper) ?? 1, 1), 0);
+  const f = value / Math.max(1.1920929e-7, (lo[limitAxis] + span * upper) - (lo[limitAxis] + span * lower));
+  const map = modeIndex === 1 ? [0, 1, 2] : [[1, 2, 0], [2, 0, 1], [0, 1, 2]][axisIndex];
+  for (let i = 0; i < p.count; i++) {
+    const co = [p.getX(i), p.getY(i), p.getZ(i)];
+    const cut = [0, 0, 0];
+    const limit = (a, l0, l1) => { const v = Math.min(Math.max(co[a], l0), l1); cut[a] = co[a] - v; co[a] = v; };
+    if (modeIndex !== 1) {
+      if ((lock & 1) && axisIndex !== 0) limit(0, 0, 0);
+      if ((lock & 2) && axisIndex !== 1) limit(1, 0, 0);
+      if ((lock & 4) && axisIndex !== 2) limit(2, 0, 0);
+    }
+    limit(limitAxis, lo[limitAxis] + span * Math.min(lower, upper), lo[limitAxis] + span * upper);
+    const c = [co[map[0]], co[map[1]], co[map[2]]];
+    const d = [cut[map[0]], cut[map[1]], cut[map[2]]];
+    const x = c[0], y = c[1], z = c[2];
+    if (modeIndex === 0) { const t = z * f, st = Math.sin(t), ct = Math.cos(t); c[0] = x * ct - y * st; c[1] = x * st + y * ct; c[2] = z; }
+    else if (modeIndex === 1) { const t = (axisIndex === 2 ? x : z) * f, st = Math.sin(t), ct = Math.cos(t), inv = 1 / f;
+      if (axisIndex === 0) { c[0] = x + d[0]; c[1] = y * ct + (1 - ct) * inv + st * d[2]; c[2] = -(y - inv) * st + ct * d[2]; }
+      else if (axisIndex === 1) { c[0] = x * ct + (1 - ct) * inv + st * d[2]; c[1] = y + d[1]; c[2] = -(x - inv) * st + ct * d[2]; }
+      else { c[0] = -(y - inv) * st + ct * d[0]; c[1] = y * ct + (1 - ct) * inv + st * d[0]; c[2] = z + d[2]; } }
+    else if (modeIndex === 2) { const s = z * f; c[0] = x + x * s; c[1] = y + y * s; c[2] = z; }
+    else { const s = z * z * f - f + 1; c[0] = x * s; c[1] = y * s; c[2] = z * (1 + f); }
+    c[0] += d[0]; c[1] += d[1]; c[2] += d[2];
+    const out = [0, 0, 0];
+    out[map[0]] = c[0]; out[map[1]] = c[1]; out[map[2]] = c[2];
+    p.setXYZ(i, out[0], out[1], out[2]);
+  }
+  p.needsUpdate = true; g.computeVertexNormals(); return updateBounds(g);
+}
 export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1}={}){
   const shapeIndex = { Sphere: 0, Cylinder: 1, Cuboid: 2 }[shape] ?? 0;
   const viaCpp = runCppKernel(geometry, null,

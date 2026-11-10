@@ -603,6 +603,13 @@ FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequen
 FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
 FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
 FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
+/* Simple Deform, ported from modifiers/intern/MOD_simpledeform.cc.
+ * mode 0 = Twisting, 1 = Bending, 2 = Taper, 3 = Stretch. deform_axis 0/1/2 =
+ * X/Y/Z. limit_lo/hi are Blender's normalised 0..1 limits. lock_axis is the
+ * bit mask 1|2|4 for X|Y|Z and is ignored for Bending, exactly as upstream. */
+FE_EXPORT int32_t  fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
+                                        float factor, float limit_lo, float limit_hi,
+                                        uint32_t lock_axis);
 FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
 /* Array, ported from modifiers/intern/MOD_array.cc: the cumulative offset
  * matrix, the Fit Length / Fit Curve count arithmetic, the UV offset per copy

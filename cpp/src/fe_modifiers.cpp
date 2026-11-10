@@ -2697,6 +2697,183 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
 }
 
 /* =========================================================================
+ * Simple Deform - ported from modifiers/intern/MOD_simpledeform.cc
+ *
+ *   source/blender/modifiers/intern/MOD_simpledeform.cc
+ *
+ * This is the closest thing in the whole modifier tree to a straight copy:
+ * four closed-form vertex functions and the bookkeeping around them. What is
+ * carried over:
+ *
+ *   - the axis remap table {{1,2,0},{2,0,1},{0,1,2}}, which exists so every
+ *     deformation can be written against Z and then mapped. Bend always uses
+ *     the identity map because it needs the deformation axis itself;
+ *   - the normalised limits: smd_limit[1] = lower + (upper-lower)*limit[1],
+ *     and smd_factor = factor / max(FLT_EPSILON, upper_limit - lower_limit) -
+ *     which is why a Twist of one full turn bends the same whatever the object
+ *     measures;
+ *   - axis_limit() on every locked axis with the base limits {0,0}, so Lock X
+ *     pins the vertex to the plane x = 0 and the amount it was cut by is handed
+ *     to the deformation as dcut (that is what keeps the locked faces flat);
+ *   - the four deformations themselves, formulas untouched:
+ *
+ *       taper    scale = z*factor; x += x*scale; y += y*scale
+ *       twist    theta = z*factor; rotate (x,y) about z
+ *       stretch  scale = z*z*factor - factor + 1; (x,y) *= scale; z *= 1+factor
+ *       bend     r = 1/factor; the arc of radius r, with the dcut corrections
+ *
+ * Not ported: vertex-group weighting, the Origin object space transform, and
+ * "Bend should not have a lock axis" is applied (lock_axis is zeroed for bend)
+ * exactly as upstream does.
+ * ========================================================================= */
+FE_EXPORT int32_t fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
+                                       float factor, float limit_lo, float limit_hi,
+                                       uint32_t lock_axis) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const uint32_t axis = deform_axis > 2u ? 2u : deform_axis;
+  const uint32_t bend = mode == 1u;
+
+  /* axis_map_table[axis] for every mode but bend, which uses the identity. */
+  static const uint32_t axis_map_table[3][3] = {
+    {1u, 2u, 0u},
+    {2u, 0u, 1u},
+    {0u, 1u, 2u}
+  };
+  const uint32_t* map = axis_map_table[bend ? 2u : axis];
+
+  uint32_t lock = bend ? 0u : lock_axis;
+  if (!bend) {
+    /* Never lock the axis being deformed: it would flatten the geometry. */
+    if (axis == 0u) lock &= ~1u;
+    if (axis == 1u) lock &= ~2u;
+    if (axis == 2u) lock &= ~4u;
+  }
+
+  const uint32_t limit_axis = bend ? ((axis == 0u || axis == 1u) ? 2u : 0u) : axis;
+
+  /* The limits are normalised to the object's own bounds along limit_axis. */
+  float lower = 3.402823466e+38f, upper = -3.402823466e+38f;
+  for (uint32_t i = 0; i < v; ++i) {
+    const Vec3 p = readPos(g_s.inPos, i);
+    const float c = limit_axis == 0u ? p.x : (limit_axis == 1u ? p.y : p.z);
+    if (c < lower) lower = c;
+    if (c > upper) upper = c;
+  }
+  const float span = upper - lower;
+  const float lo = clampf(limit_lo, 0.0f, 1.0f);
+  const float hi = clampf(limit_hi, 0.0f, 1.0f);
+  const float abs_hi = lower + span * hi;
+  const float abs_lo = lower + span * (lo < hi ? lo : hi);
+  const float eps = 1.1920929e-7f; /* FLT_EPSILON */
+  const float f = factor / maxf(eps, abs_hi - abs_lo);
+  if (bend && absf(f) < 0.000001f) {                 /* BEND_EPS */
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    if (g_s.inSmooth && g_s.outSmooth) for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+    return commit(v, t);
+  }
+
+  for (uint32_t i = 0; i < v; ++i) {
+    const Vec3 src = readPos(g_s.inPos, i);
+    float co[3] = { src.x, src.y, src.z };
+    float dcut[3] = { 0.0f, 0.0f, 0.0f };
+
+    /* axis_limit(): clamp into [0, 0] on a locked axis, record what was cut. */
+    auto axisLimit = [](uint32_t a, const float limits[2], float c[3], float cut[3]) {
+      float val = c[a];
+      val = val > limits[0] ? val : limits[0];
+      val = val < limits[1] ? val : limits[1];
+      cut[a] = c[a] - val;
+      c[a] = val;
+    };
+    const float base_limit[2] = { 0.0f, 0.0f };
+    if (lock & 1u) axisLimit(0u, base_limit, co, dcut);
+    if (lock & 2u) axisLimit(1u, base_limit, co, dcut);
+    if (lock & 4u) axisLimit(2u, base_limit, co, dcut);
+    {
+      const float limits[2] = { abs_lo, abs_hi };
+      axisLimit(limit_axis, limits, co, dcut);
+    }
+
+    float co_map[3] = { co[map[0]], co[map[1]], co[map[2]] };
+    float cut_map[3] = { dcut[map[0]], dcut[map[1]], dcut[map[2]] };
+    const float x = co_map[0], y = co_map[1], z = co_map[2];
+
+    switch (mode) {
+      case 0u: {                       /* twist */
+        const float theta = z * f;
+        const float st = sinf(theta), ct = cosf(theta);
+        co_map[0] = x * ct - y * st;
+        co_map[1] = x * st + y * ct;
+        co_map[2] = z;
+        break;
+      }
+      case 1u: {                       /* bend */
+        float theta;
+        if (axis == 0u || axis == 1u) theta = z * f; else theta = x * f;
+        const float st = sinf(theta), ct = cosf(theta);
+        const float inv = 1.0f / f;
+        if (axis == 0u) {
+          co_map[0] = x;
+          co_map[1] = y * ct + (1.0f - ct) * inv;
+          co_map[2] = -(y - inv) * st;
+          co_map[0] += cut_map[0];
+          co_map[1] += st * cut_map[2];
+          co_map[2] += ct * cut_map[2];
+        } else if (axis == 1u) {
+          co_map[0] = x * ct + (1.0f - ct) * inv;
+          co_map[1] = y;
+          co_map[2] = -(x - inv) * st;
+          co_map[0] += st * cut_map[2];
+          co_map[1] += cut_map[1];
+          co_map[2] += ct * cut_map[2];
+        } else {
+          co_map[0] = -(y - inv) * st;
+          co_map[1] = y * ct + (1.0f - ct) * inv;
+          co_map[2] = z;
+          co_map[0] += ct * cut_map[0];
+          co_map[1] += st * cut_map[0];
+          co_map[2] += cut_map[2];
+        }
+        break;
+      }
+      case 2u: {                       /* taper */
+        const float scale = z * f;
+        co_map[0] = x + x * scale;
+        co_map[1] = y + y * scale;
+        co_map[2] = z;
+        break;
+      }
+      default: {                       /* stretch */
+        const float scale = z * z * f - f + 1.0f;
+        co_map[0] = x * scale;
+        co_map[1] = y * scale;
+        co_map[2] = z * (1.0f + f);
+        break;
+      }
+    }
+    co_map[0] += cut_map[0]; co_map[1] += cut_map[1]; co_map[2] += cut_map[2];
+
+    float out[3];
+    out[map[0]] = co_map[0];
+    out[map[1]] = co_map[1];
+    out[map[2]] = co_map[2];
+    writePos(g_s.outPos, i, Vec3(out[0], out[1], out[2]));
+  }
+
+  if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+  for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+  if (g_s.inSmooth && g_s.outSmooth) {
+    g_s.flagMode = 1;
+    for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+  }
+  return commit(v, t);
+}
+
+/* =========================================================================
  * Exported deformation kernel entry points
  * ========================================================================= */
 
