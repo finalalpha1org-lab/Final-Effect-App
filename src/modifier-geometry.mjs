@@ -837,6 +837,99 @@ export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis
     const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
     if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+/* Laplacian Smooth, ported from MOD_laplaciansmooth.cc. repeat passes of the
+   cotangent Laplacian, solved as a least-squares problem the way upstream's
+   Eigen solver solves it. lambda weights interior (ring) vertices, lambdaBorder
+   the ones on an open boundary; axes is [x, y, z]. */
+export function laplacianSmoothGeometry(geometry, { repeat = 1, lambda = 0.3, lambdaBorder = 0.3,
+                                                    axes = [true, true, true], preserveVolume = false,
+                                                    normalized = false } = {}) {
+  const mask = (axes[0] ? 1 : 0) | (axes[1] ? 2 : 0) | (axes[2] ? 4 : 0);
+  const passes = Math.max(0, Math.min(64, Math.round(Number(repeat) || 0)));
+  const viaCpp = runCppKernel(geometry, (v, t) => [v, t],
+    exp => exp.fe_mod_laplacian_smooth(passes, Number(lambda), Number(lambdaBorder), mask,
+      preserveVolume ? 1 : 0, normalized ? 1 : 0));
+  if (viaCpp) return viaCpp;
+  if (!mask || !passes) return updateBounds(geometry.clone());
+
+  /* JS fallback: the same weights, relaxed with Jacobi sweeps instead of a
+     conjugate-gradient solve. It is the reference, not the fast path. */
+  const src = geometry, p = assertPositions(src), idx = sourceIndices(src);
+  const v = p.count, t = idx.length / 3;
+  const cotOf = (a, b, c) => {
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const cr = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+    const l = Math.hypot(cr[0], cr[1], cr[2]);
+    return l > 1e-20 ? (ab[0] * ac[0] + ab[1] * ac[1] + ab[2] * ac[2]) / l : 0;
+  };
+  const pos = i => [p.getX(i), p.getY(i), p.getZ(i)];
+  const edges = new Map();
+  for (let f = 0; f < t; f++) {
+    for (let k = 0; k < 3; k++) {
+      const a = idx[f * 3 + k], b = idx[f * 3 + (k + 1) % 3];
+      const key = Math.min(a, b) + ':' + Math.max(a, b);
+      if (!edges.has(key)) edges.set(key, { u: Math.min(a, b), w: Math.max(a, b), n: 0 });
+      edges.get(key).n++;
+    }
+  }
+  const edgeList = [...edges.values()];
+  const neEd = new Float64Array(v), neFa = new Float64Array(v);
+  for (const e of edgeList) { neEd[e.u]++; neEd[e.w]++; }
+  for (let j = 0; j < idx.length; j++) neFa[idx[j]]++;
+  const vwt = new Float64Array(v), vlen = new Float64Array(v);
+  const eweight = edgeList.map(e => {
+    const a = pos(e.u), b = pos(e.w);
+    return 1 / Math.max(1e-6, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+  });
+  for (let f = 0; f < t; f++) {
+    const [a, b, c] = [idx[f * 3], idx[f * 3 + 1], idx[f * 3 + 2]];
+    const [pa, pb, pc] = [pos(a), pos(b), pos(c)];
+    const total = cotOf(pa, pb, pc) + cotOf(pb, pc, pa) + cotOf(pc, pa, pb);
+    vwt[a] += total; vwt[b] += total; vwt[c] += total;
+  }
+  const isRing = i => neEd[i] === neFa[i];
+  edgeList.forEach((e, i) => {
+    if (!isRing(e.u) && !isRing(e.w)) { vlen[e.u] += eweight[i]; vlen[e.w] += eweight[i]; }
+  });
+  for (let i = 0; i < v; i++) {
+    if (isRing(i)) vwt[i] = vwt[i] === 0 ? 0 : -Math.abs(lambda) / vwt[i];
+    else vlen[i] = vlen[i] === 0 ? 0 : -Math.abs(lambdaBorder) * 2 / vlen[i];
+  }
+  /* Diagonal and the neighbour terms, as one relaxation pass. */
+  const work = new Float64Array(v * 3);
+  for (let i = 0; i < v * 3; i++) work[i] = p.array[i];
+  const next = new Float64Array(v * 3);
+  for (let pass = 0; pass < passes; pass++) {
+    next.set(work);
+    for (let f = 0; f < t; f++) {
+      const corners = [idx[f * 3], idx[f * 3 + 1], idx[f * 3 + 2]];
+      for (let k = 0; k < 3; k++) {
+        const curr = corners[k], nxt = corners[(k + 1) % 3], prv = corners[(k + 2) % 3];
+        if (!isRing(curr)) continue;
+        for (const other of [nxt, prv]) for (let ax = 0; ax < 3; ax++) {
+          if (!(mask & (1 << ax))) continue;
+          next[curr * 3 + ax] -= vwt[curr] * 0.5 * work[other * 3 + ax] / 3;
+        }
+      }
+    }
+    for (let i = 0; i < v; i++) {
+      const diag = 1 + (isRing(i) ? Math.abs(lambda) : Math.abs(lambdaBorder) * 2);
+      for (let ax = 0; ax < 3; ax++) {
+        if (!(mask & (1 << ax))) continue;
+        const target = (next[i * 3 + ax] + (diag - 1) * work[i * 3 + ax]) / diag;
+        next[i * 3 + ax] = work[i * 3 + ax] + (target - work[i * 3 + ax]) * 0.5;
+      }
+    }
+    work.set(next);
+  }
+  const out = src.clone();
+  out.attributes.position.array.set(work);
+  updateBounds(out);
+  out.computeVertexNormals();
+  return out;
+}
+
 /* Edge Split, ported from MOD_edgesplit.cc + bmesh_edgesplit.cc. Blender's
    auto-smooth: no vertex moves, the corners are cut apart along the seams so
    the faces stop sharing normals. splitAngle is in degrees, 0 splits every

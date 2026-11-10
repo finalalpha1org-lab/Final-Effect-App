@@ -88,7 +88,7 @@ test('every modifier the library offers has somewhere to run', () => {
   const evaluator = evaluatorSource();
   const physics = new Set(['Collision', 'Cloth', 'Soft Body', 'Fluid']);
   const entries = registryEntries();
-  assert.equal(entries.length, 26);
+  assert.equal(entries.length, 27);
 
   for (const { name } of entries) {
     if (physics.has(name)) continue;

@@ -603,6 +603,13 @@ FE_EXPORT int32_t  fe_mod_wireframe(float thickness, float offset, int32_t repla
  * bmesh/tools/bmesh_edgesplit.cc: split_angle is in radians, -1 for "off".
  * Edges sharper than split_angle, and every edge with 3+ faces, become seams. */
 FE_EXPORT int32_t  fe_mod_edge_split(float split_angle, int32_t use_angle, int32_t use_sharp);
+/* Laplacian Smooth, ported from modifiers/intern/MOD_laplaciansmooth.cc:
+   repeat passes of the cotangent Laplacian system, solved as a least-squares
+   problem. axis_mask is 1|2|4 for X|Y|Z; lambda is the ring weight and
+   lambda_border the boundary one, exactly the two sliders upstream shows. */
+FE_EXPORT int32_t  fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
+                                           int32_t axis_mask, int32_t preserve_volume,
+                                           int32_t normalized);
 FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction);
 FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
 FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);

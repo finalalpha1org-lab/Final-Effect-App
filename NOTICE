@@ -134,6 +134,23 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
 
+cpp/src/fe_modifiers.cpp - fe_mod_laplacian_smooth()
+  Ported from  source/blender/modifiers/intern/MOD_laplaciansmooth.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         init_laplacian_matrix(), fill_laplacian_matrix() and
+               validate_solution(): the cotangent ring operator, the
+               scale-dependent umbrella on boundary vertices, the vweights /
+               vlengths normalisation, the min_area zerola pinning, the signed
+               blend-back of the solution and volume_preservation(). Upstream
+               solves the least-squares system with Eigen's
+               LeastSquaresConjugateGradient; that solver is not linkable from a
+               freestanding module, so the same normal equations are solved
+               with conjugate gradients and a Jacobi preconditioner instead.
+               Not ported: vertex-group weighting.
+
 cpp/src/fe_modifiers.cpp - fe_mod_edge_split()
   Ported from  source/blender/modifiers/intern/MOD_edgesplit.cc and
                source/blender/bmesh/tools/bmesh_edgesplit.cc

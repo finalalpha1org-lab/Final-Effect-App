@@ -11530,6 +11530,7 @@ const modifiersData = {
     {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0.1,4,1,.05,{advanced:true}]]},
     {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
+    {name:"Laplacian Smooth", fields:[["Repeat","range",1,10,1,1],["Lambda","range",0,1,.3,.01],["Lambda Border","range",0,1,.3,.01,{advanced:true}],["X","check",true],["Y","check",true],["Z","check",true],["Preserve Volume","check",false,{advanced:true}],["Normalized","check",false,{advanced:true}]]},
     {name:"Simple Deform", fields:[["Mode","select",["Twist","Bend","Taper","Stretch"]],["Deform Axis","select",["X","Y","Z"]],["Angle","range",-720,720,45,1],["Factor","range",-2,2,.5,.01],["Limit Lower","range",0,1,0,.01,{advanced:true}],["Limit Upper","range",0,1,1,.01,{advanced:true}],["Lock X","check",false,{advanced:true}],["Lock Y","check",false,{advanced:true}],["Lock Z","check",false,{advanced:true}]]},
     {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}]]},
@@ -11717,6 +11718,11 @@ function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shorte
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
 function applySimpleDeformModifier(geometry, options) { return modifierGeometryApi().simpleDeformGeometry(geometry, options); }
 function applyEdgeSplitModifier(geometry, splitAngle, useAngle=true, useSharp=false) { return modifierGeometryApi().edgeSplitGeometry(geometry, { splitAngle, useAngle, useSharp }); }
+function applyLaplacianSmoothModifier(geometry, options) { return modifierGeometryApi().laplacianSmoothGeometry(geometry, options); }
+function laplacianSmoothOptions(p) {
+  return { repeat:Number(p["Repeat"]??1), lambda:Number(p["Lambda"]??0.3), lambdaBorder:Number(p["Lambda Border"]??0.3),
+    axes:[p["X"]!==false, p["Y"]!==false, p["Z"]!==false], preserveVolume:p["Preserve Volume"]===true, normalized:p["Normalized"]===true };
+}
 function simpleDeformOptions(p) {
   return {
     mode: p.Mode || "Twist", axis: p["Deform Axis"] || "Z",
@@ -12087,6 +12093,8 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+    } else if (mod.name === "Laplacian Smooth") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyLaplacianSmoothModifier(currentGeo, laplacianSmoothOptions(p)));
     } else if (mod.name === "Edge Split") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyEdgeSplitModifier(currentGeo,
         parseFloat(p["Split Angle"] ?? 30), p["Use Angle"] !== false, p["Sharp Edges"] === true));
@@ -12595,6 +12603,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));
       else if(mod.name==='Simple Deform')stage(g=>applySimpleDeformModifier(g,simpleDeformOptions(p)));
       else if(mod.name==='Edge Split')stage(g=>applyEdgeSplitModifier(g,Number(p['Split Angle']??30),p['Use Angle']!==false,p['Sharp Edges']===true));
+      else if(mod.name==='Laplacian Smooth')stage(g=>applyLaplacianSmoothModifier(g,laplacianSmoothOptions(p)));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));

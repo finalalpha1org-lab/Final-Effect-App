@@ -3105,6 +3105,413 @@ FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_
   return commit(outV, t);
 }
 
+constexpr uint32_t LAPLACIAN_MAX_VERTS = 40000u;
+constexpr uint32_t LAPLACIAN_MAX_ITERS = 260u;
+
+struct Csr {
+  uint32_t n = 0, nnz = 0;
+  uint32_t* row = nullptr;
+  uint32_t* col = nullptr;
+  float* val = nullptr;
+};
+
+inline void csrMatVec(const Csr& a, const float* x, float* y) {
+  for (uint32_t i = 0; i < a.n; ++i) {
+    float sum = 0.0f;
+    for (uint32_t k = a.row[i]; k < a.row[i + 1u]; ++k) sum += a.val[k] * x[a.col[k]];
+    y[i] = sum;
+  }
+}
+
+/* A^T, from A. Same coefficients, rows and columns exchanged. */
+bool csrTranspose(const Csr& a, Csr& out) {
+  out.n = a.n;
+  out.nnz = a.nnz;
+  out.row = modArray<uint32_t>(a.n + 1u);
+  out.col = modArray<uint32_t>(a.nnz ? a.nnz : 1u);
+  out.val = modArray<float>(a.nnz ? a.nnz : 1u);
+  if (!out.row || !out.col || !out.val) return false;
+  for (uint32_t i = 0; i <= a.n; ++i) out.row[i] = 0u;
+  for (uint32_t k = 0; k < a.nnz; ++k) ++out.row[a.col[k] + 1u];
+  for (uint32_t i = 0; i < a.n; ++i) out.row[i + 1u] += out.row[i];
+  /* Walk the columns of each row, filling the next slot of the target row. */
+  uint32_t* cursor = modArray<uint32_t>(a.n);
+  if (!cursor) return false;
+  for (uint32_t i = 0; i < a.n; ++i) cursor[i] = out.row[i];
+  for (uint32_t i = 0; i < a.n; ++i) {
+    for (uint32_t k = a.row[i]; k < a.row[i + 1u]; ++k) {
+      const uint32_t slot = cursor[a.col[k]]++;
+      out.col[slot] = i;
+      out.val[slot] = a.val[k];
+    }
+  }
+  return true;
+}
+FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
+                                          int32_t axis_mask, int32_t preserve_volume,
+                                          int32_t normalized) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const uint32_t axes = static_cast<uint32_t>(axis_mask) & 7u;
+  const int32_t iters = repeat < 0 ? 0 : (repeat > 64 ? 64 : repeat);
+  if (!axes || !iters) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    if (g_s.inSmooth && g_s.outSmooth) {
+      g_s.flagMode = 1;
+      for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+    }
+    return commit(v, t);
+  }
+  if (v > LAPLACIAN_MAX_VERTS) return -5;
+  g_s.flagMode = 1;
+  if (g_s.inSmooth && g_s.outSmooth) {
+    for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i];
+  }
+
+  const float minArea = 0.00001f;
+
+  /* ---- unique edges ---- */
+  SplitEdges es;
+  if (!splitEdgesInit(es, t)) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t a = g_s.inIdx[f * 3 + k];
+      const uint32_t b = g_s.inIdx[f * 3 + (k + 1u) % 3u];
+      if (a != b) splitEdgeSlot(es, a, b, true, f, nullptr);
+    }
+  }
+  uint32_t ec = 0;
+  for (uint32_t i = 0; i <= es.mask; ++i) if (es.nf[i]) ++ec;
+  if (!ec) return -4;
+
+  uint32_t* eu = modArray<uint32_t>(ec);
+  uint32_t* ev = modArray<uint32_t>(ec);
+  float* eweight = modArray<float>(ec);
+  uint32_t* neEd = modArray<uint32_t>(v);
+  uint32_t* neFa = modArray<uint32_t>(v);
+  float* ringArea = modArray<float>(v);
+  float* vlen = modArray<float>(v);
+  float* vwt = modArray<float>(v);
+  uint8_t* zero = modArray<uint8_t>(v);
+  float* cot = modArray<float>(t * 3u);
+  if (!eu || !ev || !eweight || !neEd || !neFa || !ringArea || !vlen || !vwt || !zero || !cot) return -2;
+
+  for (uint32_t i = 0; i < v; ++i) {
+    neEd[i] = 0u; neFa[i] = 0u; ringArea[i] = 0.0f; vlen[i] = 0.0f; vwt[i] = 0.0f; zero[i] = 0u;
+  }
+
+  /* ---- init_laplacian_matrix(): edge lengths first ---- */
+  {
+    uint32_t w = 0;
+    for (uint32_t i = 0; i <= es.mask; ++i) {
+      if (!es.nf[i]) continue;
+      eu[w] = es.a[i]; ev[w] = es.b[i];
+      const float len = (readPos(g_s.inPos, es.b[i]) - readPos(g_s.inPos, es.a[i])).length();
+      float weight = len;
+      if (len < minArea) {
+        zero[es.a[i]] = 1u;
+        zero[es.b[i]] = 1u;
+      } else {
+        weight = 1.0f / len;
+      }
+      eweight[w] = weight;
+      ++neEd[es.a[i]];
+      ++neEd[es.b[i]];
+      ++w;
+    }
+  }
+
+  /* ---- corner cotangents, ring areas, face counts ---- */
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t ia = g_s.inIdx[f * 3], ib = g_s.inIdx[f * 3 + 1], ic = g_s.inIdx[f * 3 + 2];
+    const Vec3 pa = readPos(g_s.inPos, ia), pb = readPos(g_s.inPos, ib), pc = readPos(g_s.inPos, ic);
+    const float twice = cross(pb - pa, pc - pa).length();
+    const float area = 0.5f * twice;
+    ++neFa[ia]; ++neFa[ib]; ++neFa[ic];
+    ringArea[ia] += area; ringArea[ib] += area; ringArea[ic] += area;
+    if (area < minArea) { zero[ia] = 1u; zero[ib] = 1u; zero[ic] = 1u; }
+    /* cotangent_tri_weight_v3(): dot(a, b) / |cross(a, b)| at each corner. */
+    const float inv = twice > 0.0f ? 1.0f / twice : 0.0f;
+    cot[f * 3] = Vec3::dot(pa - pb, pa - pc) * inv;
+    cot[f * 3 + 1] = Vec3::dot(pb - pa, pb - pc) * inv;
+    cot[f * 3 + 2] = Vec3::dot(pc - pa, pc - pb) * inv;
+  }
+
+  /* vweights. Upstream's corner loop visits every corner of a face three
+     times - once with it as curr, once as next, once as prev - and each visit
+     adds the two cotangents at the other corners, so a triangle contributes
+     twice the sum of its three cotangents to each of its vertices. */
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t c0 = f * 3, c1 = f * 3 + 1, c2 = f * 3 + 2;
+    const float total = cot[c0] + cot[c1] + cot[c2];
+    vwt[g_s.inIdx[c0]] += total;
+    vwt[g_s.inIdx[c1]] += total;
+    vwt[g_s.inIdx[c2]] += total;
+  }
+
+  auto isRing = [&](uint32_t i) { return neEd[i] == neFa[i] && zero[i] == 0u; };
+  auto isBoundary = [&](uint32_t i) { return neEd[i] != neFa[i]; };
+
+  for (uint32_t e = 0; e < ec; ++e) {
+    if (isBoundary(eu[e]) && isBoundary(ev[e])) {
+      vlen[eu[e]] += eweight[e];
+      vlen[ev[e]] += eweight[e];
+    }
+  }
+
+  /* ---- the per-vertex normalisation, before anything is assembled ---- */
+  const float absLambda = absf(lambda);
+  const float absBorder = absf(lambda_border);
+  for (uint32_t i = 0; i < v; ++i) {
+    if (zero[i]) { vwt[i] = 0.0f; vlen[i] = 0.0f; continue; }
+    if (isRing(i)) {
+      if (normalized) {
+        vwt[i] = vwt[i] == 0.0f ? 0.0f : -absLambda / vwt[i];
+      } else {
+        const float w = vwt[i] * ringArea[i];
+        vwt[i] = w == 0.0f ? 0.0f : -absLambda / (4.0f * w);
+      }
+      vlen[i] = 0.0f;
+    } else {
+      vwt[i] = 0.0f;
+      vlen[i] = vlen[i] == 0.0f ? 0.0f : -absBorder * 2.0f / vlen[i];
+    }
+  }
+
+  /* ---- assemble A ---- */
+  /* Six entries per corner, exactly like fill_laplacian_matrix(): each corner
+     writes the two neighbours of itself, of the next corner and of the
+     previous one, so a pair inside one triangle is written twice. */
+  uint32_t nnz = v;  /* the diagonal, always present */
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      if (isRing(g_s.inIdx[f * 3 + k])) nnz += 6u;
+    }
+  }
+  for (uint32_t e = 0; e < ec; ++e) {
+    if (isBoundary(eu[e]) && isBoundary(ev[e]) && !zero[eu[e]] && !zero[ev[e]]) nnz += 2u;
+  }
+
+  Csr a;
+  a.n = v;
+  a.nnz = nnz;
+  a.row = modArray<uint32_t>(v + 1u);
+  a.col = modArray<uint32_t>(nnz);
+  a.val = modArray<float>(nnz);
+  uint32_t* cursor = modArray<uint32_t>(v);
+  if (!a.row || !a.col || !a.val || !cursor) return -2;
+
+  for (uint32_t i = 0; i <= v; ++i) a.row[i] = 0u;
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t c = g_s.inIdx[f * 3 + k];
+      if (isRing(c)) a.row[c + 1u] += 6u;
+    }
+  }
+  for (uint32_t e = 0; e < ec; ++e) {
+    if (isBoundary(eu[e]) && isBoundary(ev[e]) && !zero[eu[e]] && !zero[ev[e]]) {
+      ++a.row[eu[e] + 1u];
+      ++a.row[ev[e] + 1u];
+    }
+  }
+  for (uint32_t i = 0; i < v; ++i) ++a.row[i + 1u];
+  for (uint32_t i = 0; i < v; ++i) a.row[i + 1u] += a.row[i];
+  for (uint32_t i = 0; i < v; ++i) cursor[i] = a.row[i];
+
+  auto addEntry = [&](uint32_t r, uint32_t c, float val) {
+    const uint32_t slot = cursor[r]++;
+    a.col[slot] = c;
+    a.val[slot] = val;
+  };
+
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t curr = f * 3 + k, next = f * 3 + (k + 1u) % 3u, prev = f * 3 + (k + 2u) % 3u;
+      const uint32_t vc = g_s.inIdx[curr], vn = g_s.inIdx[next], vp = g_s.inIdx[prev];
+      const float wNext = cot[next] * 0.5f, wPrev = cot[prev] * 0.5f, wCurr = cot[curr] * 0.5f;
+      if (isRing(vc)) {
+        addEntry(vc, vn, wPrev * vwt[vc]);
+        addEntry(vc, vp, wNext * vwt[vc]);
+      }
+      if (isRing(vn)) {
+        addEntry(vn, vc, wPrev * vwt[vn]);
+        addEntry(vn, vp, wCurr * vwt[vn]);
+      }
+      if (isRing(vp)) {
+        addEntry(vp, vc, wNext * vwt[vp]);
+        addEntry(vp, vn, wCurr * vwt[vp]);
+      }
+    }
+  }
+  for (uint32_t e = 0; e < ec; ++e) {
+    const uint32_t u = eu[e], w = ev[e];
+    if (isBoundary(u) && isBoundary(w) && !zero[u] && !zero[w]) {
+      addEntry(u, w, eweight[e] * vlen[u]);
+      addEntry(w, u, eweight[e] * vlen[w]);
+    }
+  }
+  for (uint32_t i = 0; i < v; ++i) {
+    if (zero[i]) { addEntry(i, i, 1.0f); }
+    else if (isRing(i)) {
+      addEntry(i, i, normalized ? 1.0f + absLambda
+                                : 1.0f + (ringArea[i] > 0.0f ? absLambda / (4.0f * ringArea[i]) : 0.0f));
+    } else {
+      addEntry(i, i, 1.0f + absBorder * 2.0f);
+    }
+  }
+
+  Csr at;
+  if (!csrTranspose(a, at)) return -2;
+
+  /* ---- workspace: three axes share it ---- */
+  float* x = modArray<float>(v);
+  float* r = modArray<float>(v);
+  float* p = modArray<float>(v);
+  float* q = modArray<float>(v);
+  float* s2 = modArray<float>(v);
+  float* diag = modArray<float>(v);
+  float* rhs = modArray<float>(v);
+  float* prec = modArray<float>(v);
+  if (!x || !r || !p || !q || !s2 || !diag || !rhs || !prec) return -2;
+
+  /* diag(A^T A) = sum of the squares of column i. */
+  for (uint32_t i = 0; i < v; ++i) diag[i] = 0.0f;
+  for (uint32_t i = 0; i < v; ++i) {
+    for (uint32_t k = at.row[i]; k < at.row[i + 1u]; ++k) diag[at.col[k]] += at.val[k] * at.val[k];
+  }
+  for (uint32_t i = 0; i < v; ++i) prec[i] = diag[i] > 1e-12f ? 1.0f / diag[i] : 1.0f;
+
+  auto solveAxis = [&](float* coord) -> bool {
+    /* rhs = A^T b */
+    for (uint32_t i = 0; i < v; ++i) {
+      x[i] = coord[i];
+      rhs[i] = 0.0f;
+    }
+    for (uint32_t i = 0; i < v; ++i) {
+      const float xi = coord[i];
+      for (uint32_t k = at.row[i]; k < at.row[i + 1u]; ++k) rhs[at.col[k]] += at.val[k] * xi;
+    }
+    /* r = A^T b - A^T A x */
+    csrMatVec(a, x, q);
+    csrMatVec(at, q, r);
+    float rr = 0.0f;
+    for (uint32_t i = 0; i < v; ++i) { r[i] = rhs[i] - r[i]; rr += r[i] * r[i]; }
+    const float rr0 = rr;
+    if (!(rr0 > 0.0f)) return true;
+    for (uint32_t i = 0; i < v; ++i) p[i] = r[i] * prec[i];
+    float rp = 0.0f;
+    for (uint32_t i = 0; i < v; ++i) rp += r[i] * p[i];
+    for (uint32_t iter = 0; iter < LAPLACIAN_MAX_ITERS; ++iter) {
+      if (rr <= rr0 * 1e-10f) break;
+      csrMatVec(a, p, q);
+      csrMatVec(at, q, s2);
+      float pAp = 0.0f;
+      for (uint32_t i = 0; i < v; ++i) pAp += p[i] * s2[i];
+      if (!(pAp > 1e-20f)) break;
+      const float alpha = rp / pAp;
+      for (uint32_t i = 0; i < v; ++i) { x[i] += alpha * p[i]; r[i] -= alpha * s2[i]; }
+      float rrNew = 0.0f;
+      for (uint32_t i = 0; i < v; ++i) rrNew += r[i] * r[i];
+      if (!(rrNew > 0.0f)) break;
+      for (uint32_t i = 0; i < v; ++i) q[i] = r[i] * prec[i];
+      float rpNew = 0.0f;
+      for (uint32_t i = 0; i < v; ++i) rpNew += r[i] * q[i];
+      const float beta = rpNew / rp;
+      for (uint32_t i = 0; i < v; ++i) p[i] = q[i] + beta * p[i];
+      rp = rpNew;
+      rr = rrNew;
+    }
+    return true;
+  };
+
+  /* ---- the centroid, and the starting volume ---- */
+  Vec3 centroid(0.0f, 0.0f, 0.0f);
+  for (uint32_t i = 0; i < v; ++i) centroid += readPos(g_s.inPos, i);
+  centroid = centroid * (1.0f / static_cast<float>(v));
+
+  auto volume = [&](const float* pos) {
+    float vol = 0.0f;
+    for (uint32_t f = 0; f < t; ++f) {
+      const Vec3 a = readPos(pos, g_s.inIdx[f * 3]) - centroid;
+      const Vec3 b = readPos(pos, g_s.inIdx[f * 3 + 1]) - centroid;
+      const Vec3 c = readPos(pos, g_s.inIdx[f * 3 + 2]) - centroid;
+      vol += Vec3::dot(a, cross(b, c)) / 6.0f;
+    }
+    return absf(vol);
+  };
+
+  /* Working positions, so the solve always reads the same buffer. */
+  float* pos = g_s.outPos;
+  for (uint32_t i = 0; i < v * 3u; ++i) pos[i] = g_s.inPos[i];
+
+  const float vini = preserve_volume ? volume(pos) : 0.0f;
+
+  float* axisBuf = modArray<float>(v);
+  if (!axisBuf) return -2;
+
+  for (int32_t iter = 0; iter < iters; ++iter) {
+    for (uint32_t axis = 0; axis < 3u; ++axis) {
+      if (!(axes & (1u << axis))) continue;
+      for (uint32_t i = 0; i < v; ++i) axisBuf[i] = pos[i * 3 + axis];
+      if (!solveAxis(axisBuf)) return -2;
+      for (uint32_t i = 0; i < v; ++i) {
+        if (zero[i]) continue;
+        const float lam = isRing(i) ? (lambda >= 0.0f ? 1.0f : -1.0f)
+                                    : (lambda_border >= 0.0f ? 1.0f : -1.0f);
+        pos[i * 3 + axis] += lam * (x[i] - pos[i * 3 + axis]);
+      }
+    }
+    if (preserve_volume) {
+      const float vend = volume(pos);
+      if (vend > 0.0f && vini > 0.0f) {
+        const float beta = powf(vini / vend, 1.0f / 3.0f);
+        for (uint32_t i = 0; i < v; ++i) {
+          const Vec3 d = readPos(pos, i) - centroid;
+          Vec3 out = d;
+          if (axes & 1u) out.x = d.x * beta;
+          if (axes & 2u) out.y = d.y * beta;
+          if (axes & 4u) out.z = d.z * beta;
+          writePos(pos, i, out + centroid);
+        }
+      }
+    }
+  }
+
+  for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+  if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+  return commit(v, t);
+}
+
+/* =========================================================================
+ * Laplacian Smooth - ported from MOD_laplaciansmooth.cc
+ *
+ *   source/blender/modifiers/intern/MOD_laplaciansmooth.cc
+ *
+ * Upstream builds one sparse Laplacian matrix per mesh and solves it as a
+ * least-squares problem, three right-hand sides at once (x, y, z):
+ *
+ *   - a ring (interior) vertex gets the cotangent weights of the triangles
+ *     around it, normalised by vweights,
+ *   - a boundary vertex gets the scale-dependent umbrella operator over the
+ *     edges that stay on the boundary, normalised by vlengths,
+ *   - a triangle below 1e-5 in area, or an edge below it in length, marks its
+ *     vertices zerola and pins them to a unit diagonal.
+ *
+ * Upstream solves it with Eigen's LeastSquaresConjugateGradient. Eigen is not
+ * something a freestanding module can link, so the same normal equations
+ * (A^T A x = A^T b) are solved here with conjugate gradients and a Jacobi
+ * preconditioner; that is the same method, written out. The result is then
+ * blended in with the signed step validate_solution() applies, and the volume
+ * preserved the way volume_preservation() does it.
+ *
+ * Not ported: vertex-group weighting (no weight groups in this pipeline).
+ * Meshes above LAPLACIAN_MAX_VERTS fall back to the caller's own smoothing:
+ * the three sparse matrices would not fit the arena.
+ * ========================================================================= */
+
 /* =========================================================================
  * Exported deformation kernel entry points
  * ========================================================================= */
