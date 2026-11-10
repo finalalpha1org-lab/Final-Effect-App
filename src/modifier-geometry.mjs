@@ -277,10 +277,13 @@ export function weldGeometry(geometry, distance = 1e-5) {
    The kernel keeps the vertex buffer exactly as it was and only rewrites the
    index, which is what the modifier is: the corners stay where they are and
    only the way the face is stitched changes. */
-const TRIANGULATE_QUAD = { 'Ear Clip': 0, 'Shortest Diagonal': 1, 'Fixed': 2 };
-const TRIANGULATE_NGON = { 'Ear Clip': 0, 'Fan': 1 };
+const TRIANGULATE_QUAD = { 'Beauty': 0, 'Ear Clip': 0, 'Shortest Diagonal': 1, 'Fixed': 2 };
+const TRIANGULATE_NGON = { 'Beauty': 0, 'Ear Clip': 0, 'Fan': 1 };
+/* Blender's Modifier default is BEAUTY for both, and the beauty pass is what
+   turns an ear clipper's fan into the even triangulation a modeller expects. */
+const triangulateBeauty = (quadMethod, ngonMethod) => quadMethod === 'Beauty' || ngonMethod === 'Beauty';
 
-function triangulateWithKernel(geometry, quadMethod, ngonMethod) {
+function triangulateWithKernel(geometry, quadMethod, ngonMethod, beauty) {
   const exp = cppExports();
   if (!exp || typeof exp.fe_polyfill_build !== 'function') return null;
   const faces = globalThis.FEPoly?.facesInSlots?.(geometry);
@@ -294,6 +297,7 @@ function triangulateWithKernel(geometry, quadMethod, ngonMethod) {
   /* Allocate before taking a view: the first call grows the memory and every
      view made before it would be detached. */
   if (exp.fe_polyfill_begin() !== 0) return null;
+  if (typeof exp.fe_polyfill_set_beauty === 'function') exp.fe_polyfill_set_beauty(beauty ? 1 : 0);
   const buf = exp.memory.buffer;
   new Float32Array(buf, exp.fe_polyfill_positions_ptr(), verts * 3).set(position.array.subarray(0, verts * 3));
   const ring = new Uint32Array(buf, exp.fe_polyfill_ring_ptr(), corners);
@@ -326,12 +330,13 @@ function triangulateWithKernel(geometry, quadMethod, ngonMethod) {
   return tris;
 }
 
-export function triangulateGeometry(geometry, { keepNormals = true, quadMethod = 'Shortest Diagonal', ngonMethod = 'Ear Clip' } = {}) {
+export function triangulateGeometry(geometry, { keepNormals = true, quadMethod = 'Beauty', ngonMethod = 'Beauty' } = {}) {
   const idx=sourceIndices(geometry);if(idx.length%3)throw new Error('Triangulate needs complete triangles');
   const indexed=geometry.clone();
   const tris = triangulateWithKernel(geometry,
-    TRIANGULATE_QUAD[quadMethod] ?? TRIANGULATE_QUAD['Shortest Diagonal'],
-    TRIANGULATE_NGON[ngonMethod] ?? TRIANGULATE_NGON['Ear Clip']);
+    TRIANGULATE_QUAD[quadMethod] ?? TRIANGULATE_QUAD['Beauty'],
+    TRIANGULATE_NGON[ngonMethod] ?? TRIANGULATE_NGON['Beauty'],
+    triangulateBeauty(quadMethod, ngonMethod));
   if (tris) indexed.setIndex(new THREE.BufferAttribute(tris, 1));
   else if (!geometry.index) indexed.setIndex(new THREE.BufferAttribute(Uint32Array.from({ length: idx.length }, (_, i) => idx[i]), 1));
 

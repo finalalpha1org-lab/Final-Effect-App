@@ -134,7 +134,7 @@ const REQUIRED_EXPORTS = [
      session, measured once in the engine instead of twice in two languages. */
   'fe_polyfill_begin','fe_polyfill_build','fe_polyfill_positions_ptr','fe_polyfill_ring_ptr',
   'fe_polyfill_start_ptr','fe_polyfill_tris_ptr','fe_polyfill_quad_count','fe_polyfill_ngon_count',
-  'fe_polyfill_max_vertices','fe_polyfill_max_corners','fe_polyfill_max_faces','fe_polyfill_max_face_verts',
+  'fe_polyfill_max_vertices','fe_polyfill_max_corners','fe_polyfill_max_faces','fe_polyfill_max_face_verts','fe_polyfill_set_beauty',
   'fe_poly_begin','fe_poly_positions_ptr','fe_poly_indices_ptr',
   'fe_poly_declared_start_ptr','fe_poly_declared_ring_ptr','fe_poly_set_declared_corners',
   'fe_poly_build','fe_poly_face_count','fe_poly_face_start_ptr','fe_poly_face_ring_ptr',

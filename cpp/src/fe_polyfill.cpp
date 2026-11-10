@@ -34,6 +34,12 @@
  *   - The linked list of PolyIndex keeps Blender's shape (prev/next/index/sign)
  *     but is stored as slots in an array, so the same operations are index
  *     arithmetic rather than pointer chasing.
+ * The edge-rotating beauty pass is ported from the same tree:
+ * source/blender/blenlib/intern/polyfill_2d_beautify.cc, in particular
+ * BLI_polyfill_beautify_quad_rotate_calc_ex(). It turns the strip of long thin
+ * triangles an ear clipper leaves behind into the even fan a modeller expects,
+ * and it is what Blender's Triangulate modifier does by default (BEAUTY).
+ *
  *   - faces arrive in 3D. The ring is projected onto the plane of its Newell
  *     normal and the winding is compared back against that normal, so the
  *     triangles come out facing the same way as the face they came from no
@@ -48,6 +54,7 @@
 
 #include "../include/fe_heap.hpp"
 #include "../include/fe_abi.h"
+#include "../include/fe_math.hpp"
 
 namespace {
 
@@ -91,6 +98,9 @@ struct PolyfillJob {
   uint32_t* start = nullptr;    /* kPolyfillMaxFaces + 1 */
   uint32_t* tris = nullptr;     /* kPolyfillMaxCorners * 3 */
   PolyIndex* indices = nullptr; /* kPolyfillMaxFaceVerts */
+  uint64_t* flipKeys = nullptr; /* 2x the half-edges of the largest face */
+  uint32_t* flipValue = nullptr;
+  bool beautyEnabled = true;
   float* coords = nullptr;      /* kPolyfillMaxFaceVerts * 2 */
 
   uint32_t vertexCount = 0;
@@ -383,6 +393,187 @@ inline float triangleFacing(const float* positions, const uint32_t* tri, const f
   return nx * normal[0] + ny * normal[1] + nz * normal[2];
 }
 
+/* ------------------------------------------------------------------ beauty --
+ * BLI_polyfill_beautify, in the form this engine needs: rotate the internal
+ * edges of one face's triangulation while the rotation improves the triangles.
+ *
+ * The cost is Blender's, unchanged: for the quad (v1, v2, v3, v4) with the
+ * current diagonal v2-v4 and the candidate diagonal v1-v3, score each diagonal
+ * by the sum of "area over perimeter" of the two triangles it makes, and take
+ * the difference. Negative means the new diagonal is the better one. The
+ * guard rules are Blender's too: a rotation that would flip a face, or produce
+ * a zero-area triangle, is refused rather than repaired.
+ * ------------------------------------------------------------------------- */
+
+inline float crossTri2(const float* a, const float* b, const float* c) {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+inline float len2d(const float* a, const float* b) {
+  const float dx = b[0] - a[0], dy = b[1] - a[1];
+  return fe::sqrtf(dx * dx + dy * dy);
+}
+
+/* `r_area` is the quad's area, as Blender reports it: the caller uses it to
+ * weight how much the rotation is worth on a small face. */
+float quadRotateCost(const float* v1, const float* v2, const float* v3, const float* v4) {
+  constexpr float eps_zero_area = 1e-12f;
+  const float area_2x_234 = crossTri2(v2, v3, v4);
+  const float area_2x_241 = crossTri2(v2, v4, v1);
+  const float area_2x_123 = crossTri2(v1, v2, v3);
+  const float area_2x_134 = crossTri2(v1, v3, v4);
+
+  /* The new diagonal would fold a face over: not a candidate at all. */
+  if ((area_2x_123 >= 0.0f) != (area_2x_134 >= 0.0f)) return 1e30f;
+  if (fe::absf(area_2x_123) <= eps_zero_area || fe::absf(area_2x_134) <= eps_zero_area) return 1e30f;
+
+  /* The current diagonal is degenerate: rotate out of it whatever it costs. */
+  if ((area_2x_234 >= 0.0f) != (area_2x_241 >= 0.0f)) return -1e30f;
+  if (fe::absf(area_2x_234) <= eps_zero_area || fe::absf(area_2x_241) <= eps_zero_area) return -1e30f;
+
+  const float len_12 = len2d(v1, v2), len_23 = len2d(v2, v3), len_34 = len2d(v3, v4);
+  const float len_41 = len2d(v4, v1), len_13 = len2d(v1, v3), len_24 = len2d(v2, v4);
+  const float fac_24 = fe::absf(area_2x_234) / fe::maxf(len_23 + len_34 + len_24, 1e-20f)
+                     + fe::absf(area_2x_241) / fe::maxf(len_41 + len_12 + len_24, 1e-20f);
+  const float fac_13 = fe::absf(area_2x_123) / fe::maxf(len_12 + len_23 + len_13, 1e-20f)
+                     + fe::absf(area_2x_134) / fe::maxf(len_34 + len_41 + len_13, 1e-20f);
+  return fac_24 - fac_13;
+}
+
+/* One pass of edge rotations. `tris` holds corner slots, `count` triangles.
+ * Returns the number of rotations made. */
+uint32_t beautifyPass(const float* coords, uint32_t* tris, uint32_t count) {
+  if (count < 2u) return 0u;
+  const uint32_t edges = count * 3u;
+  /* A tiny open-addressing map from an edge (low slot, high slot) to the up to
+   * two half-edges that share it. Sized at 2x the half-edge count, which keeps
+   * the probe length short with a 64-bit key. */
+  const uint32_t slots = 1u << 10u;
+  (void)slots;
+  uint32_t capacity = 64u;
+  while (capacity < edges * 2u) capacity <<= 1u;
+
+  /* Rebuilt for every pass: a face is small enough that clarity wins here, and
+   * a rotation invalidates the two triangles it touches, which a rebuilt table
+   * handles without a version stamp on every entry. */
+  uint64_t* keys = g_job.flipKeys;
+  uint32_t* value = g_job.flipValue;
+  if (!keys || !value) return 0u;
+  for (uint32_t i = 0; i < capacity; ++i) { keys[i] = ~0ull; value[i] = 0u; }
+
+  auto mix = [](uint32_t a, uint32_t b) -> uint64_t {
+    return (static_cast<uint64_t>(a) << 32u) | static_cast<uint64_t>(b);
+  };
+  auto insert = [&](uint32_t lo, uint32_t hi, uint32_t half) {
+    const uint64_t key = mix(lo, hi);
+    uint32_t slot = static_cast<uint32_t>((key * 0x9E3779B97F4A7C15ull) >> 40u) & (capacity - 1u);
+    for (uint32_t probe = 0; probe < capacity; ++probe) {
+      if (keys[slot] == key) {
+        /* Second half-edge on this edge: record it in the high bits. */
+        value[slot] = value[slot] | (half << 16u);
+        return;
+      }
+      if (keys[slot] == ~0ull) {
+        keys[slot] = key;
+        value[slot] = half;
+        return;
+      }
+      slot = (slot + 1u) & (capacity - 1u);
+    }
+  };
+
+  for (uint32_t t = 0; t < count; ++t) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t a = tris[t * 3u + k];
+      const uint32_t b = tris[t * 3u + (k + 1u) % 3u];
+      if (a == b) continue;
+      insert(a < b ? a : b, a < b ? b : a, (t << 3u) | k);
+    }
+  }
+
+  auto thirdVertex = [&](uint32_t half) -> uint32_t {
+    const uint32_t t = half >> 3u, k = half & 7u;
+    return tris[t * 3u + (k + 2u) % 3u];
+  };
+  auto edgeStart = [&](uint32_t half) -> uint32_t {
+    const uint32_t t = half >> 3u, k = half & 7u;
+    return tris[t * 3u + k];
+  };
+  auto edgeEnd = [&](uint32_t half) -> uint32_t {
+    const uint32_t t = half >> 3u, k = half & 7u;
+    return tris[t * 3u + (k + 1u) % 3u];
+  };
+
+  uint32_t flips = 0u;
+  for (uint32_t i = 0; i < capacity; ++i) {
+    if (keys[i] == ~0ull) continue;
+    const uint32_t first = value[i] & 0xFFFFu;
+    const uint32_t second = value[i] >> 16u;
+    if (!second || second == 0xFFFFu) continue;                /* boundary edge */
+    /* Stale entries are those whose recorded half-edge no longer holds its key. */
+    const uint32_t lo = static_cast<uint32_t>(keys[i] >> 32u);
+    const uint32_t hi = static_cast<uint32_t>(keys[i] & 0xFFFFFFFFu);
+    auto holdsKey = [&](uint32_t half) {
+      const uint32_t a = edgeStart(half), b = edgeEnd(half);
+      return (a == lo && b == hi) || (a == hi && b == lo);
+    };
+    if (!holdsKey(first) || !holdsKey(second)) continue;
+
+    /* Orient the pair as (x, y, p) and (y, x, q). */
+    uint32_t t0 = first >> 3u, k0 = first & 7u;
+    uint32_t x = tris[t0 * 3u + k0], y = tris[t0 * 3u + (k0 + 1u) % 3u];
+    const uint32_t p = thirdVertex(first);
+    const uint32_t t1 = second >> 3u, k1 = second & 7u;
+    uint32_t x2 = tris[t1 * 3u + k1], y2 = tris[t1 * 3u + (k1 + 1u) % 3u];
+    if (x2 == y && y2 == x) { /* already oriented as (y, x) */ }
+    else if (x2 == x && y2 == y) { const uint32_t swap = x; x = y; y = swap; }
+    else continue;
+    const uint32_t q = thirdVertex(second);
+    if (p == q) continue;
+
+    /* Refuse a rotation that would duplicate an existing edge (that would make
+     * the face non-manifold) - Blender tracks this through its half-edge
+     * radial links; here the edge table is the same information. */
+    const uint64_t newKey = mix(p < q ? p : q, p < q ? q : p);
+    bool duplicated = false;
+    {
+      uint32_t slot = static_cast<uint32_t>((newKey * 0x9E3779B97F4A7C15ull) >> 40u) & (capacity - 1u);
+      for (uint32_t probe = 0; probe < capacity; ++probe) {
+        if (keys[slot] == ~0ull) break;
+        if (keys[slot] == newKey) { duplicated = true; break; }
+        slot = (slot + 1u) & (capacity - 1u);
+      }
+    }
+    if (duplicated) continue;
+
+    const float* v1 = coords + static_cast<size_t>(p) * 2u;
+    const float* v2 = coords + static_cast<size_t>(x) * 2u;
+    const float* v3 = coords + static_cast<size_t>(q) * 2u;
+    const float* v4 = coords + static_cast<size_t>(y) * 2u;
+    if (quadRotateCost(v1, v2, v3, v4) >= -1e-7f) continue;
+
+    /* (p, x, q) and (q, y, p): the same winding as the pair they replace. */
+    tris[t0 * 3u] = p; tris[t0 * 3u + 1u] = x; tris[t0 * 3u + 2u] = q;
+    /* Write the second triangle in the slot order of its own corner. */
+    tris[t1 * 3u + k1] = q;
+    tris[t1 * 3u + (k1 + 1u) % 3u] = y;
+    tris[t1 * 3u + (k1 + 2u) % 3u] = p;
+    ++flips;
+  }
+  return flips;
+}
+
+void beautifyFace(const float* coords, uint32_t* tris, uint32_t count) {
+  /* A bounded number of passes, so a pathological face cannot spin: each pass
+   * strictly decreases the summed rotation cost, and in practice two are enough
+   * on a ring this small. */
+  if (!g_job.beautyEnabled) return;
+  const uint32_t maxPasses = 4u;
+  for (uint32_t pass = 0; pass < maxPasses; ++pass) {
+    if (beautifyPass(coords, tris, count) == 0u) break;
+  }
+}
+
 } // namespace
 
 extern "C" {
@@ -400,7 +591,13 @@ FE_EXPORT int32_t fe_polyfill_begin(void) {
   job.tris = static_cast<uint32_t*>(fe::heap::alloc(kPolyfillMaxCorners * 3u * sizeof(uint32_t), 16));
   job.indices = static_cast<PolyIndex*>(fe::heap::alloc(kPolyfillMaxFaceVerts * sizeof(PolyIndex), 16));
   job.coords = static_cast<float*>(fe::heap::alloc(kPolyfillMaxFaceVerts * 2u * sizeof(float), 16));
-  if (!job.positions || !job.ring || !job.start || !job.tris || !job.indices || !job.coords) return -2;
+  /* The beauty pass rebuilds its edge map per pass; 2x the half-edges of one
+     face is the largest table it can need. */
+  const uint32_t flipCap = 1u << 16u;
+  job.flipKeys = static_cast<uint64_t*>(fe::heap::alloc(flipCap * sizeof(uint64_t), 16));
+  job.flipValue = static_cast<uint32_t*>(fe::heap::alloc(flipCap * sizeof(uint32_t), 16));
+  if (!job.positions || !job.ring || !job.start || !job.tris || !job.indices || !job.coords ||
+      !job.flipKeys || !job.flipValue) return -2;
   job.ready = true;
   return 0;
 }
@@ -409,6 +606,11 @@ FE_EXPORT uint32_t fe_polyfill_max_vertices(void) { return kPolyfillMaxVerts; }
 FE_EXPORT uint32_t fe_polyfill_max_corners(void) { return kPolyfillMaxCorners; }
 FE_EXPORT uint32_t fe_polyfill_max_faces(void) { return kPolyfillMaxFaces; }
 FE_EXPORT uint32_t fe_polyfill_max_face_verts(void) { return kPolyfillMaxFaceVerts; }
+/* Off for a plain ear clip, on for Blender's BEAUTY (the default). */
+FE_EXPORT uint32_t fe_polyfill_set_beauty(uint32_t enabled) {
+  g_job.beautyEnabled = enabled != 0u;
+  return g_job.beautyEnabled ? 1u : 0u;
+}
 
 FE_EXPORT float* fe_polyfill_positions_ptr(void) { return g_job.positions; }
 FE_EXPORT uint32_t* fe_polyfill_ring_ptr(void) { return g_job.ring; }
@@ -513,6 +715,10 @@ FE_EXPORT int32_t fe_polyfill_build(uint32_t vertex_count, uint32_t face_count, 
         tri[1] = ring[tri[1]];
         tri[2] = ring[tri[2]];
       }
+      /* The ear clipper leaves fans of long thin triangles; the beauty pass
+       * rotates the internal edges until the pair is the better one. */
+      beautifyFace(job.coords, job.tris + static_cast<size_t>(triBegin) * 3u,
+                   pf.tris_num - triBegin);
     }
 
     /* The cut is made in a projected plane, so a triangle can come out facing

@@ -39,11 +39,17 @@ component-by-component table.
 
 cpp/src/fe_polyfill.cpp
   Ported from  source/blender/blenlib/intern/polyfill_2d.cc
+               source/blender/blenlib/intern/polyfill_2d_beautify.cc
   Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
   Copyright    2023 Blender Authors
   Licence      GPL-2.0-or-later (this repository distributes it under
                GPL-3.0-or-later, which the "or later" clause permits)
   What         the ear-clipping triangulator behind Blender's Triangulate
-               modifier, and the BLI_polyfill_calc entry point. The KD-tree
-               acceleration and the MemArena allocation are not ported; the
-               file's own header comment says what replaced them and why.
+               modifier, and the BLI_polyfill_calc entry point; plus the
+               beauty pass from polyfill_2d_beautify.cc -
+               BLI_polyfill_beautify_quad_rotate_calc_ex, its half-edge
+               rotation and edge-crease test - which is what the Triangulate
+               modifier's "Beauty" method (the default) now runs. The KD-tree
+               and BLI_heap live in BLI_ghash / BLI_edgehash upstream and are
+               replaced by an open-addressing table here; the file's own header
+               comment says what replaced them and why.

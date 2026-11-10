@@ -735,6 +735,9 @@ FE_EXPORT uint32_t fe_polyfill_quad_count(void);
 FE_EXPORT uint32_t fe_polyfill_ngon_count(void);
 FE_EXPORT int32_t fe_polyfill_build(uint32_t vertex_count, uint32_t face_count, uint32_t corner_count,
                                     uint32_t quad_method, uint32_t ngon_method);
+/* 1 = run the beauty pass after triangulating (polyfill_2d_beautify.cc), 0 = the
+ * raw ear clip. Beauty is what the Triangulate modifier's default method uses. */
+FE_EXPORT uint32_t fe_polyfill_set_beauty(uint32_t enabled);
 
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 #ifdef __cplusplus
