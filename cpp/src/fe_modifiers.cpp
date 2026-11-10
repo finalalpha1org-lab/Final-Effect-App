@@ -1200,39 +1200,143 @@ FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merg
   return rc;
 }
 
+/* =========================================================================
+ * Solidify - ported from modifiers/intern/MOD_solidify_extrude.cc
+ *
+ *   source/blender/modifiers/intern/MOD_solidify.cc          (the dispatcher)
+ *   source/blender/modifiers/intern/MOD_solidify_extrude.cc  (the algorithm)
+ *
+ * The shell is Blender's: every vertex is copied, the original ring is pushed
+ * along the vertex normals by ofs_orig and the copy by ofs_new, where
+ *
+ *   ofs_orig = -(((-offset_fac + 1.0f) * 0.5f) * thickness)
+ *   ofs_new  = thickness + ofs_orig
+ *
+ * is the same pair the modifier builds from its two sliders. The copied faces
+ * are emitted with reversed winding so their normals point the other way, and
+ * each boundary edge gets a rim quad, wound against the face normal so it
+ * closes the shell rather than folding into it.
+ *
+ * Even thickness is MOD_SOLIDIFY_EVEN: for every corner, the angle at that
+ * corner is accumulated both raw (vert_accum) and scaled by
+ * shell_v3v3_normalized_to_dist(vert_normal, face_normal) = 1 / |dot| - the
+ * factor by which a vertex normal has to stretch to reach the face's plane -
+ * and the offset is multiplied by their ratio. That is what keeps a shell on a
+ * pyramid or a bevelled edge from thinning out at the corners.
+ *
+ * Not ported, and named so nobody has to guess: the Non Manifold mode
+ * (MOD_solidify_nonmanifold.cc, 113 341 bytes, a different algorithm entirely),
+ * vertex-group weights, material offsets, the
+ * bevel-convex edge weight, the degenerate-length clamp and complex mode, and
+ * n-gons - the modifier stack hands this kernel triangles.
+ * ========================================================================= */
+/* acos through the engine's own atan2: the freestanding build carries no libm. */
+inline float cornerAngle(float cosang) {
+  const float c = clampf(cosang, -1.0f, 1.0f);
+  return atan2f(sqrtf(maxf(0.0f, 1.0f - c * c)), c);
+}
+
 FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness) {
   if (!g_s.ready) return -1;
-  /* Two shells, a rim and an inner face for every triangle: what the input's
-     faces were shaded like no longer describes the output, so the new surface is
-     smooth all over rather than half-inheriting a flag at random. */
+  /* The shell has twice the faces and none of them is the one it came from, so
+     the per-face smooth flags cannot be carried: the new surface is smooth. */
   g_s.flagMode = 0;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
   if (v * 2u > g_s.vcap) return -2;
   const float th = clampf(thickness, -1.0f, 1.0f);
-  if (absf(th) < 1e-9f) return 0;
-  (void)even_thickness;
+  if (absf(th) < 1e-9f) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    return commit(v, t);
+  }
+  const float offset_fac = clampf(offset, -1.0f, 1.0f);
+  const float ofs_orig = -(((-offset_fac + 1.0f) * 0.5f) * th);
+  const float ofs_new = th + ofs_orig;
 
-  computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
-  const float outer = th * (1.0f - clampf(offset, -1.0f, 1.0f)) * 0.5f;
-  const float inner = -th * (1.0f + clampf(offset, -1.0f, 1.0f)) * 0.5f;
+  float* fn = modArray<float>(t * 3u);
+  float* vn = modArray<float>(v * 3u);
+  float* accum = modArray<float>(v);
+  float* angles = modArray<float>(v);
+  if (!fn || !vn || !accum || !angles) return -2;
+
+  /* Face normals, unit. */
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 a = readPos(g_s.inPos, g_s.inIdx[f * 3]);
+    const Vec3 b = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
+    const Vec3 c = readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]);
+    const Vec3 n = normalize(cross(b - a, c - a));
+    fn[f * 3] = n.x; fn[f * 3 + 1] = n.y; fn[f * 3 + 2] = n.z;
+  }
+
+  /* mesh vertex normals, angle weighted: the same weighting the mesh would
+     carry into the modifier. */
+  for (uint32_t i = 0; i < v * 3u; ++i) vn[i] = 0.0f;
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 p[3] = { readPos(g_s.inPos, g_s.inIdx[f * 3]),
+                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]),
+                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]) };
+    const Vec3 n(fn[f * 3], fn[f * 3 + 1], fn[f * 3 + 2]);
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const Vec3 e0 = p[(k + 1u) % 3u] - p[k];
+      const Vec3 e1 = p[(k + 2u) % 3u] - p[k];
+      const float l0 = length(e0), l1 = length(e1);
+      float cosang = 1.0f;
+      if (l0 > 0.0f && l1 > 0.0f) cosang = clampf(dot(e0 * (1.0f / l0), e1 * (1.0f / l1)), -1.0f, 1.0f);
+      const float ang = cornerAngle(cosang);       /* the face's corner angle */
+      const uint32_t vi = g_s.inIdx[f * 3 + k];
+      writePos(vn, vi, readPos(vn, vi) + n * ang);
+    }
+  }
+  for (uint32_t i = 0; i < v; ++i) {
+    Vec3 n = readPos(vn, i);
+    if (length_sq(n) == 0.0f) { writePos(vn, i, Vec3(0.0f, 1.0f, 0.0f)); continue; }
+    writePos(vn, i, normalize(n));
+  }
+
+  /* MOD_SOLIDIFY_EVEN. shell_v3v3_normalized_to_dist() is |dot| based and
+     clamps a near-perpendicular pair to 1, exactly as upstream. */
+  for (uint32_t i = 0; i < v; ++i) { accum[i] = 0.0f; angles[i] = 0.0f; }
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 p[3] = { readPos(g_s.inPos, g_s.inIdx[f * 3]),
+                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]),
+                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]) };
+    const Vec3 n(fn[f * 3], fn[f * 3 + 1], fn[f * 3 + 2]);
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const Vec3 e0 = p[(k + 1u) % 3u] - p[k];
+      const Vec3 e1 = p[(k + 2u) % 3u] - p[k];
+      const float l0 = length(e0), l1 = length(e1);
+      if (l0 <= 0.0f || l1 <= 0.0f) continue;
+      const float cosang = clampf(dot(e0 * (1.0f / l0), e1 * (1.0f / l1)), -1.0f, 1.0f);
+      const float ang = cornerAngle(cosang);
+      const uint32_t vi = g_s.inIdx[f * 3 + k];
+      const float cosvn = absf(dot(readPos(vn, vi), n));
+      const float dist = cosvn < 1e-8f ? 1.0f : 1.0f / cosvn;
+      accum[vi] += ang;
+      angles[vi] += (even_thickness ? dist : 1.0f) * ang;
+    }
+  }
 
   for (uint32_t i = 0; i < v; ++i) {
     const Vec3 p = readPos(g_s.inPos, i);
-    const Vec3 n = readPos(g_s.nrm, i);
-    writePos(g_s.outPos, i, p + n * outer);
-    writePos(g_s.outPos, v + i, p + n * inner);
+    const Vec3 n = readPos(vn, i);
+    const float scale = accum[i] > 1e-12f ? angles[i] / accum[i] : 1.0f;
+    writePos(g_s.outPos, i, p + n * (ofs_orig * scale));
+    writePos(g_s.outPos, v + i, p + n * (ofs_new * scale));
     if (g_s.hasUv) {
       g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1];
       g_s.outUv[(v + i) * 2] = g_s.inUv[i * 2]; g_s.outUv[(v + i) * 2 + 1] = g_s.inUv[i * 2 + 1];
     }
   }
 
-  uint32_t outT = 0;
-  for (uint32_t f = 0; f < t; ++f) {
+  uint32_t outT = 0u;
+  for (uint32_t f = 0; f < t && outT + 2u <= g_s.tcap; ++f) {
     const uint32_t a = g_s.inIdx[f * 3], b = g_s.inIdx[f * 3 + 1], c = g_s.inIdx[f * 3 + 2];
-    g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c; outT++;
-    g_s.outIdx[outT * 3] = v + c; g_s.outIdx[outT * 3 + 1] = v + b; g_s.outIdx[outT * 3 + 2] = v + a; outT++;
+    g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c; ++outT;
+    /* The copy is the same face with the winding reversed, so the two skins
+       face away from each other. */
+    g_s.outIdx[outT * 3] = v + c; g_s.outIdx[outT * 3 + 1] = v + b; g_s.outIdx[outT * 3 + 2] = v + a; ++outT;
   }
 
   if (rim) {
@@ -1242,27 +1346,25 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
       const uint32_t i0 = g_s.inIdx[f * 3], i1 = g_s.inIdx[f * 3 + 1], i2 = g_s.inIdx[f * 3 + 2];
       if (!edgeTableAdd(edges, i0, i1, f) || !edgeTableAdd(edges, i1, i2, f) || !edgeTableAdd(edges, i2, i0, f)) return -2;
     }
-    for (uint32_t s = 0; s <= edges.mask; ++s) {
-      if (edges.count[s] != 1u) continue;
+    for (uint32_t sIdx = 0; sIdx <= edges.mask; ++sIdx) {
+      if (edges.count[sIdx] != 1u) continue;
       if (outT + 2u > g_s.tcap) return -2;
-      const uint32_t a = edges.a[s], b = edges.b[s];
+      const uint32_t a = edges.a[sIdx], b = edges.b[sIdx];
       const Vec3 pa = readPos(g_s.inPos, a), pb = readPos(g_s.inPos, b);
-      const Vec3 na = readPos(g_s.nrm, a), nb = readPos(g_s.nrm, b);
-      const Vec3 oa = pa + na * outer, ob = pb + nb * outer;
-      const Vec3 ib = pb + nb * inner;
-      const uint32_t f = edges.tri ? edges.tri[s] : 0u;
-      const Vec3 fa = readPos(g_s.inPos, g_s.inIdx[f * 3]);
-      const Vec3 fb = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
-      const Vec3 fc = readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]);
-      const Vec3 n = cross(fb - fa, fc - fa);
+      const Vec3 oa = readPos(g_s.outPos, a), ob = readPos(g_s.outPos, b);
+      const Vec3 ib = readPos(g_s.outPos, v + b);
+      const Vec3 fv = readPos(g_s.inPos, g_s.inIdx[edges.tri[sIdx] * 3]);
+      const Vec3 fv1 = readPos(g_s.inPos, g_s.inIdx[edges.tri[sIdx] * 3 + 1]);
+      const Vec3 fv2 = readPos(g_s.inPos, g_s.inIdx[edges.tri[sIdx] * 3 + 2]);
+      const Vec3 n = cross(fv1 - fv, fv2 - fv);
       const Vec3 want = cross(pb - pa, n);
       const Vec3 got = cross(ob - oa, ib - oa);
       if (dot(got, want) >= 0.0f) {
-        g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = v + b; outT++;
-        g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = v + b; g_s.outIdx[outT * 3 + 2] = v + a; outT++;
+        g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = v + b; ++outT;
+        g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = v + b; g_s.outIdx[outT * 3 + 2] = v + a; ++outT;
       } else {
-        g_s.outIdx[outT * 3] = b; g_s.outIdx[outT * 3 + 1] = a; g_s.outIdx[outT * 3 + 2] = v + a; outT++;
-        g_s.outIdx[outT * 3] = b; g_s.outIdx[outT * 3 + 1] = v + a; g_s.outIdx[outT * 3 + 2] = v + b; outT++;
+        g_s.outIdx[outT * 3] = b; g_s.outIdx[outT * 3 + 1] = a; g_s.outIdx[outT * 3 + 2] = v + a; ++outT;
+        g_s.outIdx[outT * 3] = b; g_s.outIdx[outT * 3 + 1] = v + a; g_s.outIdx[outT * 3 + 2] = v + b; ++outT;
       }
     }
   }

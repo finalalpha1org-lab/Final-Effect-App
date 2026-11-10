@@ -680,7 +680,10 @@ export function shadeGeometry(geometry) {
 }
 
 export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true } = {}) {
-  const viaCpp = Math.abs(thickness) < 1e-9 ? null : runCppKernel(geometry, (v,t)=>[v*2, t*5],
+  /* Two shells (2t triangles) plus a quad per boundary edge. A vertex-split
+     mesh - a box fresh out of three, where every face has its own corners - can
+     have up to 3t boundary edges, so the rim alone is 6t triangles. */
+  const viaCpp = Math.abs(thickness) < 1e-9 ? null : runCppKernel(geometry, (v,t)=>[v*2, t*8],
     exp => exp.fe_mod_solidify(Number(thickness)||0, Number(offset)||0, rim ? 1 : 0, evenThickness ? 1 : 0));
   if (viaCpp) return viaCpp;
   if(Math.abs(thickness)<1e-9)return geometry.clone();
