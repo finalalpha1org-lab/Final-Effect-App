@@ -594,6 +594,11 @@ FE_EXPORT int32_t  fe_mod_weld(float epsilon);
 FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode);
 FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon);
 FE_EXPORT int32_t  fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness);
+/* Wireframe, ported from bmesh/tools/bmesh_wireframe.cc (BM_mesh_wireframe):
+ * the per-corner inset frame plus its two quads, the boundary strips, and the
+ * Even Offset rule. offset is Blender's Offset slider (0 = centred). */
+FE_EXPORT int32_t  fe_mod_wireframe(float thickness, float offset, int32_t replace_original,
+                                    int32_t boundary, int32_t even_offset);
 FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction);
 FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
 FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);

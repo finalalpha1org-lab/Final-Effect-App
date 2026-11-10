@@ -31,7 +31,7 @@ wrangler (Cloudflare Workers)   Apache-2.0 / MIT
 
 Copied Blender source
 ---------------------
-Two files carry Blender code (five upstream sources). The rule for any other: keep the
+Two files carry Blender code (seven upstream sources). The rule for any other: keep the
 original copyright header on every file, add an entry here naming the file, the
 upstream commit and the licence, and do not use the Blender or Cycles
 trademarks to imply endorsement. docs/LICENSING.md has the
@@ -90,3 +90,19 @@ cpp/src/fe_modifiers.cpp - fe_mod_solidify()
                different algorithm), vertex groups, material offsets, the
                bevel-convex edge weight, the degenerate-length clamp and
                complex mode.
+
+cpp/src/fe_modifiers.cpp - fe_mod_wireframe()
+  Ported from  source/blender/bmesh/tools/bmesh_wireframe.cc
+               source/blender/modifiers/intern/MOD_wireframe.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         BM_mesh_wireframe: the per-corner inset along
+               BM_loop_calc_face_tangent(), the two quads per corner that make
+               the square strut, the ofs_orig / ofs_new vertex duplication,
+               shell_angle_to_dist() for Even Offset, and the boundary strips
+               from bm_vert_boundary_tangent() with its
+               BM_edge_calc_face_tangent() flip test. Not ported: crease
+               weights, vertex groups, relative offset, material offsets and
+               the n-gon paths - all of them read BMesh custom data.

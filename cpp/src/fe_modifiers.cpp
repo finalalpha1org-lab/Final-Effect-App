@@ -383,6 +383,20 @@ bool edgeTableAdd(EdgeTable& t, uint32_t va, uint32_t vb, uint32_t tri) {
   return false;
 }
 
+/* How many faces use this edge: the wireframe has to know whether the edge a
+   loop is walking is on the border before it adds a boundary strip. */
+uint32_t edgeTableCount(const EdgeTable& t, uint32_t va, uint32_t vb) {
+  const uint32_t lo = va < vb ? va : vb, hi = va < vb ? vb : va;
+  const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+  uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & t.mask;
+  for (uint32_t probe = 0; probe <= t.mask; ++probe) {
+    if (t.count[i] == 0) return 0u;
+    if (t.key[i] == key) return t.count[i];
+    i = (i + 1u) & t.mask;
+  }
+  return 0u;
+}
+
 /* ---- Value noise (freestanding, deterministic) ---- */
 inline float noiseHash(int32_t x, int32_t y, int32_t z, uint32_t seed) {
   const uint32_t h = static_cast<uint32_t>(x) * 374761393u ^ static_cast<uint32_t>(y) * 668265263u ^
@@ -1231,6 +1245,34 @@ FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merg
  * n-gons - the modifier stack hands this kernel triangles.
  * ========================================================================= */
 /* acos through the engine's own atan2: the freestanding build carries no libm. */
+inline float cornerAngle(float cosang);
+
+/* Angle-weighted vertex normals: the weighting a mesh carries into a modifier
+   (every face contributes its normal, scaled by the angle it subtends at the
+   vertex). Used by Solidify and Wireframe, which both offset along it. */
+void vertexNormalsAngleWeighted(const float* pos, const uint32_t* idx, uint32_t vCount,
+                                uint32_t triCount, const float* faceNormal, float* out) {
+  for (uint32_t i = 0; i < vCount * 3u; ++i) out[i] = 0.0f;
+  for (uint32_t f = 0; f < triCount; ++f) {
+    const Vec3 p[3] = { readPos(pos, idx[f * 3]), readPos(pos, idx[f * 3 + 1]), readPos(pos, idx[f * 3 + 2]) };
+    const Vec3 n(faceNormal[f * 3], faceNormal[f * 3 + 1], faceNormal[f * 3 + 2]);
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const Vec3 e0 = p[(k + 1u) % 3u] - p[k];
+      const Vec3 e1 = p[(k + 2u) % 3u] - p[k];
+      const float l0 = length(e0), l1 = length(e1);
+      if (l0 <= 0.0f || l1 <= 0.0f) continue;
+      const float ang = cornerAngle(dot(e0 * (1.0f / l0), e1 * (1.0f / l1)));
+      const uint32_t vi = idx[f * 3 + k];
+      writePos(out, vi, readPos(out, vi) + n * ang);
+    }
+  }
+  for (uint32_t i = 0; i < vCount; ++i) {
+    const Vec3 n = readPos(out, i);
+    writePos(out, i, length_sq(n) == 0.0f ? Vec3(0.0f, 1.0f, 0.0f) : normalize(n));
+  }
+}
+
+
 inline float cornerAngle(float cosang) {
   const float c = clampf(cosang, -1.0f, 1.0f);
   return atan2f(sqrtf(maxf(0.0f, 1.0f - c * c)), c);
@@ -1272,28 +1314,7 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
 
   /* mesh vertex normals, angle weighted: the same weighting the mesh would
      carry into the modifier. */
-  for (uint32_t i = 0; i < v * 3u; ++i) vn[i] = 0.0f;
-  for (uint32_t f = 0; f < t; ++f) {
-    const Vec3 p[3] = { readPos(g_s.inPos, g_s.inIdx[f * 3]),
-                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]),
-                        readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]) };
-    const Vec3 n(fn[f * 3], fn[f * 3 + 1], fn[f * 3 + 2]);
-    for (uint32_t k = 0; k < 3u; ++k) {
-      const Vec3 e0 = p[(k + 1u) % 3u] - p[k];
-      const Vec3 e1 = p[(k + 2u) % 3u] - p[k];
-      const float l0 = length(e0), l1 = length(e1);
-      float cosang = 1.0f;
-      if (l0 > 0.0f && l1 > 0.0f) cosang = clampf(dot(e0 * (1.0f / l0), e1 * (1.0f / l1)), -1.0f, 1.0f);
-      const float ang = cornerAngle(cosang);       /* the face's corner angle */
-      const uint32_t vi = g_s.inIdx[f * 3 + k];
-      writePos(vn, vi, readPos(vn, vi) + n * ang);
-    }
-  }
-  for (uint32_t i = 0; i < v; ++i) {
-    Vec3 n = readPos(vn, i);
-    if (length_sq(n) == 0.0f) { writePos(vn, i, Vec3(0.0f, 1.0f, 0.0f)); continue; }
-    writePos(vn, i, normalize(n));
-  }
+  vertexNormalsAngleWeighted(g_s.inPos, g_s.inIdx, v, t, fn, vn);
 
   /* MOD_SOLIDIFY_EVEN. shell_v3v3_normalized_to_dist() is |dot| based and
      clamps a near-perpendicular pair to 1, exactly as upstream. */
@@ -2153,6 +2174,271 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
   if (outT == 0u || outV == 0u) return -4;
   (void)pushed;
   return commit(outV, outT);
+}
+
+/* =========================================================================
+ * Wireframe - ported from bmesh/tools/bmesh_wireframe.cc
+ *
+ *   source/blender/bmesh/tools/bmesh_wireframe.cc  (BM_mesh_wireframe)
+ *   source/blender/modifiers/intern/MOD_wireframe.cc (the dispatcher)
+ *
+ * The modifier does not thicken the edges; it frames the faces. Around every
+ * corner it puts four vertices:
+ *
+ *   - two copies of the corner itself, pushed along the vertex normal to
+ *     ofs_orig and ofs_new, which are the same pair Solidify uses, so the
+ *     Offset slider means the same thing in both modifiers;
+ *   - one vertex inset into the face along BM_loop_calc_face_tangent(), the
+ *     corner's interior bisector, by thickness / 2. With Even Offset that
+ *     inset is divided by cos((pi - corner_angle) / 2) - shell_angle_to_dist()
+ *     - so a sharp corner does not produce a thin strut.
+ *
+ * Two quads per corner then join the inset vertex to the two copies, which is
+ * where the square profile comes from, and a boundary edge gets two more quads
+ * so an open mesh's border closes. Open borders use bm_vert_boundary_tangent():
+ * cross(average edge direction, average face normal), flipped against
+ * BM_edge_calc_face_tangent() so it points out of the surface.
+ *
+ * Not ported: crease weights, vertex groups, relative offset, material
+ * offsets, and the n-gon paths (a triangle buffer has three corners per face).
+ * Those are the parts that read BMesh custom data.
+ * ========================================================================= */
+FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replace_original,
+                                   int32_t boundary, int32_t even_offset) {
+  if (!g_s.ready) return -1;
+  /* A wireframe is all new surface: the input's per-face flags have nothing to
+     say about it. */
+  g_s.flagMode = 0;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const float th = clampf(thickness, 0.0f, 1.0f);
+  if (th <= 1e-6f) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    return commit(v, t);
+  }
+  const float offset_fac = clampf(offset, -1.0f, 1.0f);
+  const float ofs_orig = -(((-offset_fac + 1.0f) * 0.5f) * th);
+  const float ofs_new = th + ofs_orig;
+  const float ofs_mid = (ofs_orig + ofs_new) * 0.5f;
+  const float inset = th * 0.5f;
+
+  float* fn = modArray<float>(t * 3u);
+  float* vn = modArray<float>(v * 3u);
+  float* loopPos = modArray<float>(t * 3u * 3u);
+  float* bndPos = modArray<float>(v * 3u);
+  uint8_t* bndMade = modArray<uint8_t>(v);
+  int32_t* eaFace = modArray<int32_t>(v);
+  int32_t* ebFace = modArray<int32_t>(v);
+  uint32_t* eaOther = modArray<uint32_t>(v);
+  uint32_t* ebOther = modArray<uint32_t>(v);
+  if (!fn || !vn || !loopPos || !bndPos || !bndMade || !eaFace || !ebFace || !eaOther || !ebOther) return -2;
+
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 a = readPos(g_s.inPos, g_s.inIdx[f * 3]);
+    const Vec3 b = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
+    const Vec3 c = readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]);
+    const Vec3 n = normalize(cross(b - a, c - a));
+    fn[f * 3] = n.x; fn[f * 3 + 1] = n.y; fn[f * 3 + 2] = n.z;
+  }
+  vertexNormalsAngleWeighted(g_s.inPos, g_s.inIdx, v, t, fn, vn);
+  for (uint32_t i = 0; i < v; ++i) { eaFace[i] = -1; ebFace[i] = -1; eaOther[i] = ebOther[i] = 0u; bndMade[i] = 0u; }
+
+  /* Boundary edges carry both endpoints, so bm_vert_boundary_tangent() has the
+     two edges it needs. */
+  EdgeTable edges;
+  uint32_t boundaryEdges = 0u;
+  {
+    if (!edgeTableInit(edges, t, true)) return -2;
+    for (uint32_t f = 0; f < t; ++f) {
+      const uint32_t i0 = g_s.inIdx[f * 3], i1 = g_s.inIdx[f * 3 + 1], i2 = g_s.inIdx[f * 3 + 2];
+      if (!edgeTableAdd(edges, i0, i1, f) || !edgeTableAdd(edges, i1, i2, f) || !edgeTableAdd(edges, i2, i0, f)) return -2;
+    }
+    for (uint32_t sIdx = 0; sIdx <= edges.mask; ++sIdx) {
+      if (edges.count[sIdx] != 1u) continue;
+      ++boundaryEdges;
+      const uint32_t a = edges.a[sIdx], b = edges.b[sIdx], f = edges.tri[sIdx];
+      if (eaFace[a] < 0) { eaFace[a] = static_cast<int32_t>(f); eaOther[a] = b; }
+      else if (ebFace[a] < 0) { ebFace[a] = static_cast<int32_t>(f); ebOther[a] = b; }
+      if (eaFace[b] < 0) { eaFace[b] = static_cast<int32_t>(f); eaOther[b] = a; }
+      else if (ebFace[b] < 0) { ebFace[b] = static_cast<int32_t>(f); ebOther[b] = a; }
+    }
+  }
+
+  /* ---- the inset vertex per face corner (verts_loop) ---- */
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 n(fn[f * 3], fn[f * 3 + 1], fn[f * 3 + 2]);
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t iv = g_s.inIdx[f * 3 + k];
+      const Vec3 prev = readPos(g_s.inPos, g_s.inIdx[f * 3 + (k + 2u) % 3u]);
+      const Vec3 next = readPos(g_s.inPos, g_s.inIdx[f * 3 + (k + 1u) % 3u]);
+      const Vec3 curr = readPos(g_s.inPos, iv);
+      /* BM_loop_calc_face_tangent(): bisector of the two corner edges, made
+         perpendicular to the face normal so it lies in the plane. */
+      Vec3 vPrev = prev - curr, vNext = next - curr;
+      const float lp = length(vPrev), ln = length(vNext);
+      Vec3 tangent(0.0f, 0.0f, 0.0f);
+      if (lp > 0.0f && ln > 0.0f) {
+        vPrev = vPrev * (1.0f / lp);
+        vNext = vNext * (1.0f / ln);
+        const Vec3 dir = vPrev + vNext;
+        Vec3 nor = cross(vPrev, vNext);
+        if (dot(nor, n) < 0.0f) nor = nor * -1.0f;
+        tangent = cross(dir, nor);
+        const float lt = length(tangent);
+        tangent = lt > 0.0f ? tangent * (1.0f / lt) : n;
+      }
+      /* BM_loop_calc_face_angle() and shell_angle_to_dist(). */
+      float facShell = 1.0f;
+      if (even_offset && lp > 0.0f && ln > 0.0f) {
+        const float corner = cornerAngle(dot(vPrev, vNext));
+        const float a = (3.14159265358979f - corner) * 0.5f;
+        facShell = absf(1.0f / cosf(a));
+      }
+      const Vec3 vnormal = readPos(vn, iv);
+      Vec3 p = curr + tangent * (inset * facShell) + vnormal * ofs_mid;
+      writePos(loopPos + f * 9u, k, p);
+    }
+  }
+
+  /* ---- boundary vertices (bm_vert_boundary_tangent) ---- */
+  if (boundary) {
+    for (uint32_t i = 0; i < v; ++i) {
+      if (eaFace[i] < 0 || bndMade[i]) continue;
+      const int32_t fa = eaFace[i];
+      const Vec3 na(fn[fa * 3], fn[fa * 3 + 1], fn[fa * 3 + 2]);
+      const Vec3 co = readPos(g_s.inPos, i);
+      const uint32_t va = eaOther[i];
+      const Vec3 coA = readPos(g_s.inPos, va);
+      Vec3 noFace = na;
+      Vec3 noEdge;
+      Vec3 tangentA = cross(co - coA, na);
+      Vec3 tangentB(0.0f, 0.0f, 0.0f);
+      bool hasSecond = ebFace[i] >= 0;
+      Vec3 tvecA = co - coA;
+      if (length(tvecA) > 0.0f) tvecA = normalize(tvecA);
+      if (hasSecond) {
+        const int32_t fb = ebFace[i];
+        const Vec3 nb(fn[fb * 3], fn[fb * 3 + 1], fn[fb * 3 + 2]);
+        noFace = normalize(na + nb);
+        const uint32_t vb = ebOther[i];
+        Vec3 tvecB = readPos(g_s.inPos, vb) - co;
+        if (length(tvecB) > 0.0f) tvecB = normalize(tvecB);
+        noEdge = tvecA + tvecB;
+        tangentB = cross(readPos(g_s.inPos, vb) - co, nb);
+      } else {
+        noEdge = tvecA;
+      }
+      Vec3 no = cross(noEdge, noFace);
+      const float ln = length(no);
+      no = ln > 0.0f ? no * (1.0f / ln) : readPos(vn, i);
+      if (length(tangentA) > 0.0f) tangentA = normalize(tangentA);
+      if (length(tangentB) > 0.0f) tangentB = normalize(tangentB);
+      const Vec3 tangentSum = tangentA + tangentB;
+      if (dot(no, hasSecond ? tangentSum : tangentA) > 0.0f) no = no * -1.0f;
+
+      float facShell = 1.0f;
+      if (even_offset && hasSecond) {
+        /* angle_on_axis_v3v3v3_v3(va, v, vb, no_face): both vectors point away
+           from the vertex, so a straight border reads as pi and gets factor 1. */
+        const Vec3 vb = readPos(g_s.inPos, ebOther[i]);
+        const Vec3 u1 = readPos(g_s.inPos, va) - co;
+        const Vec3 u2 = vb - co;
+        const float l1v = length(u1), l2 = length(u2);
+        if (l1v > 0.0f && l2 > 0.0f) {
+          const Vec3 u1n = u1 * (1.0f / l1v);
+          const Vec3 u2n = u2 * (1.0f / l2);
+          float angle = atan2f(dot(noFace, cross(u1n, u2n)), dot(u1n, u2n));
+          if (angle < 0.0f) angle += 6.28318530717959f;
+          const float a = (3.14159265358979f - angle) * 0.5f;
+          const float c = cosf(a);
+          /* A border corner folded back on itself would send shell_angle_to_dist
+             to infinity; upstream carries the same hazard, and a finite 1 here
+             is the only sane answer. */
+          facShell = absf(c) > 1e-6f ? absf(1.0f / c) : 1.0f;
+        }
+      }
+      const Vec3 p = co + no * (inset * facShell) + readPos(vn, i) * ofs_mid;
+      writePos(bndPos, i, p);
+      bndMade[i] = 1u;
+    }
+  }
+
+  /* ---- write the mesh ---- */
+  const uint32_t negBase = 0u;              /* 2i, 2i+1 */
+  const uint32_t loopBase = v * 2u;
+  const uint32_t bndBase = loopBase + t * 3u;
+  const uint32_t totalVerts = bndBase + (boundary ? v : 0u);
+  uint32_t outT = 0u;
+
+  for (uint32_t i = 0; i < v; ++i) {
+    const Vec3 p = readPos(g_s.inPos, i);
+    const Vec3 n = readPos(vn, i);
+    writePos(g_s.outPos, negBase + i * 2u, p + n * ofs_orig);
+    writePos(g_s.outPos, negBase + i * 2u + 1u, p + n * ofs_new);
+    if (g_s.hasUv) {
+      g_s.outUv[(negBase + i * 2u) * 2] = g_s.inUv[i * 2];
+      g_s.outUv[(negBase + i * 2u) * 2 + 1] = g_s.inUv[i * 2 + 1];
+      g_s.outUv[(negBase + i * 2u + 1u) * 2] = g_s.inUv[i * 2];
+      g_s.outUv[(negBase + i * 2u + 1u) * 2 + 1] = g_s.inUv[i * 2 + 1];
+    }
+  }
+  for (uint32_t j = 0; j < t * 3u; ++j) {
+    const uint32_t iv = g_s.inIdx[j];
+    writePos(g_s.outPos, loopBase + j, readPos(loopPos, j));
+    if (g_s.hasUv) {
+      g_s.outUv[(loopBase + j) * 2] = g_s.inUv[iv * 2];
+      g_s.outUv[(loopBase + j) * 2 + 1] = g_s.inUv[iv * 2 + 1];
+    }
+  }
+  if (boundary) {
+    for (uint32_t i = 0; i < v; ++i) {
+      writePos(g_s.outPos, bndBase + i, bndMade[i] ? readPos(bndPos, i) : readPos(g_s.inPos, i));
+      if (g_s.hasUv) {
+        g_s.outUv[(bndBase + i) * 2] = g_s.inUv[i * 2];
+        g_s.outUv[(bndBase + i) * 2 + 1] = g_s.inUv[i * 2 + 1];
+      }
+    }
+  }
+
+  auto tri = [&](uint32_t a, uint32_t b, uint32_t c) {
+    if (outT >= g_s.tcap) return false;
+    g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c;
+    ++outT;
+    return true;
+  };
+
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t k2 = (k + 1u) % 3u;
+      const uint32_t l1 = loopBase + f * 3u + k, l2 = loopBase + f * 3u + k2;
+      const uint32_t i1 = g_s.inIdx[f * 3 + k], i2 = g_s.inIdx[f * 3 + k2];
+      const uint32_t n1 = negBase + i1 * 2u, n2 = negBase + i2 * 2u;
+      const uint32_t p1 = n1 + 1u, p2 = n2 + 1u;
+      /* quad(v_l1, v_l2, v_neg2, v_neg1) */
+      if (!tri(l1, l2, n2) || !tri(l1, n2, n1)) return -2;
+      /* quad(v_l2, v_l1, v_pos1, v_pos2) */
+      if (!tri(l2, l1, p1) || !tri(l2, p1, p2)) return -2;
+
+      if (boundary && bndMade[i1] && bndMade[i2] && edgeTableCount(edges, i1, i2) == 1u) {
+        const uint32_t b1 = bndBase + i1, b2 = bndBase + i2;
+        /* quad(v_b2, v_b1, v_neg1, v_neg2) */
+        if (!tri(b2, b1, n1) || !tri(b2, n1, n2)) return -2;
+        /* quad(v_b1, v_b2, v_pos2, v_pos1) */
+        if (!tri(b1, b2, p2) || !tri(b1, p2, p1)) return -2;
+      }
+    }
+  }
+
+  if (!replace_original) {
+    for (uint32_t f = 0; f < t; ++f) {
+      if (!tri(g_s.inIdx[f * 3], g_s.inIdx[f * 3 + 1], g_s.inIdx[f * 3 + 2])) return -2;
+    }
+  }
+
+  (void)boundaryEdges;
+  return commit(totalVerts, outT);
 }
 
 /* =========================================================================

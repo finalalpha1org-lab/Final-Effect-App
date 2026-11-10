@@ -11522,7 +11522,7 @@ const modifiersData = {
     {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
     {name:"Triangulate", fields:[["Quad Method","select",["Beauty","Shortest Diagonal","Ear Clip","Fixed"]],["Ngon Method","select",["Beauty","Ear Clip","Fan"]],["Keep Normals","check",true]]},
     {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
-    {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
+    {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Offset","range",-1,1,0,.05,{advanced:true}],["Replace Original","check",true],["Boundary","check",true,{advanced:true}],["Even Offset","check",true,{advanced:true}]]}
   ],
   Deform: [
     {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
@@ -11706,7 +11706,7 @@ function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e
 function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
 function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip') { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
-function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal }); }
+function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true, options={}) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal, ...options }); }
 function applyDisplaceModifier(geometry, strength, midlevel, frequency=1, options={}) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency, ...options }); }
 function applyWaveModifier(geometry, speed, height, width, time=0, options={}) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time, ...options }); }
 function applyCastModifier(geometry, shape, factor, radius, size=1) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size }); }
@@ -12061,7 +12061,9 @@ function updateModifiersOnScene(targetOverride) {
     } else if (mod.name === "Wireframe") {
       const th = parseFloat(p["Thickness"] ?? 0.03);
       const replaceOriginal = p["Replace Original"] !== false;
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWireframeModifier(currentGeo, th, replaceOriginal));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWireframeModifier(currentGeo, th, replaceOriginal, {
+        offset: parseFloat(p["Offset"] ?? 0), boundary: p["Boundary"] !== false, evenOffset: p["Even Offset"] !== false
+      }));
     } else if (mod.name === "Displace") {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
@@ -12563,7 +12565,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false));
       else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false,p['Quad Method']||'Beauty',p['Ngon Method']||'Beauty'));
       else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
-      else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false));
+      else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false,{offset:Number(p.Offset??0),boundary:p.Boundary!==false,evenOffset:p['Even Offset']!==false}));
       else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),{direction:p.Direction||'Normal',octaves:Number(p.Octaves??2),seed:Number(p.Seed??0)}));
       else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0),{axis:p.Axis||'Y',phase:Number(p.Phase??0)}));
       else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));

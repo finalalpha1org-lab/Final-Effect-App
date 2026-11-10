@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 472 733 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 508 947 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:
@@ -138,7 +138,7 @@ Concretely:
 | --- | --- |
 | Face law (quads, n-gons, wireframe, outlines) | Ours, `cpp/src/fe_poly.cpp`, measured against Blender's semantics |
 | Edit tools (extrude, inset, bevel, loop cut, slide, pole fill) | Ours, `cpp/src/fe_editmesh*.cpp` |
-| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse and Solidify's shell (below) |
+| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse, Solidify's shell and Wireframe's frame (below) |
 | Boolean | Ours (the mesh-arrangement approach); **not** `three-csg-ts` in JavaScript |
 | Path tracing | Ours, `cpp/src/fe_renderer.cpp` |
 | Small pure-data tables (a colour-space matrix, a socket enum, a curve preset) | Copied from Blender where it is genuinely a table: keep the header, add the `NOTICE` entry |
@@ -156,6 +156,7 @@ header comment says which.
 | `cpp/src/fe_polyfill.cpp` | `blenlib/intern/polyfill_2d.cc` + `polyfill_2d_beautify.cc` | the ear-clipping loop, `BLI_polyfill_beautify_quad_rotate_calc_ex` and its rotation | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_decimate_collapse()` | `bmesh/tools/bmesh_decimate_collapse.cc` | quadric build (including the boundary-plane weighting), target-coordinate optimisation, edge cost, link condition, degenerate-flip test | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_solidify()` | `modifiers/intern/MOD_solidify_extrude.cc` (+ `MOD_solidify.cc`) | the thickness/offset split, angle-weighted vertex normals, reversed inner copy, rim quads, and the Even Thickness correction | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_wireframe()` | `bmesh/tools/bmesh_wireframe.cc` (+ `MOD_wireframe.cc`) | the per-corner inset frame, its two quads, the boundary strips and the Even Offset rule | GPL-2.0-or-later |
 
 What was *not* copied in each case is the thing that would have pulled BMesh in:
 `BLI_edgehash`/`BLI_heap` become an open-addressing table and a binary heap in

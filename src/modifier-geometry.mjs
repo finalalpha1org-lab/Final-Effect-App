@@ -891,7 +891,17 @@ export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElement
 }
 
 /* ---- True 3D Volumetric Strut Wireframe Modifier ---- */
-export function wireframeGeometry3D(geometry,{thickness=.03,replaceOriginal=true}={}){
+export function wireframeGeometry3D(geometry,{thickness=.03,offset=0,replaceOriginal=true,boundary=true,evenOffset=true}={}){
+  /* The C++ kernel is BM_mesh_wireframe ported (cpp/src/fe_modifiers.cpp):
+     per-corner inset along the face tangent, two quads per corner, boundary
+     strips. It needs three vertex slots plus two copies per input vertex and
+     twelve triangles per input triangle. */
+  const requested=Number(thickness);
+  if(!Number.isFinite(requested)||Math.abs(requested)<=1e-7)return geometry.clone();
+  const viaCpp=runCppKernel(geometry,(v,t)=>[v*3+t*3+16,t*26+16],
+    exp=>exp.fe_mod_wireframe(clamp(requested,.002,.5),clamp(Number(offset)||0,-1,1),
+      replaceOriginal?1:0,boundary?1:0,evenOffset?1:0));
+  if(viaCpp)return viaCpp;
   const p=assertPositions(geometry),idx=sourceIndices(geometry),r=clamp(Number(thickness)||.03,.002,.5)*.5;
   const box=geometry.boundingBox||(geometry.computeBoundingBox(),geometry.boundingBox);
   const eps=Math.max((box?box.getSize(new THREE.Vector3()).length():1)*1e-6,1e-8);
