@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 546 445 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 565 335 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:
@@ -138,7 +138,7 @@ Concretely:
 | --- | --- |
 | Face law (quads, n-gons, wireframe, outlines) | Ours, `cpp/src/fe_poly.cpp`, measured against Blender's semantics |
 | Edit tools (extrude, inset, bevel, loop cut, slide, pole fill) | Ours, `cpp/src/fe_editmesh*.cpp` |
-| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse, Solidify's shell, Wireframe's frame and Array's offset matrix (below) |
+| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse, Solidify's shell, Wireframe's frame, Array's offset matrix, Simple Deform's four deformations and Edge Split's fan split (below) |
 | Boolean | Ours (the mesh-arrangement approach); **not** `three-csg-ts` in JavaScript |
 | Path tracing | Ours, `cpp/src/fe_renderer.cpp` |
 | Small pure-data tables (a colour-space matrix, a socket enum, a curve preset) | Copied from Blender where it is genuinely a table: keep the header, add the `NOTICE` entry |
@@ -159,6 +159,7 @@ header comment says which.
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_wireframe()` | `bmesh/tools/bmesh_wireframe.cc` (+ `MOD_wireframe.cc`) | the per-corner inset frame, its two quads, the boundary strips and the Even Offset rule | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_array_ex()` | `modifiers/intern/MOD_array.cc` | the cumulative offset matrix, the Fit Length count arithmetic, the UV offset and the seam merge | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_simple_deform()` | `modifiers/intern/MOD_simpledeform.cc` | the four deformations, the axis remap table, the normalised limits and axis_limit's dcut correction | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_edge_split()` | `modifiers/intern/MOD_edgesplit.cc` + `bmesh/tools/bmesh_edgesplit.cc` | the seam threshold and BM_vert_separate_hflag's fan split, as one vertex per fan | GPL-2.0-or-later |
 
 What was *not* copied in each case is the thing that would have pulled BMesh in:
 `BLI_edgehash`/`BLI_heap` become an open-addressing table and a binary heap in

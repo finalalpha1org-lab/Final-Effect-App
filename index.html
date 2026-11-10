@@ -11516,6 +11516,7 @@ const modifiersData = {
     {name:"Array", fields:[["Fit Type","select",["Fixed Count","Fit Length","Fit Curve"]],["Count","range",1,10,2,1],["Length","range",0,50,10,.5,{advanced:true}],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}],["Merge","check",false,{advanced:true}],["Merge Distance","range",0,.5,.001,.001,{advanced:true}],["UV Offset U","range",-1,1,0,.05,{advanced:true}],["UV Offset V","range",-1,1,0,.05,{advanced:true}]]},
     {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
+    {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
     {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
@@ -11715,6 +11716,7 @@ function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return 
 function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip') { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
 function applySimpleDeformModifier(geometry, options) { return modifierGeometryApi().simpleDeformGeometry(geometry, options); }
+function applyEdgeSplitModifier(geometry, splitAngle, useAngle=true, useSharp=false) { return modifierGeometryApi().edgeSplitGeometry(geometry, { splitAngle, useAngle, useSharp }); }
 function simpleDeformOptions(p) {
   return {
     mode: p.Mode || "Twist", axis: p["Deform Axis"] || "Z",
@@ -12085,6 +12087,9 @@ function updateModifiersOnScene(targetOverride) {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+    } else if (mod.name === "Edge Split") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyEdgeSplitModifier(currentGeo,
+        parseFloat(p["Split Angle"] ?? 30), p["Use Angle"] !== false, p["Sharp Edges"] === true));
     } else if (mod.name === "Simple Deform") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applySimpleDeformModifier(currentGeo, simpleDeformOptions(p)));
     } else if (mod.name === "Wave") {
@@ -12589,6 +12594,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0),{axis:p.Axis||'Y',phase:Number(p.Phase??0)}));
       else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));
       else if(mod.name==='Simple Deform')stage(g=>applySimpleDeformModifier(g,simpleDeformOptions(p)));
+      else if(mod.name==='Edge Split')stage(g=>applyEdgeSplitModifier(g,Number(p['Split Angle']??30),p['Use Angle']!==false,p['Sharp Edges']===true));
       else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));

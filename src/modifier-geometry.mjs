@@ -837,6 +837,93 @@ export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis
     const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
     if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+/* Edge Split, ported from MOD_edgesplit.cc + bmesh_edgesplit.cc. Blender's
+   auto-smooth: no vertex moves, the corners are cut apart along the seams so
+   the faces stop sharing normals. splitAngle is in degrees, 0 splits every
+   edge (a fully faceted mesh), 180 splits nothing. */
+export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, useSharp = false } = {}) {
+  const angle = Math.max(0, Math.min(180, Number(splitAngle) || 0));
+  const viaCpp = runCppKernel(geometry, (v,t)=>[t*3+16, t],
+    exp => exp.fe_mod_edge_split(angle * Math.PI / 180, useAngle ? 1 : 0, useSharp ? 1 : 0));
+  if (viaCpp) return viaCpp;
+  /* JS fallback: the same union-find over the faces around every vertex. */
+  const src = geometry, p = assertPositions(src), idx = sourceIndices(src);
+  if (!useAngle) return updateBounds(src.clone());
+  const faces = idx.length / 3;
+  const fn = new Float32Array(faces * 3);
+  for (let f = 0; f < faces; f++) {
+    const a = new THREE.Vector3().fromBufferAttribute(p, idx[f*3]);
+    const b = new THREE.Vector3().fromBufferAttribute(p, idx[f*3+1]);
+    const c = new THREE.Vector3().fromBufferAttribute(p, idx[f*3+2]);
+    const n = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+    fn[f*3]=n.x; fn[f*3+1]=n.y; fn[f*3+2]=n.z;
+  }
+  const threshold = Math.cos(angle * Math.PI / 180 + 0.000000175);
+  const splitAll = angle < 1e-6;
+  const edges = new Map();
+  for (let f = 0; f < faces; f++) {
+    for (let k = 0; k < 3; k++) {
+      const a = idx[f*3+k], b = idx[f*3+(k+1)%3];
+      const key = a < b ? a+':'+b : b+':'+a;
+      if (!edges.has(key)) edges.set(key, { count: 0, faces: [] });
+      const e = edges.get(key);
+      e.count++;
+      if (e.faces.length < 2) e.faces.push(f);
+    }
+  }
+  for (const e of edges.values()) {
+    let split = splitAll || e.count >= 3;
+    if (!split && e.count === 2) {
+      const [fa, fb] = e.faces;
+      if (fn[fa*3]*fn[fb*3] + fn[fa*3+1]*fn[fb*3+1] + fn[fa*3+2]*fn[fb*3+2] < threshold) split = true;
+    }
+    e.split = split;
+  }
+  const byVert = Array.from({ length: p.count }, () => []);
+  for (let j = 0; j < idx.length; j++) byVert[idx[j]].push(j);
+  const cornerOut = new Int32Array(idx.length).fill(-1);
+  const outPos = [], outUv = [];
+  const uv = src.attributes.uv;
+  /* Vertices in ascending order, so an unsplit vertex keeps its own index. */
+  for (let vi = 0; vi < byVert.length; vi++) {
+    const corners = byVert[vi];
+    if (!corners.length) continue;
+    const parent = new Map();
+    const find = (x) => { while (parent.get(x) !== x) x = parent.get(x); return x; };
+    for (const c of corners) parent.set(Math.floor(c/3), Math.floor(c/3));
+    for (const c of corners) {
+      const f = Math.floor(c/3), k = c % 3;
+      for (const side of [0, 1]) {
+        const other = idx[f*3 + (side === 0 ? (k+1)%3 : (k+2)%3)];
+        if (other === vi) continue;
+        const key = vi < other ? vi+':'+other : other+':'+vi;
+        const e = edges.get(key);
+        if (!e || e.split || e.count !== 2) continue;
+        const [fa, fb] = e.faces;
+        if (!parent.has(fa) || !parent.has(fb)) continue;
+        const ra = find(fa), rb = find(fb);
+        if (ra !== rb) parent.set(ra, rb);
+      }
+    }
+    const idFor = new Map();
+    for (const c of corners) {
+      const root = find(Math.floor(c/3));
+      if (!idFor.has(root)) {
+        idFor.set(root, outPos.length / 3);
+        outPos.push(p.getX(vi), p.getY(vi), p.getZ(vi));
+        outUv.push(uv ? uv.getX(vi) : 0, uv ? uv.getY(vi) : 0);
+      }
+      cornerOut[c] = idFor.get(root);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(outPos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(outUv, 2));
+  g.setIndex(Array.from(cornerOut));
+  g.computeVertexNormals();
+  return updateBounds(g);
+}
+
 /* Simple Deform, ported from MOD_simpledeform.cc (cpp/src/fe_modifiers.cpp).
    Blender's panel shows angles for Twist and Bend, so degrees come in here and
    are converted to the radians the modifier actually stores. */

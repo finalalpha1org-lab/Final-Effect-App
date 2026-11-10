@@ -133,3 +133,19 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                into smd_limit[] and smd_factor, and axis_limit() with its dcut
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
+
+cpp/src/fe_modifiers.cpp - fe_mod_edge_split()
+  Ported from  source/blender/modifiers/intern/MOD_edgesplit.cc and
+               source/blender/bmesh/tools/bmesh_edgesplit.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         doEdgeSplit()'s seam rule - the cosf(split_angle + 1.75e-7)
+               threshold, the "3 or more faces" case and the split-everything
+               case - then BM_mesh_edgesplit() / BM_vert_separate_hflag() in
+               the form a triangle buffer needs: the faces around each vertex
+               are grouped into the fans still joined by unsplit edges, and
+               every fan gets its own copy of that vertex and its UV. Not
+               ported: sharp-edge tagging (MOD_EDGESPLIT_FROMFLAG), because
+               this pipeline stores one smooth flag per face, not per edge.

@@ -2874,6 +2874,223 @@ FE_EXPORT int32_t fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
 }
 
 /* =========================================================================
+ * Edge Split - ported from MOD_edgesplit.cc and bmesh_edgesplit.cc
+ *
+ *   source/blender/modifiers/intern/MOD_edgesplit.cc   (the seam tags)
+ *   source/blender/bmesh/tools/bmesh_edgesplit.cc      (BM_vert_separate_hflag)
+ *
+ * The modifier moves no vertex at all. It decides which edges are seams, then
+ * splits every vertex along them so the faces on either side stop sharing a
+ * corner - which is how a hard edge becomes hard, and what Blender used for
+ * auto-smooth before 4.1.
+ *
+ * The tag rule is doEdgeSplit()'s, term for term:
+ *
+ *   threshold = cosf(split_angle + 0.000000175f)
+ *   split if   the edge has 3+ faces                (always)
+ *           or split_angle is ~zero                 (split everything)
+ *           or dot(face_a_normal, face_b_normal) < threshold
+ *
+ * The split is BM_vert_separate_hflag(), in the form a triangle buffer needs:
+ * around every vertex the incident faces are grouped into the fans still joined
+ * by unsplit edges - a union-find over those faces - and each fan gets its own
+ * output vertex. A vertex whose edges are all seams becomes one vertex per
+ * corner, exactly as upstream leaves it.
+ *
+ * Sharp-edge tagging (MOD_EDGESPLIT_FROMFLAG) is not offered: this pipeline
+ * carries one smooth flag per face, not per edge, and inventing edge flags the
+ * model does not have would be worse than saying so. Edge Angle is the mode.
+ * ========================================================================= */
+struct SplitEdges {
+  uint64_t* key = nullptr;
+  uint32_t* a = nullptr;
+  uint32_t* b = nullptr;
+  uint32_t* f0 = nullptr;
+  uint32_t* f1 = nullptr;
+  uint8_t* nf = nullptr;
+  uint8_t* split = nullptr;
+  uint32_t mask = 0;
+};
+
+bool splitEdgesInit(SplitEdges& e, uint32_t triCount) {
+  const uint32_t cap = nextPow2(triCount * 3u + 8u);
+  e.key = modArray<uint64_t>(cap);
+  e.a = modArray<uint32_t>(cap);
+  e.b = modArray<uint32_t>(cap);
+  e.f0 = modArray<uint32_t>(cap);
+  e.f1 = modArray<uint32_t>(cap);
+  e.nf = modArray<uint8_t>(cap);
+  e.split = modArray<uint8_t>(cap);
+  if (!e.key || !e.a || !e.b || !e.f0 || !e.f1 || !e.nf || !e.split) return false;
+  for (uint32_t i = 0; i < cap; ++i) { e.nf[i] = 0u; e.split[i] = 0u; }
+  e.mask = cap - 1u;
+  return true;
+}
+
+inline uint32_t splitEdgeSlot(const SplitEdges& e, uint32_t va, uint32_t vb, bool insert,
+                              uint32_t tri, bool* added) {
+  const uint32_t lo = va < vb ? va : vb, hi = va < vb ? vb : va;
+  const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+  uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & e.mask;
+  for (uint32_t probe = 0; probe <= e.mask; ++probe) {
+    if (e.nf[i] == 0u) {
+      if (!insert) return 0xFFFFFFFFu;
+      e.key[i] = key; e.a[i] = va; e.b[i] = vb;
+      e.f0[i] = tri; e.f1[i] = 0xFFFFFFFFu; e.nf[i] = 1u;
+      if (added) *added = true;
+      return i;
+    }
+    if (e.key[i] == key) {
+      if (insert) {
+        if (e.nf[i] == 1u) { e.f1[i] = tri; e.nf[i] = 2u; }
+        else if (e.nf[i] < 255u) { e.nf[i] = static_cast<uint8_t>(e.nf[i] + 1u); }
+      }
+      return i;
+    }
+    i = (i + 1u) & e.mask;
+  }
+  return 0xFFFFFFFFu;
+}
+
+FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_t use_sharp) {
+  if (!g_s.ready) return -1;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  (void)use_sharp;
+
+  const bool do_split_angle = use_angle != 0 && split_angle < 3.14159265f;
+  if (!do_split_angle) {
+    /* Nothing tagged: upstream hands the mesh straight back. */
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    if (g_s.inSmooth && g_s.outSmooth) { g_s.flagMode = 1; for (uint32_t i = 0; i < t; ++i) g_s.outSmooth[i] = g_s.inSmooth[i]; }
+    return commit(v, t);
+  }
+  g_s.flagMode = 0;
+
+  const float threshold = cosf(split_angle + 0.000000175f);
+  const bool do_split_all = split_angle < 1.1920929e-7f;   /* FLT_EPSILON */
+
+  float* fn = modArray<float>(t * 3u);
+  SplitEdges e;
+  uint32_t* cornerCount = modArray<uint32_t>(v + 1u);
+  uint32_t* cornerStart = modArray<uint32_t>(v + 1u);
+  uint32_t* cornerList = modArray<uint32_t>(t * 3u);
+  float* cornerUv = modArray<float>(t * 3u * 2u);
+  uint32_t* parent = modArray<uint32_t>(t);
+  uint32_t* cornerOut = modArray<uint32_t>(t * 3u);
+  if (!fn || !splitEdgesInit(e, t) || !cornerCount || !cornerStart || !cornerList || !cornerUv ||
+      !parent || !cornerOut) return -2;
+
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 a = readPos(g_s.inPos, g_s.inIdx[f * 3]);
+    const Vec3 b = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
+    const Vec3 c = readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]);
+    const Vec3 n = normalize(cross(b - a, c - a));
+    fn[f * 3] = n.x; fn[f * 3 + 1] = n.y; fn[f * 3 + 2] = n.z;
+    for (uint32_t k = 0; k < 3u; ++k) {
+      splitEdgeSlot(e, g_s.inIdx[f * 3 + k], g_s.inIdx[f * 3 + (k + 1u) % 3u], true, f, nullptr);
+    }
+  }
+
+  /* ---- tag the seams ---- */
+  for (uint32_t i = 0; i <= e.mask; ++i) {
+    if (e.nf[i] == 0u) continue;
+    bool split = do_split_all || e.nf[i] >= 3u;
+    if (!split && e.nf[i] == 2u) {
+      const uint32_t fa = e.f0[i], fb = e.f1[i];
+      if (fa < t && fb < t && fa != fb) {
+        const float d = fn[fa * 3] * fn[fb * 3] + fn[fa * 3 + 1] * fn[fb * 3 + 1] +
+                        fn[fa * 3 + 2] * fn[fb * 3 + 2];
+        if (d < threshold) split = true;
+      }
+    }
+    e.split[i] = split ? 1u : 0u;
+  }
+
+  /* ---- vertex -> its corners, contiguous (CSR) ---- */
+  for (uint32_t i = 0; i <= v; ++i) cornerCount[i] = 0u;
+  for (uint32_t j = 0; j < t * 3u; ++j) ++cornerCount[g_s.inIdx[j]];
+  cornerStart[0] = 0u;
+  for (uint32_t i = 0; i < v; ++i) cornerStart[i + 1u] = cornerStart[i] + cornerCount[i];
+  for (uint32_t i = 0; i <= v; ++i) cornerCount[i] = cornerStart[i];
+  for (uint32_t j = 0; j < t * 3u; ++j) {
+    const uint32_t vi = g_s.inIdx[j];
+    cornerList[cornerCount[vi]++] = j;
+    cornerUv[j * 2] = g_s.hasUv ? g_s.inUv[vi * 2] : 0.0f;
+    cornerUv[j * 2 + 1] = g_s.hasUv ? g_s.inUv[vi * 2 + 1] : 0.0f;
+  }
+
+  auto findRoot = [&](uint32_t i) {
+    while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+
+  uint32_t outV = 0u;
+  for (uint32_t vi = 0; vi < v; ++vi) {
+    const uint32_t begin = cornerStart[vi], endc = cornerStart[vi + 1u];
+    if (begin == endc) continue;
+
+    for (uint32_t i = begin; i < endc; ++i) parent[cornerList[i] / 3u] = cornerList[i] / 3u;
+
+    /* Join the faces on either side of every unsplit edge through this vertex.
+       Each corner contributes two edges, so this covers the whole fan. */
+    for (uint32_t i = begin; i < endc; ++i) {
+      const uint32_t corner = cornerList[i];
+      const uint32_t f = corner / 3u, k = corner % 3u;
+      for (uint32_t side = 0; side < 2u; ++side) {
+        /* side 0: the edge leaving this corner; side 1: the one arriving. */
+        const uint32_t other = g_s.inIdx[f * 3 + (side == 0u ? (k + 1u) % 3u : (k + 2u) % 3u)];
+        if (other == vi) continue;
+        const uint32_t slot = splitEdgeSlot(e, vi, other, false, 0u, nullptr);
+        if (slot == 0xFFFFFFFFu || e.split[slot] || e.nf[slot] != 2u) continue;
+        const uint32_t fa = e.f0[slot], fb = e.f1[slot];
+        /* Only union faces that both touch this vertex. */
+        bool aHere = false, bHere = false;
+        for (uint32_t j = begin; j < endc; ++j) {
+          const uint32_t f2 = cornerList[j] / 3u;
+          if (f2 == fa) aHere = true;
+          if (f2 == fb) bHere = true;
+        }
+        if (!aHere || !bHere) continue;
+        const uint32_t ra = findRoot(fa), rb = findRoot(fb);
+        if (ra != rb) parent[ra] = rb;
+      }
+    }
+
+    /* One output vertex per fan. */
+    uint32_t roots[64];
+    uint32_t ids[64];
+    uint32_t rootCount = 0u;
+    for (uint32_t i = begin; i < endc; ++i) {
+      const uint32_t corner = cornerList[i];
+      const uint32_t root = findRoot(corner / 3u);
+      uint32_t found = 0xFFFFFFFFu;
+      for (uint32_t r = 0; r < rootCount; ++r) if (roots[r] == root) { found = ids[r]; break; }
+      if (found == 0xFFFFFFFFu) {
+        if (outV >= g_s.vcap) return -2;
+        found = outV++;
+        writePos(g_s.outPos, found, readPos(g_s.inPos, vi));
+        if (g_s.hasUv) {
+          g_s.outUv[found * 2] = cornerUv[corner * 2];
+          g_s.outUv[found * 2 + 1] = cornerUv[corner * 2 + 1];
+        }
+        if (rootCount < 64u) { roots[rootCount] = root; ids[rootCount] = found; ++rootCount; }
+      }
+      cornerOut[corner] = found;
+    }
+  }
+
+  for (uint32_t j = 0; j < t * 3u; ++j) {
+    g_s.outIdx[j] = cornerOut[j];
+    if (cornerOut[j] == 0xFFFFFFFFu) return -4;
+  }
+  if (outV == 0u) return -4;
+  return commit(outV, t);
+}
+
+/* =========================================================================
  * Exported deformation kernel entry points
  * ========================================================================= */
 

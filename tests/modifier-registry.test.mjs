@@ -7,10 +7,10 @@ const html=readFileSync(appPath('index.html'),'utf8');
 const start=html.indexOf('const modifiersData = {'),end=html.indexOf('\nlet modStack',start);
 const registry=html.slice(start,end);
 const names=[...registry.matchAll(/\{name:"([^"]+)"/g)].map(match=>match[1]);
-const expected=['Array','Bevel','Boolean','Decimate','Mirror','Solidify','Subdivision Surface','Triangulate','Weld','Wireframe','Armature','Cast','Displace','Lattice','Shrinkwrap','Simple Deform','Smooth','Surface Deform','Warp','Wave','Weighted Normal','Collision','Cloth','Soft Body','Fluid'].sort();
+const expected=['Array','Bevel','Boolean','Decimate','Edge Split','Mirror','Solidify','Subdivision Surface','Triangulate','Weld','Wireframe','Armature','Cast','Displace','Lattice','Shrinkwrap','Simple Deform','Smooth','Surface Deform','Warp','Wave','Weighted Normal','Collision','Cloth','Soft Body','Fluid'].sort();
 
-test('modifier registry audit enumerates all current categories and 25 modifiers',()=>{
-  assert.equal(names.length,25);
+test('modifier registry audit enumerates all current categories and 26 modifiers',()=>{
+  assert.equal(names.length,26);
   assert.deepEqual([...names].sort(),expected);
   assert.match(registry,/Generate:\s*\[/);
   assert.match(registry,/Deform:\s*\[/);
