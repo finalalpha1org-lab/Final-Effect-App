@@ -134,6 +134,24 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
 
+cpp/src/fe_modifiers.cpp - fe_mod_bevel()
+  Ported from  source/blender/bmesh/tools/bmesh_bevel.cc
+               (BM_mesh_bevel) and source/blender/modifiers/intern/MOD_bevel.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the construction BM_mesh_bevel performs, in its order: the
+               corner inset along both edges by width / sin(corner angle), the
+               strip between the two faces that share each edge, the circular
+               arc across that strip when the segment count is above one, the
+               vertex patch that closes the corner, and Clamp Overlap. Upstream
+               bevels n-gon faces, so coplanar triangles are first welded into
+               the polygons a modeller would see - otherwise a cube bevels
+               along its diagonals. Not ported: vertex/edge weights, the custom
+               profile curve and the miter modes, none of which this pipeline
+               has data for.
+
 cpp/src/fe_modifiers.cpp - fe_mod_build()
   Ported from  source/blender/modifiers/intern/MOD_build.cc
   Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449

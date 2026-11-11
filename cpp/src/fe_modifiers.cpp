@@ -3195,6 +3195,536 @@ Vec3 rotateAboutAxis(const Vec3& p, uint32_t axis, float angle) {
  * other end. The shuffle is splitmix64 seeded the way BLI_array_randomize is
  * seeded, not bit-identical to it.
  * ========================================================================= */
+/* =========================================================================
+ * Bevel - ported from the shape of bmesh_bevel.cc
+ *
+ *   source/blender/bmesh/tools/bmesh_bevel.cc   (BM_mesh_bevel)
+ *   source/blender/modifiers/intern/MOD_bevel.cc
+ *
+ * Upstream bevels the edges of n-gon faces, not of triangles, so the first
+ * thing this does is rebuild the faces a modeller would see: triangles that
+ * share an edge and agree on their normal are welded into one polygon. A cube
+ * out of a triangle buffer therefore bevels as six quads, not as eighteen
+ * strips along its diagonals - which is the difference between a bevel and a
+ * mess.
+ *
+ * With polygons in hand the construction is bmesh_bevel's, in the same order:
+ *
+ *   - every face corner moves in along both of its edges by
+ *     t = width / sin(corner angle), which puts it `width` away from each of
+ *     the two edges. Clamp Overlap caps t at 45% of the shorter edge so two
+ *     offsets cannot cross.
+ *   - every edge becomes a strip between the two faces that share it. With
+ *     more than one segment the strip follows an arc: the offset vector is
+ *     rotated about the edge by the dihedral angle, and Profile bends the
+ *     parameter the way upstream's profile does (0.5 is a round bevel, values
+ *     away from it push the arc out or in).
+ *   - every vertex becomes a patch: its corner offsets and the strip ends of
+ *     the edges between them form a ring, which is fanned from its centroid.
+ *
+ * Not ported: the vertex/edge weights, the custom profile curve and the
+ * miter modes - this pipeline carries no custom data for them.
+ * ========================================================================= */
+struct BevelFace {
+  uint32_t* verts = nullptr;   /* the polygon's corners */
+  float* corner = nullptr;     /* 3 floats per corner: the inset point */
+  uint32_t n = 0;
+};
+
+FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_overlap, float profile) {
+  if (!g_s.ready) return -1;
+  uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  if (!(width > 1e-7f)) {
+    for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = g_s.inPos[i];
+    for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = g_s.inIdx[i];
+    if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+    g_s.flagMode = 0;
+    return commit(v, t);
+  }
+  g_s.flagMode = 0;
+
+  /* ---- 0. weld the input ----
+     A mesh out of a triangle buffer splits its vertices at every UV seam, so a
+     cube arrives as 24 vertices that do not share a single edge. Blender's
+     bevel works on the mesh's real edges, and so must this: weld by position
+     first, which is what BMesh's edges already imply. */
+  float* bpos = modArray<float>(v * 3u);
+  uint32_t* bidx = modArray<uint32_t>(t * 3u);
+  uint32_t* wremap = modArray<uint32_t>(v);
+  float* buv = modArray<float>(v * 2u);
+  if (!bpos || !bidx || !wremap) return -2;
+  uint32_t bv = 0u;
+  {
+    WeldMap wm;
+    if (!weldMapInit(wm, v)) return -2;
+    const float inv = 1e7f;
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(g_s.inPos, i);
+      const int32_t qx = quantize(p.x, inv), qy = quantize(p.y, inv), qz = quantize(p.z, inv);
+      uint32_t slot = hashU32(static_cast<uint32_t>(qx) * 73856093u ^
+                              static_cast<uint32_t>(qy) * 19349663u ^
+                              static_cast<uint32_t>(qz) * 83492791u) & wm.mask;
+      for (;;) {
+        if (wm.slot[slot] == 0) {
+          wm.slot[slot] = ++wm.unique;
+          wm.cx[slot] = qx; wm.cy[slot] = qy; wm.cz[slot] = qz;
+          const uint32_t id = bv++;
+          writePos(bpos, id, p);
+          if (g_s.hasUv) { buv[id * 2] = g_s.inUv[i * 2]; buv[id * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+          wremap[i] = id;
+          break;
+        }
+        if (wm.cx[slot] == qx && wm.cy[slot] == qy && wm.cz[slot] == qz) {
+          wremap[i] = wm.slot[slot] - 1u;
+          break;
+        }
+        slot = (slot + 1u) & wm.mask;
+      }
+    }
+  }
+  uint32_t bt = 0u;
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t a = wremap[g_s.inIdx[f * 3]], b = wremap[g_s.inIdx[f * 3 + 1]],
+                   c = wremap[g_s.inIdx[f * 3 + 2]];
+    if (a == b || b == c || c == a) continue;
+    bidx[bt * 3] = a; bidx[bt * 3 + 1] = b; bidx[bt * 3 + 2] = c;
+    ++bt;
+  }
+  if (bt < 4u) return -4;
+  /* The kernel below works on the welded copy; v and t follow it. */
+  const uint32_t vIn = v, tIn = t;
+  (void)vIn; (void)tIn;
+  v = bv; t = bt;
+
+  const int32_t seg = segments < 1 ? 1 : (segments > 16 ? 16 : segments);
+  const float prof = clampf(profile <= 0.0f ? 0.5f : profile, 0.05f, 0.99f);
+
+  /* ---- 1. coplanar triangles -> polygons ---- */
+  float* fn = modArray<float>(t * 3u);
+  uint32_t* parent = modArray<uint32_t>(t);
+  if (!fn || !parent) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 a = readPos(bpos, bidx[f * 3]);
+    const Vec3 b = readPos(bpos, bidx[f * 3 + 1]);
+    const Vec3 c = readPos(bpos, bidx[f * 3 + 2]);
+    const Vec3 n = normalize(cross(b - a, c - a));
+    fn[f * 3] = n.x; fn[f * 3 + 1] = n.y; fn[f * 3 + 2] = n.z;
+    parent[f] = f;
+  }
+  auto findFace = [&](uint32_t i) {
+    while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  {
+    /* Union each pair of triangles that share an edge and agree on the normal. */
+    SplitEdges es;
+    if (!splitEdgesInit(es, t)) return -2;
+    for (uint32_t f = 0; f < t; ++f) {
+      for (uint32_t k = 0; k < 3u; ++k) {
+        splitEdgeSlot(es, bidx[f * 3 + k], bidx[f * 3 + (k + 1u) % 3u], true, f, nullptr);
+      }
+    }
+    for (uint32_t i = 0; i <= es.mask; ++i) {
+      if (es.nf[i] != 2u) continue;
+      const uint32_t fa = es.f0[i], fb = es.f1[i];
+      if (fa >= t || fb >= t || fa == fb) continue;
+      const float d = fn[fa * 3] * fn[fb * 3] + fn[fa * 3 + 1] * fn[fb * 3 + 1] +
+                      fn[fa * 3 + 2] * fn[fb * 3 + 2];
+      if (d > 0.99995f) {
+        const uint32_t ra = findFace(fa), rb = findFace(fb);
+        if (ra != rb) parent[ra] = rb;
+      }
+    }
+  }
+
+  /* ---- 2. each group's boundary, walked into one loop ---- */
+  /* A directed boundary edge exists once; the loop is its chain. */
+  struct LoopEdge { uint32_t a, b; };
+  uint32_t* rootOf = modArray<uint32_t>(t);
+  if (!rootOf) return -2;
+  for (uint32_t f = 0; f < t; ++f) rootOf[f] = findFace(f);
+
+  /* Count the corners so the polygon array can be laid out flat. */
+  uint32_t maxCorners = 0;
+  for (uint32_t f = 0; f < t; ++f) {
+    if (rootOf[f] != f) continue;
+    uint32_t corners = 0;
+    for (uint32_t g = 0; g < t; ++g) if (rootOf[g] == f) corners += 3u;
+    maxCorners += corners;
+  }
+  if (!maxCorners) return -4;
+
+  uint32_t* loopStart = modArray<uint32_t>(t + 1u);
+  uint32_t* loopVerts = modArray<uint32_t>(maxCorners);
+  float* cornerPos = modArray<float>(maxCorners * 3u);
+  uint32_t* faceOfCorner = modArray<uint32_t>(maxCorners);
+  if (!loopStart || !loopVerts || !cornerPos || !faceOfCorner) return -2;
+
+  uint32_t faceCount = 0, cornerWrite = 0;
+  uint32_t* nextOf = modArray<uint32_t>(v);
+  uint8_t* used = modArray<uint8_t>(v);
+  if (!nextOf || !used) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    if (rootOf[f] != f) continue;
+    /* Directed boundary edges of the group, as next[a] = b. A vertex can be
+       on two boundary edges of the same group (a pinch), which a triangle
+       mesh does not produce; the first one wins. */
+    for (uint32_t i = 0; i < v; ++i) { nextOf[i] = 0xFFFFFFFFu; used[i] = 0u; }
+    uint32_t start = 0xFFFFFFFFu;
+    for (uint32_t g = 0; g < t; ++g) {
+      if (rootOf[g] != f) continue;
+      for (uint32_t k = 0; k < 3u; ++k) {
+        const uint32_t a = bidx[g * 3 + k];
+        const uint32_t b = bidx[g * 3 + (k + 1u) % 3u];
+        /* is the reverse edge inside the same group? */
+        bool interior = false;
+        for (uint32_t h = 0; h < t && !interior; ++h) {
+          if (rootOf[h] != f) continue;
+          for (uint32_t m = 0; m < 3u; ++m) {
+            if (bidx[h * 3 + m] == b && bidx[h * 3 + (m + 1u) % 3u] == a) { interior = true; break; }
+          }
+        }
+        if (interior) continue;
+        if (!used[a]) { nextOf[a] = b; used[a] = 1u; if (start == 0xFFFFFFFFu) start = a; }
+      }
+    }
+    if (start == 0xFFFFFFFFu) continue;
+    /* Walk the loop. */
+    loopStart[faceCount] = cornerWrite;
+    uint32_t cur = start, guard = 0;
+    do {
+      loopVerts[cornerWrite] = cur;
+      faceOfCorner[cornerWrite] = f;
+      const Vec3 cp = readPos(bpos, cur);
+      cornerPos[cornerWrite * 3] = cp.x;
+      cornerPos[cornerWrite * 3 + 1] = cp.y;
+      cornerPos[cornerWrite * 3 + 2] = cp.z;
+      ++cornerWrite;
+      cur = nextOf[cur];
+      if (cur == 0xFFFFFFFFu) break;
+    } while (cur != start && ++guard < v);
+    ++faceCount;
+  }
+  loopStart[faceCount] = cornerWrite;
+  if (!faceCount || !cornerWrite) return -4;
+
+  /* ---- 3. the corner offsets ---- */
+  /* cornerOut[c] is the new vertex id for corner c of the flat corner array. */
+  uint32_t* cornerOut = modArray<uint32_t>(cornerWrite);
+  /* Which face and which slot each output corner belongs to, for the strips. */
+  uint32_t* cornerFace = modArray<uint32_t>(cornerWrite);
+  if (!cornerOut || !cornerFace) return -2;
+
+  /* vertex -> (face, slot) is needed to find the two faces of an edge. */
+  uint32_t nextV = 0;
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+    const uint32_t n = e - b;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t c = b + i;
+      const uint32_t prev = b + (i + n - 1u) % n;
+      const uint32_t next = b + (i + 1u) % n;
+      const Vec3 P = {cornerPos[c * 3], cornerPos[c * 3 + 1], cornerPos[c * 3 + 2]};
+      const Vec3 P0 = {cornerPos[prev * 3], cornerPos[prev * 3 + 1], cornerPos[prev * 3 + 2]};
+      const Vec3 P1 = {cornerPos[next * 3], cornerPos[next * 3 + 1], cornerPos[next * 3 + 2]};
+      const Vec3 d0 = normalize(P0 - P), d1 = normalize(P1 - P);
+      const float sinA = cross(d0, d1).length();
+      float tparam = sinA > 1e-6f ? width / sinA : width * 1e3f;
+      if (clamp_overlap) {
+        const float limit = 0.45f * minf((P0 - P).length(), (P1 - P).length());
+        if (tparam > limit) tparam = limit;
+      }
+      const Vec3 q = P + (d0 + d1) * tparam;
+      if (nextV >= g_s.vcap) return -2;
+      writePos(g_s.outPos, nextV, q);
+      if (g_s.hasUv) {
+        const uint32_t srcVert = loopVerts[c];
+        g_s.outUv[nextV * 2] = buv[srcVert * 2];
+        g_s.outUv[nextV * 2 + 1] = buv[srcVert * 2 + 1];
+      }
+      cornerOut[c] = nextV;
+      cornerFace[c] = f;
+      ++nextV;
+    }
+  }
+
+  /* ---- 4. vertex -> corners, so the strips can find their faces ---- */
+  uint32_t* cornerStart = modArray<uint32_t>(v + 1u);
+  uint32_t* cornerList = modArray<uint32_t>(cornerWrite);
+  uint32_t* cornerAtV = modArray<uint32_t>(cornerWrite);
+  if (!cornerStart || !cornerList || !cornerAtV) return -2;
+  for (uint32_t i = 0; i <= v; ++i) cornerStart[i] = 0u;
+  for (uint32_t c = 0; c < cornerWrite; ++c) ++cornerStart[loopVerts[c] + 1u];
+  for (uint32_t i = 0; i < v; ++i) cornerStart[i + 1u] += cornerStart[i];
+  for (uint32_t i = 0; i < v; ++i) cornerAtV[i] = cornerStart[i];
+  for (uint32_t c = 0; c < cornerWrite; ++c) cornerList[cornerAtV[loopVerts[c]]++] = c;
+
+  uint32_t outT = 0;
+  auto putTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+    if (outT >= g_s.tcap) return false;
+    g_s.outIdx[outT * 3] = a;
+    g_s.outIdx[outT * 3 + 1] = b;
+    g_s.outIdx[outT * 3 + 2] = c;
+    ++outT;
+    return true;
+  };
+  auto fan = [&](const uint32_t* ids, uint32_t n) {
+    for (uint32_t i = 1; i + 1u < n; ++i) {
+      if (!putTri(ids[0], ids[i], ids[i + 1u])) return false;
+    }
+    return true;
+  };
+
+  /* ---- 5. the shrunken faces ---- */
+  uint32_t* ids = modArray<uint32_t>(64u);
+  const uint32_t idsCap = 64u;
+  if (!ids) return -2;
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+    const uint32_t n = e - b;
+    if (n < 3u) continue;
+    if (n > idsCap) return -2;
+    for (uint32_t i = 0; i < n; ++i) ids[i] = cornerOut[b + i];
+    if (!fan(ids, n)) return -2;
+  }
+
+  /* ---- 6. the strips ---- */
+  /* Every boundary edge of every face, with the two faces that own it. */
+  SplitEdges be;
+  if (!splitEdgesInit(be, t)) return -2;
+  for (uint32_t c = 0; c < cornerWrite; ++c) {
+    const uint32_t f = cornerFace[c];
+    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+    const uint32_t n = e - b;
+    const uint32_t a = loopVerts[c];
+    const uint32_t nxt = loopVerts[b + ((c - b) + 1u) % n];
+    splitEdgeSlot(be, a, nxt, true, f, nullptr);
+  }
+
+  /* For every edge that two faces share: the four corners that own it. */
+  const uint32_t levelCount = static_cast<uint32_t>(seg) + 1u;
+  uint32_t* edgeFaceA = modArray<uint32_t>(be.mask + 1u);
+  uint32_t* edgeFaceB = modArray<uint32_t>(be.mask + 1u);
+  uint32_t* edgeCorner = modArray<uint32_t>((be.mask + 1u) * 4u);  /* a_u, a_v, b_u, b_v */
+  uint8_t* edgeLive = modArray<uint8_t>(be.mask + 1u);
+  if (!edgeFaceA || !edgeFaceB || !edgeCorner || !edgeLive) return -2;
+  for (uint32_t i = 0; i <= be.mask; ++i) edgeLive[i] = 0u;
+
+  uint32_t stripCount = 0;
+  auto cornerFor = [&](uint32_t face, uint32_t vert) -> uint32_t {
+    for (uint32_t c = 0; c < cornerWrite; ++c) {
+      if (loopVerts[c] == vert && cornerFace[c] == face) return c;
+    }
+    return 0xFFFFFFFFu;
+  };
+  for (uint32_t i = 0; i <= be.mask; ++i) {
+    if (be.nf[i] != 2u) continue;
+    const uint32_t va = be.a[i], vb2 = be.b[i];
+    /* the two faces that own this edge, found from va's corners */
+    uint32_t faces[2] = {0xFFFFFFFFu, 0xFFFFFFFFu};
+    uint32_t nf = 0u;
+    for (uint32_t k = cornerStart[va]; k < cornerStart[va + 1u] && nf < 2u; ++k) {
+      const uint32_t c = cornerList[k];
+      const uint32_t f = cornerFace[c];
+      const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+      const uint32_t n = e - b;
+      const uint32_t slot = c - b;
+      if (loopVerts[b + (slot + 1u) % n] == vb2 || loopVerts[b + (slot + n - 1u) % n] == vb2) {
+        if (nf == 0u || faces[0] != f) faces[nf++] = f;
+      }
+    }
+    if (nf < 2u) continue;
+    const uint32_t ca_a = cornerFor(faces[0], va), ca_b = cornerFor(faces[0], vb2);
+    const uint32_t cb_a = cornerFor(faces[1], va), cb_b = cornerFor(faces[1], vb2);
+    if (ca_a == 0xFFFFFFFFu || ca_b == 0xFFFFFFFFu || cb_a == 0xFFFFFFFFu || cb_b == 0xFFFFFFFFu) continue;
+    edgeLive[i] = 1u;
+    edgeFaceA[i] = faces[0];
+    edgeFaceB[i] = faces[1];
+    edgeCorner[i * 4] = ca_a;
+    edgeCorner[i * 4 + 1] = ca_b;
+    edgeCorner[i * 4 + 2] = cb_a;
+    edgeCorner[i * 4 + 3] = cb_b;
+    ++stripCount;
+  }
+  if (!stripCount) return -4;
+
+  /* The inner ring levels, stored contiguously per edge so the vertex patch
+     can splice them into its ring. */
+  const uint32_t innerPerEdge = (levelCount > 2u ? levelCount - 2u : 0u) * 2u;
+  uint32_t* stripBase = modArray<uint32_t>(be.mask + 1u);
+  uint32_t* innerVerts = innerPerEdge ? modArray<uint32_t>(stripCount * innerPerEdge) : nullptr;
+  if (!stripBase || (innerPerEdge && !innerVerts)) return -2;
+  for (uint32_t i = 0; i <= be.mask; ++i) stripBase[i] = 0xFFFFFFFFu;
+
+  uint32_t innerWrite = 0;
+  for (uint32_t i = 0; i <= be.mask; ++i) {
+    if (!edgeLive[i]) continue;
+    const uint32_t va = be.a[i], vb = be.b[i];
+    const uint32_t ca_a = edgeCorner[i * 4], ca_b = edgeCorner[i * 4 + 1];
+    const uint32_t cb_a = edgeCorner[i * 4 + 2], cb_b = edgeCorner[i * 4 + 3];
+
+    /* The inset points, not the original corners: these are what the strip
+       arcs between, and the vertex ids they became. */
+    const Vec3 P0 = readPos(g_s.outPos, cornerOut[ca_a]);
+    const Vec3 P1 = readPos(g_s.outPos, cornerOut[cb_a]);
+    const Vec3 Q0 = readPos(g_s.outPos, cornerOut[ca_b]);
+    const Vec3 Q1 = readPos(g_s.outPos, cornerOut[cb_b]);
+
+    const Vec3 vaPos = readPos(bpos, va), vbPos = readPos(bpos, vb);
+    const Vec3 axis = normalize(vbPos - vaPos);
+
+    uint32_t rings[17][2];
+    for (uint32_t lv = 0; lv < levelCount; ++lv) { rings[lv][0] = 0xFFFFFFFFu; rings[lv][1] = 0xFFFFFFFFu; }
+    rings[0][0] = cornerOut[ca_a];
+    rings[0][1] = cornerOut[ca_b];
+    rings[levelCount - 1u][0] = cornerOut[cb_a];
+    rings[levelCount - 1u][1] = cornerOut[cb_b];
+
+    stripBase[i] = innerWrite;
+    for (uint32_t lv = 1; lv + 1u < levelCount; ++lv) {
+      float u = static_cast<float>(lv) / static_cast<float>(levelCount - 1u);
+      if (prof != 0.5f) u = powf(u, prof * 2.0f);
+      for (uint32_t end = 0; end < 2u; ++end) {
+        const Vec3 A = end == 0u ? P0 : Q0;
+        const Vec3 B = end == 0u ? P1 : Q1;
+        const Vec3 base = end == 0u ? vaPos : vbPos;
+        const Vec3 foot = base + axis * Vec3::dot(A - base, axis);
+        const Vec3 rA = A - foot;
+        const Vec3 rB = B - foot;
+        const float lenA = rA.length(), lenB = rB.length();
+        if (lenA < 1e-9f || lenB < 1e-9f) {
+          /* the offset is on the edge itself: no arc to follow */
+          rings[lv][end] = cornerOut[end == 0u ? ca_a : ca_b];
+          continue;
+        }
+        const float c = clampf(Vec3::dot(rA, rB) / (lenA * lenB), -1.0f, 1.0f);
+        const float ang = atan2f(cross(rA, rB).length(), c);
+        const Vec3 rd = rA * (1.0f / lenA);
+        Vec3 perp = cross(axis, rd);
+        const float pl = perp.length();
+        perp = pl > 1e-9f ? perp * (1.0f / pl) : Vec3(0.0f, 0.0f, 0.0f);
+        /* Turn towards the other face, never the long way round: the arc has
+           to stay inside the corner. */
+        if (Vec3::dot(perp, rB) < 0.0f) perp = -perp;
+        const float a2 = ang * u;
+        const float radius = lerpf(lenA, lenB, u);
+        const Vec3 pt = foot + rd * (cosf(a2) * radius) + perp * (sinf(a2) * radius);
+        if (nextV >= g_s.vcap) return -2;
+        writePos(g_s.outPos, nextV, pt);
+        if (g_s.hasUv) {
+          const uint32_t uvA = loopVerts[end == 0u ? ca_a : cb_a];
+          const uint32_t uvB = loopVerts[end == 0u ? ca_b : cb_b];
+          g_s.outUv[nextV * 2] = lerpf(buv[uvA * 2], buv[uvB * 2], u);
+          g_s.outUv[nextV * 2 + 1] = lerpf(buv[uvA * 2 + 1], buv[uvB * 2 + 1], u);
+        }
+        rings[lv][end] = nextV;
+        innerVerts[innerWrite++] = nextV;
+        ++nextV;
+      }
+    }
+
+    for (uint32_t lv = 0; lv + 1u < levelCount; ++lv) {
+      const uint32_t a0 = rings[lv][0], b0 = rings[lv][1];
+      const uint32_t a1 = rings[lv + 1u][0], b1 = rings[lv + 1u][1];
+      if (a0 == 0xFFFFFFFFu || b0 == 0xFFFFFFFFu || a1 == 0xFFFFFFFFu || b1 == 0xFFFFFFFFu) continue;
+      if (!putTri(a0, b0, b1)) return -2;
+      if (!putTri(a0, b1, a1)) return -2;
+    }
+  }
+
+  /* ---- 7. the vertex patches ---- */
+  uint32_t* ring = modArray<uint32_t>(64u + stripCount * 4u);
+  uint8_t* seenV = modArray<uint8_t>(v);
+  if (!ring || !seenV) return -2;
+  for (uint32_t i = 0; i < v; ++i) seenV[i] = 0u;
+
+  for (uint32_t vi = 0; vi < v; ++vi) {
+    const uint32_t cb = cornerStart[vi], ce = cornerStart[vi + 1u];
+    if (ce - cb < 3u) continue;   /* one or two faces meet smoothly here */
+    seenV[vi] = 1u;
+
+    const Vec3 centre = readPos(bpos, vi);
+    uint32_t owners[64];
+    float angOf[64];
+    const uint32_t ownerCount = ce - cb < 64u ? ce - cb : 64u;
+    for (uint32_t i = 0; i < ownerCount; ++i) owners[i] = cornerList[cb + i];
+
+    /* Rotational order in the plane the offsets lie in. */
+    Vec3 axisV(0.0f, 0.0f, 0.0f);
+    for (uint32_t i = 0; i < ownerCount; ++i) axisV += readPos(g_s.outPos, cornerOut[owners[i]]) - centre;
+    if (axisV.length() < 1e-9f) axisV = Vec3(0.0f, 0.0f, 1.0f);
+    axisV = normalize(axisV);
+    Vec3 e1 = cross(axisV, Vec3(0.0f, 1.0f, 0.0f));
+    if (e1.length() < 1e-6f) e1 = cross(axisV, Vec3(1.0f, 0.0f, 0.0f));
+    e1 = normalize(e1);
+    const Vec3 e2 = cross(axisV, e1);
+    for (uint32_t i = 0; i < ownerCount; ++i) {
+      const Vec3 d = readPos(g_s.outPos, cornerOut[owners[i]]) - centre;
+      angOf[i] = atan2f(Vec3::dot(d, e2), Vec3::dot(d, e1));
+    }
+    for (uint32_t i = 1; i < ownerCount; ++i) {
+      const float key = angOf[i];
+      const uint32_t keyOwner = owners[i];
+      int32_t j = static_cast<int32_t>(i) - 1;
+      while (j >= 0 && angOf[j] > key) {
+        angOf[j + 1] = angOf[j];
+        owners[j + 1] = owners[j];
+        --j;
+      }
+      angOf[j + 1] = key;
+      owners[j + 1] = keyOwner;
+    }
+
+    /* Ring: corner offset, then the strip ends towards the next face. */
+    uint32_t ringN = 0;
+    for (uint32_t i = 0; i < ownerCount; ++i) {
+      ring[ringN++] = cornerOut[owners[i]];
+      const uint32_t c = owners[i];
+      const uint32_t f = cornerFace[c];
+      const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+      const uint32_t n = e - b;
+      const uint32_t slot = c - b;
+      const uint32_t fwd = loopVerts[b + (slot + 1u) % n];
+      const uint32_t backV = loopVerts[b + (slot + n - 1u) % n];
+      /* The edge that leads to the next face in the ring - which of the two
+         edges leaving this corner that is depends on how the faces came out of
+         the sort, so both are tried and the one whose *other* face matches is
+         the one that gets spliced in. */
+      const uint32_t nextFace = cornerFace[owners[(i + 1u) % ownerCount]];
+      auto leadsTo = [&](uint32_t other) {
+        const uint32_t slotE = splitEdgeSlot(be, vi, other, false, 0u, nullptr);
+        if (slotE == 0xFFFFFFFFu || !edgeLive[slotE]) return 0xFFFFFFFFu;
+        const uint32_t fa = edgeFaceA[slotE], fb = edgeFaceB[slotE];
+        const bool shares = fa == f || fb == f;
+        const uint32_t otherFace = fa == f ? fb : fa;
+        if (!shares || otherFace != nextFace) return 0xFFFFFFFFu;
+        return slotE;
+      };
+      uint32_t edgeSlot = leadsTo(fwd);
+      if (edgeSlot == 0xFFFFFFFFu) edgeSlot = leadsTo(backV);
+      if (edgeSlot == 0xFFFFFFFFu || !edgeLive[edgeSlot] || stripBase[edgeSlot] == 0xFFFFFFFFu) continue;
+      /* Which end of the strip is this vertex, and which way does the ring
+         travel across it? The inner levels run from the A side of the strip to
+         the B side, so a ring leaving the A face reads them in order and one
+         leaving the B face reads them backwards. */
+      const uint32_t base = stripBase[edgeSlot];
+      const bool atA = be.a[edgeSlot] == vi;
+      const bool fromA = edgeFaceA[edgeSlot] == f;
+      const uint32_t levels = innerPerEdge / 2u;
+      for (uint32_t lv = 0; lv < levels; ++lv) {
+        const uint32_t pick = fromA ? lv : (levels - 1u - lv);
+        ring[ringN++] = innerVerts[base + pick * 2u + (atA ? 0u : 1u)];
+      }
+    }
+    if (ringN < 3u) continue;
+    if (!fan(ring, ringN)) return -2;
+  }
+
+  if (!nextV || !outT) return -4;
+  return commit(nextV, outT);
+}
+
 FE_EXPORT int32_t fe_mod_build(float progress, int32_t reverse, int32_t randomize, int32_t seed) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;

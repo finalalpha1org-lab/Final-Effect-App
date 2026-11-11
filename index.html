@@ -11514,7 +11514,7 @@ window.addEventListener('keydown', (e) => {
 const modifiersData = {
   Generate: [
     {name:"Array", fields:[["Fit Type","select",["Fixed Count","Fit Length","Fit Curve"]],["Count","range",1,10,2,1],["Length","range",0,50,10,.5,{advanced:true}],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}],["Merge","check",false,{advanced:true}],["Merge Distance","range",0,.5,.001,.001,{advanced:true}],["UV Offset U","range",-1,1,0,.05,{advanced:true}],["UV Offset V","range",-1,1,0,.05,{advanced:true}]]},
-    {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
+    {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true],["Profile","range",.05,.95,.5,.05,{advanced:true}]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
     {name:"Build", fields:[["Progress","range",0,1,.5,.01],["Reverse","check",false,{advanced:true}],["Randomize","check",true],["Seed","range",0,999,0,1,{advanced:true}]]},
     {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
@@ -11683,7 +11683,7 @@ function modifierRelativeMatrix(sourceObj, targetObj) {
   sourceObj.updateWorldMatrix?.(true, false); targetObj.updateWorldMatrix?.(true, false);
   return new THREE.Matrix4().copy(sourceObj.matrixWorld).invert().multiply(targetObj.matrixWorld);
 }
-function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
+function applyBevelModifier(geometry, amount, segments, clampOverlap=true, profile=0.5) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap, profile }); }
 function applySubdivisionModifier(geometry, levels, simple=false) { return modifierGeometryApi().subdivideLoop(geometry, levels, { simple }); }
 function applySolidifyModifier(geometry, thickness, offset, rim=true, evenThickness=true) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset, { rim, evenThickness }); }
 /* Re-applies the per-face shading a mesh was left with. Called whenever a
@@ -12064,7 +12064,7 @@ function updateModifiersOnScene(targetOverride) {
 
     if (mod.name === "Bevel") {
       const amt = parseFloat(p["Amount"] ?? 0.15);
-      if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false));
+      if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false, Number(p["Profile"] ?? 0.5)));
     } else if (mod.name === "Subdivision Surface") {
       const lvl = parseInt(p["Viewport Levels"] ?? 2, 10);
       const simple = p["Subdivision Type"] === "Simple";
@@ -12604,7 +12604,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       if (!mod.enabled) continue;
       const p=mod.values||{};
       const stage=(fn)=>{geometry=applyModifierGeometryStage(geometry,()=>fn(geometry))};
-      if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false)); }
+      if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false,Number(p.Profile??.5))); }
       else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2),p['Subdivision Type']==='Simple'));
       else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1),p['Rim Fill']!==false,p['Even Thickness']!==false));
       else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));

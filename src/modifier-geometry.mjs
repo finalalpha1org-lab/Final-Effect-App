@@ -736,9 +736,22 @@ export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = 
   out.setIndex(new THREE.BufferAttribute(faces.length>65535?new Uint32Array(faces):new Uint16Array(faces),1));out.deleteAttribute('normal');out.computeVertexNormals();updateBounds(out);src.dispose();return out;
 }
 
-export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true}={}){
+/* Bevel, ported from bmesh_bevel.cc: coplanar triangles are welded into n-gon
+   faces first, so the cube in a triangle buffer bevels as six quads rather than
+   eighteen strips along its diagonals. Every edge then becomes a strip, every
+   vertex a patch, and more than one segment follows a circular arc whose shape
+   Profile bends. clampOverlap keeps the offsets from crossing. */
+export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true,profile=.5}={}){
   if(!Number.isFinite(width)||width<0)throw new Error('Bevel width must be a finite non-negative value');
   if(width<=1e-7)return geometry.clone();
+  const seg=Math.max(1,Math.min(16,Math.round(Number(segments)||1)));
+  /* A bevel grows both counts several times over: one corner per face corner,
+     one strip end per edge and segment, one patch per corner. The estimates
+     below are deliberately loose - running short only costs the fallback. */
+  const viaCpp = runCppKernel(geometry,
+    (v,t)=>[Math.min(131072,v*(seg+2)+256),Math.min(262144,t*(3*seg+10)+256)],
+    exp=>exp.fe_mod_bevel(width,seg,clampOverlap?1:0,Number(profile)||0.5));
+  if(viaCpp) return viaCpp;
   const src=weldGeometry(geometry,1e-7);
   try{
     validateClosedManifold(src,'Bevel input');
