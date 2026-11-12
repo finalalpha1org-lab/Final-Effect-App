@@ -691,7 +691,7 @@ FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
  * Same signature and return codes as fe_mod_decimate above. */
 FE_EXPORT int32_t  fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary,
                                            int32_t use_symmetry, int32_t symmetry_axis,
-                                           float vweight_factor);
+                                           float vweight_factor, int32_t invert_vgroup);
 /* Decimate's other two decimate_type values:
  *   Un-Subdivide (bmesh_decimate_unsubdivide.cc) - dissolve the vertices a
  *     subdivision created, `iterations` times.

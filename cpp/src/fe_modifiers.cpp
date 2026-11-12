@@ -3242,7 +3242,7 @@ bool heapPop(CollapseHeap& h, float& cost, uint32_t& a, uint32_t& b) {
  * one of its two vertices moves. */
 FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary,
                                           int32_t use_symmetry, int32_t symmetry_axis,
-                                          float vweight_factor) {
+                                          float vweight_factor, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   g_s.flagMode = 0;                 /* a collapsed mesh has no 1:1 face mapping */
   const uint32_t v = g_s.vc, t = g_s.tc;
@@ -3364,7 +3364,7 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
      * group is never collapsed at all, and the rest are pushed back by their
      * length. bm_decim_build_edge_cost_single(), the vweights branches. */
     if (g_s.vgOn) {
-      const float wa = g_s.vg[a], wb = g_s.vg[b];
+      const float wa = deformWeight(a, invert_vgroup), wb = deformWeight(b, invert_vgroup);
       if (wa == 0.0f || wb == 0.0f) return DECIM_COST_INVALID;
       const float e_weight = 2.0f - (wa + wb);
       if (e_weight != 0.0f) c += length(readPos(pos, a) - readPos(pos, b)) * (e_weight * vweight_factor);

@@ -41,8 +41,11 @@ The data-model blockers, once, so the tables can just say which one applies:
 `offset_u`, `offset_v`.
 
 ⛔ `curve` (O), `start_cap` / `end_cap` / `use_merge_vertices_cap` (O: each cap
-is a second mesh merged into the result, which needs a multi-mesh kernel),
-`vertex_group` (V).
+is a second mesh merged into the result, which needs a multi-mesh kernel).
+
+Array has no `vertex_group` in `rna_modifier.cc` at all - `array` defines
+`start_cap`, `end_cap`, `use_merge_vertices_cap` and `curve`, and no deform
+group - so there is nothing to read a weight for.
 
 ### Bevel — `bmesh_bevel.cc`
 ✅ `width`, `segments`, `limit_method` (None / Angle), `angle_limit`,
@@ -88,7 +91,11 @@ the vertices the tessellation put between them.
 ❌ `delimit`: NORMAL is the angle test already, and the other choices (UV,
 SEAM, SHARP, MATERIAL) need E and M.
 
-⛔ `vertex_group`, `vertex_group_factor`, `invert_vertex_group` (V).
+✅ `vertex_group`, `vertex_group_factor`, `invert_vertex_group`: an edge with
+a weight-0 end never enters the heap, and every other edge's cost gains
+`|e| * (2 - w_a - w_b) * factor`, which is
+`bm_decim_build_edge_cost_single()`'s vweights branch. Inverting reads
+`1 - w`, so the group becomes everything *except* the named vertices.
 ◻︎ `use_collapse_triangulate` — the pipeline is triangles in and triangles out,
 so there is never a face for it to triangulate. `face_count` is display-only in
 Blender and is not a setting here.
@@ -119,9 +126,17 @@ runs — the toggle that would turn it off is not exposed.
 Both clamp branches are upstream's: the edge-length form, and the
 half-dihedral form gated behind the angle clamp.
 
-❌ `solidify_mode` (Complex / non-manifold mode), `use_quality_normals`.
+✅ `vertex_group` + `thickness_vertex_group` + `invert_vertex_group`:
+`f = factor + weight * (1 - factor)`, the `thickness_vgroup_fac` blend, so
+factor 1 means the group changes nothing and 0 means it is the whole story.
 
-⛔ `thickness_vertex_group`, `shell_vertex_group`, `rim_vertex_group` (V),
+❌ `solidify_mode` (Complex / non-manifold mode), `nonmanifold_thickness_mode`,
+`nonmanifold_boundary_mode`, `nonmanifold_merge_threshold`, `bevel_convex`,
+`use_quality_normals`.
+
+⛔ `shell_vertex_group`, `rim_vertex_group` (V: the kernel would need two more
+weight channels - a second and third upload - because they select *which*
+part of the shell a vertex belongs to, not how thick it is),
 `material_offset`, `material_offset_rim` (M), `edge_crease_*` (E),
 `use_flat_faces` (needs the modifier's own normals policy, A).
 
@@ -161,8 +176,11 @@ edges to collapse, so the toggle would be dead).
 ✅ `thickness`, `offset`, `use_replace`, `use_boundary`, `use_even_offset`,
 `use_relative_offset`.
 
-⛔ `thickness_vertex_group`, `vertex_group` (V), `use_crease`, `crease_weight`
-(E), `material_offset` (M).
+✅ `vertex_group` + `thickness_vertex_group` + `invert_vertex_group`:
+`verts_relfac[i] *= f + w * (1 - f)`, exactly `bmesh_wireframe.cc`'s
+`defgrp_fac` line.
+
+⛔ `use_crease`, `crease_weight` (E), `material_offset` (M).
 
 ## Deform
 
@@ -297,7 +315,10 @@ present but whose solvers are separate work.
 Every property marked ⛔ is blocked by one of the remaining data models, not by
 the kernels. **Vertex groups are open**: Solidify, Wireframe, Displace, Wave,
 Cast, Decimate, Weld, Smooth, Laplacian Smooth and Simple Deform read them
-today; Bevel is the next kernel with an argument to grow.
+today, each by its own source's rule (a scale, a blend, a selection, a row
+weight, or an edge cost). What is left of the family is Solidify's shell and
+rim groups, which need two more channels rather than a second reader, and
+Bevel's vertex group, which needs the kernel's weight argument.
 Next in line, **per-edge flags and per-corner UVs** unlock the delimit / crease
 / seam family, and **per-face material indices** unlock the material offset
 family.

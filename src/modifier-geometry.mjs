@@ -567,7 +567,7 @@ export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000,
                                  { preserveBoundary = true, decimateType = 'Collapse', iterations = 1,
                                    angleLimit = 5, useSymmetry = false, symmetryAxis = 'X',
                                    dissolveBoundaries = false, vertexWeights = null,
-                                   vertexGroupFactor = 0 } = {}) {
+                                   vertexGroupFactor = 0, invertVertexGroup = false } = {}) {
   /* The C++ kernels (ported from bmesh_decimate_collapse.cc,
      bmesh_decimate_unsubdivide.cc and bmesh_decimate_dissolve.cc) are the real
      implementation now, at every size - there is nothing the JS path does
@@ -587,7 +587,8 @@ export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000,
     const flag = preserveBoundary ? 1 : 0;
     if (typeof exp.fe_mod_decimate_collapse === 'function') {
       return exp.fe_mod_decimate_collapse(ratioNow, flag, useSymmetry ? 1 : 0,
-        SYMMETRY_AXES[symmetryAxis] ?? 0, Math.max(0, Number(vertexGroupFactor) || 0));
+        SYMMETRY_AXES[symmetryAxis] ?? 0, Math.max(0, Number(vertexGroupFactor) || 0),
+        invertVertexGroup ? 1 : 0);
     }
     return exp.fe_mod_decimate(ratioNow, flag);
   }, undefined, type === 0 ? vertexWeights : null);
