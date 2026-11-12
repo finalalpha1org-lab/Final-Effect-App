@@ -474,3 +474,94 @@ test('Laplacian Smooth scales each vertex row by its weight', () => {
       `a half weight lands between zero and full for ${bracketed}/${tested} vertices`);
   });
 });
+
+/* =========================================================================
+ * Cast, ported from MOD_cast.cc (sphere_do / cuboid_do). The centre is the
+ * object origin - not the bounding-box centre the old kernel used - `radius`
+ * limits which vertices move, `size` is the distance the cast pulls to, and
+ * `use_x/y/z` choose the components.
+ * ========================================================================= */
+
+test('Cast pulls to `size` from the object origin, and `radius` only limits', () => {
+  withCore(() => {
+    const source = new THREE.IcosahedronGeometry(1, 1);
+    /* size 2, no radius limit, sphere: every vertex lands on radius 2. */
+    const out = castGeometry(source, { shape: 'Sphere', factor: 1, radius: 0, size: 2 });
+    const p = out.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      assert.ok(Math.abs(Math.hypot(p.getX(i), p.getY(i), p.getZ(i)) - 2) < 1e-5,
+        `vertex ${i} should be at 2 from the origin, is ${Math.hypot(p.getX(i), p.getY(i), p.getZ(i)).toFixed(4)}`);
+    }
+
+    /* use_radius_as_size makes the radius the distance instead. */
+    const fromRadius = castGeometry(source, { shape: 'Sphere', factor: 1, radius: 0.75, useRadiusAsSize: true });
+    const q = fromRadius.attributes.position;
+    /* radius > 0 also limits, and a unit sphere is outside 0.75 everywhere,
+       so the two flags together leave it alone; that is upstream's order too. */
+    assert.deepEqual(Array.from(q.array), Array.from(source.attributes.position.array),
+      'the radius limit is applied before the size is read from it');
+
+    /* Half the radius: every vertex within 0.5 of the origin moves to 0.5. */
+    const sphere = new THREE.SphereGeometry(1, 24, 16);
+    const inner = castGeometry(sphere, { shape: 'Sphere', factor: 1, radius: 0.5, size: 0.5 });
+    const r = inner.attributes.position, s = sphere.attributes.position;
+    for (let i = 0; i < r.count; i++) {
+      const d = Math.hypot(s.getX(i), s.getY(i), s.getZ(i));
+      if (d > 0.5 + 1e-6) continue;
+      assert.ok(Math.abs(Math.hypot(r.getX(i), r.getY(i), r.getZ(i)) - 0.5) < 1e-5, 'inside the radius, cast to 0.5');
+    }
+  });
+});
+
+test('Cast honours the axis toggles and the cylinder rule', () => {
+  withCore(() => {
+    const source = new THREE.IcosahedronGeometry(1, 1);
+    const xOnly = castGeometry(source, { shape: 'Sphere', factor: 1, radius: 0, size: 2, useY: false, useZ: false });
+    const p = xOnly.attributes.position, s = source.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      assert.ok(Math.abs(p.getY(i) - s.getY(i)) < 1e-6 && Math.abs(p.getZ(i) - s.getZ(i)) < 1e-6,
+        'with Y and Z off, only x moves');
+      /* The direction is normalised on the full vector, exactly as
+         sphere_do() does, and only then is the enabled component written. */
+      const d = Math.hypot(s.getX(i), s.getY(i), s.getZ(i));
+      assert.ok(Math.abs(p.getX(i) - (s.getX(i) / d) * 2) < 1e-5, 'x takes its scaled direction');
+    }
+    /* A cylinder clears MOD_CAST_Z, so z is never touched even with Z on. */
+    const cyl = castGeometry(source, { shape: 'Cylinder', factor: 1, radius: 0, size: 2 });
+    const c = cyl.attributes.position;
+    for (let i = 0; i < c.count; i++) {
+      assert.ok(Math.abs(c.getZ(i) - s.getZ(i)) < 1e-6, 'a cylinder does not move along its own axis');
+      /* A vertex on the axis has no planar direction to normalise, so it is
+         left where it is - normalize_v3() of a zero vector is the zero vector. */
+      if (Math.hypot(s.getX(i), s.getY(i)) < 1e-6) continue;
+      assert.ok(Math.abs(Math.hypot(c.getX(i), c.getY(i)) - 2) < 1e-5, 'and it casts on the XY plane');
+    }
+    assert.deepEqual(positions(castGeometry(source, { shape: 'Sphere', factor: 0, radius: 0, size: 2 })), positions(source),
+      'factor 0 is a no-op');
+  });
+});
+
+test('Cast is weighted and can be centred on a control object', () => {
+  withCore(() => {
+    const source = new THREE.IcosahedronGeometry(1, 1);
+    const p = source.attributes.position;
+    const weights = new Float32Array(p.count);
+    for (let i = 0; i < p.count; i++) weights[i] = p.getY(i) > 0 ? 1 : 0;
+    const out = castGeometry(source, { shape: 'Sphere', factor: 1, radius: 0, size: 2, vertexWeights: weights });
+    const q = out.attributes.position, s = positions(source);
+    for (let i = 0; i < p.count; i++) {
+      if (weights[i] === 0) assert.ok(Math.abs(q.getX(i) - s[i][0]) < 1e-6 && Math.abs(q.getY(i) - s[i][1]) < 1e-6 && Math.abs(q.getZ(i) - s[i][2]) < 1e-6,
+        `weight-0 vertex ${i} stays put`);
+      else assert.ok(Math.abs(Math.hypot(q.getX(i), q.getY(i), q.getZ(i)) - 2) < 1e-5, 'weighted vertices cast');
+    }
+
+    /* A control object at (3, 0, 0) makes the cast a sphere around it. */
+    const offset = castGeometry(new THREE.SphereGeometry(0.5, 16, 12), {
+      shape: 'Sphere', factor: 1, radius: 0, size: 1, objectCenter: [3, 0, 0]
+    });
+    const o = offset.attributes.position;
+    let worst = 0;
+    for (let i = 0; i < o.count; i++) worst = Math.max(worst, Math.abs(Math.hypot(o.getX(i) - 3, o.getY(i), o.getZ(i)) - 1));
+    assert.ok(worst < 1e-4, `the cast is centred on the control object (worst ${worst})`);
+  });
+});

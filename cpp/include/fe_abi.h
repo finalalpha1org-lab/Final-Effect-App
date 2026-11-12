@@ -654,7 +654,15 @@ FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float tim
                                int32_t invert_vgroup, float narrowness, float time_offset, float lifetime,
                                float damping, float start_x, float start_y, float falloff, int32_t cyclic,
                                int32_t use_normal);
-FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size, int32_t invert_vgroup);
+/* Cast, ported from modifiers/intern/MOD_cast.cc (sphere_do / cuboid_do).
+ * axis_mask is MOD_CAST_X|Y|Z; `radius` is a limit, not a scale; `size` is the
+ * distance the cast pulls to; size_from_radius is use_radius_as_size;
+ * use_transform is use_transform; has_object says the relative matrix carries
+ * the control object's location. */
+FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size,
+                               int32_t invert_vgroup, uint32_t axis_mask,
+                               int32_t size_from_radius, int32_t use_transform,
+                               int32_t has_object);
 FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
 /* Simple Deform, ported from modifiers/intern/MOD_simpledeform.cc.
  * mode 0 = Twisting, 1 = Bending, 2 = Taper, 3 = Stretch. deform_axis 0/1/2 =

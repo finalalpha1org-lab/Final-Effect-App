@@ -300,6 +300,14 @@ uint32_t applyFaceShading(uint32_t v, uint32_t t) {
   return next;
 }
 
+/* The UV of an unchanged vertex, for the kernels that move only some of them. */
+inline bool copyUv(uint32_t i) {
+  if (!g_s.hasUv) return false;
+  g_s.outUv[i * 2] = g_s.inUv[i * 2];
+  g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1];
+  return true;
+}
+
 void copyOutToIn(uint32_t v, uint32_t t) {
   for (uint32_t i = 0; i < v * 3u; ++i) g_s.inPos[i] = g_s.outPos[i];
   if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.inUv[i] = g_s.outUv[i];
@@ -675,6 +683,35 @@ inline Mat4 matMultiply(const Mat4& a, const Mat4& b) {
     }
   }
   return o;
+}
+
+/* invert_m4_m4(): the adjugate over the determinant, column-major like the
+   rest of this file. Returns false for a singular matrix, which upstream
+   tolerates by leaving the identity in place. */
+inline bool matInvert(const Mat4& m, Mat4& out) {
+  const float* a = m.e;
+  float inv[16];
+  inv[0]  =  a[5]*a[10]*a[15] - a[5]*a[11]*a[14] - a[9]*a[6]*a[15] + a[9]*a[7]*a[14] + a[13]*a[6]*a[11] - a[13]*a[7]*a[10];
+  inv[4]  = -a[4]*a[10]*a[15] + a[4]*a[11]*a[14] + a[8]*a[6]*a[15] - a[8]*a[7]*a[14] - a[12]*a[6]*a[11] + a[12]*a[7]*a[10];
+  inv[8]  =  a[4]*a[9]*a[15]  - a[4]*a[11]*a[13] - a[8]*a[5]*a[15] + a[8]*a[7]*a[13] + a[12]*a[5]*a[11] - a[12]*a[7]*a[9];
+  inv[12] = -a[4]*a[9]*a[14]  + a[4]*a[10]*a[13] + a[8]*a[5]*a[14] - a[8]*a[6]*a[13] - a[12]*a[5]*a[10] + a[12]*a[6]*a[9];
+  inv[1]  = -a[1]*a[10]*a[15] + a[1]*a[11]*a[14] + a[9]*a[2]*a[15] - a[9]*a[3]*a[14] - a[13]*a[2]*a[11] + a[13]*a[3]*a[10];
+  inv[5]  =  a[0]*a[10]*a[15] - a[0]*a[11]*a[14] - a[8]*a[2]*a[15] + a[8]*a[3]*a[14] + a[12]*a[2]*a[11] - a[12]*a[3]*a[10];
+  inv[9]  = -a[0]*a[9]*a[15]  + a[0]*a[11]*a[13] + a[8]*a[1]*a[15] - a[8]*a[3]*a[13] - a[12]*a[1]*a[11] + a[12]*a[3]*a[9];
+  inv[13] =  a[0]*a[9]*a[14]  - a[0]*a[10]*a[13] - a[8]*a[1]*a[14] + a[8]*a[2]*a[13] + a[12]*a[1]*a[10] - a[12]*a[2]*a[9];
+  inv[2]  =  a[1]*a[6]*a[15]  - a[1]*a[7]*a[14]  - a[5]*a[2]*a[15] + a[5]*a[3]*a[14] + a[13]*a[2]*a[7]  - a[13]*a[3]*a[6];
+  inv[6]  = -a[0]*a[6]*a[15]  + a[0]*a[7]*a[14]  + a[4]*a[2]*a[15] - a[4]*a[3]*a[14] - a[12]*a[2]*a[7]  + a[12]*a[3]*a[6];
+  inv[10] =  a[0]*a[5]*a[15]  - a[0]*a[7]*a[13]  - a[4]*a[1]*a[15] + a[4]*a[3]*a[13] + a[12]*a[1]*a[7]  - a[12]*a[3]*a[5];
+  inv[14] = -a[0]*a[5]*a[14]  + a[0]*a[6]*a[13]  + a[4]*a[1]*a[14] - a[4]*a[2]*a[13] - a[12]*a[1]*a[6]  + a[12]*a[2]*a[5];
+  inv[3]  = -a[1]*a[6]*a[11]  + a[1]*a[7]*a[10]  + a[5]*a[2]*a[11] - a[5]*a[3]*a[10] - a[9]*a[2]*a[7]   + a[9]*a[3]*a[6];
+  inv[7]  =  a[0]*a[6]*a[11]  - a[0]*a[7]*a[10]  - a[4]*a[2]*a[11] + a[4]*a[3]*a[10] + a[8]*a[2]*a[7]   - a[8]*a[3]*a[6];
+  inv[11] = -a[0]*a[5]*a[11]  + a[0]*a[7]*a[9]   + a[4]*a[1]*a[11] - a[4]*a[3]*a[9]  - a[8]*a[1]*a[7]   + a[8]*a[3]*a[5];
+  inv[15] =  a[0]*a[5]*a[10]  - a[0]*a[6]*a[9]   - a[4]*a[1]*a[10] + a[4]*a[2]*a[9]  + a[8]*a[1]*a[6]   - a[8]*a[2]*a[5];
+  const float det = a[0]*inv[0] + a[1]*inv[4] + a[2]*inv[8] + a[3]*inv[12];
+  if (absf(det) < 1e-20f) { out = matIdentity(); return false; }
+  const float invDet = 1.0f / det;
+  for (uint32_t i = 0; i < 16u; ++i) out.e[i] = inv[i] * invDet;
+  return true;
 }
 
 inline Vec3 matPoint(const Mat4& m, const Vec3& p) {
@@ -2356,32 +2393,148 @@ FE_EXPORT int32_t fe_mod_wave(float height, float width, float speed, float time
   return commit(v, t);
 }
 
-FE_EXPORT int32_t fe_mod_cast(uint32_t shape, float factor, float radius, float size, int32_t invert_vgroup) {
+/* =========================================================================
+ * Cast - ported from modifiers/intern/MOD_cast.cc
+ *
+ *   source/blender/modifiers/intern/MOD_cast.cc  (sphere_do, cuboid_do)
+ *
+ * The old kernel treated `radius` as a scale and cast around the bounding-box
+ * centre. Neither is what the modifier does:
+ *
+ *   - the centre is the object's own origin, {0, 0, 0} in local space, unless
+ *     an object is assigned, in which case it is that object's location
+ *     converted into the modified object's space;
+ *   - `radius` is a *limit*: with radius > FLT_EPSILON a vertex further than
+ *     radius from the centre is skipped, not scaled;
+ *   - `size` is the distance the cast pulls a vertex to; when it is zero the
+ *     size is the mean distance of the vertices from the centre (and 10 if
+ *     that is zero too), and with use_radius_as_size the radius *is* the size;
+ *   - use_x / use_y / use_z choose which components move, and Cylinder clears
+ *     Z from the flags, so a cylinder never moves along its own axis.
+ *
+ * Cuboid is cuboid_do(): the octant's corner of the (symmetric) bound box is
+ * the apex, the coordinate whose ratio to that apex is largest picks the wall,
+ * and the vertex is projected onto it by fbb = apex[coord] / co[coord].
+ * ========================================================================= */
+
+FE_EXPORT int32_t fe_mod_cast(uint32_t shape, float factor, float radius, float size,
+                              int32_t invert_vgroup, uint32_t axis_mask,
+                              int32_t size_from_radius, int32_t use_transform,
+                              int32_t has_object) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
-  const Box box = meshBounds(g_s.inPos, v);
-  const Vec3 center = box.center();
-  const Vec3 ext = box.size();
-  const float base = maxf(maxf(ext.x, ext.y), ext.z) * 0.5f * maxf(radius, 0.0f) * clampf(size, 0.05f, 8.0f);
-  const float f = clampf(factor, 0.0f, 1.0f);
-  for (uint32_t i = 0; i < v; ++i) {
-    const Vec3 p = readPos(g_s.inPos, i);
-    const Vec3 local = p - center;
-    Vec3 target = local;
-    if (shape == 0u) {
-      const float len = maxf(length(local), 1e-6f);
-      target = local * (base / len);
-    } else if (shape == 1u) {
-      const float len = maxf(sqrtf(local.x * local.x + local.z * local.z), 1e-6f);
-      target = Vec3(local.x * (base / len), local.y, local.z * (base / len));
-    } else {
-      target = Vec3(clampf(local.x, -base, base), clampf(local.y, -base, base), clampf(local.z, -base, base));
-    }
-    writePos(g_s.outPos, i, center + lerpv(local, target, f * deformWeight(i, invert_vgroup)));
-    if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+
+  uint32_t flags = axis_mask & 7u;
+  const bool cylinder = shape == 1u;
+  if (cylinder) flags &= ~4u;             /* MOD_CAST_Z is cleared for cylinders */
+
+  const Mat4 rel = sessionMatrix();
+  const Vec3 center = has_object ? Vec3(rel.e[12], rel.e[13], rel.e[14]) : Vec3(0.0f, 0.0f, 0.0f);
+  Mat4 to_ctrl, from_ctrl;
+  const bool use_tf = has_object && use_transform != 0;
+  if (use_tf) {
+    /* mat = inverse(inverse(ob) * ctrl), so a point goes ob-local -> ctrl-local
+       with mat and back with its inverse, exactly as sphere_do() does. */
+    matInvert(rel, to_ctrl);
+    matInvert(to_ctrl, from_ctrl);
   }
-  for (uint32_t f2 = 0; f2 < t * 3u; ++f2) g_s.outIdx[f2] = g_s.inIdx[f2];
+
+  const bool has_radius = radius > 1.1920929e-7f;   /* FLT_EPSILON */
+  const float fac_orig = clampf(factor, 0.0f, 1.0f);
+
+  if (shape != 2u) {
+    /* ---- sphere_do(): Sphere and Cylinder ---- */
+    float len = size_from_radius ? radius : size;
+    if (len <= 0.0f) {
+      len = 0.0f;
+      for (uint32_t i = 0; i < v; ++i) len += length(readPos(g_s.inPos, i) - center);
+      len /= static_cast<float>(v);
+      if (len == 0.0f) len = 10.0f;
+    }
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(g_s.inPos, i);
+      Vec3 tmp = use_tf ? matPoint(to_ctrl, p) : (has_object ? p - center : p);
+      Vec3 vec = tmp;
+      if (cylinder) vec.z = 0.0f;
+      if (has_radius && length(vec) > radius) { writePos(g_s.outPos, i, p); copyUv(i); continue; }
+      const float w = deformWeight(i, invert_vgroup);
+      if (w == 0.0f) { writePos(g_s.outPos, i, p); copyUv(i); continue; }
+      const float fac = fac_orig * w;
+      const float facm = 1.0f - fac;
+      const float l = maxf(length(vec), 1e-20f);
+      vec = vec * (1.0f / l);
+      if (flags & 1u) tmp.x = fac * vec.x * len + facm * tmp.x;
+      if (flags & 2u) tmp.y = fac * vec.y * len + facm * tmp.y;
+      if (flags & 4u) tmp.z = fac * vec.z * len + facm * tmp.z;
+      const Vec3 out = use_tf ? matPoint(from_ctrl, tmp) : (has_object ? tmp + center : tmp);
+      writePos(g_s.outPos, i, out);
+      copyUv(i);
+    }
+  }
+  else {
+    /* ---- cuboid_do() ---- */
+    float mn[3], mx[3];
+    if (size_from_radius && has_radius) {
+      for (uint32_t a = 0; a < 3u; ++a) { mn[a] = -radius; mx[a] = radius; }
+    }
+    else if (!size_from_radius && size > 0.0f) {
+      for (uint32_t a = 0; a < 3u; ++a) { mn[a] = -size; mx[a] = size; }
+    }
+    else {
+      for (uint32_t a = 0; a < 3u; ++a) { mn[a] = 3.402823466e+38f; mx[a] = -3.402823466e+38f; }
+      auto expand = [&](const Vec3& q) {
+        if (q.x < mn[0]) { mn[0] = q.x; }
+        if (q.x > mx[0]) { mx[0] = q.x; }
+        if (q.y < mn[1]) { mn[1] = q.y; }
+        if (q.y > mx[1]) { mx[1] = q.y; }
+        if (q.z < mn[2]) { mn[2] = q.z; }
+        if (q.z > mx[2]) { mx[2] = q.z; }
+      };
+      if (has_object) expand(center);
+      for (uint32_t i = 0; i < v; ++i) {
+        const Vec3 p = readPos(g_s.inPos, i);
+        expand(has_object ? p - center : p);
+      }
+      /* A symmetric box about the origin. */
+      for (uint32_t a = 0; a < 3u; ++a) {
+        const float lo = absf(mn[a]), hi = absf(mx[a]);
+        mx[a] = lo > hi ? lo : hi;
+        mn[a] = -mx[a];
+      }
+    }
+
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(g_s.inPos, i);
+      Vec3 tmp = use_tf ? matPoint(to_ctrl, p) : (has_object ? p - center : p);
+      if (has_radius && (absf(tmp.x) > radius || absf(tmp.y) > radius || absf(tmp.z) > radius)) {
+        writePos(g_s.outPos, i, p); copyUv(i); continue;
+      }
+      const float w = deformWeight(i, invert_vgroup);
+      if (w == 0.0f) { writePos(g_s.outPos, i, p); copyUv(i); continue; }
+      const float fac = fac_orig * w;
+      const float facm = 1.0f - fac;
+
+      /* the octant the vertex is in picks the box corner it is aimed at */
+      const uint32_t octant = (tmp.x > 0.0f ? 1u : 0u) | (tmp.y > 0.0f ? 2u : 0u) | (tmp.z > 0.0f ? 4u : 0u);
+      const float apex[3] = { (octant & 1u) ? mx[0] : mn[0], (octant & 2u) ? mx[1] : mn[1], (octant & 4u) ? mx[2] : mn[2] };
+      const float co[3] = { tmp.x, tmp.y, tmp.z };
+      float dmax = co[0] / apex[0];
+      uint32_t coord = 0u;
+      if (co[1] / apex[1] > dmax) { dmax = co[1] / apex[1]; coord = 1u; }
+      if (co[2] / apex[2] > dmax) { coord = 2u; }
+      if (absf(co[coord]) < 1.1920929e-7f) { writePos(g_s.outPos, i, p); copyUv(i); continue; }
+      const float fbb = apex[coord] / co[coord];
+      if (flags & 1u) tmp.x = facm * tmp.x + fac * tmp.x * fbb;
+      if (flags & 2u) tmp.y = facm * tmp.y + fac * tmp.y * fbb;
+      if (flags & 4u) tmp.z = facm * tmp.z + fac * tmp.z * fbb;
+      const Vec3 out = use_tf ? matPoint(from_ctrl, tmp) : (has_object ? tmp + center : tmp);
+      writePos(g_s.outPos, i, out);
+      copyUv(i);
+    }
+  }
+
+  for (uint32_t f = 0; f < t * 3u; ++f) g_s.outIdx[f] = g_s.inIdx[f];
   return commit(v, t);
 }
 

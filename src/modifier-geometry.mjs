@@ -1506,21 +1506,98 @@ export function simpleDeformGeometry(geometry, {
   }
   p.needsUpdate = true; g.computeVertexNormals(); return updateBounds(g);
 }
-export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1,vertexWeights=null,invertVertexGroup=false}={}){
+/* Cast, ported from MOD_cast.cc (sphere_do / cuboid_do) in
+   cpp/src/fe_modifiers.cpp. The centre is the object origin, `radius` limits
+   which vertices move (it is not a scale), `size` is the distance the cast
+   pulls to, and `useX/useY/useZ` choose the components. Cylinder clears Z. */
+export function castGeometry(geometry, {
+  shape = 'Sphere', factor = 1, radius = 1, size = 1, vertexWeights = null,
+  invertVertexGroup = false, useX = true, useY = true, useZ = true,
+  useRadiusAsSize = false, objectCenter = null
+} = {}) {
   const shapeIndex = { Sphere: 0, Cylinder: 1, Cuboid: 2 }[shape] ?? 0;
+  const flags = (useX ? 1 : 0) | (useY ? 2 : 0) | (useZ ? 4 : 0);
+  const center = objectCenter && objectCenter.length >= 3 ? objectCenter : null;
   const viaCpp = runCppKernel(geometry, null,
-    exp => exp.fe_mod_cast(shapeIndex, Number(factor)||0, Number(radius)||0, Number(size)||1, invertVertexGroup ? 1 : 0),
-    undefined, vertexWeights);
+    exp => exp.fe_mod_cast(shapeIndex, Number(factor) || 0, Number(radius) || 0, Number(size) || 0,
+      invertVertexGroup ? 1 : 0, flags, useRadiusAsSize ? 1 : 0, 0, center ? 1 : 0),
+    center ? (exp) => writeSessionMatrix(exp, [1,0,0,0, 0,1,0,0, 0,0,1,0, center[0], center[1], center[2], 1]) : undefined,
+    vertexWeights);
   if (viaCpp) return viaCpp;
-  const g=geometry.clone(),p=g.attributes.position;g.computeBoundingBox();
-  const center=g.boundingBox.getCenter(new THREE.Vector3()),bbox=g.boundingBox.getSize(new THREE.Vector3());
-  const base=Math.max(bbox.x,bbox.y,bbox.z)*.5*Math.max(radius,0)*clamp(Number(size)||1,.05,8),f=clamp(factor,0,1);
-  for(let i=0;i<p.count;i++){let x=p.getX(i)-center.x,y=p.getY(i)-center.y,z=p.getZ(i)-center.z,tx=x,ty=y,tz=z;
-    if(shape==='Sphere'){const l=Math.hypot(x,y,z)||1;tx=x/l*base;ty=y/l*base;tz=z/l*base}
-    else if(shape==='Cylinder'){const l=Math.hypot(x,z)||1;tx=x/l*base;tz=z/l*base}
-    else if(shape==='Cuboid'){tx=clamp(x,-base,base);ty=clamp(y,-base,base);tz=clamp(z,-base,base)}
-    p.setXYZ(i,center.x+THREE.MathUtils.lerp(x,tx,f),center.y+THREE.MathUtils.lerp(y,ty,f),center.z+THREE.MathUtils.lerp(z,tz,f))}
-  p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+
+  /* JS fallback: the same two functions. */
+  const g = geometry.clone(), p = assertPositions(g);
+  const c = center ? new THREE.Vector3(center[0], center[1], center[2]) : new THREE.Vector3();
+  const cylinder = shape === 'Cylinder';
+  let mask = flags;
+  if (cylinder) mask &= ~4;
+  const hasRadius = radius > 1e-7;
+  const facOrig = clamp(factor, 0, 1);
+  const weightAt = (i) => {
+    if (!vertexWeights || vertexWeights.length !== p.count) return 1;
+    return invertVertexGroup ? 1 - vertexWeights[i] : vertexWeights[i];
+  };
+  const half = (i) => [p.getX(i) - c.x, p.getY(i) - c.y, p.getZ(i) - c.z];
+
+  if (shape !== 'Cuboid') {
+    let len = useRadiusAsSize ? radius : size;
+    if (!(len > 0)) {
+      len = 0;
+      for (let i = 0; i < p.count; i++) { const h = half(i); len += Math.hypot(h[0], h[1], h[2]); }
+      len /= p.count;
+      if (len === 0) len = 10;
+    }
+    for (let i = 0; i < p.count; i++) {
+      const t = half(i);
+      let vec = [t[0], t[1], cylinder ? 0 : t[2]];
+      if (hasRadius && Math.hypot(vec[0], vec[1], vec[2]) > radius) continue;
+      const w = weightAt(i);
+      if (w === 0) continue;
+      const fac = facOrig * w, facm = 1 - fac;
+      const l = Math.max(1e-20, Math.hypot(vec[0], vec[1], vec[2]));
+      vec = vec.map(v => v / l);
+      if (mask & 1) t[0] = fac * vec[0] * len + facm * t[0];
+      if (mask & 2) t[1] = fac * vec[1] * len + facm * t[1];
+      if (mask & 4) t[2] = fac * vec[2] * len + facm * t[2];
+      p.setXYZ(i, t[0] + c.x, t[1] + c.y, t[2] + c.z);
+    }
+  } else {
+    let mn, mx;
+    if (useRadiusAsSize && hasRadius) { mn = [-radius, -radius, -radius]; mx = [radius, radius, radius]; }
+    else if (!useRadiusAsSize && size > 0) { mn = [-size, -size, -size]; mx = [size, size, size]; }
+    else {
+      mn = [Infinity, Infinity, Infinity]; mx = [-Infinity, -Infinity, -Infinity];
+      const expand = (q) => {
+        for (let a = 0; a < 3; a++) { mn[a] = Math.min(mn[a], q[a]); mx[a] = Math.max(mx[a], q[a]); }
+      };
+      if (center) expand([c.x, c.y, c.z]);
+      for (let i = 0; i < p.count; i++) expand(center ? half(i) : [p.getX(i), p.getY(i), p.getZ(i)]);
+      for (let a = 0; a < 3; a++) { mx[a] = Math.max(Math.abs(mn[a]), Math.abs(mx[a])); mn[a] = -mx[a]; }
+    }
+    for (let i = 0; i < p.count; i++) {
+      const t = center ? half(i) : [p.getX(i), p.getY(i), p.getZ(i)];
+      if (hasRadius && (Math.abs(t[0]) > radius || Math.abs(t[1]) > radius || Math.abs(t[2]) > radius)) continue;
+      const w = weightAt(i);
+      if (w === 0) continue;
+      const fac = facOrig * w, facm = 1 - fac;
+      const octant = (t[0] > 0 ? 1 : 0) | (t[1] > 0 ? 2 : 0) | (t[2] > 0 ? 4 : 0);
+      const apex = [(octant & 1) ? mx[0] : mn[0], (octant & 2) ? mx[1] : mn[1], (octant & 4) ? mx[2] : mn[2]];
+      let dmax = t[0] / apex[0], coord = 0;
+      if (t[1] / apex[1] > dmax) { dmax = t[1] / apex[1]; coord = 1; }
+      if (t[2] / apex[2] > dmax) { coord = 2; }
+      if (Math.abs(t[coord]) < 1e-7) continue;
+      const fbb = apex[coord] / t[coord];
+      if (mask & 1) t[0] = facm * t[0] + fac * t[0] * fbb;
+      if (mask & 2) t[1] = facm * t[1] + fac * t[1] * fbb;
+      if (mask & 4) t[2] = facm * t[2] + fac * t[2] * fbb;
+      p.setXYZ(i, t[0] + c.x, t[1] + c.y, t[2] + c.z);
+    }
+  }
+  p.needsUpdate = true;
+  g.computeVertexNormals();
+  return updateBounds(g);
+}
+
 export function smoothGeometry(geometry,{factor=.6,iterations=3,preserveVolume=false,boundary='Smooth',vertexWeights=null,invertVertexGroup=false}={}){
   const viaCpp = runCppKernel(geometry, null,
     exp => exp.fe_mod_smooth(Math.round(iterations), Number(factor)||0, preserveVolume ? 1 : 0,

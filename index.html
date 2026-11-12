@@ -11552,7 +11552,7 @@ const modifiersData = {
   ],
   Deform: [
     {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
-    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0.1,4,1,.05,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0,4,1,.05,{advanced:true}],["X","check",true,{advanced:true}],["Y","check",true,{advanced:true}],["Z","check",true,{advanced:true}],["Size From Radius","check",false,{advanced:true}],["Object Center","select",[],{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Laplacian Smooth", fields:[["Repeat","range",1,10,1,1],["Lambda","range",0,1,.3,.01],["Lambda Border","range",0,1,.3,.01,{advanced:true}],["X","check",true],["Y","check",true],["Z","check",true],["Preserve Volume","check",false,{advanced:true}],["Normalized","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
@@ -12018,8 +12018,18 @@ function waveOptions(p, geometry, obj = null) {
 }
 function applyWaveModifier(geometry, speed, height, width, time=0, options={}) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time, ...options }); }
 function castOptions(p, geometry, obj = null) {
+  /* MOD_cast.cc takes its centre from a control object when one is assigned:
+     the object's location in the modified object's local space. */
+  let objectCenter = null;
+  const centerId = p["Object Center"];
+  if (centerId && obj && typeof getAllSceneMeshes === 'function') {
+    const center = getAllSceneMeshes().find(mesh => mesh.uuid === centerId && mesh.isMesh);
+    if (center) { const m = modifierRelativeMatrix(obj, center).elements; objectCenter = [m[12], m[13], m[14]]; }
+  }
   return { shape: p["Shape"] || "Sphere", factor: parseFloat(p["Factor"] || 1), radius: parseFloat(p["Radius"] || 1),
     size: parseFloat(p["Size"] ?? 1),
+    useX: p["X"] !== false, useY: p["Y"] !== false, useZ: p["Z"] !== false,
+    useRadiusAsSize: p["Size From Radius"] === true, objectCenter,
     vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
 }
 function applyCastModifier(geometry, shape, factor, radius, size=1, extra={}) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size, ...extra }); }
@@ -12186,6 +12196,7 @@ function modifierDependencyRef(mod) {
   if (mod.name === 'Boolean') return mod.values?.['Operand Object'];
   if (mod.name === 'Array' && mod.values?.['Object Offset'] === true) return mod.values?.['Offset Object'];
   if (mod.name === 'Wave') return mod.values?.['Object Center'];
+  if (mod.name === 'Cast') return mod.values?.['Object Center'];
   if (mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') return mod.values?.['Target Object'];
   if (mod.name === 'Lattice') return mod.values?.['Cage Object'];
   if (mod.name === 'Armature') return mod.values?.['Rig Object'];
@@ -12658,7 +12669,7 @@ function addModifierToStack(category, definition) {
   }
   if (definition.name === 'Boolean') values['Operand Object'] = '';
   if (definition.name === 'Array') values['Offset Object'] = '';
-  if (definition.name === 'Wave') values['Object Center'] = '';
+  if (definition.name === 'Wave' || definition.name === 'Cast') values['Object Center'] = '';
   if (definition.name === 'Shrinkwrap' || definition.name === 'Surface Deform') values['Target Object'] = '';
   if (definition.name === 'Lattice') values['Cage Object'] = '';
   if (definition.name === 'Armature') values['Rig Object'] = ''; 
@@ -12871,6 +12882,7 @@ function createModifierField(mod, index, field) {
     const isObjectTarget = (mod.name === 'Boolean' && label === 'Operand Object')
       || (mod.name === 'Array' && label === 'Offset Object')
       || (mod.name === 'Wave' && label === 'Object Center')
+      || (mod.name === 'Cast' && label === 'Object Center')
       || ((mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') && label === 'Target Object')
       || (mod.name === 'Lattice' && label === 'Cage Object')
       || (mod.name === 'Armature' && label === 'Rig Object');

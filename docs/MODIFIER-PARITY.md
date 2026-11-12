@@ -167,12 +167,25 @@ edges to collapse, so the toggle would be dead).
 ## Deform
 
 ### Cast — `MOD_cast.cc`
-✅ `cast_type`, `factor`, `radius`, `size`, `vertex_group` + `invert_vertex_group`.
+✅ `cast_type` (Sphere / Cylinder / Cuboid), `factor`, `radius`, `size`,
+`use_radius_as_size`, `use_x` / `use_y` / `use_z`, `vertex_group` +
+`invert_vertex_group`, and `object` (`objectcenter`).
 
-❌ `use_radius_as_size`, `use_transform`, `use_x` / `use_y` / `use_z`
-(this app has one Cast shape, not three axes).
+The kernel is `sphere_do()` and `cuboid_do()`. Three things the old version
+had wrong are now upstream's:
 
-⛔ `object` (O).
+- the centre is the object origin `{0, 0, 0}` (or the control object's
+  location in the modified object's space), not the bounding-box centre;
+- `radius` is a **limit** - a vertex further than `radius` from the centre is
+  skipped, it is not a scale. `size` is the distance the cast pulls to, and
+  when it is zero the mean distance of the vertices stands in (10 if that is
+  zero as well);
+- `use_x` / `use_y` / `use_z` gate the components, and Cylinder clears Z from
+  the flags, so a cylinder never moves along its own axis. Cuboid projects to
+  the octant's box corner (`fbb = apex[coord] / co[coord]`), it does not clamp.
+
+⛔ `use_transform` (O: needs the control object's full transform pair, not just
+its location, and that is a second relative matrix the session does not carry).
 
 ### Displace — `MOD_displace.cc`
 🟡 `strength`, `mid_level`, `direction`; the texture input is a procedural

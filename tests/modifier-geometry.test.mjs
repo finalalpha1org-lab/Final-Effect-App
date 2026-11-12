@@ -104,8 +104,22 @@ test('Wave time and Warp strength produce parameter-dependent vertex motion', ()
 });
 
 test('Cast and procedural displacement change vertices according to parameters', () => {
-  const source=new THREE.IcosahedronGeometry(1,1),cast=castGeometry(source,{shape:'Cuboid',factor:1,radius:.5}),sphere=castGeometry(source,{shape:'Sphere',factor:1,radius:.5}),cylinder=castGeometry(source,{shape:'Cylinder',factor:1,radius:.5}),displaced=displaceGeometry(source,{strength:1,midlevel:.2,frequency:2});
+  /* MOD_cast.cc: `radius` limits which vertices move, it is not a scale. A
+     unit-radius source with a 0.5 radius has nothing inside the limit, so the
+     mesh stays exactly where it was; `size` is what decides how far the cast
+     pulls. */
+  const source=new THREE.IcosahedronGeometry(1,1);
+  const untouched=castGeometry(source,{shape:'Sphere',factor:1,radius:.5});
+  assert.deepEqual(Array.from(untouched.attributes.position.array),Array.from(source.attributes.position.array),'0.5 radius leaves a unit sphere alone');
+  const cast=castGeometry(source,{shape:'Cuboid',factor:1,radius:0,size:.5});
+  const sphere=castGeometry(source,{shape:'Sphere',factor:1,radius:0,size:.5});
+  const cylinder=castGeometry(source,{shape:'Cylinder',factor:1,radius:0,size:.5});
+  const displaced=displaceGeometry(source,{strength:1,midlevel:.2,frequency:2});
   for(const result of [cast,sphere,cylinder,displaced]){assert.notDeepEqual(Array.from(result.attributes.position.array),Array.from(source.attributes.position.array));assertFinite(result)}
+  /* A cast to `size` puts every moving vertex at that distance from the
+     origin, which is what the sphere shape means. */
+  const p=sphere.attributes.position;
+  for(let i=0;i<p.count;i++) assert.ok(Math.abs(Math.hypot(p.getX(i),p.getY(i),p.getZ(i))-.5)<1e-5,`vertex ${i} should sit at 0.5`);
 });
 
 test('Laplacian smoothing and weighted normals produce valid geometry', () => {
