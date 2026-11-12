@@ -74,7 +74,7 @@ const REQUIRED_EXPORTS = [
   'fe_vol_set_temporal','fe_vol_temporal',
   'fe_mod_begin','fe_mod_counts_ptr','fe_mod_in_pos_ptr','fe_mod_in_uv_ptr','fe_mod_in_idx_ptr',
   'fe_mod_normals_ptr','fe_mod_set_counts','fe_mod_weld','fe_mod_smooth','fe_mod_mirror',
-  'fe_mod_solidify','fe_mod_wireframe','fe_mod_edge_split','fe_mod_laplacian_smooth','fe_mod_screw','fe_mod_build','fe_mod_bevel','fe_mod_displace','fe_mod_wave','fe_mod_cast','fe_mod_twist','fe_mod_simple_deform','fe_mod_array','fe_mod_array_ex',
+  'fe_mod_solidify','fe_mod_wireframe','fe_mod_edge_split','fe_mod_laplacian_smooth','fe_mod_screw','fe_mod_build','fe_mod_bevel','fe_mod_boolean','fe_mod_target_uv_ptr','fe_mod_displace','fe_mod_wave','fe_mod_cast','fe_mod_twist','fe_mod_simple_deform','fe_mod_array','fe_mod_array_ex',
   'fe_mod_subdivide','fe_mod_decimate','fe_mod_decimate_collapse',
   'fe_mod_in_nrm_ptr','fe_mod_face_smooth_ptr','fe_mod_set_face_smooth',
   'fe_mod_derive_face_smooth','fe_mod_shade',

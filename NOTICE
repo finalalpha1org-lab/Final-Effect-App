@@ -134,6 +134,22 @@ cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
                correction. Not ported: vertex-group weighting and the Origin
                object's space transform.
 
+cpp/src/fe_modifiers.cpp - fe_mod_boolean()
+  Ported from  source/blender/blenlib/intern/mesh_boolean.cc
+               (BLI_mesh_boolean) and source/blender/modifiers/intern/MOD_boolean.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the three passes the float solver performs: the BVH pair search
+               (upstream's KDopBVH holds the same data), the cut along the
+               segment where two triangles meet, and the parity test that says
+               which pieces are inside. Coplanar faces - two cubes sharing a
+               wall - are separated by a 1.5e-4 rad rotation of the operand,
+               which is how this port resolves what upstream's exact solver
+               settles with rationals. Not ported: self-intersection, the
+               hole-tolerant winding numbers and material transfer.
+
 cpp/src/fe_modifiers.cpp - fe_mod_bevel()
   Ported from  source/blender/bmesh/tools/bmesh_bevel.cc
                (BM_mesh_bevel) and source/blender/modifiers/intern/MOD_bevel.cc

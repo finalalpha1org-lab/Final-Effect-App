@@ -67,6 +67,7 @@ struct ModSession {
   float* matrix = nullptr;
   float* tgtPos = nullptr;
   uint32_t* tgtIdx = nullptr;
+  float* tgtUv = nullptr;
   float* tgtWorld = nullptr;
   uint32_t* tgtCounts = nullptr;
   uint32_t* sdOrd = nullptr;
@@ -934,6 +935,383 @@ int32_t surfaceDeformApply(float strength) {
 
 
 } // namespace
+
+
+/* =========================================================================
+ * Boolean - ported from mesh_boolean.cc's construction
+ *
+ *   source/blender/blenlib/intern/mesh_boolean.cc  (BLI_mesh_boolean)
+ *   source/blender/modifiers/intern/MOD_boolean.cc
+ *
+ * Upstream's float solver does three things, and so does this:
+ *
+ *   1. find the pairs of triangles that intersect, with a BVH over each mesh
+ *      (upstream's KDopBVH holds the same data);
+ *   2. cut every intersecting triangle along the segment where it meets the
+ *      other mesh, so the two surfaces share a boundary curve exactly;
+ *   3. decide, for every resulting piece, whether its centre is inside the
+ *      other mesh - by counting crossings of a ray - and keep the pieces the
+ *      operation asks for. Difference keeps A outside B and B inside A, with
+ *      B's winding reversed; Union keeps both outsides; Intersection both
+ *      insides.
+ *
+ * Upstream's Exact solver uses GMP rationals and the floating solver here
+ * mirrors the "Fast" one. Coplanar face pairs (two cubes sharing a wall) are
+ * not special-cased: they are detected and left whole, which is what the fast
+ * solver does too.
+ *
+ * Not ported: self-intersection (`use_self`), the hole-tolerant winding
+ * numbers and material transfer.
+ * ========================================================================= */
+constexpr uint32_t BOOL_MAX_PIECES = 12u;
+constexpr uint32_t BOOL_MAX_POLY_VERTS = 16u;
+
+struct BoolBvh {
+  float* lo = nullptr;        /* 3 per node */
+  float* hi = nullptr;
+  uint32_t* start = nullptr;  /* leaf: first triangle, internal: 0xFFFFFFFF */
+  uint32_t* count = nullptr;  /* leaf: triangle count */
+  uint32_t* right = nullptr;  /* internal: right child; left is node + 1 */
+  uint32_t* order = nullptr;
+  uint32_t nodes = 0, tn = 0;
+};
+
+inline void triBounds(const float* pos, const uint32_t* idx, uint32_t t, Vec3& lo, Vec3& hi) {
+  const Vec3 a = readPos(pos, idx[t * 3]), b = readPos(pos, idx[t * 3 + 1]), c = readPos(pos, idx[t * 3 + 2]);
+  lo = minv(minv(a, b), c);
+  hi = maxv(maxv(a, b), c);
+}
+
+/* ---- quickselect on the centroid of a triangle along one axis ---- */
+void selectTri(uint32_t* order, uint32_t lo, uint32_t hi, uint32_t k, const float* cen, uint32_t axis) {
+  while (hi - lo > 1u) {
+    const uint32_t mid = lo + (hi - lo) / 2u;
+    /* median of three */
+    const float a = cen[order[lo] * 3u + axis], b = cen[order[mid] * 3u + axis], c = cen[order[hi - 1u] * 3u + axis];
+    const float pivot = a < b ? (b < c ? b : (a < c ? c : a)) : (a < c ? a : (b < c ? c : b));
+    uint32_t i = lo, j = hi - 1u;
+    while (true) {
+      while (cen[order[i] * 3u + axis] < pivot) ++i;
+      while (cen[order[j] * 3u + axis] > pivot) { if (j == lo) break; --j; }
+      if (i >= j) break;
+      const uint32_t tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+      ++i;
+      if (j) --j;
+    }
+    const uint32_t split = i;
+    if (k < split) hi = split;
+    else if (k > split) lo = split;
+    else return;
+    if (hi <= lo + 1u) return;
+  }
+}
+
+uint32_t bvhBuildNode(BoolBvh& b, uint32_t lo, uint32_t hi, const float* cen, const float* tlo, const float* thi) {
+  const uint32_t node = b.nodes++;
+  Vec3 blo(1e30f, 1e30f, 1e30f), bhi(-1e30f, -1e30f, -1e30f);
+  for (uint32_t i = lo; i < hi; ++i) {
+    const uint32_t t = b.order[i];
+    blo = minv(blo, Vec3(tlo[t * 3], tlo[t * 3 + 1], tlo[t * 3 + 2]));
+    bhi = maxv(bhi, Vec3(thi[t * 3], thi[t * 3 + 1], thi[t * 3 + 2]));
+  }
+  b.lo[node * 3] = blo.x; b.lo[node * 3 + 1] = blo.y; b.lo[node * 3 + 2] = blo.z;
+  b.hi[node * 3] = bhi.x; b.hi[node * 3 + 1] = bhi.y; b.hi[node * 3 + 2] = bhi.z;
+  if (hi - lo <= 4u) {
+    b.start[node] = lo;
+    b.count[node] = hi - lo;
+    b.right[node] = 0xFFFFFFFFu;
+    return node;
+  }
+  const Vec3 ext = bhi - blo;
+  const uint32_t axis = ext.x >= ext.y ? (ext.x >= ext.z ? 0u : 2u) : (ext.y >= ext.z ? 1u : 2u);
+  const uint32_t mid = lo + (hi - lo) / 2u;
+  selectTri(b.order, lo, hi, mid, cen, axis);
+  b.start[node] = 0xFFFFFFFFu;
+  b.count[node] = 0;
+  const uint32_t left = bvhBuildNode(b, lo, mid, cen, tlo, thi);
+  (void)left;
+  const uint32_t r = bvhBuildNode(b, mid, hi, cen, tlo, thi);
+  b.right[node] = r;
+  return node;
+}
+
+bool bvhBuild(BoolBvh& b, const float* pos, const uint32_t* idx, uint32_t tn) {
+  b.tn = tn;
+  const uint32_t maxNodes = tn * 2u + 4u;
+  b.lo = modArray<float>(maxNodes * 3u);
+  b.hi = modArray<float>(maxNodes * 3u);
+  b.start = modArray<uint32_t>(maxNodes);
+  b.count = modArray<uint32_t>(maxNodes);
+  b.right = modArray<uint32_t>(maxNodes);
+  b.order = modArray<uint32_t>(tn);
+  float* cen = modArray<float>(tn * 3u);
+  float* tlo = modArray<float>(tn * 3u);
+  float* thi = modArray<float>(tn * 3u);
+  if (!b.lo || !b.hi || !b.start || !b.count || !b.right || !b.order || !cen || !tlo || !thi) return false;
+  for (uint32_t t = 0; t < tn; ++t) {
+    b.order[t] = t;
+    Vec3 lo, hi;
+    triBounds(pos, idx, t, lo, hi);
+    tlo[t * 3] = lo.x; tlo[t * 3 + 1] = lo.y; tlo[t * 3 + 2] = lo.z;
+    thi[t * 3] = hi.x; thi[t * 3 + 1] = hi.y; thi[t * 3 + 2] = hi.z;
+    cen[t * 3] = (lo.x + hi.x) * 0.5f;
+    cen[t * 3 + 1] = (lo.y + hi.y) * 0.5f;
+    cen[t * 3 + 2] = (lo.z + hi.z) * 0.5f;
+  }
+  b.nodes = 0;
+  bvhBuildNode(b, 0u, tn, cen, tlo, thi);
+  return b.nodes > 0u;
+}
+
+inline bool boxHit(const float* lo, const float* hi, const Vec3& o, const Vec3& d, float tmax) {
+  float t0 = 0.0f, t1 = tmax;
+  for (uint32_t a = 0; a < 3u; ++a) {
+    const float oa = a == 0u ? o.x : (a == 1u ? o.y : o.z);
+    const float da = a == 0u ? d.x : (a == 1u ? d.y : d.z);
+    const float la = lo[a], ha = hi[a];
+    if (absf(da) < 1e-12f) {
+      if (oa < la || oa > ha) return false;
+    } else {
+      const float inv = 1.0f / da;
+      float tn = (la - oa) * inv, tf = (ha - oa) * inv;
+      if (tn > tf) { const float tmp = tn; tn = tf; tf = tmp; }
+      if (tn > t0) t0 = tn;
+      if (tf < t1) t1 = tf;
+      if (t0 > t1) return false;
+    }
+  }
+  return true;
+}
+
+/* Möller-Trumbore, front and back faces. */
+inline bool rayTri(const Vec3& o, const Vec3& d, const Vec3& a, const Vec3& b, const Vec3& c, float& tOut) {
+  const Vec3 e1 = b - a, e2 = c - a;
+  const Vec3 p = cross(d, e2);
+  const float det = Vec3::dot(e1, p);
+  if (absf(det) < 1e-12f) return false;
+  const float inv = 1.0f / det;
+  const Vec3 tv = o - a;
+  const float u = Vec3::dot(tv, p) * inv;
+  if (u < 0.0f || u > 1.0f) return false;
+  const Vec3 q = cross(tv, e1);
+  const float v = Vec3::dot(d, q) * inv;
+  if (v < 0.0f || u + v > 1.0f) return false;
+  tOut = Vec3::dot(e2, q) * inv;
+  return tOut > 1e-6f;
+}
+
+/* How many triangles of the tree a ray crosses. */
+uint32_t bvhHits(const BoolBvh& b, const float* pos, const uint32_t* idx, const Vec3& o, const Vec3& d) {
+  uint32_t hits = 0;
+  uint32_t stack[64];
+  uint32_t sp = 0;
+  stack[sp++] = 0u;
+  while (sp) {
+    const uint32_t n = stack[--sp];
+    if (!boxHit(b.lo + n * 3u, b.hi + n * 3u, o, d, 1e30f)) continue;
+    if (b.start[n] != 0xFFFFFFFFu) {
+      for (uint32_t i = 0; i < b.count[n]; ++i) {
+        const uint32_t t = b.order[b.start[n] + i];
+        float tt;
+        if (rayTri(o, d, readPos(pos, idx[t * 3]), readPos(pos, idx[t * 3 + 1]), readPos(pos, idx[t * 3 + 2]), tt)) ++hits;
+      }
+      continue;
+    }
+    if (sp + 2u < 64u) {
+      stack[sp++] = n + 1u;
+      stack[sp++] = b.right[n];
+    }
+  }
+  return hits;
+}
+
+/* The segment where two triangles meet, or false when they do not. */
+bool triTriSegment(const Vec3& a0, const Vec3& a1, const Vec3& a2,
+                   const Vec3& b0, const Vec3& b1, const Vec3& b2, Vec3& s0, Vec3& s1) {
+  const Vec3 nA = cross(a1 - a0, a2 - a0);
+  const float lenA = nA.length();
+  if (lenA < 1e-12f) return false;
+  const Vec3 nA1 = nA * (1.0f / lenA);
+  const float dA = Vec3::dot(nA1, a0);
+  const Vec3 nB = cross(b1 - b0, b2 - b0);
+  const float lenB = nB.length();
+  if (lenB < 1e-12f) return false;
+  const Vec3 nB1 = nB * (1.0f / lenB);
+  const float dB = Vec3::dot(nB1, b0);
+
+  const float da[3] = {Vec3::dot(nB1, a0) - dB, Vec3::dot(nB1, a1) - dB, Vec3::dot(nB1, a2) - dB};
+  const float db[3] = {Vec3::dot(nA1, b0) - dA, Vec3::dot(nA1, b1) - dA, Vec3::dot(nA1, b2) - dA};
+  if ((da[0] > 1e-7f && da[1] > 1e-7f && da[2] > 1e-7f) || (da[0] < -1e-7f && da[1] < -1e-7f && da[2] < -1e-7f)) return false;
+  if ((db[0] > 1e-7f && db[1] > 1e-7f && db[2] > 1e-7f) || (db[0] < -1e-7f && db[1] < -1e-7f && db[2] < -1e-7f)) return false;
+
+  const Vec3 A[3] = {a0, a1, a2};
+  const Vec3 B[3] = {b0, b1, b2};
+  /* The part of A on B's plane. */
+  Vec3 pa[4];
+  uint32_t nPA = 0;
+  for (uint32_t i = 0; i < 3u; ++i) {
+    const uint32_t j = (i + 1u) % 3u;
+    if (absf(da[i]) < 1e-9f) { pa[nPA++] = A[i]; }
+    if ((da[i] < 0.0f && da[j] > 0.0f) || (da[i] > 0.0f && da[j] < 0.0f)) {
+      const float t = da[i] / (da[i] - da[j]);
+      pa[nPA++] = A[i] + (A[j] - A[i]) * t;
+    }
+    if (nPA >= 4u) break;
+  }
+  if (nPA < 2u) return false;
+
+  Vec3 pb[4];
+  uint32_t nPB = 0;
+  for (uint32_t i = 0; i < 3u; ++i) {
+    const uint32_t j = (i + 1u) % 3u;
+    if (absf(db[i]) < 1e-9f) { pb[nPB++] = B[i]; }
+    if ((db[i] < 0.0f && db[j] > 0.0f) || (db[i] > 0.0f && db[j] < 0.0f)) {
+      const float t = db[i] / (db[i] - db[j]);
+      pb[nPB++] = B[i] + (B[j] - B[i]) * t;
+    }
+    if (nPB >= 4u) break;
+  }
+  if (nPB < 2u) return false;
+
+  /* Both cuts lie on the planes' intersection line: compare their extents
+     along it and keep the overlap. */
+  Vec3 dir = cross(nA1, nB1);
+  const float dl = dir.length();
+  if (dl < 1e-9f) return false;   /* parallel (or coplanar) planes: left whole */
+  dir = dir * (1.0f / dl);
+  const Vec3 ref = pa[0];
+  float loA = 1e30f, hiA = -1e30f;
+  for (uint32_t i = 0; i < nPA; ++i) {
+    const float t = Vec3::dot(pa[i] - ref, dir);
+    loA = minf(loA, t); hiA = maxf(hiA, t);
+  }
+  float loB = 1e30f, hiB = -1e30f;
+  for (uint32_t i = 0; i < nPB; ++i) {
+    const float t = Vec3::dot(pb[i] - ref, dir);
+    loB = minf(loB, t); hiB = maxf(hiB, t);
+  }
+  const float lo = maxf(loA, loB), hi = minf(hiA, hiB);
+  if (hi - lo < 1e-7f) return false;
+  s0 = ref + dir * lo;
+  s1 = ref + dir * hi;
+  return true;
+}
+
+/* A convex polygon in the plane of a triangle, as 2D points plus the
+   barycentrics needed to carry the UV across a cut. */
+struct BoolPoly {
+  float x[BOOL_MAX_POLY_VERTS];
+  float y[BOOL_MAX_POLY_VERTS];
+  uint32_t n;
+};
+
+/* Split one convex polygon by the line through two 2D points. */
+void polySplit(const BoolPoly& in, float ax, float ay, float bx, float by,
+               BoolPoly& left, BoolPoly& right, bool& anyLeft, bool& anyRight) {
+  const float dx = bx - ax, dy = by - ay;
+  float s[BOOL_MAX_POLY_VERTS + 2];
+  for (uint32_t i = 0; i < in.n; ++i) s[i] = dx * (in.y[i] - ay) - dy * (in.x[i] - ax);
+  left.n = 0; right.n = 0;
+  for (uint32_t i = 0; i < in.n; ++i) {
+    const uint32_t j = (i + 1u) % in.n;
+    const float si = s[i], sj = s[j];
+    if (si >= -1e-9f && left.n < BOOL_MAX_POLY_VERTS) { left.x[left.n] = in.x[i]; left.y[left.n] = in.y[i]; ++left.n; }
+    if (si <= 1e-9f && right.n < BOOL_MAX_POLY_VERTS) { right.x[right.n] = in.x[i]; right.y[right.n] = in.y[i]; ++right.n; }
+    if ((si > 1e-9f && sj < -1e-9f) || (si < -1e-9f && sj > 1e-9f)) {
+      const float t = si / (si - sj);
+      const float px = in.x[i] + (in.x[j] - in.x[i]) * t;
+      const float py = in.y[i] + (in.y[j] - in.y[i]) * t;
+      if (left.n < BOOL_MAX_POLY_VERTS) { left.x[left.n] = px; left.y[left.n] = py; ++left.n; }
+      if (right.n < BOOL_MAX_POLY_VERTS) { right.x[right.n] = px; right.y[right.n] = py; ++right.n; }
+    }
+  }
+  anyLeft = left.n >= 3u;
+  anyRight = right.n >= 3u;
+}
+
+template <typename Emit>
+void boolCutTriangle(const Vec3& p0, const Vec3& p1, const Vec3& p2,
+                     const float* uv0, const float* uv1, const float* uv2,
+                     const Vec3* segA, const Vec3* segB, uint32_t segN,
+                     Emit&& emit) {
+  const Vec3 n = cross(p1 - p0, p2 - p0);
+  const float len = n.length();
+  Vec3 e1 = p1 - p0;
+  if (len < 1e-12f || e1.length() < 1e-12f) return;
+  const Vec3 nUnit = n * (1.0f / len);
+  e1 = normalize(e1);
+  const Vec3 e2 = cross(nUnit, e1);
+
+  auto to2 = [&](const Vec3& p, float& x, float& y) {
+    const Vec3 d = p - p0;
+    x = Vec3::dot(d, e1);
+    y = Vec3::dot(d, e2);
+  };
+
+  BoolPoly work[BOOL_MAX_PIECES * 2u];
+  uint32_t workN = 1u;
+  work[0].n = 3u;
+  to2(p0, work[0].x[0], work[0].y[0]);
+  to2(p1, work[0].x[1], work[0].y[1]);
+  to2(p2, work[0].x[2], work[0].y[2]);
+
+  for (uint32_t sgi = 0; sgi < segN && workN < BOOL_MAX_PIECES * 2u; ++sgi) {
+    float ax, ay, bx, by;
+    to2(segA[sgi], ax, ay);
+    to2(segB[sgi], bx, by);
+    if ((ax - bx) * (ax - bx) + (ay - by) * (ay - by) < 1e-14f) continue;
+
+    BoolPoly next[BOOL_MAX_PIECES * 2u];
+    uint32_t nextN = 0;
+    for (uint32_t i = 0; i < workN; ++i) {
+      BoolPoly left, right;
+      bool anyLeft = false, anyRight = false;
+      polySplit(work[i], ax, ay, bx, by, left, right, anyLeft, anyRight);
+      if (!anyLeft && !anyRight) continue;
+      if (anyLeft && nextN < BOOL_MAX_PIECES * 2u) next[nextN++] = left;
+      if (anyRight && nextN < BOOL_MAX_PIECES * 2u) next[nextN++] = right;
+    }
+    if (!nextN) break;
+    for (uint32_t i = 0; i < nextN; ++i) work[i] = next[i];
+    workN = nextN;
+  }
+
+  float ax0, ay0, ax1, ay1, ax2, ay2;
+  to2(p0, ax0, ay0);
+  to2(p1, ax1, ay1);
+  to2(p2, ax2, ay2);
+  const float d20 = (ay1 - ay2) * (ax0 - ax2) + (ax2 - ax1) * (ay0 - ay2);
+  const float denom = absf(d20) > 1e-12f ? 1.0f / d20 : 0.0f;
+
+  auto bary = [&](float x, float y, float* out) {
+    const float w0 = ((ay1 - ay2) * (x - ax2) + (ax2 - ax1) * (y - ay2)) * denom;
+    const float w1 = ((ay2 - ay0) * (x - ax2) + (ax0 - ax2) * (y - ay2)) * denom;
+    out[0] = w0;
+    out[1] = w1;
+    out[2] = 1.0f - w0 - w1;
+  };
+
+  for (uint32_t i = 0; i < workN; ++i) {
+    const uint32_t npoly = work[i].n;
+    if (npoly < 3u) continue;
+    for (uint32_t k = 1; k + 1u < npoly; ++k) {
+      Vec3 tri[3];
+      float uvs[3][2];
+      const float xs[3] = {work[i].x[0], work[i].x[k], work[i].x[k + 1u]};
+      const float ys[3] = {work[i].y[0], work[i].y[k], work[i].y[k + 1u]};
+      for (uint32_t c = 0; c < 3u; ++c) {
+        tri[c] = p0 + e1 * xs[c] + e2 * ys[c];
+        float w[3];
+        bary(xs[c], ys[c], w);
+        uvs[c][0] = w[0] * uv0[0] + w[1] * uv1[0] + w[2] * uv2[0];
+        uvs[c][1] = w[0] * uv0[1] + w[1] * uv1[1] + w[2] * uv2[1];
+      }
+      /* Slivers are what a cut produces by the dozen; they carry no surface. */
+      if (cross(tri[1] - tri[0], tri[2] - tri[0]).length() < 1e-10f) continue;
+      emit(tri, uvs);
+    }
+  }
+}
 
 extern "C" {
 
@@ -4280,6 +4658,158 @@ FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float la
   return commit(v, t);
 }
 
+FE_EXPORT int32_t fe_mod_boolean(int32_t op, int32_t use_self, int32_t hole_tolerant) {
+  if (!g_s.ready) return -1;
+  const uint32_t vA = g_s.vc, tA = g_s.tc;
+  if (!vA || !tA) return -3;
+  if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx) return -3;
+  const uint32_t tB = g_s.tgtCounts[1];
+  if (!g_s.tgtCounts[0] || !tB) return -3;
+  (void)use_self;
+  (void)hole_tolerant;
+  if (op < 0 || op > 2) op = 0;
+  g_s.flagMode = 0;
+
+  /* Coplanar faces are the one case a segment-based cut cannot see: two cubes
+     sharing a wall meet along no line at all, and both copies of that wall
+     would be classified from a point that sits exactly on the other surface.
+     Upstream's exact solver resolves it with rationals; the float solver is
+     allowed a nudge, so B is rotated by a tenth of a milliradian about its own
+     centre. Nothing visible moves - on a 2-unit cube it is 2e-4 units - and
+     every pair of faces is afterwards in general position. */
+  float* bPos = modArray<float>(g_s.tgtCounts[0] * 3u);
+  if (!bPos) return -2;
+  {
+    Vec3 c(0.0f, 0.0f, 0.0f);
+    for (uint32_t i = 0; i < g_s.tgtCounts[0]; ++i) c += readPos(g_s.tgtPos, i);
+    c = c * (1.0f / static_cast<float>(g_s.tgtCounts[0]));
+    const Vec3 ax = normalize(Vec3(0.3121f, 0.5153f, 0.7977f));
+    const float ang = 1.5e-4f;
+    const float ca = cosf(ang), sa = sinf(ang);
+    for (uint32_t i = 0; i < g_s.tgtCounts[0]; ++i) {
+      const Vec3 d = readPos(g_s.tgtPos, i) - c;
+      const Vec3 par = ax * Vec3::dot(d, ax);
+      const Vec3 perp = d - par;
+      const Vec3 rot = perp * ca + cross(ax, perp) * sa + par;
+      writePos(bPos, i, rot + c);
+    }
+  }
+
+  BoolBvh bvhA, bvhB;
+  if (!bvhBuild(bvhA, g_s.inPos, g_s.inIdx, tA)) return -2;
+  if (!bvhBuild(bvhB, bPos, g_s.tgtIdx, tB)) return -2;
+
+  uint32_t nextV = 0, outT = 0;
+  /* The ray: not axis aligned and not a small rational, so a cube's edges and
+     diagonals never line up with it. */
+  const Vec3 rayDir = normalize(Vec3(0.3420201f, 0.6040228f, 0.7198463f));
+
+  auto emitTri = [&](const Vec3* tri, const float uvs[3][2], bool hasUv, bool flip) -> bool {
+    if (outT >= g_s.tcap || nextV + 3u > g_s.vcap) return false;
+    const uint32_t base = nextV;
+    for (uint32_t c = 0; c < 3u; ++c) {
+      writePos(g_s.outPos, base + c, tri[c]);
+      if (g_s.hasUv) {
+        g_s.outUv[(base + c) * 2] = hasUv ? uvs[c][0] : 0.0f;
+        g_s.outUv[(base + c) * 2 + 1] = hasUv ? uvs[c][1] : 0.0f;
+      }
+    }
+    g_s.outIdx[outT * 3] = base;
+    g_s.outIdx[outT * 3 + 1] = base + (flip ? 2u : 1u);
+    g_s.outIdx[outT * 3 + 2] = base + (flip ? 1u : 2u);
+    ++outT;
+    nextV = base + 3u;
+    return true;
+  };
+
+  /* One mesh against the other: cut where they cross, classify the pieces,
+     keep the half the operation wants. */
+  auto process = [&](const float* pos, const uint32_t* idx, const float* uvBuf, uint32_t tn,
+                     const BoolBvh& other, const float* oPos, const uint32_t* oIdx,
+                     bool keepInside, bool flip) -> int32_t {
+    for (uint32_t t = 0; t < tn; ++t) {
+      const Vec3 p0 = readPos(pos, idx[t * 3]);
+      const Vec3 p1 = readPos(pos, idx[t * 3 + 1]);
+      const Vec3 p2 = readPos(pos, idx[t * 3 + 2]);
+      if (cross(p1 - p0, p2 - p0).length() < 1e-12f) continue;
+
+      Vec3 segA[BOOL_MAX_PIECES], segB[BOOL_MAX_PIECES];
+      uint32_t segN = 0;
+      Vec3 tl, th;
+      triBounds(pos, idx, t, tl, th);
+      uint32_t stack[64];
+      uint32_t sp = 0;
+      stack[sp++] = 0u;
+      while (sp && segN < BOOL_MAX_PIECES) {
+        const uint32_t nd = stack[--sp];
+        if (th.x < other.lo[nd * 3] || tl.x > other.hi[nd * 3]) continue;
+        if (th.y < other.lo[nd * 3 + 1] || tl.y > other.hi[nd * 3 + 1]) continue;
+        if (th.z < other.lo[nd * 3 + 2] || tl.z > other.hi[nd * 3 + 2]) continue;
+        if (other.start[nd] != 0xFFFFFFFFu) {
+          for (uint32_t i = 0; i < other.count[nd] && segN < BOOL_MAX_PIECES; ++i) {
+            const uint32_t u = other.order[other.start[nd] + i];
+            const Vec3 q0 = readPos(oPos, oIdx[u * 3]);
+            const Vec3 q1 = readPos(oPos, oIdx[u * 3 + 1]);
+            const Vec3 q2 = readPos(oPos, oIdx[u * 3 + 2]);
+            Vec3 s0, s1;
+            if (triTriSegment(p0, p1, p2, q0, q1, q2, s0, s1)) {
+              segA[segN] = s0;
+              segB[segN] = s1;
+              ++segN;
+            }
+          }
+          continue;
+        }
+        if (sp + 2u < 64u) { stack[sp++] = nd + 1u; stack[sp++] = other.right[nd]; }
+      }
+
+      const bool hasUv = g_s.hasUv && uvBuf != nullptr;
+      float uv[3][2] = {{0.0f, 0.0f}, {0.0f, 0.0f}, {0.0f, 0.0f}};
+      if (hasUv) {
+        uv[0][0] = uvBuf[idx[t * 3] * 2]; uv[0][1] = uvBuf[idx[t * 3] * 2 + 1];
+        uv[1][0] = uvBuf[idx[t * 3 + 1] * 2]; uv[1][1] = uvBuf[idx[t * 3 + 1] * 2 + 1];
+        uv[2][0] = uvBuf[idx[t * 3 + 2] * 2]; uv[2][1] = uvBuf[idx[t * 3 + 2] * 2 + 1];
+      }
+
+      const Vec3 corners[3] = {p0, p1, p2};
+      int32_t rc = 0;
+      if (!segN) {
+        const Vec3 centre = (p0 + p1 + p2) * (1.0f / 3.0f);
+        const bool inside = (bvhHits(other, oPos, oIdx, centre, rayDir) & 1u) != 0u;
+        if (inside == keepInside) {
+          if (!emitTri(corners, uv, hasUv, flip)) rc = -2;
+        }
+      } else {
+        boolCutTriangle(p0, p1, p2, uv[0], uv[1], uv[2], segA, segB, segN,
+          [&](const Vec3* tri, const float uvs[3][2]) {
+            if (rc) return;
+            const Vec3 centre = (tri[0] + tri[1] + tri[2]) * (1.0f / 3.0f);
+            const bool inside = (bvhHits(other, oPos, oIdx, centre, rayDir) & 1u) != 0u;
+            if (inside == keepInside) {
+              if (!emitTri(tri, uvs, hasUv, flip)) rc = -2;
+            }
+          });
+      }
+      if (rc) return rc;
+    }
+    return 0;
+  };
+
+  /* Difference keeps A outside B and B inside A, with B reversed; Union keeps
+     both outsides; Intersection both insides. */
+  const bool aInside = op == 2;
+  const bool bInside = op != 1;   /* Difference and Intersection both keep B's
+                                     inside; Union keeps its outside. */
+  int32_t rc = process(g_s.inPos, g_s.inIdx, g_s.hasUv ? g_s.inUv : nullptr, tA,
+                       bvhB, g_s.tgtPos, g_s.tgtIdx, aInside, false);
+  if (rc) return rc;
+  rc = process(bPos, g_s.tgtIdx, g_s.tgtUv, tB,
+               bvhA, g_s.inPos, g_s.inIdx, bInside, op == 0);
+  if (rc) return rc;
+  if (!nextV || !outT) return -4;
+  return commit(nextV, outT);
+}
+
 /* =========================================================================
  * Laplacian Smooth - ported from MOD_laplaciansmooth.cc
  *
@@ -4322,11 +4852,13 @@ FE_EXPORT int32_t fe_mod_target_begin(uint32_t vert_count, uint32_t tri_count) {
   float* pos = modArray<float>(vert_count * 3u);
   uint32_t* idx = modArray<uint32_t>(tri_count * 3u);
   float* world = modArray<float>(vert_count * 3u);
+  float* tuv = modArray<float>(vert_count * 2u);
   uint32_t* counts = modArray<uint32_t>(2u);
-  if (!pos || !idx || !world || !counts) return -2;
+  if (!pos || !idx || !world || !tuv || !counts) return -2;
   g_s.tgtPos = pos;
   g_s.tgtIdx = idx;
   g_s.tgtWorld = world;
+  g_s.tgtUv = tuv;
   g_s.tgtCounts = counts;
   counts[0] = vert_count;
   counts[1] = tri_count;
@@ -4339,6 +4871,10 @@ FE_EXPORT uint32_t fe_mod_target_counts_ptr(void) {
 FE_EXPORT uint32_t fe_mod_target_pos_ptr(void) {
   return g_s.tgtPos ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtPos)) : 0u;
 }
+FE_EXPORT uint32_t fe_mod_target_uv_ptr(void) {
+  return g_s.tgtUv ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtUv)) : 0u;
+}
+
 FE_EXPORT uint32_t fe_mod_target_idx_ptr(void) {
   return g_s.tgtIdx ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.tgtIdx)) : 0u;
 }

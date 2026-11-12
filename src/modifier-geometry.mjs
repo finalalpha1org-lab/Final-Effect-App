@@ -187,9 +187,46 @@ export function validateClosedManifold(geometry, label = 'Mesh', epsilon) {
   return { triangles: validTriangles, edges: edges.size, vertices: next };
 }
 
+/* Boolean, from mesh_boolean.cc: the operand is baked into the target's space,
+   uploaded as the session's target mesh, and the kernel does the three passes -
+   BVH pair finding, cutting, and the inside test - in C++. The CSG.js path
+   below stays as the fallback for when the core is missing. */
 export function booleanGeometry(targetGeometry, operandGeometry, operandMatrixElements, operation = 'Difference') {
   const op = String(operation).toLowerCase();
   if (!['difference','union','intersect','intersection'].includes(op)) throw new Error(`Unsupported Boolean operation: ${operation}`);
+  const opCode = op === 'difference' ? 0 : op === 'union' ? 1 : 2;
+  const viaCpp = runCppKernel(targetGeometry,
+    (v, t) => [Math.min(131072, v + 3 * t * 4 + 256), Math.min(262144, t * 6 + 256)],
+    exp => exp.fe_mod_boolean(opCode, 0, 0),
+    exp => {
+      /* Baked into the target's own space, which is what the kernel's
+         inside-test compares against. */
+      const b = operandGeometry;
+      const bp = b.attributes.position;
+      if (!bp) return false;
+      const src = b.index ? b.index.array : null;
+      const tris = src ? Math.floor(src.length / 3) : Math.floor(bp.count / 3);
+      if (!tris) return false;
+      if (exp.fe_mod_target_begin(bp.count, tris) !== 0) return false;
+      const mat = new THREE.Matrix4().fromArray(Array.from(operandMatrixElements || new THREE.Matrix4().elements));
+      const v = new THREE.Vector3();
+      const out = new Float32Array(bp.count * 3);
+      for (let i = 0; i < bp.count; i++) {
+        v.fromBufferAttribute(bp, i).applyMatrix4(mat);
+        out[i * 3] = v.x; out[i * 3 + 1] = v.y; out[i * 3 + 2] = v.z;
+      }
+      new Float32Array(exp.memory.buffer, exp.fe_mod_target_pos_ptr(), out.length).set(out);
+      const idx = new Uint32Array(exp.memory.buffer, exp.fe_mod_target_idx_ptr(), tris * 3);
+      if (src) idx.set(src.subarray(0, tris * 3));
+      else for (let i = 0; i < tris * 3; i++) idx[i] = i;
+      const uv = b.attributes.uv;
+      if (uv && typeof exp.fe_mod_target_uv_ptr === 'function') {
+        const dst = new Float32Array(exp.memory.buffer, exp.fe_mod_target_uv_ptr(), bp.count * 2);
+        for (let i = 0; i < bp.count; i++) { dst[i * 2] = uv.getX(i); dst[i * 2 + 1] = uv.getY(i); }
+      }
+      return true;
+    });
+  if (viaCpp) return viaCpp;
   validateClosedManifold(targetGeometry, 'Boolean target');
   validateClosedManifold(operandGeometry, 'Boolean operand');
   const aGeo = ensureNormalsAndUv(targetGeometry), bGeo = ensureNormalsAndUv(operandGeometry);

@@ -607,6 +607,10 @@ FE_EXPORT int32_t  fe_mod_edge_split(float split_angle, int32_t use_angle, int32
    repeat passes of the cotangent Laplacian system, solved as a least-squares
    problem. axis_mask is 1|2|4 for X|Y|Z; lambda is the ring weight and
    lambda_border the boundary one, exactly the two sliders upstream shows. */
+/* Boolean, from mesh_boolean.cc: op is 0 = Difference (A - B), 1 = Union,
+   2 = Intersection. B is the mesh uploaded through fe_mod_target_begin(). */
+FE_EXPORT int32_t  fe_mod_boolean(int32_t op, int32_t use_self, int32_t hole_tolerant);
+FE_EXPORT uint32_t fe_mod_target_uv_ptr(void);
 /* Bevel, ported from bmesh/tools/bmesh_bevel.cc: coplanar triangles are welded
    into n-gon faces first, then every edge is bevelled by `width` with
    `segments` steps along a circular profile. clamp_overlap keeps the offsets
