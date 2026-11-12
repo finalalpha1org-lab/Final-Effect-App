@@ -5657,7 +5657,7 @@ FE_EXPORT int32_t fe_mod_build(float progress, int32_t reverse, int32_t randomiz
 
 FE_EXPORT int32_t fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
                                int32_t axis, int32_t use_merge, float merge_dist,
-                               int32_t normal_flip) {
+                               int32_t normal_flip, int32_t smooth_shade) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -5805,6 +5805,17 @@ FE_EXPORT int32_t fe_mod_screw(float angle, float screw_ofs, int32_t iterations,
   computeNormals(g_s.inPos, g_s.inIdx, outV, outT, g_s.nrm);
   g_s.counts[0] = outV;
   g_s.counts[1] = outT;
+  /* MOD_SCREW_SMOOTH_SHADING: `use_flat_shading = (flag & SMOOTH_SHADING) == 0`,
+     so with the option on every face the screw generates is smooth. Without
+     it they are flat, which is what flagMode 0 means here. */
+  if (smooth_shade && g_s.inSmooth && g_s.outSmooth) {
+    for (uint32_t i = 0; i < outT; ++i) g_s.inSmooth[i] = 1u;
+    /* The same split-normal pass commit() runs, because this kernel finishes
+       its own buffer instead of going through commit(). */
+    g_s.vc = applyFaceShading(outV, outT);
+    g_s.counts[0] = g_s.vc;
+    return 0;
+  }
   return 0;
 }
 
@@ -6310,8 +6321,9 @@ FE_EXPORT int32_t fe_mod_boolean(int32_t op, int32_t use_self, int32_t hole_tole
   rc = process(bPos, g_s.tgtIdx, g_s.tgtUv, tB,
                bvhA, g_s.inPos, g_s.inIdx, bInside, op == 0);
   if (rc) return rc;
-  if (!nextV || !outT) return -4;
+    if (!nextV || !outT) return -4;
   return commit(nextV, outT);
+
 }
 
 /* =========================================================================

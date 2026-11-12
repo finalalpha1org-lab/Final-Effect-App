@@ -114,7 +114,12 @@ runs — the toggle that would turn it off is not exposed.
 ✅ `steps`, `iterations`, `axis`, `angle`, `screw_offset`,
 `use_merge_vertices`, `merge_threshold`, `use_normal_flip`.
 
-❌ `use_normal_calculate`, `use_smooth_shade`.
+✅ `use_smooth_shade`: `use_flat_shading = (flag & MOD_SCREW_SMOOTH_SHADING) == 0`
+inverted, so with the option on every face the screw generates is smooth and
+the kernel runs the same split-normal pass `commit()` does.
+
+❌ `use_normal_calculate` (upstream rebuilds vertex connectivity so faces flip
+consistently; the triangle-soup kernel would need that connectivity pass).
 
 ⛔ `object` / `use_object_screw_offset` (O), `use_stretch_u` / `use_stretch_v`
 (needs per-loop UVs, E).

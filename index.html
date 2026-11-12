@@ -11543,7 +11543,7 @@ const modifiersData = {
     {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
     {name:"Decimate", fields:[["Type","select",["Collapse","Un-Subdivide","Planar"]],["Ratio","range",0.01,1,0.5,.01],["Iterations","range",1,6,1,1,{advanced:true}],["Angle Limit","range",0,180,5,1,{advanced:true}],["Preserve Boundaries","check",true,{advanced:true}],["Symmetry","check",false,{advanced:true}],["Symmetry Axis","select",["X","Y","Z"],{advanced:true}],["All Boundaries","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Group Factor","range",0,10,0,.1,{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Bisect X","check",false],["Bisect Y","check",false],["Bisect Z","check",false],["Flip X","check",false,{advanced:true}],["Flip Y","check",false,{advanced:true}],["Flip Z","check",false,{advanced:true}],["Bisect Threshold","range",0,.05,.0001,.0001,{advanced:true}],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}],["Mirror U","check",false,{advanced:true}],["Mirror V","check",false,{advanced:true}],["Mirror UDIM","check",false,{advanced:true}],["U Offset","range",-1,1,0,.05,{advanced:true}],["V Offset","range",-1,1,0,.05,{advanced:true}]]},
-    {name:"Screw", fields:[["Angle","range",0,720,360,5],["Screw","range",-2,2,0,.05],["Iterations","range",1,10,1,1],["Steps","range",2,64,16,1],["Axis","select",["X","Y","Z"]],["Merge","check",true],["Merge Distance","range",0,.1,.001,.001,{advanced:true}],["Normal Flip","check",false,{advanced:true}]]},
+    {name:"Screw", fields:[["Angle","range",0,720,360,5],["Screw","range",-2,2,0,.05],["Iterations","range",1,10,1,1],["Steps","range",2,64,16,1],["Axis","select",["X","Y","Z"]],["Merge","check",true],["Merge Distance","range",0,.1,.001,.001,{advanced:true}],["Normal Flip","check",false,{advanced:true}],["Smooth Shade","check",false,{advanced:true}]]},
     {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}],["Flip Normals","check",false,{advanced:true}],["Rim Only","check",false,{advanced:true}],["Thickness Clamp","range",0,2,0,.05,{advanced:true}],["Angle Clamp","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Group Factor","range",0,1,1,.05,{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
     {name:"Triangulate", fields:[["Quad Method","select",["Beauty","Shortest Diagonal","Ear Clip","Fixed"]],["Ngon Method","select",["Beauty","Ear Clip","Fan"]],["Minimum Vertices","range",3,12,4,1,{advanced:true}],["Keep Normals","check",true]]},
@@ -11966,7 +11966,8 @@ function buildOptions(p) {
 function screwOptions(p) {
   return { angle:Number(p["Angle"]??360), screwOffset:Number(p["Screw"]??0), iterations:Number(p["Iterations"]??1),
     steps:Number(p["Steps"]??16), axis:{X:0,Y:1,Z:2}[p["Axis"]??"Z"] ?? 2, useMerge:p["Merge"]===true,
-    mergeDistance:Number(p["Merge Distance"]??0.001), normalFlip:p["Normal Flip"]===true };
+    mergeDistance:Number(p["Merge Distance"]??0.001), normalFlip:p["Normal Flip"]===true,
+    smoothShade:p["Smooth Shade"]===true };
 }
 function laplacianSmoothOptions(p, geometry = null, obj = null) {
   return { repeat:Number(p["Repeat"]??1), lambda:Number(p["Lambda"]??0.3), lambdaBorder:Number(p["Lambda Border"]??0.3),

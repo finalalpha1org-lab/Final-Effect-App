@@ -640,7 +640,7 @@ FE_EXPORT int32_t  fe_mod_build(float progress, int32_t reverse, int32_t randomi
    iteration, steps is the sub-step count and axis is 0/1/2 for X/Y/Z. */
 FE_EXPORT int32_t  fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
                                 int32_t axis, int32_t use_merge, float merge_dist,
-                                int32_t normal_flip);
+                                int32_t normal_flip, int32_t smooth_shade);
 FE_EXPORT int32_t  fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
                                            int32_t axis_mask, int32_t preserve_volume,
                                            int32_t normalized, int32_t invert_vgroup);

@@ -1185,7 +1185,7 @@ export function buildGeometry(geometry, { progress = 0.5, reverse = false, rando
    turn with no screw offset closes the loop instead of duplicating a ring. */
 export function screwGeometry(geometry, { angle = 360, screwOffset = 0, iterations = 1, steps = 16,
                                            axis = 1, useMerge = false, mergeDistance = 1e-4,
-                                           normalFlip = false } = {}) {
+                                           normalFlip = false, smoothShade = false } = {}) {
   const iter = Math.max(1, Math.min(100, Math.round(Number(iterations) || 1)));
   const stepIn = Math.max(1, Math.min(512, Math.round(Number(steps) || 1)));
   const ax = Math.max(0, Math.min(2, Math.round(Number(axis) || 0)));
@@ -1193,7 +1193,7 @@ export function screwGeometry(geometry, { angle = 360, screwOffset = 0, iteratio
   const viaCpp = runCppKernel(geometry,
     (v, t) => [Math.min(131072, v * totalSteps), Math.min(262144, t * 3 * totalSteps * 2)],
     exp => exp.fe_mod_screw((Number(angle) || 0) * Math.PI / 180, Number(screwOffset) || 0, iter, stepIn,
-      ax, useMerge ? 1 : 0, Number(mergeDistance) || 0, normalFlip ? 1 : 0));
+      ax, useMerge ? 1 : 0, Number(mergeDistance) || 0, normalFlip ? 1 : 0, smoothShade ? 1 : 0));
   if (viaCpp) return viaCpp;
 
   /* JS fallback: the same rings and quads, built in place. */
