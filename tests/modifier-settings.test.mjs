@@ -15,7 +15,7 @@ function sliceFunction(name) {
 
 test('every advanced modifier setting is declared and routed into the evaluator', () => {
   const registry = html.slice(html.indexOf('const modifiersData = {'), html.indexOf('\nlet modStack'));
-  const labels = ['Rotation Per Step', 'Preserve Boundaries', 'Merge Distance', 'Rim Fill', 'Even Thickness', 'Size', 'Direction', 'Octaves', 'Seed', 'Preserve Volume', 'Boundary', 'Axis', 'Phase'];
+  const labels = ['Rotation Per Step', 'Preserve Boundaries', 'Merge Distance', 'Rim Fill', 'Even Thickness', 'Size', 'Direction', 'Octaves', 'Seed', 'Preserve Volume', 'Boundary', 'Axis', 'Narrowness', 'Lifetime', 'Falloff'];
   for (const label of labels) {
     let at = -1, marked = false;
     while ((at = registry.indexOf(`["${label}","`, at + 1)) >= 0) {
@@ -31,20 +31,43 @@ test('every advanced modifier setting is declared and routed into the evaluator'
     'parseFloat(p["Rotation Per Step"] ?? 0)',
     'p["Preserve Boundaries"] !== false',
     'parseFloat(p["Merge Distance"] ?? 1e-6)',
-    'p["Rim Fill"] !== false, p["Even Thickness"] !== false',
+    'applySolidifyModifierEx(currentGeo, p)',
     'parseFloat(p["Size"] ?? 1)',
-    'direction: p["Direction"] || "Normal"',
-    'octaves: parseInt(p["Octaves"]',
-    'seed: parseInt(p["Seed"]',
-    'axis: p["Axis"] || "Y"',
+    'displaceOptions(p, currentGeo, targetObj)',
+    'waveOptions(p, currentGeo, targetObj)',
+    'castOptions(p, currentGeo, targetObj)',
+    'wireframeOptions(p, currentGeo, targetObj)',
+    'decimateOptions(p, currentGeo, targetObj)',
     'preserveVolume: p["Preserve Volume"] === true',
     'applyWarpModifier(currentGeo, str, p["Axis"] || "Y")'
   ]) {
     assert.ok(live.includes(anchor), `live evaluation passes ${anchor}`);
   }
 
+  /* Those five settings bags are read in their own helpers, so the check moves
+     with them: a helper that stops forwarding a setting fails here. */
+  const optionHelpers = {
+    displaceOptions: ['p["Direction"] || "Normal"', 'p["Octaves"]', 'p["Seed"]'],
+    waveOptions: ['p["Axis"] || "X"', 'p["Narrowness"]', 'p["Lifetime"]', 'p["Falloff"]', 'p["Cyclic"]'],
+    castOptions: ['p["Shape"]', 'p["Factor"]', 'p["Radius"]', 'p["Size"]'],
+    wireframeOptions: ['p["Offset"]', 'p["Boundary"]', 'p["Even Offset"]', 'p["Relative Offset"]']
+  };
+  for (const [name, settings] of Object.entries(optionHelpers)) {
+    const body = sliceFunction(name);
+    for (const setting of settings) assert.ok(body.includes(setting), `${name} forwards ${setting}`);
+  }
+
+  /* Solidify, Weld and Mirror hand their whole parameter bag to one helper,
+     so the settings have to be read there - one place, both stage paths. */
+  const solidifyHelper = sliceFunction('applySolidifyModifierEx');
+  for (const setting of ['"Thickness"', '"Offset"', '"Rim Fill"', '"Even Thickness"', '"Flip Normals"', '"Rim Only"']) {
+    assert.ok(solidifyHelper.includes(setting), `applySolidifyModifierEx forwards ${setting}`);
+  }
+  const weldHelper = sliceFunction('applyWeldModifierEx');
+  assert.ok(weldHelper.includes('"Distance"') && weldHelper.includes('"Mode"'), 'Weld forwards Distance and Mode');
+
   const baked = sliceFunction('evaluateModifierPrefix');
-  for (const anchor of ['Rotation Per Step', 'Preserve Boundaries', 'Merge Distance', 'Rim Fill', 'Direction', 'Octaves', 'Phase', 'Preserve Volume']) {
+  for (const anchor of ['Rotation Per Step', 'Preserve Boundaries', 'Merge Distance', 'applySolidifyModifierEx', 'displaceOptions', 'waveOptions', 'castOptions', 'Preserve Volume']) {
     assert.ok(baked.includes(anchor), `baking keeps the ${anchor} setting`);
   }
 });

@@ -210,3 +210,48 @@ test('a zero thickness is a no-op and an inverted one flips the shell', () => {
     assert.ok(Math.abs(max - 0.2) < 1e-5 && Math.abs(min) < 1e-5, `got ${min}..${max}`);
   });
 });
+
+test('thickness_clamp stops a shell outgrowing the edges around it', () => {
+  withCore(() => {
+    /* 40 segments over 2 units: every edge is 0.05 long, so a 0.2 shell is
+       four times the shortest edge at each vertex. */
+    const source = new THREE.PlaneGeometry(2, 2, 40, 40);
+    const free = solidifyGeometry(source, 0.2, 0, { thicknessClamp: 0 });
+    const clamped = solidifyGeometry(source, 0.2, 0, { thicknessClamp: 1 });
+    const t = 0.2, len = 0.05;
+
+    /* MOD_solidify_extrude.cc: scalar = sqrt(min_edge_len_sq) / offset. */
+    const wanted = (t * 0.5) * (len / t);
+    assert.ok(Math.abs(zRange(free).max - t * 0.5) < 1e-5,
+      `unclamped shell should sit at t/2, got ${zRange(free).max.toFixed(4)}`);
+    assert.ok(Math.abs(zRange(clamped).max - wanted) < 1e-5,
+      `clamped shell should sit at ${wanted.toFixed(4)}, got ${zRange(clamped).max.toFixed(4)}`);
+  });
+});
+
+test('the angle clamp lets a flat surface keep its full thickness', () => {
+  withCore(() => {
+    /* The dihedral of a flat grid is a straight angle, so the angle clamp
+       derives no extra limit from it - max_off = len/2 / cos(0) - and only
+       clamps when that is below half the requested offset. With these numbers
+       it is exactly at the boundary, so the shell keeps t/2. */
+    const source = new THREE.PlaneGeometry(2, 2, 40, 40);
+    const plain = solidifyGeometry(source, 0.2, 0, { thicknessClamp: 1 });
+    const angle = solidifyGeometry(source, 0.2, 0, { thicknessClamp: 1, useAngleClamp: true });
+    const zPlain = zRange(plain).max, zAngle = zRange(angle).max;
+    assert.ok(zPlain < 0.05, `plain clamp should pull it in, got ${zPlain.toFixed(4)}`);
+    assert.ok(Math.abs(zAngle - 0.1) < 1e-5,
+      `angle clamp should keep t/2 = 0.1 on a flat grid, got ${zAngle.toFixed(4)}`);
+  });
+});
+
+test('thickness_clamp leaves a shell that already fits alone', () => {
+  withCore(() => {
+    const source = new THREE.BoxGeometry(2, 2, 2);
+    const free = solidifyGeometry(source, 0.01, -1, { thicknessClamp: 0 });
+    const clamped = solidifyGeometry(source, 0.01, -1, { thicknessClamp: 1 });
+    const a = free.attributes.position.array, b = clamped.attributes.position.array;
+    assert.equal(a.length, b.length);
+    for (let i = 0; i < a.length; i++) assert.ok(Math.abs(a[i] - b[i]) < 1e-7, `vertex ${i} moved`);
+  });
+});

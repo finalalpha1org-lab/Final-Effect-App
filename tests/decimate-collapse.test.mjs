@@ -240,3 +240,122 @@ test('a ratio of 1 returns the mesh untouched and a tiny ratio still resolves', 
     for (const count of uses.values()) assert.ok(count <= 2, 'the collapse tore the mesh');
   });
 });
+
+/* ---- the other two decimate_type values, and the symmetry option ---- */
+
+const trisOf = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+
+function areaOf(geometry) {
+  const p = geometry.attributes.position;
+  const idx = geometry.index ? geometry.index.array : Uint32Array.from({ length: p.count }, (_, i) => i);
+  let total = 0;
+  for (let i = 0; i + 2 < idx.length; i += 3) {
+    const a = new THREE.Vector3().fromBufferAttribute(p, idx[i]);
+    const b = new THREE.Vector3().fromBufferAttribute(p, idx[i + 1]);
+    const c = new THREE.Vector3().fromBufferAttribute(p, idx[i + 2]);
+    total += b.clone().sub(a).cross(c.clone().sub(a)).length() / 2;
+  }
+  return total;
+}
+
+test('Planar merges a flat grid into one face and keeps its area', () => withCore(() => {
+  const grid = new THREE.PlaneGeometry(2, 2, 8, 8);
+  const before = areaOf(grid);
+  assert.equal(trisOf(grid), 128);
+  const out = decimateGeometry(grid, 0.5, 65000, { decimateType: 'Planar', angleLimit: 1 });
+  /* The border ring is 32 corners, so the merged face is 30 triangles - and
+     only the interior vertices are gone. */
+  assert.equal(trisOf(out), 30, `a flat grid is one face, got ${trisOf(out)} triangles`);
+  assert.equal(out.attributes.position.count, 32, 'the border ring survives');
+  assert.ok(Math.abs(areaOf(out) - before) < 1e-4, 'area is unchanged');
+}));
+
+test('Planar leaves a sharp edge alone and merges the faces inside it', () => withCore(() => {
+  const cube = new THREE.BoxGeometry(2, 2, 2, 3, 3, 3);
+  const before = areaOf(cube);
+  const out = decimateGeometry(cube, 0.5, 65000, { decimateType: 'Planar', angleLimit: 1 });
+  /* Six 3x3 faces, each merged into a 12-corner n-gon: 10 triangles per face. */
+  assert.equal(trisOf(out), 60, `six merged faces, got ${trisOf(out)}`);
+  assert.ok(Math.abs(areaOf(out) - before) < 1e-4, 'the cube still has its six faces of area');
+  /* The 90-degree edges are not crossed: the box is still 2x2x2. */
+  out.computeBoundingBox();
+  const size = out.boundingBox.getSize(new THREE.Vector3());
+  for (const axis of ['x', 'y', 'z']) assert.ok(Math.abs(size[axis] - 2) < 1e-5);
+}));
+
+test('Un-Subdivide dissolves the vertices a subdivision added, and more with iterations', () => withCore(() => {
+  const grid = new THREE.PlaneGeometry(2, 2, 4, 4);
+  const before = areaOf(grid);
+  const once = decimateGeometry(grid, 0.5, 65000, { decimateType: 'Un-Subdivide', iterations: 1 });
+  const twice = decimateGeometry(grid, 0.5, 65000, { decimateType: 'Un-Subdivide', iterations: 2 });
+  assert.ok(trisOf(once) < trisOf(grid), `one pass removes faces (${trisOf(once)} < ${trisOf(grid)})`);
+  assert.ok(trisOf(twice) <= trisOf(once), 'a second pass never adds faces back');
+  assert.ok(Math.abs(areaOf(once) - before) < 1e-4, 'a flat grid keeps its area');
+  assert.ok(Math.abs(areaOf(twice) - before) < 1e-4);
+  /* A cube has no interior vertex, so there is nothing to dissolve. */
+  const cube = new THREE.BoxGeometry(2, 2, 2);
+  const cubed = decimateGeometry(cube, 0.5, 65000, { decimateType: 'Un-Subdivide', iterations: 1 });
+  assert.equal(trisOf(cubed), trisOf(cube), 'a closed box is unchanged');
+}));
+
+test('Symmetry keeps a decimated mesh symmetric about the chosen axis', () => withCore(() => {
+  const sphere = icosphere(2);
+  for (const axis of ['X', 'Y', 'Z']) {
+    const out = decimateGeometry(sphere, 0.4, 65000, { useSymmetry: true, symmetryAxis: axis });
+    assert.ok(trisOf(out) < trisOf(sphere), 'the mesh was decimated');
+    /* Every vertex must have a partner mirrored across the axis (or sit on
+       the plane): that is what the option is for. */
+    const p = out.attributes.position;
+    const key = (x, y, z) => [x, y, z].map((v) => Math.round(v * 1e4)).join(',');
+    const set = new Set();
+    for (let i = 0; i < p.count; i++) set.add(key(p.getX(i), p.getY(i), p.getZ(i)));
+    let unmatched = 0;
+    for (let i = 0; i < p.count; i++) {
+      const x = axis === 'X' ? -p.getX(i) : p.getX(i);
+      const y = axis === 'Y' ? -p.getY(i) : p.getY(i);
+      const z = axis === 'Z' ? -p.getZ(i) : p.getZ(i);
+      if (!set.has(key(x, y, z))) unmatched++;
+    }
+    assert.equal(unmatched, 0, `${axis}: ${unmatched} vertices have no mirror partner`);
+  }
+}));
+
+test('All Boundaries dissolves the straight runs of a border', () => {
+  withCore(() => {
+    /* A flat grid is one region, so its border is the outer rectangle. Without
+       the option every vertex the tessellation put on the border stays there;
+       with it, only the four corners survive and the face is two triangles. */
+    const grid = new THREE.PlaneGeometry(2, 2, 8, 8);
+    const before = areaOf(grid);
+    const kept = decimateGeometry(grid, 1, 65000, { decimateType: 'Planar', angleLimit: 5 });
+    const dissolved = decimateGeometry(grid, 1, 65000,
+      { decimateType: 'Planar', angleLimit: 5, dissolveBoundaries: true });
+    assert.equal(kept.attributes.position.count, 32, 'the border keeps its vertices');
+    assert.equal(trisOf(kept), 30);
+    assert.equal(dissolved.attributes.position.count, 4, 'only the corners remain');
+    assert.equal(trisOf(dissolved), 2);
+    assert.ok(Math.abs(areaOf(dissolved) - before) < 1e-4,
+      `area ${areaOf(dissolved)} vs ${before}`);
+  });
+});
+
+test('All Boundaries never eats a corner or a border another region needs', () => {
+  withCore(() => {
+    /* A box: every face is its own region, so every corner of every face is
+       shared with a neighbour region and must survive; the two mid-edge
+       vertices per face are not shared and are straight-through. */
+    const box = new THREE.BoxGeometry(2, 2, 2, 2, 2, 2);
+    const out = decimateGeometry(box, 1, 65000,
+      { decimateType: 'Planar', angleLimit: 1, dissolveBoundaries: true });
+    const p = out.attributes.position;
+    /* 24 corners of the six faces, plus the 8 cube corners and 12 edge mids
+       that the 2x2 subdivided box introduces - but never a vertex pulled off
+       the cube: the bounding box stays exactly 2 units. */
+    out.computeBoundingBox();
+    const b = out.boundingBox;
+    assert.ok(Math.abs(b.min.x + 1) < 1e-5 && Math.abs(b.max.x - 1) < 1e-5, `x ${b.min.x}..${b.max.x}`);
+    assert.ok(Math.abs(b.min.y + 1) < 1e-5 && Math.abs(b.max.y - 1) < 1e-5, `y ${b.min.y}..${b.max.y}`);
+    assert.ok(Math.abs(b.min.z + 1) < 1e-5 && Math.abs(b.max.z - 1) < 1e-5, `z ${b.min.z}..${b.max.z}`);
+    assert.ok(p.count < box.attributes.position.count, 'it still removed something');
+  });
+});

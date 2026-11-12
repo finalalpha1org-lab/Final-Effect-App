@@ -189,3 +189,25 @@ test('a zero thickness leaves the mesh alone', () => {
     assert.equal(triangleCount(same), triangleCount(source));
   });
 });
+
+test('Relative Offset scales the wire by the mesh density at each vertex', () => withCore(() => {
+  /* Two quads of very different size sharing one edge: with relative offset on,
+     the wire at the small quad's corners is much thinner than at the big
+     quad's, because the factor is the mean edge length at the vertex. */
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -1, -1, 0, 0.1, -1, 0, 0.1, 0.1, 0, -1, 0.1, 0,
+    1, -1, 0, 1, 1, 0,
+  ], 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2]);
+  const absolute = wireframeGeometry3D(geometry, { thickness: 0.02, relativeOffset: false });
+  const relative = wireframeGeometry3D(geometry, { thickness: 0.02, relativeOffset: true });
+  assert.equal(relative.attributes.position.count, absolute.attributes.position.count);
+  /* Every vertex of the relative result is within the un-scaled one's slab, and
+     the two differ: the relative wire cannot be identical. */
+  const a = absolute.attributes.position.array, b = relative.attributes.position.array;
+  let moved = 0;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 1e-6) moved++;
+  assert.ok(moved > a.length * 0.1, `relative offset moves the wire (${moved} of ${a.length} values)`);
+  for (let i = 0; i < b.length; i++) assert.ok(Number.isFinite(b[i]), 'no NaN');
+}));

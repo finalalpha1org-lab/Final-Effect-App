@@ -114,7 +114,56 @@ function readFaceShading(exp, geometry, triCount) {
   geometry.userData = { ...(geometry.userData || {}), feFaceShading: flags };
 }
 
-function runCppKernel(geometry, capsFn, call, prepare) {
+/* Vertex groups survive a modifier the way Blender's custom-data interpolation
+   lets them: the weight of an output vertex is the weight of the input vertex
+   it came from. This pipeline re-derives topology instead of carrying per-vertex
+   indices, so the match is by position - an output vertex takes the weight of
+   the nearest input vertex, looked up in a hash grid keyed at 1/2048 of the
+   mesh's size. When the counts already agree the arrays line up and the copy is
+   exact, which is the common case for the first modifier in a stack. */
+export function carryVertexWeights(weights, fromGeometry, toGeometry) {
+  if (!weights) return null;
+  const from = fromGeometry?.attributes?.position;
+  const to = toGeometry?.attributes?.position;
+  if (!from || !to) return null;
+  if (weights.length === to.count) return weights;
+  if (weights.length !== from.count) return null;
+  toGeometry.computeBoundingBox?.();
+  const box = toGeometry.boundingBox;
+  const extent = box ? Math.max(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z) : 1;
+  const cell = Math.max((extent || 1) / 2048, 1e-9);
+  const inv = 1 / cell;
+  const buckets = new Map();
+  const keyOf = (x, y, z) => `${Math.floor(x * inv)},${Math.floor(y * inv)},${Math.floor(z * inv)}`;
+  for (let i = 0; i < from.count; i++) {
+    const key = keyOf(from.getX(i), from.getY(i), from.getZ(i));
+    const list = buckets.get(key);
+    if (list) list.push(i); else buckets.set(key, [i]);
+  }
+  const out = new Float32Array(to.count);
+  for (let i = 0; i < to.count; i++) {
+    const x = to.getX(i), y = to.getY(i), z = to.getZ(i);
+    const bx = Math.floor(x * inv), by = Math.floor(y * inv), bz = Math.floor(z * inv);
+    let best = -1, bestD = Infinity;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const list = buckets.get(`${bx + dx},${by + dy},${bz + dz}`);
+          if (!list) continue;
+          for (const j of list) {
+            const ddx = from.getX(j) - x, ddy = from.getY(j) - y, ddz = from.getZ(j) - z;
+            const d = ddx * ddx + ddy * ddy + ddz * ddz;
+            if (d < bestD) { bestD = d; best = j; }
+          }
+        }
+      }
+    }
+    out[i] = best >= 0 ? weights[best] : 0;
+  }
+  return out;
+}
+
+function runCppKernel(geometry, capsFn, call, prepare, vertexWeights) {
   const exp = cppExports();
   if (!exp) return null;
   const base = kernelCapacities(geometry);
@@ -138,6 +187,18 @@ function runCppKernel(geometry, capsFn, call, prepare) {
     if (hasUv) new Float32Array(buf, exp.fe_mod_in_uv_ptr(), base.v * 2).set(attrs.uv.array.subarray(0, base.v * 2));
     exp.fe_mod_set_counts(base.v, base.t);
     uploadFaceShading(exp, geometry, base.v, base.t);
+    /* The active vertex group, if the caller has one. fe_mod_set_vgroup(0)
+       clears it: a kernel must never pick up the group the previous stage
+       uploaded, because every modifier carries its own group name. */
+    if (typeof exp.fe_mod_set_vgroup === 'function' && typeof exp.fe_mod_vgroup_ptr === 'function') {
+      const ptr = exp.fe_mod_vgroup_ptr();
+      if (vertexWeights && ptr && vertexWeights.length === base.v) {
+        new Float32Array(exp.memory.buffer, ptr, base.v).set(vertexWeights);
+        exp.fe_mod_set_vgroup(base.v);
+      } else {
+        exp.fe_mod_set_vgroup(0);
+      }
+    }
     if (prepare && prepare(exp) === false) return null;
     if (call(exp) !== 0) return null;
     const counts = new Uint32Array(exp.memory.buffer, exp.fe_mod_counts_ptr(), 2);
@@ -258,7 +319,7 @@ export function arrayGeometry(geometry, {
   count = 2, offset = [1.8,0,0], relative = [0,0,0], rotationPerStep = 0,
   fitType = 'Fixed Count', fitLength = 10,
   merge = false, mergeDistance = 0.001, uvOffset = [0,0],
-  rotation = [0,0,0]
+  rotation = [0,0,0], objectOffset = null
 } = {}) {
   /* Blender's Array (MOD_array.cc): one offset matrix multiplied into a running
      matrix per copy, so a rotated or scaled offset compounds. Fit Length and
@@ -284,11 +345,13 @@ export function arrayGeometry(geometry, {
       const rot = [asNumber(rotation[0]), asNumber(rotation[1]), asNumber(rotation[2])];
       if (rotationPerStep && !rot[1]) rot[1] = asNumber(rotationPerStep);
       if (typeof exp.fe_mod_array_ex === 'function') {
+        const hasObjectOffset = !!(objectOffset && objectOffset.length >= 16);
+        if (hasObjectOffset) writeSessionMatrix(exp, objectOffset);
         return exp.fe_mod_array_ex(copies, fit ? (fitType === 'Fit Curve' ? 2 : 1) : 0, asNumber(fitLength), 3,
           ...offset.map(asNumber), ...relative.map(asNumber),
           rot[0], rot[1], rot[2],
           merge ? 1 : 0, Math.max(asNumber(mergeDistance), 0),
-          asNumber(uvOffset[0]), asNumber(uvOffset[1]));
+          asNumber(uvOffset[0]), asNumber(uvOffset[1]), hasObjectOffset ? 1 : 0);
       }
       return exp.fe_mod_array(copies, asNumber(offset[0]), asNumber(offset[1]), asNumber(offset[2]),
         asNumber(relative[0]), asNumber(relative[1]), asNumber(relative[2]), asNumber(rotationPerStep));
@@ -317,14 +380,28 @@ export function arrayGeometry(geometry, {
   return updateBounds(result);
 }
 
-export function weldGeometry(geometry, distance = 1e-5) {
-  const viaCpp = runCppKernel(geometry, null, exp => exp.fe_mod_weld(Math.max(Number(distance)||0, 1e-9)));
+export function weldGeometry(geometry, distance = 1e-5, { mode = 'All', vertexWeights = null, invertVertexGroup = false } = {}) {
+  const viaCpp = runCppKernel(geometry, null,
+    exp => exp.fe_mod_weld(Math.max(Number(distance)||0, 1e-9), mode === 'Connected' ? 1 : 0,
+      invertVertexGroup ? 1 : 0), undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   const p=assertPositions(geometry), eps=Math.max(Number(distance)||0,1e-9), idx=sourceIndices(geometry), attrs=Object.entries(geometry.attributes);
+  /* Mode 'Connected' walks edges rather than looking for coincident points;
+     the fallback keeps the by-distance shape and only honours the selection,
+     which is what the kernel argument means. */
+  const sel = vertexWeights && vertexWeights.length === p.count
+    ? (i) => (vertexWeights[i] > 0) !== invertVertexGroup : null;
   const unique=[], map=new Map(), oldToNew=new Uint32Array(p.count), values=Object.fromEntries(attrs.map(([n])=>[n,[]]));
+  const pushVertex = (i) => {
+    const id = unique.length;
+    unique.push([p.getX(i), p.getY(i), p.getZ(i)]);
+    for (const [name, a] of attrs) for (let c = 0; c < a.itemSize; c++) values[name].push(a.array[i * a.itemSize + c]);
+    return id;
+  };
   for(let i=0;i<p.count;i++) {
+    if (sel && !sel(i)) { oldToNew[i] = pushVertex(i); continue; }
     const key=vertexKey(p.getX(i),p.getY(i),p.getZ(i),eps); let id=map.get(key);
-    if(id===undefined){id=unique.length;map.set(key,id);unique.push([p.getX(i),p.getY(i),p.getZ(i)]);for(const [name,a] of attrs)for(let c=0;c<a.itemSize;c++)values[name].push(a.array[i*a.itemSize+c]);}
+    if(id===undefined){id=pushVertex(i);map.set(key,id);}
     oldToNew[i]=id;
   }
   const outIdx=[];
@@ -354,10 +431,39 @@ const TRIANGULATE_NGON = { 'Beauty': 0, 'Ear Clip': 0, 'Fan': 1 };
    turns an ear clipper's fan into the even triangulation a modeller expects. */
 const triangulateBeauty = (quadMethod, ngonMethod) => quadMethod === 'Beauty' || ngonMethod === 'Beauty';
 
-function triangulateWithKernel(geometry, quadMethod, ngonMethod, beauty) {
+/* Which polygon each input triangle came from. Every triangle of a well-formed
+   mesh lies wholly inside exactly one face ring, and the face with the smallest
+   ring that contains all three corners is that face. Triangulate's
+   Min Vertices setting needs this: a face below the threshold keeps the
+   triangles it arrived with, so its diagonal does not move. */
+function faceOwnersOfTriangles(faces, idx) {
+  const atVertex = new Map();
+  faces.forEach((ring, fi) => {
+    for (const v of ring) {
+      let list = atVertex.get(v);
+      if (!list) atVertex.set(v, (list = []));
+      list.push(fi);
+    }
+  });
+  const owner = new Int32Array(Math.floor(idx.length / 3)).fill(-1);
+  for (let t = 0; t < owner.length; t++) {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    let best = -1, bestLen = Infinity;
+    for (const fi of atVertex.get(a) || []) {
+      const ring = faces[fi];
+      if (ring.length >= bestLen) continue;
+      if (!ring.includes(b) || !ring.includes(c)) continue;
+      best = fi; bestLen = ring.length;
+    }
+    owner[t] = best;
+  }
+  return owner;
+}
+
+function triangulateWithKernel(geometry, quadMethod, ngonMethod, beauty, onlyFaces, expectedTris) {
   const exp = cppExports();
   if (!exp || typeof exp.fe_polyfill_build !== 'function') return null;
-  const faces = globalThis.FEPoly?.facesInSlots?.(geometry);
+  const faces = onlyFaces ?? globalThis.FEPoly?.facesInSlots?.(geometry);
   if (!Array.isArray(faces) || !faces.length) return null;
   const position = geometry.attributes.position;
   const verts = position.count;
@@ -387,7 +493,7 @@ function triangulateWithKernel(geometry, quadMethod, ngonMethod, beauty) {
   /* Coverage check: the triangles have to account for the same surface the
      mesh did. A face ring the tessellator refused would show up here as lost
      area, and a silent hole is worse than the fallback. */
-  const src = sourceIndices(geometry);
+  const src = expectedTris ?? sourceIndices(geometry);
   const triArea = (a, b, c) => {
     const ax = position.getX(a), ay = position.getY(a), az = position.getZ(a);
     const bx = position.getX(b) - ax, by = position.getY(b) - ay, bz = position.getZ(b) - az;
@@ -401,13 +507,43 @@ function triangulateWithKernel(geometry, quadMethod, ngonMethod, beauty) {
   return tris;
 }
 
-export function triangulateGeometry(geometry, { keepNormals = true, quadMethod = 'Beauty', ngonMethod = 'Beauty' } = {}) {
+export function triangulateGeometry(geometry, { keepNormals = true, quadMethod = 'Beauty', ngonMethod = 'Beauty', minVertices = 4 } = {}) {
   const idx=sourceIndices(geometry);if(idx.length%3)throw new Error('Triangulate needs complete triangles');
   const indexed=geometry.clone();
-  const tris = triangulateWithKernel(geometry,
-    TRIANGULATE_QUAD[quadMethod] ?? TRIANGULATE_QUAD['Beauty'],
-    TRIANGULATE_NGON[ngonMethod] ?? TRIANGULATE_NGON['Beauty'],
-    triangulateBeauty(quadMethod, ngonMethod));
+  const quadPipe = TRIANGULATE_QUAD[quadMethod] ?? TRIANGULATE_QUAD['Beauty'];
+  const ngonPipe = TRIANGULATE_NGON[ngonMethod] ?? TRIANGULATE_NGON['Beauty'];
+  const beauty = triangulateBeauty(quadMethod, ngonMethod);
+  /* Min Vertices: "Triangulate only polygons with vertex count greater than or
+     equal to this number" (rna_modifier.cc). A face under the threshold is left
+     with the triangles it already had, which is what keeps a quad's diagonal
+     where the artist put it. */
+  const minV = Math.max(3, Math.round(Number(minVertices) || 4));
+  let tris = null;
+  const faces = globalThis.FEPoly?.facesInSlots?.(geometry);
+  if (faces && minV > 3 && faces.length) {
+    const big = faces.filter(face => face.length >= minV);
+    if (!big.length) {
+      /* Nothing reaches the threshold: the modifier is a no-op and every
+         triangle keeps the diagonal it came with. */
+      tris = Uint32Array.from(idx);
+    } else if (big.length < faces.length) {
+      const small = new Uint8Array(faces.length);
+      faces.forEach((face, fi) => { if (face.length < minV) small[fi] = 1; });
+      const owner = faceOwnersOfTriangles(faces, idx);
+      const kept = [], expected = [];
+      for (let t = 0; t < owner.length; t++) {
+        if (owner[t] >= 0 && small[owner[t]]) kept.push(idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]);
+        else expected.push(idx[t * 3], idx[t * 3 + 1], idx[t * 3 + 2]);
+      }
+      const restitched = triangulateWithKernel(geometry, quadPipe, ngonPipe, beauty, big, expected);
+      if (restitched) {
+        tris = new Uint32Array(kept.length + restitched.length);
+        tris.set(kept, 0);
+        tris.set(restitched, kept.length);
+      }
+    }
+  }
+  if (!tris) tris = triangulateWithKernel(geometry, quadPipe, ngonPipe, beauty);
   if (tris) indexed.setIndex(new THREE.BufferAttribute(tris, 1));
   else if (!geometry.index) indexed.setIndex(new THREE.BufferAttribute(Uint32Array.from({ length: idx.length }, (_, i) => idx[i]), 1));
 
@@ -423,20 +559,42 @@ export function triangulateGeometry(geometry, { keepNormals = true, quadMethod =
   return updateBounds(out);
 }
 
-export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000, { preserveBoundary = true } = {}) {
-  /* The C++ collapse (ported from bmesh_decimate_collapse.cc) is the real
+/* The three decimate_type values, in RNA order (rna_modifier.cc). */
+const DECIMATE_TYPES = { Collapse: 0, 'Un-Subdivide': 1, Planar: 2 };
+const SYMMETRY_AXES = { X: 0, Y: 1, Z: 2 };
+
+export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000,
+                                 { preserveBoundary = true, decimateType = 'Collapse', iterations = 1,
+                                   angleLimit = 5, useSymmetry = false, symmetryAxis = 'X',
+                                   dissolveBoundaries = false, vertexWeights = null,
+                                   vertexGroupFactor = 0 } = {}) {
+  /* The C++ kernels (ported from bmesh_decimate_collapse.cc,
+     bmesh_decimate_unsubdivide.cc and bmesh_decimate_dissolve.cc) are the real
      implementation now, at every size - there is nothing the JS path does
-     better. The JS below is a fallback for when the wasm engine is unavailable
-     (a stripped build), and the clustering kernel fe_mod_decimate is kept for
-     callers that ask for it by name. */
+     better. The JS below is a fallback for the collapse mode when the wasm
+     engine is unavailable (a stripped build), and the clustering kernel
+     fe_mod_decimate is kept for callers that ask for it by name. */
+  const type = DECIMATE_TYPES[decimateType] ?? 0;
   const current = kernelCapacities(geometry);
   const viaCpp = current && runCppKernel(geometry, null, exp => {
+    if (type === 1 && typeof exp.fe_mod_decimate_unsubdivide === 'function') {
+      return exp.fe_mod_decimate_unsubdivide(Math.max(1, Math.round(Number(iterations) || 1)));
+    }
+    if (type === 2 && typeof exp.fe_mod_decimate_planar === 'function') {
+      return exp.fe_mod_decimate_planar(Number(angleLimit) || 0, dissolveBoundaries ? 1 : 0);
+    }
     const ratioNow = clamp(Number(ratio) || .5, .01, 1);
     const flag = preserveBoundary ? 1 : 0;
-    if (typeof exp.fe_mod_decimate_collapse === 'function') return exp.fe_mod_decimate_collapse(ratioNow, flag);
+    if (typeof exp.fe_mod_decimate_collapse === 'function') {
+      return exp.fe_mod_decimate_collapse(ratioNow, flag, useSymmetry ? 1 : 0,
+        SYMMETRY_AXES[symmetryAxis] ?? 0, Math.max(0, Number(vertexGroupFactor) || 0));
+    }
     return exp.fe_mod_decimate(ratioNow, flag);
-  });
+  }, undefined, type === 0 ? vertexWeights : null);
   if (viaCpp) return viaCpp;
+  /* Un-Subdivide and Planar have no fallback: without the engine they would be
+     the collapse at ratio 1, which is a different modifier. */
+  if (type !== 0) return geometry.clone();
   const g=weldGeometry(geometry,1e-7),p=g.attributes.position,idx=g.index.array;
   const initialFaces=idx.length/3;
   if(initialFaces>maxFaces){g.dispose();throw new Error(`Decimate currently caps edge-collapse input at ${maxFaces} triangles; reduce source density first`)}
@@ -601,11 +759,27 @@ export function decimateGeometry(geometry, ratio = .5, maxFaces = 65000, { prese
   out.computeVertexNormals();g.dispose();return updateBounds(out);
 }
 
-export function mirrorGeometry(geometry, { axes = [true,false,false], clipping = false, mergeDistance = 1e-6 } = {}) {
+/* Mirror, from MOD_mirror.cc: the mesh is reflected across each enabled axis,
+   the reflection's winding flipped, and optionally bisected first - upstream's
+   BM_mesh_bisect_plane() - so a half-modelled mesh can be completed by its own
+   other half. */
+export function mirrorGeometry(geometry, { axes = [true,false,false], clipping = false, mergeDistance = 1e-6,
+                                            bisectAxes = [false,false,false], bisectFlip = [false,false,false],
+                                            bisectThreshold = 1e-4, useMirrorU = false, useMirrorV = false,
+                                            mirrorOffsetU = 0, mirrorOffsetV = 0, useMirrorUdim = false } = {}) {
   const mirrorAxes = axes.map(Boolean);
   const mirrorCopies = 1 << mirrorAxes.filter(Boolean).length;
-  const viaCpp = runCppKernel(geometry, (v,t)=>[v*mirrorCopies, t*mirrorCopies],
-    exp => exp.fe_mod_mirror((mirrorAxes[0]?1:0)|(mirrorAxes[1]?2:0)|(mirrorAxes[2]?4:0), clipping ? 1 : 0, mergeDistance));
+  const bm = (bisectAxes[0]?1:0)|(bisectAxes[1]?2:0)|(bisectAxes[2]?4:0);
+  const bf = (bisectFlip[0]?1:0)|(bisectFlip[1]?2:0)|(bisectFlip[2]?4:0);
+  /* A bisect cuts every straddling triangle in two and adds a vertex per
+     crossing, and the commit then splits the corners of the flat faces it
+     produced, so the finished mesh needs up to three vertices per triangle. */
+  const viaCpp = runCppKernel(geometry,
+    (v,t)=>[Math.min(131072,(v+t*2)*mirrorCopies*3), Math.min(262144,t*2*mirrorCopies+8)],
+    exp => exp.fe_mod_mirror((mirrorAxes[0]?1:0)|(mirrorAxes[1]?2:0)|(mirrorAxes[2]?4:0), clipping ? 1 : 0,
+      mergeDistance, bm, bf, Number(bisectThreshold)||0,
+      useMirrorU ? 1 : 0, useMirrorV ? 1 : 0, Number(mirrorOffsetU)||0, Number(mirrorOffsetV)||0,
+      useMirrorUdim ? 1 : 0));
   if (viaCpp) return viaCpp;
   const src=geometry.clone(), p=assertPositions(src), idx=sourceIndices(src), enabled=axes.map(Boolean), flags=[];
   for(let bits=0;bits<(1<<enabled.filter(Boolean).length);bits++){const signs=[1,1,1];let j=0;for(let axis=0;axis<3;axis++)if(enabled[axis]){if(bits&(1<<j))signs[axis]=-1;j++}flags.push(signs)}
@@ -750,12 +924,15 @@ export function shadeGeometry(geometry) {
   return viaCpp || geometry;
 }
 
-export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true } = {}) {
+export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = true, evenThickness = true, flipNormals = false, rimOnly = false, thicknessClamp = 0, useAngleClamp = false, vertexWeights = null, thicknessVertexGroup = 1, invertVertexGroup = false } = {}) {
   /* Two shells (2t triangles) plus a quad per boundary edge. A vertex-split
      mesh - a box fresh out of three, where every face has its own corners - can
      have up to 3t boundary edges, so the rim alone is 6t triangles. */
   const viaCpp = Math.abs(thickness) < 1e-9 ? null : runCppKernel(geometry, (v,t)=>[v*2, t*8],
-    exp => exp.fe_mod_solidify(Number(thickness)||0, Number(offset)||0, rim ? 1 : 0, evenThickness ? 1 : 0));
+    exp => exp.fe_mod_solidify(Number(thickness)||0, Number(offset)||0, rim ? 1 : 0, evenThickness ? 1 : 0,
+      flipNormals ? 1 : 0, rimOnly ? 1 : 0, Math.max(0, Number(thicknessClamp)||0), useAngleClamp ? 1 : 0,
+      Math.max(0, Math.min(1, Number(thicknessVertexGroup) || 0)), invertVertexGroup ? 1 : 0),
+    undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   if(Math.abs(thickness)<1e-9)return geometry.clone();
   const src=geometry.clone(), p=assertPositions(src);if(!src.attributes.normal)src.computeVertexNormals();
@@ -778,7 +955,13 @@ export function solidifyGeometry(geometry, thickness = .1, offset = -1, { rim = 
    eighteen strips along its diagonals. Every edge then becomes a strip, every
    vertex a patch, and more than one segment follows a circular arc whose shape
    Profile bends. clampOverlap keeps the offsets from crossing. */
-export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true,profile=.5}={}){
+/* Blender's own enumerations, in RNA order: bmesh_bevel.cc reads
+   BEVEL_AMT_OFFSET/WIDTH/DEPTH/PERCENT, and MOD_bevel.c reads
+   BEVEL_LIMIT_NONE/ANGLE with the angle limit in radians. */
+const OFFSET_TYPES={Offset:0,Width:1,Depth:2,Percent:3};
+const LIMIT_METHODS={None:0,Angle:1};
+
+export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true,profile=.5,offsetType='Offset',limitMethod='None',angleLimit=30}={}){
   if(!Number.isFinite(width)||width<0)throw new Error('Bevel width must be a finite non-negative value');
   if(width<=1e-7)return geometry.clone();
   const seg=Math.max(1,Math.min(16,Math.round(Number(segments)||1)));
@@ -787,7 +970,8 @@ export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true,p
      below are deliberately loose - running short only costs the fallback. */
   const viaCpp = runCppKernel(geometry,
     (v,t)=>[Math.min(131072,v*(seg+2)+256),Math.min(262144,t*(3*seg+10)+256)],
-    exp=>exp.fe_mod_bevel(width,seg,clampOverlap?1:0,Number(profile)||0.5));
+    exp=>exp.fe_mod_bevel(width,seg,clampOverlap?1:0,Number(profile)||.5,
+      OFFSET_TYPES[offsetType]??0,LIMIT_METHODS[limitMethod]??0,Number(angleLimit)||0));
   if(viaCpp) return viaCpp;
   const src=weldGeometry(geometry,1e-7);
   try{
@@ -861,10 +1045,11 @@ export function bevelGeometry(geometry,{width=.15,segments=4,clampOverlap=true,p
 
 function hash3(x,y,z){const q=Math.sin(x*127.1+y*311.7+z*74.7)*43758.5453123;return q-Math.floor(q)}
 function valueNoise3(x,y,z){const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z),fx=x-ix,fy=y-iy,fz=z-iz,s=t=>t*t*(3-2*t);let v=0;for(let dz=0;dz<=1;dz++)for(let dy=0;dy<=1;dy++)for(let dx=0;dx<=1;dx++){const w=(dx? s(fx):1-s(fx))*(dy?s(fy):1-s(fy))*(dz?s(fz):1-s(fz));v+=hash3(ix+dx,iy+dy,iz+dz)*w}return v}
-export function displaceGeometry(geometry,{strength=.35,midlevel=.5,frequency=1,direction='Normal',octaves=1,seed=0}={}){
+export function displaceGeometry(geometry,{strength=.35,midlevel=.5,frequency=1,direction='Normal',octaves=1,seed=0,vertexWeights=null,invertVertexGroup=false}={}){
   const dirIndex = { Normal: 0, X: 1, Y: 2, Z: 3 }[direction] ?? 0;
   const viaCpp = runCppKernel(geometry, null,
-    exp => exp.fe_mod_displace(Number(strength)||0, Number(midlevel)||0, Number(frequency)||1, Number(seed)||0, Number(octaves)||1, dirIndex));
+    exp => exp.fe_mod_displace(Number(strength)||0, Number(midlevel)||0, Number(frequency)||1, Number(seed)||0, Number(octaves)||1, dirIndex, invertVertexGroup ? 1 : 0),
+    undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   const g=geometry.clone();if(!g.attributes.normal)g.computeVertexNormals();const p=g.attributes.position,n=g.attributes.normal;
   const fixed = dirIndex === 1 ? new THREE.Vector3(1,0,0) : dirIndex === 2 ? new THREE.Vector3(0,1,0) : dirIndex === 3 ? new THREE.Vector3(0,0,1) : null;
@@ -876,17 +1061,74 @@ export function displaceGeometry(geometry,{strength=.35,midlevel=.5,frequency=1,
     const dx=fixed?fixed.x:n.getX(i), dy=fixed?fixed.y:n.getY(i), dz=fixed?fixed.z:n.getZ(i);
     p.setXYZ(i,x+dx*d,y+dy*d,z+dz*d)}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
-export function waveGeometry(geometry,{speed=1.5,height=.6,width=2.5,time=0,axis='Y',phase=0}={}){
-  const axisIndex = { X: 0, Y: 1, Z: 2 }[axis] ?? 1;
-  const viaCpp = runCppKernel(geometry, null,
-    exp => exp.fe_mod_wave(Number(height)||0, Number(width)||0, Number(speed)||0, Number(time)||0, axisIndex, Number(phase)||0));
+/* Wave, from MOD_wave.cc's waveModifier_do: a travelling gaussian.
+ *
+ *   amplit = distance from the start point (per plane) - elapsed * speed
+ *   amplit = 1 / exp((amplit * narrowness)^2) - minfac   inside |amplit| < width
+ *   vertex += height * amplit * weight * falloff, along Z or along the normal
+ *
+ * `plane` is Blender's flag: X (0), Y (1) or X|Y (2, the circles), NOT the axis
+ * the vertex moves on - upstream always moves it along local Z unless Use
+ * Normal is on. `time` is the clock the modifier used to read from the frame;
+ * `phase` is this app's addition for callers that have no clock.
+ */
+export function waveGeometry(geometry,{speed=1.5,height=.6,width=1,time=0,axis='X',phase=0,
+  narrowness=1,timeOffset=0,lifetime=0,damping=0,startX=0,startY=0,falloff=0,cyclic=false,
+  useNormal=false,vertexWeights=null,invertVertexGroup=false}={}){
+  const plane = { X: 0, Y: 1, Radial: 2, XY: 2, Z: 2 }[axis] ?? 0;
+  const w = Math.max(Number(width) || 0, 1e-6);
+  const narrow = Number(narrowness) || 0;
+  const args = [Number(height)||0, w, Number(speed)||0, Number(time)||0, plane, Number(phase)||0,
+    invertVertexGroup ? 1 : 0, narrow, Number(timeOffset)||0, Number(lifetime)||0, Number(damping)||0,
+    Number(startX)||0, Number(startY)||0, Math.max(0, Number(falloff)||0), cyclic ? 1 : 0, useNormal ? 1 : 0];
+  const viaCpp = runCppKernel(geometry, null, exp => exp.fe_mod_wave(...args), undefined, vertexWeights);
   if (viaCpp) return viaCpp;
-  const g=geometry.clone(),p=g.attributes.position;if(!p)throw new Error('Wave needs vertex positions');
-  for(let i=0;i<p.count;i++){const x=p.getX(i),y=p.getY(i),z=p.getZ(i);
-    const r=axisIndex===0?Math.hypot(y,z):axisIndex===1?Math.hypot(x,z):Math.hypot(x,y);
-    const w=Math.sin(r*width*1.5-time*speed+phase)*height*.2;
-    if(axisIndex===1)p.setY(i,y+w);else if(axisIndex===0)p.setX(i,x+w);else p.setZ(i,z+w)}
+
+  /* JS fallback: the same arithmetic. */
+  const g=geometry.clone();
+  const p=g.attributes.position; if(!p) throw new Error('Wave needs vertex positions');
+  if(!g.attributes.normal) g.computeVertexNormals();
+  const nrm=g.attributes.normal;
+  const minfac = 1 / Math.exp(w * narrow * w * narrow);
+  const ctime = (Number(time)||0) + (Number(phase)||0);
+  const damp = (Number(damping)||0) === 0 ? 10 : Number(damping);
+  let lifefac = Number(height)||0;
+  if ((Number(lifetime)||0) !== 0 && ctime - (Number(timeOffset)||0) > (Number(lifetime)||0)) {
+    const x = ctime - (Number(timeOffset)||0) - (Number(lifetime)||0);
+    lifefac = x > damp ? 0 : (Number(height)||0) * (1 - Math.sqrt(x / damp));
+  }
+  if (lifefac !== 0) {
+    const falloffAmt = Math.max(0, Number(falloff)||0);
+    const falloffInv = falloffAmt ? 1 / falloffAmt : 1;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i) - (Number(startX)||0), y = p.getY(i) - (Number(startY)||0);
+      let weight = 1;
+      if (vertexWeights) weight = invertVertexGroup ? 1 - vertexWeights[i] : vertexWeights[i];
+      if (weight === 0) continue;
+      let amplit, dist;
+      if (plane === 2) { amplit = Math.hypot(x, y); dist = amplit; }
+      else if (plane === 1) { amplit = y; dist = Math.abs(y); }
+      else { amplit = x; dist = Math.abs(x); }
+      amplit -= (ctime - (Number(timeOffset)||0)) * (Number(speed)||0);
+      if (cyclic) {
+        /* fmodf(amplit - width, 2 * width) + width; JS % is C's fmod. */
+        amplit = (amplit - w) % (2 * w) + w;
+      }
+      let falloffFac = 1;
+      if (falloffAmt) falloffFac = Math.min(1, Math.max(0, 1 - dist * falloffInv));
+      if (falloffFac !== 0 && amplit > -w && amplit < w) {
+        const a = amplit * narrow;
+        const move = lifefac * (1 / Math.exp(a * a) - minfac) * weight * falloffFac;
+        if (useNormal) {
+          p.setXYZ(i, p.getX(i) + nrm.getX(i) * move, p.getY(i) + nrm.getY(i) * move, p.getZ(i) + nrm.getZ(i) * move);
+        } else {
+          p.setZ(i, p.getZ(i) + move);
+        }
+      }
+    }
+  }
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
+
 /* Build, ported from MOD_build.cc. Upstream derives a fraction from the frame
    and keeps that many faces, in order or from a seeded shuffle; this stack is
    evaluated on demand, so progress is the fraction itself. */
@@ -1019,12 +1261,13 @@ export function screwGeometry(geometry, { angle = 360, screwOffset = 0, iteratio
    the ones on an open boundary; axes is [x, y, z]. */
 export function laplacianSmoothGeometry(geometry, { repeat = 1, lambda = 0.3, lambdaBorder = 0.3,
                                                     axes = [true, true, true], preserveVolume = false,
-                                                    normalized = false } = {}) {
+                                                    normalized = false, vertexWeights = null,
+                                                    invertVertexGroup = false } = {}) {
   const mask = (axes[0] ? 1 : 0) | (axes[1] ? 2 : 0) | (axes[2] ? 4 : 0);
   const passes = Math.max(0, Math.min(64, Math.round(Number(repeat) || 0)));
   const viaCpp = runCppKernel(geometry, (v, t) => [v, t],
     exp => exp.fe_mod_laplacian_smooth(passes, Number(lambda), Number(lambdaBorder), mask,
-      preserveVolume ? 1 : 0, normalized ? 1 : 0));
+      preserveVolume ? 1 : 0, normalized ? 1 : 0, invertVertexGroup ? 1 : 0), undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   if (!mask || !passes) return updateBounds(geometry.clone());
 
@@ -1068,9 +1311,15 @@ export function laplacianSmoothGeometry(geometry, { repeat = 1, lambda = 0.3, la
   edgeList.forEach((e, i) => {
     if (!isRing(e.u) && !isRing(e.w)) { vlen[e.u] += eweight[i]; vlen[e.w] += eweight[i]; }
   });
+  /* The same wpaint the kernel builds its rows with. */
+  const wpaint = new Float64Array(v);
   for (let i = 0; i < v; i++) {
-    if (isRing(i)) vwt[i] = vwt[i] === 0 ? 0 : -Math.abs(lambda) / vwt[i];
-    else vlen[i] = vlen[i] === 0 ? 0 : -Math.abs(lambdaBorder) * 2 / vlen[i];
+    wpaint[i] = vertexWeights && vertexWeights.length === v
+      ? (invertVertexGroup ? 1 - vertexWeights[i] : vertexWeights[i]) : 1;
+  }
+  for (let i = 0; i < v; i++) {
+    if (isRing(i)) vwt[i] = vwt[i] === 0 ? 0 : -Math.abs(lambda) * wpaint[i] / vwt[i];
+    else vlen[i] = vlen[i] === 0 ? 0 : -Math.abs(lambdaBorder) * 2 * wpaint[i] / vlen[i];
   }
   /* Diagonal and the neighbour terms, as one relaxation pass. */
   const work = new Float64Array(v * 3);
@@ -1090,7 +1339,7 @@ export function laplacianSmoothGeometry(geometry, { repeat = 1, lambda = 0.3, la
       }
     }
     for (let i = 0; i < v; i++) {
-      const diag = 1 + (isRing(i) ? Math.abs(lambda) : Math.abs(lambdaBorder) * 2);
+      const diag = 1 + (isRing(i) ? Math.abs(lambda) : Math.abs(lambdaBorder) * 2) * wpaint[i];
       for (let ax = 0; ax < 3; ax++) {
         if (!(mask & (1 << ax))) continue;
         const target = (next[i * 3 + ax] + (diag - 1) * work[i * 3 + ax]) / diag;
@@ -1206,7 +1455,8 @@ export function edgeSplitGeometry(geometry, { splitAngle = 30, useAngle = true, 
    are converted to the radians the modifier actually stores. */
 export function simpleDeformGeometry(geometry, {
   mode = 'Twist', axis = 'Z', angle = 45, factor = 0.5,
-  limitLower = 0, limitUpper = 1, lockX = false, lockY = false, lockZ = false
+  limitLower = 0, limitUpper = 1, lockX = false, lockY = false, lockZ = false,
+  vertexWeights = null, invertVertexGroup = false
 } = {}) {
   const modeIndex = { Twist: 0, Bend: 1, Taper: 2, Stretch: 3 }[mode] ?? 0;
   const axisIndex = { X: 0, Y: 1, Z: 2 }[axis] ?? 2;
@@ -1216,7 +1466,8 @@ export function simpleDeformGeometry(geometry, {
   const lock = (lockX ? 1 : 0) | (lockY ? 2 : 0) | (lockZ ? 4 : 0);
   const viaCpp = runCppKernel(geometry, null,
     exp => exp.fe_mod_simple_deform(modeIndex, axisIndex, value,
-      Math.min(Number(limitLower) || 0, 1), Math.max(Math.min(Number(limitUpper) ?? 1, 1), 0), lock));
+      Math.min(Number(limitLower) || 0, 1), Math.max(Math.min(Number(limitUpper) ?? 1, 1), 0), lock,
+      invertVertexGroup ? 1 : 0), undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   /* JS fallback: the same four formulas. */
   const g = geometry.clone(), p = assertPositions(g);
@@ -1255,10 +1506,11 @@ export function simpleDeformGeometry(geometry, {
   }
   p.needsUpdate = true; g.computeVertexNormals(); return updateBounds(g);
 }
-export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1}={}){
+export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1,vertexWeights=null,invertVertexGroup=false}={}){
   const shapeIndex = { Sphere: 0, Cylinder: 1, Cuboid: 2 }[shape] ?? 0;
   const viaCpp = runCppKernel(geometry, null,
-    exp => exp.fe_mod_cast(shapeIndex, Number(factor)||0, Number(radius)||0, Number(size)||1));
+    exp => exp.fe_mod_cast(shapeIndex, Number(factor)||0, Number(radius)||0, Number(size)||1, invertVertexGroup ? 1 : 0),
+    undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   const g=geometry.clone(),p=g.attributes.position;g.computeBoundingBox();
   const center=g.boundingBox.getCenter(new THREE.Vector3()),bbox=g.boundingBox.getSize(new THREE.Vector3());
@@ -1269,16 +1521,20 @@ export function castGeometry(geometry,{shape='Sphere',factor=1,radius=1,size=1}=
     else if(shape==='Cuboid'){tx=clamp(x,-base,base);ty=clamp(y,-base,base);tz=clamp(z,-base,base)}
     p.setXYZ(i,center.x+THREE.MathUtils.lerp(x,tx,f),center.y+THREE.MathUtils.lerp(y,ty,f),center.z+THREE.MathUtils.lerp(z,tz,f))}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
-export function smoothGeometry(geometry,{factor=.6,iterations=3,preserveVolume=false,boundary='Smooth'}={}){
+export function smoothGeometry(geometry,{factor=.6,iterations=3,preserveVolume=false,boundary='Smooth',vertexWeights=null,invertVertexGroup=false}={}){
   const viaCpp = runCppKernel(geometry, null,
-    exp => exp.fe_mod_smooth(Math.round(iterations), Number(factor)||0, preserveVolume ? 1 : 0, boundary === 'Fixed' ? 0 : 1));
+    exp => exp.fe_mod_smooth(Math.round(iterations), Number(factor)||0, preserveVolume ? 1 : 0,
+      boundary === 'Fixed' ? 0 : 1, invertVertexGroup ? 1 : 0), undefined, vertexWeights);
   if (viaCpp) return viaCpp;
   let g=weldGeometry(geometry,1e-7);const f=clamp(factor,0,1);
+  /* The weld above renumbers the vertices, so the weights follow them. */
+  const weights=carryVertexWeights(vertexWeights,geometry,g);
+  const wAt=i=>weights?(invertVertexGroup?1-weights[i]:weights[i]):1;
   for(let iter=0;iter<clamp(Math.round(iterations),1,20);iter++){const p=g.attributes.position,idx=g.index.array,neighbors=Array.from({length:p.count},()=>new Set());
     for(let i=0;i<idx.length;i+=3){const a=idx[i],b=idx[i+1],c=idx[i+2];neighbors[a].add(b);neighbors[a].add(c);neighbors[b].add(a);neighbors[b].add(c);neighbors[c].add(a);neighbors[c].add(b)}
-    const next=new Float32Array(p.array);for(let i=0;i<p.count;i++){const ns=[...neighbors[i]];if(!ns.length)continue;const avg=new THREE.Vector3();
-      for(const j of ns)avg.add(new THREE.Vector3(p.getX(j),p.getY(j),p.getZ(j)));avg.multiplyScalar(1/ns.length);
-      next[i*3]=THREE.MathUtils.lerp(p.getX(i),avg.x,f);next[i*3+1]=THREE.MathUtils.lerp(p.getY(i),avg.y,f);next[i*3+2]=THREE.MathUtils.lerp(p.getZ(i),avg.z,f)}
+    const next=new Float32Array(p.array);for(let i=0;i<p.count;i++){const w=wAt(i);if(w<=0)continue;const ns=[...neighbors[i]];if(!ns.length)continue;const avg=new THREE.Vector3();
+      for(const j of ns)avg.add(new THREE.Vector3(p.getX(j),p.getY(j),p.getZ(j)));avg.multiplyScalar(1/ns.length);const fi=f*w;
+      next[i*3]=THREE.MathUtils.lerp(p.getX(i),avg.x,fi);next[i*3+1]=THREE.MathUtils.lerp(p.getY(i),avg.y,fi);next[i*3+2]=THREE.MathUtils.lerp(p.getZ(i),avg.z,fi)}
     p.array.set(next);p.needsUpdate=true}
   g.computeVertexNormals();return updateBounds(g)}
 export function weightedNormalGeometry(geometry,{weight=50,keepSharp=true}={}){const g=geometry.clone(),p=g.attributes.position,idx=sourceIndices(g),out=new Float32Array(p.count*3),blend=clamp(weight/100,0,1);for(let i=0;i+2<idx.length;i+=3){const ia=idx[i],ib=idx[i+1],ic=idx[i+2],a=new THREE.Vector3(p.getX(ia),p.getY(ia),p.getZ(ia)),b=new THREE.Vector3(p.getX(ib),p.getY(ib),p.getZ(ib)),c=new THREE.Vector3(p.getX(ic),p.getY(ic),p.getZ(ic)),cross=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a)),area=cross.length()*.5;if(area<1e-12)continue;const face=cross.normalize();for(const [id,u,v]of [[ia,b,c],[ib,c,a],[ic,a,b]]){const e1=u.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),e2=v.clone().sub(new THREE.Vector3(p.getX(id),p.getY(id),p.getZ(id))).normalize(),angle=Math.acos(clamp(e1.dot(e2),-1,1)),w=angle*((1-blend)+blend*area);out[id*3]+=face.x*w;out[id*3+1]+=face.y*w;out[id*3+2]+=face.z*w}}const old=g.attributes.normal;for(let i=0;i<p.count;i++){let n=new THREE.Vector3(out[i*3],out[i*3+1],out[i*3+2]);if(n.lengthSq()<1e-12&&old)n.fromBufferAttribute(old,i);n.normalize();if(keepSharp&&old){const original=new THREE.Vector3().fromBufferAttribute(old,i);if(original.lengthSq()>0&&n.dot(original)<.5)n.copy(original)}out[i*3]=n.x;out[i*3+1]=n.y;out[i*3+2]=n.z}g.setAttribute('normal',new THREE.BufferAttribute(out,3));return updateBounds(g)}
@@ -1343,7 +1599,7 @@ export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElement
 }
 
 /* ---- True 3D Volumetric Strut Wireframe Modifier ---- */
-export function wireframeGeometry3D(geometry,{thickness=.03,offset=0,replaceOriginal=true,boundary=true,evenOffset=true}={}){
+export function wireframeGeometry3D(geometry,{thickness=.03,offset=0,replaceOriginal=true,boundary=true,evenOffset=true,relativeOffset=false,vertexWeights=null,thicknessVertexGroup=1,invertVertexGroup=false}={}){
   /* The C++ kernel is BM_mesh_wireframe ported (cpp/src/fe_modifiers.cpp):
      per-corner inset along the face tangent, two quads per corner, boundary
      strips. It needs three vertex slots plus two copies per input vertex and
@@ -1352,7 +1608,9 @@ export function wireframeGeometry3D(geometry,{thickness=.03,offset=0,replaceOrig
   if(!Number.isFinite(requested)||Math.abs(requested)<=1e-7)return geometry.clone();
   const viaCpp=runCppKernel(geometry,(v,t)=>[v*3+t*3+16,t*26+16],
     exp=>exp.fe_mod_wireframe(clamp(requested,.002,.5),clamp(Number(offset)||0,-1,1),
-      replaceOriginal?1:0,boundary?1:0,evenOffset?1:0));
+      replaceOriginal?1:0,boundary?1:0,evenOffset?1:0,relativeOffset?1:0,
+      clamp(Number(thicknessVertexGroup)||0,0,1),invertVertexGroup?1:0),
+    undefined,vertexWeights);
   if(viaCpp)return viaCpp;
   const p=assertPositions(geometry),idx=sourceIndices(geometry),r=clamp(Number(thickness)||.03,.002,.5)*.5;
   const box=geometry.boundingBox||(geometry.computeBoundingBox(),geometry.boundingBox);

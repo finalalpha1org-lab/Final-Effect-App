@@ -150,10 +150,29 @@ test('Subdivision Surface says which level it built when the slider asks for mor
   assert.match(html, /feSubdivisionNote\(subdivisionNote\)/);
 });
 
-test('the two dead sliders specifically stay gone', () => {
+test('Wave takes its origin from a control object, the way MOD_wave.cc does', () => {
+  /* objectcenter replaces startx/starty with the control object's location in
+     the modified object's local space, so the panel needs a picker and the
+     evaluator needs to read it through the same relative matrix. */
+  assert.ok(registry.includes('["Object Center","select"'), 'Wave has an Object Center field');
+  const options = topLevel(html, 'waveOptions');
+  assert.match(options, /p\["Object Center"\]/, 'the evaluator reads the picker');
+  assert.match(options, /modifierRelativeMatrix\(obj, center\)/, 'and converts it into local space');
+  assert.match(options, /startX = m\[12\]; startY = m\[13\]/, 'x and y come from the translation');
+  assert.match(html, /mod\.name === 'Wave' && label === 'Object Center'/, 'the picker lists scene meshes');
+});
+
+test('no slider is in a panel without a kernel behind it', () => {
+  /* Render Levels was a control for a number the app never used: there is one
+     quality level, and it is viewport levels. It stays gone. */
   assert.ok(!registry.includes('Render Levels'));
-  assert.ok(!registry.includes('"Falloff"'));
-  assert.ok(!html.includes("p['Falloff']"));
+  /* Falloff used to be in the same state. It is now MOD_wave.cc's own falloff,
+     so the point of this test flips: it must exist AND be read by the
+     evaluator, not merely be absent. */
+  assert.ok(registry.includes('"Falloff"'), 'Wave has a Falloff slider');
+  assert.match(html, /falloff: Number\(p\["Falloff"\]/,
+    'and the evaluator reads it');
+  assert.ok(!html.includes("p['Falloff']"), 'no stale spelling of the setting survives');
 });
 
 /* ---- Editing cost -------------------------------------------------------- */

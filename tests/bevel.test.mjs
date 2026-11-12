@@ -127,3 +127,28 @@ test('UVs come along', () => withCore(() => {
   assert.ok(out.attributes.uv);
   assert.equal(out.attributes.uv.count, out.attributes.position.count);
 }));
+
+/* ---- the settings Blender exposes, added in this pass ---- */
+
+test('Offset Type changes what the slider means', () => withCore(() => {
+  const base = { segments: 2, clampOverlap: false };
+  const offset = bevelGeometry(cube(), { ...base, width: 0.2, offsetType: 'Offset' });
+  const width = bevelGeometry(cube(), { ...base, width: 0.2, offsetType: 'Width' });
+  const percent = bevelGeometry(cube(), { ...base, width: 20, offsetType: 'Percent' });
+  const ext = g => extent(g);
+  assert.ok(ext(offset) <= 1 + 1e-6 && ext(width) <= 1 + 1e-6, 'both stay inside the cube');
+  assert.notEqual(area(offset).toFixed(4), area(width).toFixed(4), 'Width is not Offset');
+  assert.ok(Math.abs(area(percent) - area(offset)) > 1e-6, 'Percent is not Offset either');
+  for (const g of [offset, width, percent]) {
+    assert.deepEqual(Object.keys(topology(g).hist), ['2'], 'still closed');
+  }
+}));
+
+test('an angle limit leaves the shallow edges sharp', () => withCore(() => {
+  /* A cube has 90-degree edges everywhere, so a 120-degree limit bevels
+     nothing and a 30-degree limit bevels everything. */
+  const none = bevelGeometry(cube(), { width: 0.2, segments: 2, limitMethod: 'Angle', angleLimit: 120 });
+  const all = bevelGeometry(cube(), { width: 0.2, segments: 2, limitMethod: 'Angle', angleLimit: 30 });
+  assert.equal(none.attributes.position.count, 24, 'nothing was sharp enough to bevel');
+  assert.ok(all.attributes.position.count > 24, 'everything was');
+}));

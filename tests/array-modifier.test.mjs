@@ -196,3 +196,40 @@ test('one copy is the identity and the face count scales with it', () => {
     assert.equal(five.index.count / 3, faces * 5);
   });
 });
+
+test('an offset object supplies the step matrix itself', () => {
+  withCore(() => {
+    /* MOD_array.cc: offset = offset * inverse(object) * offset_object, then
+       compounded per copy. Here the object stands 3 units along x and a
+       quarter turn about z, with the constant offset switched off entirely -
+       every copy is the previous one carried through that transform. */
+    const source = box(1);
+    const perCopy = source.attributes.position.count;
+    const step = new THREE.Matrix4().makeRotationZ(Math.PI / 2);
+    step.setPosition(3, 0, 0);
+    const result = arrayGeometry(source, { count: 3, offset: [0,0,0], objectOffset: step.elements });
+    assert.equal(result.attributes.position.count, perCopy * 3);
+
+    /* Copy 0 is the original, copy 1 is it through the step, copy 2 twice. */
+    const p = result.attributes.position;
+    const corner = (c) => new THREE.Vector3(p.getX(c * perCopy), p.getY(c * perCopy), p.getZ(c * perCopy));
+    const near = (v, x, y, z) => Math.abs(v.x - x) < 1e-5 && Math.abs(v.y - y) < 1e-5 && Math.abs(v.z - z) < 1e-5;
+    const src = source.attributes.position;
+    const first = new THREE.Vector3(src.getX(0), src.getY(0), src.getZ(0));
+    const one = first.clone().applyMatrix4(step);
+    const two = one.clone().applyMatrix4(step);
+    assert.ok(near(corner(0), first.x, first.y, first.z), `copy 0 at ${corner(0).toArray()}`);
+    assert.ok(near(corner(1), one.x, one.y, one.z), `copy 1 at ${corner(1).toArray()}, wanted ${one.toArray()}`);
+    assert.ok(near(corner(2), two.x, two.y, two.z), `copy 2 at ${corner(2).toArray()}, wanted ${two.toArray()}`);
+  });
+});
+
+test('without an offset object the step matrix is the constant offset alone', () => {
+  withCore(() => {
+    const source = box(1);
+    const a = arrayGeometry(source, { count: 3, offset: [2, 0, 0] });
+    const identity = new THREE.Matrix4().elements;
+    const b = arrayGeometry(source, { count: 3, offset: [2, 0, 0], objectOffset: identity });
+    assert.deepEqual(Array.from(a.attributes.position.array), Array.from(b.attributes.position.array));
+  });
+});

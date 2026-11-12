@@ -42,6 +42,7 @@ inline T* modArray(uint32_t count) {
   return static_cast<T*>(modAlloc(count * static_cast<uint32_t>(sizeof(T))));
 }
 
+
 struct ModSession {
   bool ready = false;
   bool hasUv = false;
@@ -79,6 +80,12 @@ struct ModSession {
   float* latRest = nullptr;
   float* latDef = nullptr;
   uint32_t latN = 0;
+  /* The active vertex group's weight per vertex, 0..1. A modifier that has a
+     vertex_group reads it; kernels that do not are not allowed to care. vgOn
+     is 0 when no group was uploaded, which is the "no group" case upstream
+     spells as dvert == nullptr: the factor then has no effect at all. */
+  float* vg = nullptr;
+  uint32_t vgOn = 0;
 };
 
 ModSession g_s;
@@ -96,6 +103,57 @@ inline uint32_t nextPow2(uint32_t v) {
   uint32_t p = 16;
   while (p < v) p <<= 1;
   return p;
+}
+
+struct SplitEdges {
+  uint64_t* key = nullptr;
+  uint32_t* a = nullptr;
+  uint32_t* b = nullptr;
+  uint32_t* f0 = nullptr;
+  uint32_t* f1 = nullptr;
+  uint8_t* nf = nullptr;
+  uint8_t* split = nullptr;
+  uint32_t mask = 0;
+};
+
+bool splitEdgesInit(SplitEdges& e, uint32_t triCount) {
+  const uint32_t cap = nextPow2(triCount * 3u + 8u);
+  e.key = modArray<uint64_t>(cap);
+  e.a = modArray<uint32_t>(cap);
+  e.b = modArray<uint32_t>(cap);
+  e.f0 = modArray<uint32_t>(cap);
+  e.f1 = modArray<uint32_t>(cap);
+  e.nf = modArray<uint8_t>(cap);
+  e.split = modArray<uint8_t>(cap);
+  if (!e.key || !e.a || !e.b || !e.f0 || !e.f1 || !e.nf || !e.split) return false;
+  for (uint32_t i = 0; i < cap; ++i) { e.nf[i] = 0u; e.split[i] = 0u; }
+  e.mask = cap - 1u;
+  return true;
+}
+
+inline uint32_t splitEdgeSlot(const SplitEdges& e, uint32_t va, uint32_t vb, bool insert,
+                              uint32_t tri, bool* added) {
+  const uint32_t lo = va < vb ? va : vb, hi = va < vb ? vb : va;
+  const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+  uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & e.mask;
+  for (uint32_t probe = 0; probe <= e.mask; ++probe) {
+    if (e.nf[i] == 0u) {
+      if (!insert) return 0xFFFFFFFFu;
+      e.key[i] = key; e.a[i] = va; e.b[i] = vb;
+      e.f0[i] = tri; e.f1[i] = 0xFFFFFFFFu; e.nf[i] = 1u;
+      if (added) *added = true;
+      return i;
+    }
+    if (e.key[i] == key) {
+      if (insert) {
+        if (e.nf[i] == 1u) { e.f1[i] = tri; e.nf[i] = 2u; }
+        else if (e.nf[i] < 255u) { e.nf[i] = static_cast<uint8_t>(e.nf[i] + 1u); }
+      }
+      return i;
+    }
+    i = (i + 1u) & e.mask;
+  }
+  return 0xFFFFFFFFu;
 }
 
 inline Vec3 readPos(const float* p, uint32_t i) { return {p[i * 3], p[i * 3 + 1], p[i * 3 + 2]}; }
@@ -293,8 +351,12 @@ inline int32_t quantize(float v, float inv) {
   return static_cast<int32_t>(floorf(v * inv + 0.5f));
 }
 
-/* Weld the session mesh from input into output. */
-int32_t weldSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* remap) {
+/* Weld the session mesh from input into output. `sel`, when given, is
+   mesh_merge_by_distance_all()'s IndexMask: only the selected vertices enter
+   the KD-tree, so an unselected vertex can neither be merged nor absorb
+   another one. It keeps its own position and its own slot. */
+int32_t weldSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* remap,
+                    const uint8_t* sel = nullptr) {
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (v == 0 || t == 0) return -3;
   const float eps = epsilon > 1e-9f ? epsilon : 1e-9f;
@@ -305,6 +367,14 @@ int32_t weldSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* rem
   uint32_t newV = 0;
   for (uint32_t i = 0; i < v; ++i) {
     const Vec3 p = readPos(g_s.inPos, i);
+    if (sel && !sel[i]) {
+      /* Out of the mask: untouched, and invisible to the merge. */
+      const uint32_t id = newV++;
+      writePos(g_s.outPos, id, p);
+      if (g_s.hasUv) { g_s.outUv[id * 2] = g_s.inUv[i * 2]; g_s.outUv[id * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+      remap[i] = id;
+      continue;
+    }
     const int32_t qx = quantize(p.x, inv), qy = quantize(p.y, inv), qz = quantize(p.z, inv);
     uint32_t slot = hashU32(static_cast<uint32_t>(qx) * 73856093u ^
                             static_cast<uint32_t>(qy) * 19349663u ^
@@ -333,6 +403,86 @@ int32_t weldSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* rem
     if (a == b || b == c || c == a) continue;
     g_s.outIdx[newT * 3] = a; g_s.outIdx[newT * 3 + 1] = b; g_s.outIdx[newT * 3 + 2] = c;
     if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[newT] = g_s.inSmooth[i];
+    ++newT;
+  }
+  if (newV == 0 || newT == 0) return -4;
+  *outV = newV; *outT = newT;
+  return 0;
+}
+
+/* Weld's Connected mode, ported from mesh_merge_by_distance_connected() in
+ * geometry/intern/mesh_merge_verts.cc. It does not look for coincident points
+ * at all: it walks the edges and collapses the ones shorter than the
+ * distance, carrying a running weighted centre for each cluster:
+ *
+ *   influence = (merged_b + 1) / (merged_a + merged_b + 2)
+ *   co_a += (co_b - co_a) * influence
+ *
+ * so a fan of short edges ends up as the average of everything it absorbed
+ * rather than as whichever vertex happened to come first. */
+int32_t weldConnectedSession(float epsilon, uint32_t* outV, uint32_t* outT, uint32_t* remap,
+                             const uint8_t* sel = nullptr) {
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (v == 0 || t == 0) return -3;
+  const float eps = epsilon > 1e-9f ? epsilon : 1e-9f;
+  const float eps2 = eps * eps;
+  uint32_t* parent = modArray<uint32_t>(v);
+  uint32_t* merged = modArray<uint32_t>(v);
+  float* co = modArray<float>(v * 3u);
+  if (!parent || !merged || !co) return -2;
+  for (uint32_t i = 0; i < v; ++i) {
+    parent[i] = i;
+    merged[i] = 0u;
+    writePos(co, i, readPos(g_s.inPos, i));
+  }
+  auto rootOf = [&](uint32_t i) -> uint32_t {
+    while (parent[i] != i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  SplitEdges se;
+  if (!splitEdgesInit(se, t)) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      splitEdgeSlot(se, g_s.inIdx[f * 3 + k], g_s.inIdx[f * 3 + (k + 1u) % 3u], true, f, nullptr);
+    }
+  }
+  for (uint32_t sIdx = 0; sIdx <= se.mask; ++sIdx) {
+    if (!se.nf[sIdx]) continue;
+    uint32_t v1 = rootOf(se.a[sIdx]), v2 = rootOf(se.b[sIdx]);
+    if (v1 == v2) continue;
+    /* mesh_merge_by_distance_connected(): an edge with an end outside the
+       selection does not collapse, tested on the cluster roots. */
+    if (sel && (!sel[v1] || !sel[v2])) continue;
+    if (v1 > v2) { const uint32_t tmp = v1; v1 = v2; v2 = tmp; }
+    const Vec3 d = readPos(co, v2) - readPos(co, v1);
+    if (length_sq(d) > eps2) continue;
+    const float influence = static_cast<float>(merged[v2] + 1u) /
+                            static_cast<float>(merged[v1] + merged[v2] + 2u);
+    writePos(co, v1, readPos(co, v1) + d * influence);
+    merged[v1] += merged[v2] + 1u;
+    parent[v2] = v1;
+  }
+  /* Compact: a cluster keeps the slot of its smallest vertex, which is its
+     root, so the roots are met in increasing order and remap is ready. */
+  uint32_t newV = 0;
+  for (uint32_t i = 0; i < v; ++i) {
+    if (rootOf(i) != i) continue;
+    if (newV >= g_s.vcap) return -2;
+    writePos(g_s.outPos, newV, readPos(co, i));
+    if (g_s.hasUv) { g_s.outUv[newV * 2] = g_s.inUv[i * 2]; g_s.outUv[newV * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+    remap[i] = newV++;
+  }
+  uint32_t newT = 0;
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t a = remap[rootOf(g_s.inIdx[f * 3])];
+    const uint32_t b = remap[rootOf(g_s.inIdx[f * 3 + 1])];
+    const uint32_t c = remap[rootOf(g_s.inIdx[f * 3 + 2])];
+    if (a == b || b == c || c == a) continue;
+    g_s.outIdx[newT * 3] = a; g_s.outIdx[newT * 3 + 1] = b; g_s.outIdx[newT * 3 + 2] = c;
+    if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[newT] = g_s.inSmooth[f];
     ++newT;
   }
   if (newV == 0 || newT == 0) return -4;
@@ -393,6 +543,20 @@ uint32_t edgeTableCount(const EdgeTable& t, uint32_t va, uint32_t vb) {
   for (uint32_t probe = 0; probe <= t.mask; ++probe) {
     if (t.count[i] == 0) return 0u;
     if (t.key[i] == key) return t.count[i];
+    i = (i + 1u) & t.mask;
+  }
+  return 0u;
+}
+
+/* Same lookup, but hands back the first face that used the edge; the solidify
+   angle clamp needs the pair of faces either side of a manifold edge. */
+uint32_t edgeTableFind(const EdgeTable& t, uint32_t va, uint32_t vb, uint32_t& first) {
+  const uint32_t lo = va < vb ? va : vb, hi = va < vb ? vb : va;
+  const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+  uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & t.mask;
+  for (uint32_t probe = 0; probe <= t.mask; ++probe) {
+    if (t.count[i] == 0) return 0u;
+    if (t.key[i] == key) { first = t.tri ? t.tri[i] : 0u; return t.count[i]; }
     i = (i + 1u) & t.mask;
   }
   return 0u;
@@ -1323,6 +1487,7 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
   g_s.sdOrd = nullptr; g_s.sdBary = nullptr; g_s.sdScalars = nullptr; g_s.sdTris = nullptr;
   g_s.sdBound = 0; g_s.sdTriN = 0;
   g_s.latRest = nullptr; g_s.latDef = nullptr; g_s.latN = 0;
+  g_s.vg = nullptr; g_s.vgOn = 0;
   if (vert_capacity == 0 || tri_capacity == 0) return -3;
   if (vert_capacity > MOD_MAX_VERTS || tri_capacity > MOD_MAX_TRIS) return -2;
 
@@ -1352,13 +1517,15 @@ FE_EXPORT int32_t fe_mod_begin(uint32_t vert_capacity, uint32_t tri_capacity, ui
   g_s.outIdx = modArray<uint32_t>(t * 3u);
   g_s.nrm = modArray<float>(v * 3u);
   g_s.counts = modArray<uint32_t>(2u);
+  g_s.vg = modArray<float>(v);
+  if (g_s.vg) for (uint32_t i = 0; i < v; ++i) g_s.vg[i] = 0.0f;
   g_s.matrix = modArray<float>(16u);
   if (g_s.matrix) {
     for (uint32_t i = 0; i < 16u; ++i) g_s.matrix[i] = 0.0f;
     g_s.matrix[0] = 1.0f; g_s.matrix[5] = 1.0f; g_s.matrix[10] = 1.0f; g_s.matrix[15] = 1.0f;
   }
   if (!g_s.inPos || !g_s.inUv || !g_s.inNrm || !g_s.inIdx || !g_s.inSmooth || !g_s.outSmooth ||
-      !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts || !g_s.matrix) {
+      !g_s.outPos || !g_s.outUv || !g_s.outIdx || !g_s.nrm || !g_s.counts || !g_s.matrix || !g_s.vg) {
     g_s.ready = false;
     return -2;
   }
@@ -1377,6 +1544,30 @@ FE_EXPORT uint32_t fe_mod_in_nrm_ptr(void) { return static_cast<uint32_t>(reinte
    geometry carries its own flags, or calls fe_mod_derive_face_smooth() to have
    them read off the normals the mesh arrived with. */
 FE_EXPORT uint32_t fe_mod_face_smooth_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.inSmooth)); }
+
+/* The active vertex group, one float per input vertex. The bridge copies the
+   weights in before the kernel runs; fe_mod_set_vgroup(0) means "no group",
+   which every kernel reads as a factor of one. */
+FE_EXPORT uint32_t fe_mod_vgroup_ptr(void) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(g_s.vg)); }
+FE_EXPORT uint32_t fe_mod_set_vgroup(uint32_t count) {
+  if (!g_s.ready || !g_s.vg) return 0;
+  if (count == 0u) { g_s.vgOn = 0; return 1; }
+  if (count != g_s.vc) { g_s.vgOn = 0; return 0; }
+  for (uint32_t i = 0; i < count; ++i) {
+    float w = g_s.vg[i];
+    if (!(w >= 0.0f)) w = 0.0f;
+    if (w > 1.0f) w = 1.0f;
+    g_s.vg[i] = w;
+  }
+  g_s.vgOn = 1;
+  return 1;
+}
+
+inline float deformWeight(uint32_t i, int32_t invert) {
+  if (!g_s.vgOn) return 1.0f;
+  float w = g_s.vg[i];
+  return invert ? 1.0f - w : w;
+}
 
 FE_EXPORT uint32_t fe_mod_set_face_smooth(uint32_t count) {
   if (!g_s.ready || !g_s.inSmooth) return 0;
@@ -1471,17 +1662,41 @@ FE_EXPORT int32_t fe_mod_shade(void) {
   return 0;
 }
 
-FE_EXPORT int32_t fe_mod_weld(float epsilon) {
+FE_EXPORT int32_t fe_mod_weld(float epsilon, int32_t mode, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
-  uint32_t* remap = modArray<uint32_t>(g_s.vc + 1u);
+  const uint32_t v0 = g_s.vc, t0 = g_s.tc;
+  if (!v0 || !t0) return -3;
+  uint32_t* remap = modArray<uint32_t>(v0 + 1u);
   if (!remap) return -2;
+
+  /* MOD_weld.cc: selection_array_from_vertex_group() is
+       (BKE_defvert_find_weight(...) > 0.0f) != invert
+     - membership, not the weight. Inverting therefore selects the vertices
+     that are *not* in the group, which is why this cannot go through
+     deformWeight() (that would give 0.5 for a half-weighted vertex instead of
+     "selected"). */
+  uint8_t* sel = nullptr;
+  if (g_s.vgOn) {
+    sel = modArray<uint8_t>(v0);
+    if (!sel) return -2;
+    for (uint32_t i = 0; i < v0; ++i) {
+      const bool in_group = g_s.vg[i] > 0.0f;
+      sel[i] = (in_group != (invert_vgroup != 0)) ? 1u : 0u;
+    }
+  }
+
+  /* Weld's Mode. "All" merges vertices by distance wherever they are;
+     "Connected" collapses only edges shorter than the distance, which is what
+     keeps two coincident-but-separate surfaces from fusing. */
   uint32_t v = 0, t = 0;
-  const int32_t rc = weldSession(epsilon, &v, &t, remap);
+  const int32_t rc = mode == 1 ? weldConnectedSession(epsilon, &v, &t, remap, sel)
+                              : weldSession(epsilon, &v, &t, remap, sel);
   if (rc != 0) return rc;
   return commit(v, t);
 }
 
-FE_EXPORT int32_t fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode) {
+FE_EXPORT int32_t fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving,
+                                int32_t boundary_mode, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   const uint32_t v0 = g_s.vc, t0 = g_s.tc;
   if (v0 == 0 || t0 == 0) return -3;
@@ -1492,6 +1707,15 @@ FE_EXPORT int32_t fe_mod_smooth(uint32_t iterations, float factor, int32_t volum
   int32_t rc = weldSession(1e-6f, &v, &t, remap);
   if (rc != 0) return rc;
   copyOutToIn(v, t);
+
+  /* That weld renumbered the vertices; carry the group through it so the
+     weight still belongs to the vertex it was authored on. */
+  if (g_s.vgOn) {
+    float* carried = modArray<float>(v);
+    if (!carried) return -2;
+    for (uint32_t i = 0; i < v0; ++i) carried[remap[i]] = g_s.vg[i];
+    g_s.vg = carried;
+  }
 
   EdgeTable edges;
   if (!edgeTableInit(edges, t, false)) return -2;
@@ -1530,9 +1754,13 @@ FE_EXPORT int32_t fe_mod_smooth(uint32_t iterations, float factor, int32_t volum
     for (uint32_t i = 0; i < v; ++i) {
       if (!cnt[i]) continue;
       if (boundary_mode == 0 && boundary[i]) continue;
+      /* MOD_smooth.cc: f_vgroup <= 0 leaves the vertex alone, otherwise
+         f_new = f_vgroup * fac and the vertex is pulled by that much. */
+      const float w = deformWeight(i, invert_vgroup);
+      if (w <= 0.0f) continue;
       const Vec3 p = readPos(g_s.inPos, i);
       const Vec3 avg = readPos(acc, i) * (1.0f / static_cast<float>(cnt[i]));
-      writePos(g_s.inPos, i, lerpv(p, avg, step));
+      writePos(g_s.inPos, i, lerpv(p, avg, step * w));
     }
   }
 
@@ -1544,14 +1772,125 @@ FE_EXPORT int32_t fe_mod_smooth(uint32_t iterations, float factor, int32_t volum
   return 0;
 }
 
-FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon) {
+FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon,
+                                uint32_t bisect_mask, uint32_t bisect_flip_mask,
+                                float bisect_threshold, int32_t use_mirror_u, int32_t use_mirror_v,
+                                float mirror_offset_u, float mirror_offset_v, int32_t use_mirror_udim) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
   uint32_t axesEnabled = 0;
   for (uint32_t a = 0; a < 3; ++a) if (axis_mask & (1u << a)) axesEnabled++;
   const uint32_t copies = 1u << axesEnabled;
-  if (v * copies > g_s.vcap || t * copies > g_s.tcap) return -2;
+
+  /* ---- bisect: cut away everything on the wrong side of a mirror plane ----
+     Upstream does this with BM_mesh_bisect_plane() before it mirrors, which is
+     what lets a half-modelled mesh be completed: the half that is kept is the
+     one the artist modelled. A triangle that straddles the plane is cut, so
+     the seam is exact and the mirror then meets itself. */
+  uint32_t bv = 0, bt = 0;
+  const float* srcPos = g_s.inPos;
+  const uint32_t* srcIdx = g_s.inIdx;
+  float* cutPos = nullptr;
+  uint32_t* cutIdx = nullptr;
+  if (bisect_mask) {
+    cutPos = modArray<float>(v * 3u + t * 3u * 3u);
+    cutIdx = modArray<uint32_t>(t * 3u * 3u);
+    if (!cutPos || !cutIdx) return -2;
+    for (uint32_t i = 0; i < v; ++i) writePos(cutPos, i, readPos(g_s.inPos, i));
+    bv = v;
+    auto keepSide = [&](uint32_t a, float da, uint32_t b, float db, uint32_t& oa, uint32_t& ob) {
+      oa = a; ob = b;
+      if ((da < 0.0f) != (db < 0.0f) && absf(da - db) > 1e-12f) {
+        const float tt = da / (da - db);
+        const Vec3 pa = readPos(g_s.inPos, a), pb = readPos(g_s.inPos, b);
+        if (bv < g_s.vcap) {
+          writePos(cutPos, bv, pa + (pb - pa) * tt);
+          /* The crossing replaces the endpoint that is on the cut-away side:
+             a survives, so b takes the new vertex. */
+          if (da > 0.0f) ob = bv; else oa = bv;
+          ++bv;
+        }
+      }
+    };
+    for (uint32_t f = 0; f < t; ++f) {
+      const uint32_t ia[3] = {g_s.inIdx[f * 3], g_s.inIdx[f * 3 + 1], g_s.inIdx[f * 3 + 2]};
+      Vec3 p[3] = {readPos(g_s.inPos, ia[0]), readPos(g_s.inPos, ia[1]), readPos(g_s.inPos, ia[2])};
+      float d[3];
+      for (uint32_t c = 0; c < 3u; ++c) {
+        /* Every enabled axis is a plane, and a vertex has to be on the kept
+           side of all of them: upstream bisects once per axis, so the region
+           that survives is the intersection, not the union. */
+        float side = 1e30f;
+        for (uint32_t a = 0; a < 3u; ++a) {
+          if (!(bisect_mask & (1u << a))) continue;
+          const float val = (a == 0u ? p[c].x : (a == 1u ? p[c].y : p[c].z));
+          side = minf(side, (bisect_flip_mask & (1u << a)) ? -val : val);
+        }
+        d[c] = side - bisect_threshold;
+      }
+      const bool in[3] = {d[0] >= 0.0f, d[1] >= 0.0f, d[2] >= 0.0f};
+      const uint32_t nIn = static_cast<uint32_t>(in[0]) + static_cast<uint32_t>(in[1]) + static_cast<uint32_t>(in[2]);
+      if (nIn == 0u) continue;
+      if (nIn == 3u) {
+        if (bt >= g_s.tcap) return -2;
+        cutIdx[bt * 3] = ia[0]; cutIdx[bt * 3 + 1] = ia[1]; cutIdx[bt * 3 + 2] = ia[2];
+        ++bt;
+        continue;
+      }
+      if (nIn == 1u) {
+        /* One corner survives: the triangle becomes the corner plus the two
+           points where its edges cross the plane. keepSide writes the crossing
+           into the *outside* corner's slot, so those are the second result. */
+        const uint32_t i = in[0] ? 0u : (in[1] ? 1u : 2u);
+        const uint32_t j = (i + 1u) % 3u, k2 = (i + 2u) % 3u;
+        uint32_t keepI = 0, cutJ = 0, keepI2 = 0, cutK = 0;
+        keepSide(ia[i], d[i], ia[j], d[j], keepI, cutJ);
+        keepSide(ia[i], d[i], ia[k2], d[k2], keepI2, cutK);
+        if (bt >= g_s.tcap) return -2;
+        cutIdx[bt * 3] = ia[i]; cutIdx[bt * 3 + 1] = cutJ; cutIdx[bt * 3 + 2] = cutK;
+        ++bt;
+        continue;
+      }
+      /* Two corners survive: the corner at outI is cut off, leaving the quad
+         a1 -> a2 -> cut2 -> cut1, which is two triangles. */
+      uint32_t outI = 0;
+      for (uint32_t c = 0; c < 3u; ++c) if (!in[c]) outI = c;
+      const uint32_t a1 = (outI + 1u) % 3u, a2 = (outI + 2u) % 3u;
+      uint32_t keep1 = 0, cut1 = 0, keep2 = 0, cut2 = 0;
+      keepSide(ia[a1], d[a1], ia[outI], d[outI], keep1, cut1);
+      keepSide(ia[a2], d[a2], ia[outI], d[outI], keep2, cut2);
+      if (bt + 1u >= g_s.tcap) return -2;
+      cutIdx[bt * 3] = ia[a1]; cutIdx[bt * 3 + 1] = ia[a2]; cutIdx[bt * 3 + 2] = cut2;
+      ++bt;
+      cutIdx[bt * 3] = ia[a1]; cutIdx[bt * 3 + 1] = cut2; cutIdx[bt * 3 + 2] = cut1;
+      ++bt;
+    }
+    if (!bv || !bt) return -4;
+    /* The cut leaves vertices behind that no surviving triangle uses - the
+       corners of the removed half. Compact them away before mirroring: a loose
+       vertex at x = -1 would otherwise widen the result's bounds and get
+       duplicated into every copy. */
+    uint8_t* used = modArray<uint8_t>(bv);
+    uint32_t* dense = modArray<uint32_t>(bv);
+    if (!used || !dense) return -2;
+    for (uint32_t i = 0; i < bv; ++i) used[i] = 0u;
+    for (uint32_t i = 0; i < bt * 3u; ++i) used[cutIdx[i]] = 1u;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < bv; ++i) {
+      if (!used[i]) continue;
+      dense[i] = kept;
+      if (kept != i) writePos(cutPos, kept, readPos(cutPos, i));
+      ++kept;
+    }
+    for (uint32_t i = 0; i < bt * 3u; ++i) cutIdx[i] = dense[cutIdx[i]];
+    bv = kept;
+    srcPos = cutPos;
+    srcIdx = cutIdx;
+  }
+  const uint32_t vUse = bisect_mask ? bv : v;
+  const uint32_t tUse = bisect_mask ? bt : t;
+  if (vUse * copies > g_s.vcap || tUse * copies > g_s.tcap) return -2;
 
   for (uint32_t k = 0; k < copies; ++k) {
     float sign[3] = {1.0f, 1.0f, 1.0f};
@@ -1562,23 +1901,44 @@ FE_EXPORT int32_t fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merg
         bit++;
       }
     }
-    const uint32_t base = k * v;
-    for (uint32_t i = 0; i < v; ++i) {
-      const Vec3 p = readPos(g_s.inPos, i);
+    const uint32_t base = k * vUse;
+    for (uint32_t i = 0; i < vUse; ++i) {
+      const Vec3 p = readPos(srcPos, i);
       writePos(g_s.outPos, base + i, Vec3(p.x * sign[0], p.y * sign[1], p.z * sign[2]));
-      if (g_s.hasUv) { g_s.outUv[(base + i) * 2] = g_s.inUv[i * 2]; g_s.outUv[(base + i) * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+      if (g_s.hasUv) {
+        float u = g_s.inUv[i * 2], vv = g_s.inUv[i * 2 + 1];
+        /* use_mirror_u / use_mirror_v only touch the copies, never the
+           original: upstream runs its flip over the second set of loops.
+             u -> 1 - u + mirror_offset_u          (plain)
+             u -> ceil(u) - frac(u) + offset       (use_mirror_udim: the tile
+                                                    centre is the flip point) */
+        if (k > 0) {
+          if (use_mirror_u) {
+            u = use_mirror_udim
+                  ? -floorf(-u) - (u - floorf(u)) + mirror_offset_u
+                  : 1.0f - u + mirror_offset_u;
+          }
+          if (use_mirror_v) {
+            vv = use_mirror_udim
+                   ? -floorf(-vv) - (vv - floorf(vv)) + mirror_offset_v
+                   : 1.0f - vv + mirror_offset_v;
+          }
+        }
+        g_s.outUv[(base + i) * 2] = u;
+        g_s.outUv[(base + i) * 2 + 1] = vv;
+      }
     }
     const bool flip = sign[0] * sign[1] * sign[2] < 0.0f;
-    for (uint32_t f = 0; f < t; ++f) {
-      const uint32_t a = g_s.inIdx[f * 3], b = g_s.inIdx[f * 3 + 1], c = g_s.inIdx[f * 3 + 2];
-      const uint32_t o = (k * t + f) * 3;
+    for (uint32_t f = 0; f < tUse; ++f) {
+      const uint32_t a = srcIdx[f * 3], b = srcIdx[f * 3 + 1], c = srcIdx[f * 3 + 2];
+      const uint32_t o = (k * tUse + f) * 3;
       if (flip) { g_s.outIdx[o] = base + c; g_s.outIdx[o + 1] = base + b; g_s.outIdx[o + 2] = base + a; }
       else { g_s.outIdx[o] = base + a; g_s.outIdx[o + 1] = base + b; g_s.outIdx[o + 2] = base + c; }
-      if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[k * t + f] = g_s.inSmooth[f];
+      if (g_s.outSmooth && g_s.inSmooth) g_s.outSmooth[k * tUse + f] = g_s.inSmooth[f];
     }
   }
 
-  const uint32_t outV = v * copies, outT = t * copies;
+  const uint32_t outV = vUse * copies, outT = tUse * copies;
   int32_t rc = commit(outV, outT);
   if (rc != 0) return rc;
   if (clipping && copies > 1) {
@@ -1656,7 +2016,10 @@ inline float cornerAngle(float cosang) {
   return atan2f(sqrtf(maxf(0.0f, 1.0f - c * c)), c);
 }
 
-FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness) {
+FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness,
+                                  int32_t flip_normals, int32_t rim_only, float thickness_clamp,
+                                  int32_t use_angle_clamp, float thickness_vgroup_fac,
+                                  int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   /* The shell has twice the faces and none of them is the one it came from, so
      the per-face smooth flags cannot be carried: the new surface is smooth. */
@@ -1674,6 +2037,15 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
   const float offset_fac = clampf(offset, -1.0f, 1.0f);
   const float ofs_orig = -(((-offset_fac + 1.0f) * 0.5f) * th);
   const float ofs_new = th + ofs_orig;
+  /* INIT_VERT_ARRAY_OFFSETS: the vertices that keep the original winding take
+     the *larger* of the two offsets, so the shell faces outward whatever the
+     sign of the thickness. Flip Normals swaps the two, which is exactly what
+     turns a shell inside-out - the positions never move. */
+  float ofsFront = ofs_orig, ofsBack = ofs_new;
+  const bool frontLarger = ofsFront >= ofsBack;
+  if (frontLarger == flip_normals) {
+    const float tmp = ofsFront; ofsFront = ofsBack; ofsBack = tmp;
+  }
 
   float* fn = modArray<float>(t * 3u);
   float* vn = modArray<float>(v * 3u);
@@ -1717,12 +2089,94 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
     }
   }
 
+  /* thickness_clamp / use_thickness_angle_clamp, MOD_solidify_extrude.cc's
+     clamp block (the even-thickness branch, which is what this kernel is).
+     A shell may not travel further than the shortest edge around the vertex
+     allows: the offset is scaled back per vertex, and with the angle clamp on,
+     also by the half-dihedral of the sharpest manifold edge there. */
+  float* clampScale = nullptr;
+  const float clamp_fac_in = clampf(thickness_clamp, 0.0f, 100.0f);
+  if (clamp_fac_in > 0.0f) {
+    const float clamp_fac = 1.0f + (use_angle_clamp ? absf(offset_fac) : 0.0f);
+    const float clamp_off = absf(th) * clamp_fac_in * clamp_fac;
+    if (clamp_off > 1e-9f) {
+      float* vert_lens = modArray<float>(v);
+      clampScale = modArray<float>(v);
+      if (!vert_lens || !clampScale) return -2;
+      for (uint32_t i = 0; i < v; ++i) { vert_lens[i] = 3.4e38f; clampScale[i] = 1.0f; }
+      EdgeTable et;
+      if (!edgeTableInit(et, t, true)) return -2;
+      for (uint32_t f = 0; f < t; ++f) {
+        const uint32_t i0 = g_s.inIdx[f * 3], i1 = g_s.inIdx[f * 3 + 1], i2 = g_s.inIdx[f * 3 + 2];
+        if (!edgeTableAdd(et, i0, i1, f) || !edgeTableAdd(et, i1, i2, f) || !edgeTableAdd(et, i2, i0, f))
+          return -2;
+      }
+      for (uint32_t s = 0; s <= et.mask; ++s) {
+        if (et.count[s] == 0u) continue;
+        const float len = length_sq(readPos(g_s.inPos, et.a[s]) - readPos(g_s.inPos, et.b[s]));
+        if (len < vert_lens[et.a[s]]) vert_lens[et.a[s]] = len;
+        if (len < vert_lens[et.b[s]]) vert_lens[et.b[s]] = len;
+      }
+      if (use_angle_clamp) {
+        /* vert_angs starts at a right angle and takes the sharpest manifold
+           edge at the vertex: M_PI - the angle between the two face normals. */
+        float* vert_angs = modArray<float>(v);
+        if (!vert_angs) return -2;
+        for (uint32_t i = 0; i < v; ++i) vert_angs[i] = 0.5f * 3.14159265358979f;
+        for (uint32_t f = 0; f < t; ++f) {
+          const uint32_t i0 = g_s.inIdx[f * 3], i1 = g_s.inIdx[f * 3 + 1], i2 = g_s.inIdx[f * 3 + 2];
+          const uint32_t tri[3][2] = { { i0, i1 }, { i1, i2 }, { i2, i0 } };
+          for (uint32_t k = 0; k < 3u; ++k) {
+            uint32_t other = 0u;
+            if (edgeTableFind(et, tri[k][0], tri[k][1], other) != 2u) continue;
+            if (other == f) continue;   /* each edge is handled from its second face */
+            const Vec3 n0(fn[other * 3], fn[other * 3 + 1], fn[other * 3 + 2]);
+            const Vec3 n1(fn[f * 3], fn[f * 3 + 1], fn[f * 3 + 2]);
+            const float ang = 3.14159265358979f - cornerAngle(clampf(dot(n0, n1), -1.0f, 1.0f));
+            if (ang > vert_angs[tri[k][0]]) vert_angs[tri[k][0]] = ang;
+            if (ang > vert_angs[tri[k][1]]) vert_angs[tri[k][1]] = ang;
+          }
+        }
+        for (uint32_t i = 0; i < v; ++i) {
+          const float cos_ang = cosf(vert_angs[i] * 0.5f);
+          if (cos_ang > 0.0f) {
+            const float max_off = sqrtf(vert_lens[i]) * 0.5f / cos_ang;
+            if (max_off < clamp_off * 0.5f) clampScale[i] = max_off / clamp_off * 2.0f;
+          }
+        }
+      }
+      else {
+        const float clamp_sq = clamp_off * clamp_off;
+        for (uint32_t i = 0; i < v; ++i) {
+          if (vert_lens[i] < clamp_sq) clampScale[i] = sqrtf(vert_lens[i]) / clamp_off;
+        }
+      }
+    }
+  }
+
+  /* thickness_vertex_group (offset_fac_vg): the weight scales the offset, and
+     the factor says how much a vertex outside the group still gets:
+
+       ofs_vgroup = (factor + weight * (1 - factor)) * ofs
+
+     so factor 0 is "the group is the whole story" and factor 1 is "the group
+     changes nothing" - the same curve upstream uses. */
+  const float vgFacIn = clampf(thickness_vgroup_fac, 0.0f, 1.0f);
+  auto weightOf = [&](uint32_t i) {
+    if (!g_s.vgOn) return 1.0f;
+    float w = g_s.vg[i];
+    if (invert_vgroup) w = 1.0f - w;
+    return vgFacIn + (w * (1.0f - vgFacIn));
+  };
+
   for (uint32_t i = 0; i < v; ++i) {
     const Vec3 p = readPos(g_s.inPos, i);
     const Vec3 n = readPos(vn, i);
-    const float scale = accum[i] > 1e-12f ? angles[i] / accum[i] : 1.0f;
-    writePos(g_s.outPos, i, p + n * (ofs_orig * scale));
-    writePos(g_s.outPos, v + i, p + n * (ofs_new * scale));
+    float scale = accum[i] > 1e-12f ? angles[i] / accum[i] : 1.0f;
+    if (clampScale) scale *= clampScale[i];
+    scale *= weightOf(i);
+    writePos(g_s.outPos, i, p + n * (ofsFront * scale));
+    writePos(g_s.outPos, v + i, p + n * (ofsBack * scale));
     if (g_s.hasUv) {
       g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1];
       g_s.outUv[(v + i) * 2] = g_s.inUv[i * 2]; g_s.outUv[(v + i) * 2 + 1] = g_s.inUv[i * 2 + 1];
@@ -1730,7 +2184,9 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
   }
 
   uint32_t outT = 0u;
-  for (uint32_t f = 0; f < t && outT + 2u <= g_s.tcap; ++f) {
+  /* Rim Only drops both skins and keeps the border strip, which is how a
+     surface gets a clean edge loop without doubling its faces. */
+  for (uint32_t f = 0; f < t && !rim_only && outT + 2u <= g_s.tcap; ++f) {
     const uint32_t a = g_s.inIdx[f * 3], b = g_s.inIdx[f * 3 + 1], c = g_s.inIdx[f * 3 + 2];
     g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = c; ++outT;
     /* The copy is the same face with the winding reversed, so the two skins
@@ -1756,7 +2212,10 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
       const Vec3 fv1 = readPos(g_s.inPos, g_s.inIdx[edges.tri[sIdx] * 3 + 1]);
       const Vec3 fv2 = readPos(g_s.inPos, g_s.inIdx[edges.tri[sIdx] * 3 + 2]);
       const Vec3 n = cross(fv1 - fv, fv2 - fv);
-      const Vec3 want = cross(pb - pa, n);
+      /* The rim has to face the way the shell faces. Blender's rim follows the
+         same side test as the faces it closes, so when the shell is turned
+         inside out the wall turns with it. */
+      const Vec3 want = flip_normals ? cross(pb - pa, n) * -1.0f : cross(pb - pa, n);
       const Vec3 got = cross(ob - oa, ib - oa);
       if (dot(got, want) >= 0.0f) {
         g_s.outIdx[outT * 3] = a; g_s.outIdx[outT * 3 + 1] = b; g_s.outIdx[outT * 3 + 2] = v + b; ++outT;
@@ -1771,7 +2230,10 @@ FE_EXPORT int32_t fe_mod_solidify(float thickness, float offset, int32_t rim, in
   return commit(v * 2u, outT);
 }
 
-FE_EXPORT int32_t fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction) {
+/* vertex_group on the deform kernels: MOD_displace.cc does
+ *   weight = invert ? 1 - w : w;   if (weight == 0) skip;   strength *= weight;
+ * and the other deformers weight the same way, so one helper covers them. */
+FE_EXPORT int32_t fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -1781,7 +2243,13 @@ FE_EXPORT int32_t fe_mod_displace(float strength, float midlevel, float frequenc
   for (uint32_t i = 0; i < v; ++i) {
     const Vec3 p = readPos(g_s.inPos, i);
     const float n = fbm3(p.x * freq + 11.0f, p.y * freq + 17.0f, p.z * freq + 23.0f, seed, octaves);
-    const float d = (n - clampf(midlevel, 0.0f, 1.0f)) * strength;
+    const float w = deformWeight(i, invert_vgroup);
+    if (w == 0.0f) {
+      writePos(g_s.outPos, i, p);
+      if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+      continue;
+    }
+    const float d = (n - clampf(midlevel, 0.0f, 1.0f)) * strength * w;
     const Vec3 dir = direction == 0u ? readPos(g_s.nrm, i) : fixedAxis;
     writePos(g_s.outPos, i, p + dir * d);
     if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
@@ -1790,27 +2258,105 @@ FE_EXPORT int32_t fe_mod_displace(float strength, float midlevel, float frequenc
   return commit(v, t);
 }
 
-FE_EXPORT int32_t fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase) {
+FE_EXPORT int32_t fe_mod_wave(float height, float width, float speed, float time, uint32_t plane, float phase,
+                              int32_t invert_vgroup, float narrowness, float time_offset, float lifetime,
+                              float damping, float start_x, float start_y, float falloff, int32_t cyclic,
+                              int32_t use_normal) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
-  const uint32_t ax = axis > 2u ? 0u : axis;
-  for (uint32_t i = 0; i < v; ++i) {
-    const Vec3 p = readPos(g_s.inPos, i);
-    const float radial = ax == 0u ? sqrtf(p.x * p.x + p.z * p.z)
-                       : ax == 1u ? sqrtf(p.y * p.y + p.z * p.z)
-                                  : sqrtf(p.x * p.x + p.y * p.y);
-    const float wave = sinf(radial * width * 1.5f - time * speed + phase) * height * 0.2f;
-    Vec3 q = p;
-    if (ax == 0u) q.y += wave; else if (ax == 1u) q.x += wave; else q.z += wave;
-    writePos(g_s.outPos, i, q);
-    if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+
+  /* fbm-style sines are not what the Wave modifier is. MOD_wave.cc is a
+     travelling gaussian: the distance from a start point minus the elapsed
+     time times the speed is the phase, the phase falls off as exp(-(narrow *
+     phase)^2), and the result moves the vertex along local Z (or along its
+     normal). Everything below is that function, term for term. */
+  const float w = maxf(width, 1e-6f);
+  const float narrow = narrowness;
+  const float minfac = 1.0f / expf(w * narrow * w * narrow);
+  const float falloffAmt = maxf(falloff, 0.0f);
+  float lifefac = height;
+  const float damp = damping == 0.0f ? 10.0f : damping;
+  /* The clock: `time` is the frame time Blender reads from the depsgraph, and
+     `phase` is this app's extra offset for callers that want a moving wave
+     without touching the clock. */
+  const float ctime = time + phase;
+
+  if (lifetime != 0.0f) {
+    const float x = ctime - time_offset;
+    if (x > lifetime) {
+      lifefac = x - lifetime;
+      if (lifefac > damp) lifefac = 0.0f;
+      else lifefac = height * (1.0f - sqrtf(lifefac / damp));
+    }
+  }
+
+  computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
+  if (lifefac != 0.0f) {
+    const float falloff_inv = falloffAmt != 0.0f ? 1.0f / falloffAmt : 1.0f;
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(g_s.inPos, i);
+      const float x = p.x - start_x;
+      const float y = p.y - start_y;
+      Vec3 q = p;
+      float falloff_fac = 1.0f;
+
+      const float weight = deformWeight(i, invert_vgroup);
+      if (weight == 0.0f) {
+        writePos(g_s.outPos, i, q);
+        if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+        continue;
+      }
+
+      float amplit;
+      float dist;
+      if (plane == 2u) {          /* MOD_WAVE_X | MOD_WAVE_Y: circles */
+        amplit = sqrtf(x * x + y * y);
+        dist = amplit;
+      }
+      else if (plane == 1u) {     /* MOD_WAVE_Y */
+        amplit = y;
+        dist = absf(y);
+      }
+      else {                      /* MOD_WAVE_X */
+        amplit = x;
+        dist = absf(x);
+      }
+
+      amplit -= (ctime - time_offset) * speed;
+      if (cyclic) {
+        /* fmodf(amplit - width, 2 * width) + width, exactly as written. */
+        amplit = fmodf(amplit - w, 2.0f * w) + w;
+      }
+
+      if (falloffAmt != 0.0f) {
+        falloff_fac = clampf(1.0f - (dist * falloff_inv), 0.0f, 1.0f);
+      }
+
+      if (falloff_fac != 0.0f && amplit > -w && amplit < w) {
+        float a = amplit * narrow;
+        a = 1.0f / expf(a * a) - minfac;
+        a *= weight * falloff_fac;
+        const float move = lifefac * a;
+        if (use_normal) q = q + readPos(g_s.nrm, i) * move;
+        else q.z += move;
+      }
+
+      writePos(g_s.outPos, i, q);
+      if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+    }
+  }
+  else {
+    for (uint32_t i = 0; i < v; ++i) {
+      writePos(g_s.outPos, i, readPos(g_s.inPos, i));
+      if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
+    }
   }
   for (uint32_t f = 0; f < t * 3u; ++f) g_s.outIdx[f] = g_s.inIdx[f];
   return commit(v, t);
 }
 
-FE_EXPORT int32_t fe_mod_cast(uint32_t shape, float factor, float radius, float size) {
+FE_EXPORT int32_t fe_mod_cast(uint32_t shape, float factor, float radius, float size, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -1832,7 +2378,7 @@ FE_EXPORT int32_t fe_mod_cast(uint32_t shape, float factor, float radius, float 
     } else {
       target = Vec3(clampf(local.x, -base, base), clampf(local.y, -base, base), clampf(local.z, -base, base));
     }
-    writePos(g_s.outPos, i, center + lerpv(local, target, f));
+    writePos(g_s.outPos, i, center + lerpv(local, target, f * deformWeight(i, invert_vgroup)));
     if (g_s.hasUv) { g_s.outUv[i * 2] = g_s.inUv[i * 2]; g_s.outUv[i * 2 + 1] = g_s.inUv[i * 2 + 1]; }
   }
   for (uint32_t f2 = 0; f2 < t * 3u; ++f2) g_s.outIdx[f2] = g_s.inIdx[f2];
@@ -1900,7 +2446,7 @@ FE_EXPORT int32_t fe_mod_array_ex(uint32_t count, uint32_t fit_type, float fit_l
                                   float rx, float ry, float rz,
                                   float rot_x_deg, float rot_y_deg, float rot_z_deg,
                                   uint32_t merge, float merge_dist,
-                                  float uv_u, float uv_v) {
+                                  float uv_u, float uv_v, int32_t use_object_offset) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -1956,8 +2502,26 @@ FE_EXPORT int32_t fe_mod_array_ex(uint32_t count, uint32_t fit_type, float fit_l
   for (uint32_t i = 0; i < 16u; ++i) M[i] = R[i];
   M[12] = translation.x; M[13] = translation.y; M[14] = translation.z;
 
+  /* use_object_offset: offset = offset * inverse(object) * offset_object. The
+     caller has already reduced that to matrix_world(object)^-1 *
+     matrix_world(offset object), so the whole relative transform arrives in
+     the session matrix. */
+  if (use_object_offset && g_s.matrix) {
+    float rel[16];
+    for (uint32_t i = 0; i < 16u; ++i) rel[i] = g_s.matrix[i];
+    float out[16];
+    for (uint32_t col = 0; col < 4u; ++col) {
+      for (uint32_t row = 0; row < 4u; ++row) {
+        float acc = 0.0f;
+        for (uint32_t k = 0; k < 4u; ++k) acc += M[k * 4u + row] * rel[col * 4u + k];
+        out[col * 4u + row] = acc;
+      }
+    }
+    for (uint32_t i = 0; i < 16u; ++i) M[i] = out[i];
+  }
+
   const float eps = 1e-6f;
-  const float dist = length(translation);
+  const float dist = sqrtf(M[12] * M[12] + M[13] * M[13] + M[14] * M[14]);
   uint32_t copies = count < 1u ? 1u : count;
   if (fit_type == 1u || fit_type == 2u) {
     /* arrayModifier_doArray: (length + epsilon) / dist + 1, truncated. */
@@ -2523,7 +3087,9 @@ bool heapPop(CollapseHeap& h, float& cost, uint32_t& a, uint32_t& b) {
 /* bm_decim_build_edge_cost_single(), triangle-buffer form. Full edge list is
  * walked once for the quadrics; afterwards an edge's cost only changes when
  * one of its two vertices moves. */
-FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary) {
+FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary,
+                                          int32_t use_symmetry, int32_t symmetry_axis,
+                                          float vweight_factor) {
   if (!g_s.ready) return -1;
   g_s.flagMode = 0;                 /* a collapsed mesh has no 1:1 face mapping */
   const uint32_t v = g_s.vc, t = g_s.tc;
@@ -2640,7 +3206,17 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
     targetCo(a, b, merged);
     /* Same as upstream: sum the two vertex quadrics at the target, then take
      * the magnitude so a small negative error cannot outrank a real one. */
-    return absf(quadricError(quad[a], merged) + quadricError(quad[b], merged));
+    float c = absf(quadricError(quad[a], merged) + quadricError(quad[b], merged));
+    /* vertex_group + vertex_group_factor: an edge whose end is outside the
+     * group is never collapsed at all, and the rest are pushed back by their
+     * length. bm_decim_build_edge_cost_single(), the vweights branches. */
+    if (g_s.vgOn) {
+      const float wa = g_s.vg[a], wb = g_s.vg[b];
+      if (wa == 0.0f || wb == 0.0f) return DECIM_COST_INVALID;
+      const float e_weight = 2.0f - (wa + wb);
+      if (e_weight != 0.0f) c += length(readPos(pos, a) - readPos(pos, b)) * (e_weight * vweight_factor);
+    }
+    return c;
   };
 
   uint32_t pushed = 0u;
@@ -2654,7 +3230,6 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
     }
   }
 
-  uint32_t neighbourA[128], neighbourB[128];
   auto collectNeighbours = [&](uint32_t vi, uint32_t* out, uint32_t& count) {
     count = 0u;
     for (int32_t e = head[vi]; e >= 0; e = nextFace[e]) {
@@ -2674,29 +3249,85 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
   uint32_t pops = 0u;
   const uint32_t popBudget = t * 24u + 1024u;   /* hard stop; a stale entry costs one pop */
 
-  while (faceCount > targetT && pops < popBudget) {
-    float cost;
-    uint32_t a, b;
-    if (!heapPop(heap, cost, a, b)) break;
-    ++pops;
-    if (!aliveV[a] || !aliveV[b]) continue;
-    Vec3 merged;
-    const float fresh = edgeCost(a, b, merged);
-    if (fresh == DECIM_COST_INVALID) continue;
-    /* The stored cost is only a hint: if the quadrics moved since it was
-     * pushed, put the honest number back and let the heap re-order. */
-    if (absf(fresh - cost) > 1e-5f * (1.0f + absf(fresh) + absf(cost))) {
-      heapPush(heap, fresh, a, b);
-      continue;
+  /* bm_edge_symmetry_map(): pair every vertex with the vertex its mirror lands
+   * on, across the chosen axis, before the collapse starts. The collapse loop
+   * then collapses the twin edges together -- a post-pass cannot repair an
+   * asymmetric collapse, because the removed vertices are already gone. */
+  int32_t* mirrorV = nullptr;
+  const bool sym = use_symmetry != 0 && symmetry_axis >= 0 && symmetry_axis <= 2;
+  if (sym) {
+    const float eps = 1e-4f;
+    const float inv = 1.0f / eps;
+    const uint32_t hcap = nextPow2(v * 2u + 8u);
+    int32_t* head = modArray<int32_t>(hcap);
+    int32_t* chain = modArray<int32_t>(v);
+    int32_t* cell = modArray<int32_t>(v * 3u);
+    mirrorV = modArray<int32_t>(v);
+    if (!head || !chain || !cell || !mirrorV) return -2;
+    for (uint32_t i = 0; i < hcap; ++i) head[i] = -1;
+    for (uint32_t i = 0; i < v; ++i) {
+      const Vec3 p = readPos(pos, i);
+      const int32_t cx = static_cast<int32_t>(floorf(p.x * inv));
+      const int32_t cy = static_cast<int32_t>(floorf(p.y * inv));
+      const int32_t cz = static_cast<int32_t>(floorf(p.z * inv));
+      cell[i * 3] = cx; cell[i * 3 + 1] = cy; cell[i * 3 + 2] = cz;
+      const uint32_t h = hashU32(static_cast<uint32_t>(cx) * 73856093u ^
+                                 static_cast<uint32_t>(cy) * 19349663u ^
+                                 static_cast<uint32_t>(cz) * 83492791u) & (hcap - 1u);
+      chain[i] = head[h];
+      head[h] = static_cast<int32_t>(i);
     }
+    const float eps2 = eps * eps;
+    for (uint32_t i = 0; i < v; ++i) {
+      mirrorV[i] = -1;
+      Vec3 m = readPos(pos, i);
+      if (symmetry_axis == 0) m.x = -m.x;
+      else if (symmetry_axis == 1) m.y = -m.y;
+      else m.z = -m.z;
+      /* 27 cells around the query: after a collapse a partner can sit a hair
+       * across a cell boundary, which a single-cell lookup would miss. */
+      const int32_t base[3] = {static_cast<int32_t>(floorf(m.x * inv)),
+                               static_cast<int32_t>(floorf(m.y * inv)),
+                               static_cast<int32_t>(floorf(m.z * inv))};
+      int32_t best = -1;
+      float bestD = eps2;
+      for (int32_t dx = -1; dx <= 1; ++dx) {
+        for (int32_t dy = -1; dy <= 1; ++dy) {
+          for (int32_t dz = -1; dz <= 1; ++dz) {
+            const uint32_t h = hashU32(static_cast<uint32_t>(base[0] + dx) * 73856093u ^
+                                       static_cast<uint32_t>(base[1] + dy) * 19349663u ^
+                                       static_cast<uint32_t>(base[2] + dz) * 83492791u) & (hcap - 1u);
+            for (int32_t j = head[h]; j >= 0; j = chain[j]) {
+              if (cell[j * 3] != base[0] + dx || cell[j * 3 + 1] != base[1] + dy ||
+                  cell[j * 3 + 2] != base[2] + dz) continue;
+              const float d = length_sq(readPos(pos, static_cast<uint32_t>(j)) - m);
+              if (d <= bestD) { bestD = d; best = j; }
+            }
+          }
+        }
+      }
+      mirrorV[i] = best;
+    }
+  }
+  auto mirrorVec = [&](Vec3 p) {
+    if (symmetry_axis == 0) p.x = -p.x;
+    else if (symmetry_axis == 1) p.y = -p.y;
+    else p.z = -p.z;
+    return p;
+  };
 
-    /* Degenerate topology (bm_edge_collapse_is_degenerate_topology): the two
-     * vertex neighbourhoods may overlap only in the faces along this edge. */
+  /* bm_edge_collapse_is_degenerate_topology() + _is_degenerate_flip(), for one
+   * edge at a known target. Both edges of a mirrored pair are tested before
+   * either is collapsed, since a collapse invalidates the surrounding faces. */
+  auto canCollapse = [&](uint32_t a, uint32_t b, const Vec3& merged) -> bool {
+    /* Degenerate topology: the two vertex neighbourhoods may overlap only in
+     * the faces along this edge. */
     uint32_t shared = 0u;
     for (int32_t e = head[a]; e >= 0; e = nextFace[e]) {
       const uint32_t f = static_cast<uint32_t>(e) / 3u;
       if (aliveF[f] && faceHas(f, a) && faceHas(f, b)) ++shared;
     }
+    uint32_t neighbourA[128], neighbourB[128];
     uint32_t na = 0u, nb = 0u;
     collectNeighbours(a, neighbourA, na);
     collectNeighbours(b, neighbourB, nb);
@@ -2708,13 +3339,12 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
         if (neighbourA[i] == neighbourB[j]) { ++common; break; }
       }
     }
-    if (common != shared) continue;
+    if (common != shared) return false;
 
     /* bm_edge_collapse_is_degenerate_flip(), per surrounding vertex. */
-    bool flip = false;
-    for (uint32_t pass = 0; pass < 2u && !flip; ++pass) {
+    for (uint32_t pass = 0; pass < 2u; ++pass) {
       const uint32_t pivot = pass == 0u ? a : b;
-      for (int32_t e = head[pivot]; e >= 0 && !flip; e = nextFace[e]) {
+      for (int32_t e = head[pivot]; e >= 0; e = nextFace[e]) {
         const uint32_t f = static_cast<uint32_t>(e) / 3u;
         if (!aliveF[f] || !faceHas(f, pivot)) continue;
         if (faceHas(f, a) && faceHas(f, b)) continue;   /* the faces the edge joins */
@@ -2730,12 +3360,14 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
         const Vec3 crossExist = cross(vecOther, coPrev - readPos(pos, pivot));
         const Vec3 crossOptim = cross(vecOther, coPrev - merged);
         const float exist2 = length_sq(crossExist), optim2 = length_sq(crossOptim);
-        if (dot(crossExist, crossOptim) <= (exist2 + optim2) * 0.01f) flip = true;
+        if (dot(crossExist, crossOptim) <= (exist2 + optim2) * 0.01f) return false;
       }
     }
-    if (flip) continue;
+    return true;
+  };
 
-    /* ---- the collapse: b merges into a, at the target position ---- */
+  /* bm_edge_collapse(): b merges into a, at the target position. */
+  auto doCollapse = [&](uint32_t a, uint32_t b, const Vec3& merged) {
     writePos(pos, a, merged);
     quadricAdd(quad[a], quad[b]);
     aliveV[b] = 0;
@@ -2755,7 +3387,8 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
         if (degenerate || corner == 3u) {
           aliveF[f] = 0;
           --faceCount;
-        } else {
+        }
+        else {
           /* Re-file the face under its new corner and refresh its plane so
            * later flip tests compare against the face as it is now. */
           const int32_t node = static_cast<int32_t>(f * 3u + corner);
@@ -2785,6 +3418,59 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
         e = eNext;
       }
     }
+  };
+
+  while (faceCount > targetT && pops < popBudget) {
+    float cost;
+    uint32_t a, b;
+    if (!heapPop(heap, cost, a, b)) break;
+    ++pops;
+    if (!aliveV[a] || !aliveV[b]) continue;
+    Vec3 merged;
+    const float fresh = edgeCost(a, b, merged);
+    if (fresh == DECIM_COST_INVALID) continue;
+    /* The stored cost is only a hint: if the quadrics moved since it was
+     * pushed, put the honest number back and let the heap re-order. */
+    if (absf(fresh - cost) > 1e-5f * (1.0f + absf(fresh) + absf(cost))) {
+      heapPush(heap, fresh, a, b);
+      continue;
+    }
+
+    /* The mirrored twin of this edge, from the precomputed vertex pairing. */
+    uint32_t ma = a, mb = b;
+    bool hasMirror = false;
+    if (sym) {
+      const int32_t mvA = mirrorV[a], mvB = mirrorV[b];
+      if (mvA >= 0 && mvB >= 0 && aliveV[static_cast<uint32_t>(mvA)] &&
+          aliveV[static_cast<uint32_t>(mvB)]) {
+        ma = static_cast<uint32_t>(mvA);
+        mb = static_cast<uint32_t>(mvB);
+        /* A mirror edge that shares a vertex is refused outright, otherwise the
+         * pair would move the shared vertex twice and pull it off the plane
+         * (bm_edge_share_vert_check()). */
+        if (!(ma == a && mb == b) && (ma == a || ma == b || mb == a || mb == b)) continue;
+        if (ma == a && mb == b) {
+          /* Its own mirror, so it lies in the plane: keep it there. */
+          if (symmetry_axis == 0) merged.x = 0.0f;
+          else if (symmetry_axis == 1) merged.y = 0.0f;
+          else merged.z = 0.0f;
+        }
+        else {
+          hasMirror = true;
+        }
+      }
+      /* No twin (asymmetric mesh): collapse it alone, as upstream does. */
+    }
+
+    if (!canCollapse(a, b, merged)) continue;
+    Vec3 mergedM;
+    if (hasMirror) {
+      mergedM = mirrorVec(merged);
+      if (!canCollapse(ma, mb, mergedM)) continue;
+    }
+
+    doCollapse(a, b, merged);
+    if (hasMirror) doCollapse(ma, mb, mergedM);
   }
 
   /* ---- compact ---- */
@@ -2807,6 +3493,573 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
   if (outT == 0u || outV == 0u) return -4;
   (void)pushed;
   return commit(outV, outT);
+}
+
+/* =========================================================================
+ * Decimate's other two modes, and the symmetry option of the collapse.
+ *
+ *   source/blender/bmesh/tools/bmesh_decimate_unsubdivide.cc  (Un-Subdivide)
+ *   source/blender/bmesh/tools/bmesh_decimate_dissolve.cc     (Planar)
+ *   source/blender/modifiers/intern/MOD_decimate.cc           (the dispatcher)
+ *
+ * Un-Subdivide dissolves the vertices that a subdivision put there:
+ * bm_vert_dissolve_fan_test() accepts a vertex when every edge at it is
+ * manifold and no face already joins its ring of neighbours - the fan test
+ * that keeps a torus from being pinched - and bm_vert_dissolve_fan() then
+ * removes it. Upstream writes the four-edge and three-edge cases out by hand
+ * because a quad grid is what it is written for; the ring walk below is the
+ * same test with the valence left general, so a triangle grid - which is what
+ * a 1-to-4 subdivision of a triangle mesh produces - un-subdivides too.
+ *
+ * Planar dissolves a region of faces that are coplanar within the angle limit
+ * into a single face. The region's border is walked into one loop and that
+ * loop is ear-clipped. Unlike Blender this kernel cannot keep an n-gon - the
+ * modifier stack hands it triangles and gets triangles back - so the merged
+ * face is tessellated on the way out. The surface, its area and its winding
+ * are the same; what is gone is the interior vertices and the interior edges,
+ * which is what the modifier removes.
+ * ========================================================================= */
+
+/* Ear clipping of one closed loop of vertex ids, projected onto the loop's own
+ * plane. Returns the triangle count, or 0 when the loop is not simple (the
+ * caller then keeps its input faces). Writes winding-consistent triangles that
+ * follow the loop's own direction. */
+uint32_t earClipLoop(const float* pos, const uint32_t* loop, uint32_t n, uint32_t* out, uint32_t outCap) {
+  if (n < 3u) return 0u;
+  /* Newell normal, so a ring that is not perfectly flat still gets a plane. */
+  Vec3 nn(0.0f, 0.0f, 0.0f);
+  for (uint32_t i = 0; i < n; ++i) {
+    const Vec3 a = readPos(pos, loop[i]), b = readPos(pos, loop[(i + 1u) % n]);
+    nn.x += (a.y - b.y) * (a.z + b.z);
+    nn.y += (a.z - b.z) * (a.x + b.x);
+    nn.z += (a.x - b.x) * (a.y + b.y);
+  }
+  const float nl = length(nn);
+  if (nl < 1e-12f) return 0u;
+  nn = nn * (1.0f / nl);
+  /* Two in-plane axes; the projection keeps the loop's winding sign, which is
+   * what makes the emitted triangles face the same way as the faces they
+   * replace. */
+  Vec3 ux = cross(nn, Vec3(0.0f, 0.0f, 1.0f));
+  if (length(ux) < 1e-4f) ux = cross(nn, Vec3(1.0f, 0.0f, 0.0f));
+  ux = normalize(ux);
+  const Vec3 uy = cross(nn, ux);
+
+  float* px = modArray<float>(n * 2u);
+  uint32_t* ring = modArray<uint32_t>(n);
+  if (!px || !ring) return 0u;
+  for (uint32_t i = 0; i < n; ++i) {
+    const Vec3 p = readPos(pos, loop[i]);
+    px[i * 2] = dot(p, ux);
+    px[i * 2 + 1] = dot(p, uy);
+    ring[i] = i;
+  }
+  auto cross2 = [&](uint32_t a, uint32_t b, uint32_t c) {
+    const float ax = px[a * 2], ay = px[a * 2 + 1];
+    return (px[b * 2] - ax) * (px[c * 2 + 1] - ay) - (px[b * 2 + 1] - ay) * (px[c * 2] - ax);
+  };
+  float signedArea = 0.0f;
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t j = (i + 1u) % n;
+    signedArea += px[i * 2] * px[j * 2 + 1] - px[j * 2] * px[i * 2 + 1];
+  }
+  const float sign = signedArea >= 0.0f ? 1.0f : -1.0f;
+
+  uint32_t live = n, tris = 0u;
+  uint32_t guard = 0u;
+  while (live > 3u && tris + 1u <= outCap && guard < n * n + 8u) {
+    bool clipped = false;
+    for (uint32_t i = 0; i < live; ++i) {
+      const uint32_t ia = ring[(i + live - 1u) % live], ib = ring[i], ic = ring[(i + 1u) % live];
+      if (cross2(ia, ib, ic) * sign <= 1e-14f) continue;
+      bool empty = true;
+      for (uint32_t k = 0; k < live && empty; ++k) {
+        const uint32_t p = ring[k];
+        if (p == ia || p == ib || p == ic) continue;
+        const float d1 = cross2(ia, ib, p) * sign, d2 = cross2(ib, ic, p) * sign, d3 = cross2(ic, ia, p) * sign;
+        if (d1 >= 0.0f && d2 >= 0.0f && d3 >= 0.0f) empty = false;
+      }
+      if (!empty) continue;
+      out[tris * 3] = loop[ia]; out[tris * 3 + 1] = loop[ib]; out[tris * 3 + 2] = loop[ic];
+      ++tris;
+      for (uint32_t k = i; k + 1u < live; ++k) ring[k] = ring[k + 1u];
+      --live;
+      clipped = true;
+      break;
+    }
+    ++guard;
+    if (!clipped) return 0u;   /* not a simple polygon: let the caller keep its faces */
+  }
+  if (live != 3u || tris + 1u > outCap) return 0u;
+  out[tris * 3] = loop[ring[0]]; out[tris * 3 + 1] = loop[ring[1]]; out[tris * 3 + 2] = loop[ring[2]];
+  ++tris;
+  return tris;
+}
+
+FE_EXPORT int32_t fe_mod_decimate_unsubdivide(uint32_t iterations) {
+  if (!g_s.ready) return -1;
+  g_s.flagMode = 0;
+  const uint32_t v0 = g_s.vc, t0 = g_s.tc;
+  if (!v0 || !t0) return -3;
+  const uint32_t passes = iterations < 1u ? 1u : (iterations > 6u ? 6u : iterations);
+
+  uint32_t v = v0, t = t0;
+  /* A dissolve removes a vertex and adds a fan of (ring-2) triangles where its
+   * ring had (ring) triangles, so the block has to hold a few more than the
+   * input. Six passes over a grid shrink far more than they grow, and the
+   * guard below stops the copy from running off the end. */
+  const uint32_t tCap = t0 + 4096u;
+  float* pos = modArray<float>(v0 * 3u);
+  uint32_t* tris = modArray<uint32_t>(tCap * 3u);
+  int32_t* head = modArray<int32_t>(v0);
+  int32_t* nextFace = modArray<int32_t>(tCap * 3u);
+  uint8_t* dead = modArray<uint8_t>(v0);
+  uint8_t* blocked = modArray<uint8_t>(v0);
+  uint32_t* nextInRing = modArray<uint32_t>(v0);
+  uint32_t* ring = modArray<uint32_t>(v0);
+  uint32_t* remap = modArray<uint32_t>(v0);
+  if (!pos || !tris || !head || !nextFace || !dead || !blocked || !nextInRing || !ring || !remap) return -2;
+  for (uint32_t i = 0; i < v0 * 3u; ++i) pos[i] = g_s.inPos[i];
+  for (uint32_t i = 0; i < t0 * 3u; ++i) tris[i] = g_s.inIdx[i];
+
+  /* deadF is owned by the kernel, not by a pass: a fan triangle a dissolve adds
+     is a live face for every later pass, and the compaction reads its flag. */
+  uint8_t* deadF = modArray<uint8_t>(tCap);
+  if (!deadF) return -2;
+  for (uint32_t i = 0; i < tCap; ++i) deadF[i] = 0u;
+
+  for (uint32_t pass = 0; pass < passes; ++pass) {
+    /* vertex -> its live faces, as a linked list, so the ring walk costs the
+     * vertex's valence and not the whole mesh. */
+    for (uint32_t i = 0; i < v; ++i) { head[i] = -1; dead[i] = 0u; blocked[i] = 0u; nextInRing[i] = 0xFFFFFFFFu; }
+    for (uint32_t f = 0; f < t; ++f) {
+      for (uint32_t k = 0; k < 3u; ++k) {
+        const uint32_t vi = tris[f * 3 + k];
+        nextFace[f * 3 + k] = head[vi];
+        head[vi] = static_cast<int32_t>(f * 3u + k);
+      }
+    }
+    EdgeTable edges;
+    if (!edgeTableInit(edges, t, false)) return -2;
+    for (uint32_t f = 0; f < t; ++f) {
+      for (uint32_t k = 0; k < 3u; ++k) {
+        if (!edgeTableAdd(edges, tris[f * 3 + k], tris[f * 3 + (k + 1u) % 3u], f)) return -2;
+      }
+    }
+    auto edgeCount = [&](uint32_t a, uint32_t b) -> uint32_t {
+      const uint32_t lo = a < b ? a : b, hi = a < b ? b : a;
+      const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+      uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & edges.mask;
+      for (uint32_t probe = 0; probe <= edges.mask; ++probe) {
+        if (edges.count[i] == 0) return 0u;
+        if (edges.key[i] == key) return edges.count[i];
+        i = (i + 1u) & edges.mask;
+      }
+      return 0u;
+    };
+    for (uint32_t f = 0; f < t; ++f) deadF[f] = 0u;
+
+    /* bm_vert_dissolve_fan_test(): every edge at the vertex is manifold (no
+     * border, no wire), and no face already joins the ring - which is the
+     * fan test that keeps a torus from being pinched shut. */
+    uint32_t dissolved = 0u;
+    for (uint32_t vi = 0; vi < v; ++vi) {
+      if (blocked[vi]) continue;
+      uint32_t ringLen = 0u, incident = 0u;
+      bool ok = true;
+      uint32_t start = 0xFFFFFFFFu;
+      for (int32_t node = head[vi]; node >= 0 && ok; node = nextFace[node]) {
+        const uint32_t f = static_cast<uint32_t>(node) / 3u;
+        if (deadF[f]) continue;
+        const uint32_t k = static_cast<uint32_t>(node) % 3u;
+        const uint32_t a = tris[f * 3 + (k + 1u) % 3u];
+        const uint32_t b = tris[f * 3 + (k + 2u) % 3u];
+        if (edgeCount(vi, a) != 2u || edgeCount(vi, b) != 2u) { ok = false; break; }
+        if (nextInRing[a] != 0xFFFFFFFFu) { ok = false; break; }
+        nextInRing[a] = b;
+        if (start == 0xFFFFFFFFu) start = a;
+        ++ringLen;
+        ++incident;
+      }
+      if (ok && ringLen >= 3u && ringLen == incident) {
+        uint32_t cur = start, walked = 0u;
+        while (cur != 0xFFFFFFFFu && walked < ringLen) {
+          ring[walked++] = cur;
+          cur = nextInRing[cur];
+          if (cur == start) break;
+        }
+        if (cur != start || walked != ringLen) ok = false;
+      } else {
+        ok = false;
+      }
+      /* Reset only the scratch this vertex wrote. */
+      for (uint32_t r = 0; ok && r < ringLen; ++r) nextInRing[ring[r]] = 0xFFFFFFFFu;
+      if (!ok) {
+        for (int32_t node = head[vi]; node >= 0; node = nextFace[node]) {
+          const uint32_t f = static_cast<uint32_t>(node) / 3u;
+          const uint32_t k = static_cast<uint32_t>(node) % 3u;
+          nextInRing[tris[f * 3 + (k + 1u) % 3u]] = 0xFFFFFFFFu;
+          nextInRing[tris[f * 3 + (k + 2u) % 3u]] = 0xFFFFFFFFu;
+        }
+        continue;
+      }
+      /* A three-sided ring that already carries a face is a pinch: the fan
+       * would duplicate it. That is the only case a triangle mesh can hit. */
+      if (ringLen == 3u) {
+        bool pinched = false;
+        for (int32_t node = head[ring[0]]; node >= 0 && !pinched; node = nextFace[node]) {
+          const uint32_t f = static_cast<uint32_t>(node) / 3u;
+          if (deadF[f]) continue;
+          bool has1 = false, has2 = false;
+          for (uint32_t k = 0; k < 3u; ++k) {
+            if (tris[f * 3 + k] == ring[1]) has1 = true;
+            if (tris[f * 3 + k] == ring[2]) has2 = true;
+          }
+          if (has1 && has2) pinched = true;
+        }
+        if (pinched) continue;
+      }
+      if (t + ringLen > tCap) break;
+      for (int32_t node = head[vi]; node >= 0; node = nextFace[node]) {
+        const uint32_t f = static_cast<uint32_t>(node) / 3u;
+        if (!deadF[f]) deadF[f] = 1u;
+      }
+      dead[vi] = 1u;
+      ++dissolved;
+      /* BM_vert_dissolve_fan() -> BM_faces_join(): the ring becomes one face,
+       * emitted here as a fan from its first corner, which keeps the winding
+       * the surrounding faces had. */
+      for (uint32_t r = 1u; r + 1u < ringLen; ++r) {
+        tris[t * 3] = ring[0]; tris[t * 3 + 1] = ring[r]; tris[t * 3 + 2] = ring[r + 1u];
+        deadF[t] = 0u;
+        ++t;
+      }
+      for (uint32_t r = 0; r < ringLen; ++r) blocked[ring[r]] = 1u;
+    }
+    if (!dissolved) break;
+    /* Compact the pass. */
+    uint32_t newV = 0u;
+    for (uint32_t i = 0; i < v; ++i) {
+      if (dead[i]) { remap[i] = 0xFFFFFFFFu; continue; }
+      remap[i] = newV;
+      writePos(pos, newV, readPos(pos, i));
+      ++newV;
+    }
+    uint32_t newT = 0u;
+    for (uint32_t f = 0; f < t; ++f) {
+      if (deadF[f]) continue;
+      const uint32_t a = remap[tris[f * 3]], b = remap[tris[f * 3 + 1]], c = remap[tris[f * 3 + 2]];
+      if (a == 0xFFFFFFFFu || b == 0xFFFFFFFFu || c == 0xFFFFFFFFu) continue;
+      if (a == b || b == c || c == a) continue;
+      tris[newT * 3] = a; tris[newT * 3 + 1] = b; tris[newT * 3 + 2] = c;
+      ++newT;
+    }
+    if (!newT) break;
+    v = newV; t = newT;
+  }
+
+  if (v > g_s.vcap || t > g_s.tcap) return -2;
+  for (uint32_t i = 0; i < v * 3u; ++i) g_s.outPos[i] = pos[i];
+  for (uint32_t i = 0; i < t * 3u; ++i) g_s.outIdx[i] = tris[i];
+  if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+  return commit(v, t);
+}
+
+FE_EXPORT int32_t fe_mod_decimate_planar(float angle_limit_deg, int32_t dissolve_boundaries) {
+  if (!g_s.ready) return -1;
+  g_s.flagMode = 0;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  const float limit = clampf(angle_limit_deg, 0.0f, 180.0f) * 3.14159265358979f / 180.0f;
+  const float cosLimit = cosf(limit);
+
+  float* fn = modArray<float>(t * 3u);
+  uint32_t* parent = modArray<uint32_t>(t);
+  uint32_t* regionTris = modArray<uint32_t>(t);
+  uint32_t* scratchTris = modArray<uint32_t>(t * 3u);
+  if (!fn || !parent || !regionTris || !scratchTris) return -2;
+  for (uint32_t f = 0; f < t; ++f) {
+    const Vec3 a = readPos(g_s.inPos, g_s.inIdx[f * 3]);
+    const Vec3 b = readPos(g_s.inPos, g_s.inIdx[f * 3 + 1]);
+    const Vec3 c = readPos(g_s.inPos, g_s.inIdx[f * 3 + 2]);
+    const Vec3 n = normalize(cross(b - a, c - a));
+    fn[f * 3] = n.x; fn[f * 3 + 1] = n.y; fn[f * 3 + 2] = n.z;
+    parent[f] = f;
+  }
+  auto rootOf = [&](uint32_t i) {
+    while (parent[i] != i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  /* Region per face: two faces join when they share an edge and their normals
+   * are within the limit. Blender also refuses to merge across a face that is
+   * not a quad; a triangle buffer has no quad to protect. */
+  EdgeTable edges;
+  if (!edgeTableInit(edges, t, true)) return -2;
+  uint32_t* edgeFaceB = modArray<uint32_t>(edges.mask + 1u);
+  if (!edgeFaceB) return -2;
+  for (uint32_t i = 0; i <= edges.mask; ++i) edgeFaceB[i] = 0xFFFFFFFFu;
+  for (uint32_t f = 0; f < t; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t a = g_s.inIdx[f * 3 + k], b = g_s.inIdx[f * 3 + (k + 1u) % 3u];
+      const uint32_t lo = a < b ? a : b, hi = a < b ? b : a;
+      const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+      uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & edges.mask;
+      for (uint32_t probe = 0; probe <= edges.mask; ++probe) {
+        if (edges.count[i] == 0) {
+          edges.key[i] = key; edges.a[i] = lo; edges.b[i] = hi;
+          edges.count[i] = 1; edges.tri[i] = f;
+          break;
+        }
+        if (edges.key[i] == key) {
+          const uint32_t other = edges.tri[i];
+          edges.count[i] = 2;
+          edgeFaceB[i] = other;
+          const float d = fn[other * 3] * fn[f * 3] + fn[other * 3 + 1] * fn[f * 3 + 1] +
+                          fn[other * 3 + 2] * fn[f * 3 + 2];
+          if (d >= cosLimit) {
+            const uint32_t ra = rootOf(other), rb = rootOf(f);
+            if (ra != rb) parent[rb] = ra;
+          }
+          break;
+        }
+        i = (i + 1u) & edges.mask;
+      }
+    }
+  }
+
+  uint32_t outT = 0u;
+  uint8_t* done = modArray<uint8_t>(t);
+  /* Which regions touch each vertex: a border vertex that also belongs to a
+   * neighbouring region cannot be dissolved out of this loop, because the
+   * neighbour still needs it and the seam would crack open. One pass over the
+   * faces fills this in. */
+  uint8_t* vertMulti = modArray<uint8_t>(v);
+  uint32_t* vertRoot = modArray<uint32_t>(v);
+  if (!vertMulti || !vertRoot) return -2;
+  for (uint32_t i = 0; i < v; ++i) { vertMulti[i] = 0u; vertRoot[i] = 0xFFFFFFFFu; }
+  for (uint32_t f = 0; f < t; ++f) {
+    const uint32_t r = rootOf(f);
+    for (uint32_t k = 0; k < 3u; ++k) {
+      const uint32_t vi = g_s.inIdx[f * 3 + k];
+      if (vertRoot[vi] == 0xFFFFFFFFu) vertRoot[vi] = r;
+      else if (vertRoot[vi] != r) vertMulti[vi] = 1u;
+    }
+  }
+  /* Every per-region block is allocated once, outside the loop: a region's
+   * allocations would otherwise pile up in an arena that cannot free. */
+  uint32_t* loopVerts = modArray<uint32_t>(t * 3u);
+  uint32_t* next = modArray<uint32_t>(v);
+  uint32_t* earTris = modArray<uint32_t>(v * 3u + 3u);
+  if (!done || !loopVerts || !next || !earTris) return -2;
+  for (uint32_t f = 0; f < t; ++f) done[f] = 0u;
+
+  for (uint32_t seed = 0; seed < t; ++seed) {
+    if (done[seed]) continue;
+    const uint32_t root = rootOf(seed);
+    uint32_t count = 0u;
+    for (uint32_t f = seed; f < t; ++f) {
+      if (done[f] || rootOf(f) != root) continue;
+      regionTris[count++] = f;
+      done[f] = 1u;
+    }
+    if (count <= 1u) {
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t rf = regionTris[i];
+        for (uint32_t k = 0; k < 3u; ++k) {
+          if (outT >= g_s.tcap) return -2;
+          g_s.outIdx[outT * 3 + k] = g_s.inIdx[rf * 3 + k];
+        }
+        ++outT;
+      }
+      continue;
+    }
+    /* Directed border: an edge of a region face whose partner is outside the
+     * region, or which has no partner at all. */
+    uint32_t loopLen = 0u;
+    bool simple = true;
+    for (uint32_t i = 0; i < count && simple; ++i) {
+      const uint32_t rf = regionTris[i];
+      for (uint32_t k = 0; k < 3u; ++k) {
+        const uint32_t a = g_s.inIdx[rf * 3 + k], b = g_s.inIdx[rf * 3 + (k + 1u) % 3u];
+        const uint32_t lo = a < b ? a : b, hi = a < b ? b : a;
+        const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+        uint32_t slot = hashU32(lo * 2654435761u ^ hi * 2246822519u) & edges.mask;
+        uint32_t idx = 0xFFFFFFFFu;
+        for (uint32_t probe = 0; probe <= edges.mask; ++probe) {
+          if (edges.count[slot] == 0) break;
+          if (edges.key[slot] == key) { idx = slot; break; }
+          slot = (slot + 1u) & edges.mask;
+        }
+        bool border = true;
+        if (idx != 0xFFFFFFFFu && edges.count[idx] == 2u) {
+          const uint32_t other = edges.tri[idx] == rf ? edgeFaceB[idx] : edges.tri[idx];
+          if (other != 0xFFFFFFFFu && rootOf(other) == root) border = false;
+        }
+        if (!border) continue;
+        if (loopLen >= count * 3u) { simple = false; break; }
+        /* Store the directed edge as its start vertex, then resolve the order
+         * by following. Two border edges must not leave the same vertex. */
+        loopVerts[loopLen++] = a;
+      }
+    }
+    if (!simple || loopLen < 3u) {
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t rf = regionTris[i];
+        if (outT >= g_s.tcap) return -2;
+        for (uint32_t k = 0; k < 3u; ++k) g_s.outIdx[outT * 3 + k] = g_s.inIdx[rf * 3 + k];
+        ++outT;
+      }
+      continue;
+    }
+    /* Order the border into one loop by chasing each start vertex's successor.
+     * loopVerts only holds the starts, so the ends are recomputed here. */
+    for (uint32_t i = 0; i < v; ++i) next[i] = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < loopLen; ++i) {
+      const uint32_t a = loopVerts[i];
+      /* Find b for this border edge again: the triangles of the region that
+       * use a as a corner and cross the border. */
+      uint32_t b = 0xFFFFFFFFu;
+      for (uint32_t j = 0; j < count && b == 0xFFFFFFFFu; ++j) {
+        const uint32_t rf = regionTris[j];
+        for (uint32_t k = 0; k < 3u; ++k) {
+          if (g_s.inIdx[rf * 3 + k] != a) continue;
+          const uint32_t cand = g_s.inIdx[rf * 3 + (k + 1u) % 3u];
+          const uint32_t lo = a < cand ? a : cand, hi = a < cand ? cand : a;
+          const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
+          uint32_t slot = hashU32(lo * 2654435761u ^ hi * 2246822519u) & edges.mask;
+          uint32_t idx = 0xFFFFFFFFu;
+          for (uint32_t probe = 0; probe <= edges.mask; ++probe) {
+            if (edges.count[slot] == 0) break;
+            if (edges.key[slot] == key) { idx = slot; break; }
+            slot = (slot + 1u) & edges.mask;
+          }
+          bool border = true;
+          if (idx != 0xFFFFFFFFu && edges.count[idx] == 2u) {
+            const uint32_t other = edges.tri[idx] == rf ? edgeFaceB[idx] : edges.tri[idx];
+            if (other != 0xFFFFFFFFu && rootOf(other) == root) border = false;
+          }
+          if (border) { b = cand; break; }
+        }
+      }
+      if (b == 0xFFFFFFFFu) { simple = false; break; }
+      if (next[a] != 0xFFFFFFFFu && next[a] != b) { simple = false; break; }
+      next[a] = b;
+    }
+    uint32_t ringLen = 0u;
+    if (simple) {
+      const uint32_t first = loopVerts[0];
+      uint32_t cur = first;
+      for (uint32_t step = 0; step < loopLen; ++step) {
+        if (cur == 0xFFFFFFFFu) { simple = false; break; }
+        loopVerts[step] = cur;
+        cur = next[cur];
+      }
+      if (simple && cur == first) ringLen = loopLen;
+      else simple = false;
+    }
+    if (!simple || ringLen < 3u || ringLen + 2u > g_s.tcap - outT) {
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t rf = regionTris[i];
+        if (outT >= g_s.tcap) return -2;
+        for (uint32_t k = 0; k < 3u; ++k) g_s.outIdx[outT * 3 + k] = g_s.inIdx[rf * 3 + k];
+        ++outT;
+      }
+      continue;
+    }
+    /* The merged face, tessellated. A region that ear clipping refuses (or that
+     * would change area) keeps its own triangles. */
+    float beforeArea = 0.0f;
+    for (uint32_t i = 0; i < count; ++i) {
+      const uint32_t rf = regionTris[i];
+      const Vec3 a = readPos(g_s.inPos, g_s.inIdx[rf * 3]);
+      const Vec3 b = readPos(g_s.inPos, g_s.inIdx[rf * 3 + 1]);
+      const Vec3 c = readPos(g_s.inPos, g_s.inIdx[rf * 3 + 2]);
+      beforeArea += length(cross(b - a, c - a)) * 0.5f;
+    }
+    /* use_dissolve_boundaries: BM_mesh_decimate_dissolve_ex()'s second phase
+     * joins boundary edges that run straight through a vertex, so a straight
+     * border becomes one edge instead of keeping every vertex the original
+     * tessellation put there. A vertex is only eligible when this region is
+     * the only one using it - dropping it from the loop while a neighbour
+     * still refers to it would leave a T-junction - and when the border does
+     * not turn there. Each pass removes every vertex that qualifies against
+     * its current neighbours, and the passes repeat until nothing changes. */
+    if (dissolve_boundaries && ringLen > 3u) {
+      bool changed = true;
+      while (changed && ringLen > 3u) {
+        changed = false;
+        uint32_t out = 0u;
+        for (uint32_t i = 0; i < ringLen; ++i) {
+          const uint32_t cur = loopVerts[i];
+          const uint32_t prev = loopVerts[(i + ringLen - 1u) % ringLen];
+          const uint32_t next = loopVerts[(i + 1u) % ringLen];
+          bool drop = false;
+          if (!vertMulti[cur] && out + (ringLen - i) > 3u) {
+            const Vec3 pPrev = readPos(g_s.inPos, prev);
+            const Vec3 pCur = readPos(g_s.inPos, cur);
+            const Vec3 pNext = readPos(g_s.inPos, next);
+            const Vec3 dIn = pCur - pPrev, dOut = pNext - pCur;
+            const float lenIn2 = length_sq(dIn), lenOut2 = length_sq(dOut);
+            if (lenIn2 > 0.0f && lenOut2 > 0.0f) {
+              /* sin(theta)^2 below 1e-10 is under a hundredth of a degree. */
+              drop = length_sq(cross(dIn, dOut)) <= 1e-10f * lenIn2 * lenOut2;
+            }
+          }
+          if (drop) changed = true;
+          else loopVerts[out++] = cur;
+        }
+        if (out < 3u) break;   /* never dissolve the polygon away */
+        ringLen = out;
+      }
+    }
+    const uint32_t capTris = ringLen;   /* n - 2 triangles at most, n for headroom */
+    uint32_t* out = earTris;
+    const uint32_t made = earClipLoop(g_s.inPos, loopVerts, ringLen, out, capTris);
+    float afterArea = 0.0f;
+    for (uint32_t i = 0; i < made; ++i) {
+      const Vec3 a = readPos(g_s.inPos, out[i * 3]);
+      const Vec3 b = readPos(g_s.inPos, out[i * 3 + 1]);
+      const Vec3 c = readPos(g_s.inPos, out[i * 3 + 2]);
+      afterArea += length(cross(b - a, c - a)) * 0.5f;
+    }
+    const bool keep = made > 0u && (beforeArea <= 1e-12f || absf(afterArea - beforeArea) <= beforeArea * 1e-3f);
+    if (keep) {
+      for (uint32_t i = 0; i < made; ++i) {
+        if (outT >= g_s.tcap) return -2;
+        g_s.outIdx[outT * 3] = out[i * 3];
+        g_s.outIdx[outT * 3 + 1] = out[i * 3 + 1];
+        g_s.outIdx[outT * 3 + 2] = out[i * 3 + 2];
+        ++outT;
+      }
+    } else {
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t rf = regionTris[i];
+        if (outT >= g_s.tcap) return -2;
+        for (uint32_t k = 0; k < 3u; ++k) g_s.outIdx[outT * 3 + k] = g_s.inIdx[rf * 3 + k];
+        ++outT;
+      }
+    }
+  }
+  /* Every vertex that no output triangle uses is gone with the edges it
+   * carried. */
+  uint8_t* used = modArray<uint8_t>(v);
+  uint32_t* remap = modArray<uint32_t>(v);
+  if (!used || !remap) return -2;
+  for (uint32_t i = 0; i < v; ++i) used[i] = 0u;
+  for (uint32_t i = 0; i < outT * 3u; ++i) used[g_s.outIdx[i]] = 1u;
+  uint32_t newV = 0u;
+  for (uint32_t i = 0; i < v; ++i) {
+    remap[i] = used[i] ? newV : 0xFFFFFFFFu;
+    if (!used[i]) continue;
+    writePos(g_s.outPos, newV, readPos(g_s.inPos, i));
+    ++newV;
+  }
+  for (uint32_t f = 0; f < outT; ++f) {
+    for (uint32_t k = 0; k < 3u; ++k) g_s.outIdx[f * 3 + k] = remap[g_s.outIdx[f * 3 + k]];
+  }
+  if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
+  if (!newV || !outT) return -4;
+  return commit(newV, outT);
 }
 
 /* =========================================================================
@@ -2837,7 +4090,8 @@ FE_EXPORT int32_t fe_mod_decimate_collapse(float ratio, int32_t preserve_boundar
  * Those are the parts that read BMesh custom data.
  * ========================================================================= */
 FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replace_original,
-                                   int32_t boundary, int32_t even_offset) {
+                                   int32_t boundary, int32_t even_offset, int32_t relative_offset,
+                                   float thickness_vgroup_fac, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   /* A wireframe is all new surface: the input's per-face flags have nothing to
      say about it. */
@@ -2867,6 +4121,45 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
   uint32_t* eaOther = modArray<uint32_t>(v);
   uint32_t* ebOther = modArray<uint32_t>(v);
   if (!fn || !vn || !loopPos || !bndPos || !bndMade || !eaFace || !ebFace || !eaOther || !ebOther) return -2;
+
+  /* use_relative_offset: every offset is scaled per vertex by
+     BM_vert_calc_median_tagged_edge_length(). Despite the name that function
+     sums the lengths of the tagged edges at the vertex and divides by the edge
+     count - the mean edge length - and the modifier tags every edge, so it is
+     the vertex's average edge length. A dense patch then gets thin wire and a
+     sparse one thick wire, which is what keeps a wireframe readable at two
+     different mesh densities. */
+  float* relfac = nullptr;
+  if (relative_offset) {
+    relfac = modArray<float>(v);
+    float* sum = modArray<float>(v);
+    uint32_t* cnt = modArray<uint32_t>(v);
+    if (!relfac || !sum || !cnt) return -2;
+    for (uint32_t i = 0; i < v; ++i) { sum[i] = 0.0f; cnt[i] = 0u; }
+    for (uint32_t f = 0; f < t; ++f) {
+      for (uint32_t k = 0; k < 3u; ++k) {
+        const uint32_t a = g_s.inIdx[f * 3 + k], b = g_s.inIdx[f * 3 + (k + 1u) % 3u];
+        if (a == b) continue;
+        const float len = length(readPos(g_s.inPos, b) - readPos(g_s.inPos, a));
+        sum[a] += len; cnt[a]++;
+        sum[b] += len; cnt[b]++;
+      }
+    }
+    for (uint32_t i = 0; i < v; ++i) relfac[i] = cnt[i] ? sum[i] / static_cast<float>(cnt[i]) : 0.0f;
+  }
+  /* thickness_vertex_group: bmesh_wireframe.cc scales the same relative factor
+     the Relative Offset setting uses, so a weighted vertex gets a thinner
+     frame and the two settings compose. */
+  const float vgFacIn = clampf(thickness_vgroup_fac, 0.0f, 1.0f);
+  auto facOf = [&](uint32_t i) {
+    float f = relfac ? relfac[i] : 1.0f;
+    if (g_s.vgOn) {
+      float w = g_s.vg[i];
+      if (invert_vgroup) w = 1.0f - w;
+      f *= vgFacIn + (w * (1.0f - vgFacIn));
+    }
+    return f;
+  };
 
   for (uint32_t f = 0; f < t; ++f) {
     const Vec3 a = readPos(g_s.inPos, g_s.inIdx[f * 3]);
@@ -2930,7 +4223,8 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
         facShell = absf(1.0f / cosf(a));
       }
       const Vec3 vnormal = readPos(vn, iv);
-      Vec3 p = curr + tangent * (inset * facShell) + vnormal * ofs_mid;
+      const float fac = facOf(iv);
+      Vec3 p = curr + tangent * (inset * facShell * fac) + vnormal * (ofs_mid * fac);
       writePos(loopPos + f * 9u, k, p);
     }
   }
@@ -2992,7 +4286,8 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
           facShell = absf(c) > 1e-6f ? absf(1.0f / c) : 1.0f;
         }
       }
-      const Vec3 p = co + no * (inset * facShell) + readPos(vn, i) * ofs_mid;
+      const float fac = facOf(i);
+      const Vec3 p = co + no * (inset * facShell * fac) + readPos(vn, i) * (ofs_mid * fac);
       writePos(bndPos, i, p);
       bndMade[i] = 1u;
     }
@@ -3008,8 +4303,9 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
   for (uint32_t i = 0; i < v; ++i) {
     const Vec3 p = readPos(g_s.inPos, i);
     const Vec3 n = readPos(vn, i);
-    writePos(g_s.outPos, negBase + i * 2u, p + n * ofs_orig);
-    writePos(g_s.outPos, negBase + i * 2u + 1u, p + n * ofs_new);
+    const float fac = facOf(i);
+    writePos(g_s.outPos, negBase + i * 2u, p + n * (ofs_orig * fac));
+    writePos(g_s.outPos, negBase + i * 2u + 1u, p + n * (ofs_new * fac));
     if (g_s.hasUv) {
       g_s.outUv[(negBase + i * 2u) * 2] = g_s.inUv[i * 2];
       g_s.outUv[(negBase + i * 2u) * 2 + 1] = g_s.inUv[i * 2 + 1];
@@ -3106,7 +4402,7 @@ FE_EXPORT int32_t fe_mod_wireframe(float thickness, float offset, int32_t replac
  * ========================================================================= */
 FE_EXPORT int32_t fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
                                        float factor, float limit_lo, float limit_hi,
-                                       uint32_t lock_axis) {
+                                       uint32_t lock_axis, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -3239,7 +4535,12 @@ FE_EXPORT int32_t fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
     out[map[0]] = co_map[0];
     out[map[1]] = co_map[1];
     out[map[2]] = co_map[2];
-    writePos(g_s.outPos, i, Vec3(out[0], out[1], out[2]));
+    /* MOD_simpledeform.cc's simple_helper() ends with
+       interp_v3_v3v3(vertexCos, vertexCos, co, weight): the weight is the
+       blend between where the vertex was and where the deform puts it. */
+    const float w = deformWeight(i, invert_vgroup);
+    const Vec3 deformed(out[0], out[1], out[2]);
+    writePos(g_s.outPos, i, w == 1.0f ? deformed : src + (deformed - src) * w);
   }
 
   if (g_s.hasUv) for (uint32_t i = 0; i < v * 2u; ++i) g_s.outUv[i] = g_s.inUv[i];
@@ -3279,56 +4580,6 @@ FE_EXPORT int32_t fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
  * carries one smooth flag per face, not per edge, and inventing edge flags the
  * model does not have would be worse than saying so. Edge Angle is the mode.
  * ========================================================================= */
-struct SplitEdges {
-  uint64_t* key = nullptr;
-  uint32_t* a = nullptr;
-  uint32_t* b = nullptr;
-  uint32_t* f0 = nullptr;
-  uint32_t* f1 = nullptr;
-  uint8_t* nf = nullptr;
-  uint8_t* split = nullptr;
-  uint32_t mask = 0;
-};
-
-bool splitEdgesInit(SplitEdges& e, uint32_t triCount) {
-  const uint32_t cap = nextPow2(triCount * 3u + 8u);
-  e.key = modArray<uint64_t>(cap);
-  e.a = modArray<uint32_t>(cap);
-  e.b = modArray<uint32_t>(cap);
-  e.f0 = modArray<uint32_t>(cap);
-  e.f1 = modArray<uint32_t>(cap);
-  e.nf = modArray<uint8_t>(cap);
-  e.split = modArray<uint8_t>(cap);
-  if (!e.key || !e.a || !e.b || !e.f0 || !e.f1 || !e.nf || !e.split) return false;
-  for (uint32_t i = 0; i < cap; ++i) { e.nf[i] = 0u; e.split[i] = 0u; }
-  e.mask = cap - 1u;
-  return true;
-}
-
-inline uint32_t splitEdgeSlot(const SplitEdges& e, uint32_t va, uint32_t vb, bool insert,
-                              uint32_t tri, bool* added) {
-  const uint32_t lo = va < vb ? va : vb, hi = va < vb ? vb : va;
-  const uint64_t key = (static_cast<uint64_t>(lo) << 32) | hi;
-  uint32_t i = hashU32(lo * 2654435761u ^ hi * 2246822519u) & e.mask;
-  for (uint32_t probe = 0; probe <= e.mask; ++probe) {
-    if (e.nf[i] == 0u) {
-      if (!insert) return 0xFFFFFFFFu;
-      e.key[i] = key; e.a[i] = va; e.b[i] = vb;
-      e.f0[i] = tri; e.f1[i] = 0xFFFFFFFFu; e.nf[i] = 1u;
-      if (added) *added = true;
-      return i;
-    }
-    if (e.key[i] == key) {
-      if (insert) {
-        if (e.nf[i] == 1u) { e.f1[i] = tri; e.nf[i] = 2u; }
-        else if (e.nf[i] < 255u) { e.nf[i] = static_cast<uint8_t>(e.nf[i] + 1u); }
-      }
-      return i;
-    }
-    i = (i + 1u) & e.mask;
-  }
-  return 0xFFFFFFFFu;
-}
 
 FE_EXPORT int32_t fe_mod_edge_split(float split_angle, int32_t use_angle, int32_t use_sharp) {
   if (!g_s.ready) return -1;
@@ -3609,7 +4860,8 @@ struct BevelFace {
   uint32_t n = 0;
 };
 
-FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_overlap, float profile) {
+FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_overlap, float profile,
+                               int32_t offset_type, int32_t limit_method, float angle_limit) {
   if (!g_s.ready) return -1;
   uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -3787,44 +5039,37 @@ FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_over
   loopStart[faceCount] = cornerWrite;
   if (!faceCount || !cornerWrite) return -4;
 
-  /* ---- 3. the corner offsets ---- */
-  /* cornerOut[c] is the new vertex id for corner c of the flat corner array. */
-  uint32_t* cornerOut = modArray<uint32_t>(cornerWrite);
-  /* Which face and which slot each output corner belongs to, for the strips. */
-  uint32_t* cornerFace = modArray<uint32_t>(cornerWrite);
-  if (!cornerOut || !cornerFace) return -2;
-
-  /* vertex -> (face, slot) is needed to find the two faces of an edge. */
-  uint32_t nextV = 0;
+  /* One normal per polygon, for the angle limit. Newell's method, which does
+     not care how the polygon is shaped as long as it is flat. */
+  float* polyNormal = modArray<float>(faceCount * 3u);
+  if (!polyNormal) return -2;
   for (uint32_t f = 0; f < faceCount; ++f) {
     const uint32_t b = loopStart[f], e = loopStart[f + 1u];
     const uint32_t n = e - b;
+    Vec3 acc(0.0f, 0.0f, 0.0f);
     for (uint32_t i = 0; i < n; ++i) {
-      const uint32_t c = b + i;
-      const uint32_t prev = b + (i + n - 1u) % n;
-      const uint32_t next = b + (i + 1u) % n;
-      const Vec3 P = {cornerPos[c * 3], cornerPos[c * 3 + 1], cornerPos[c * 3 + 2]};
-      const Vec3 P0 = {cornerPos[prev * 3], cornerPos[prev * 3 + 1], cornerPos[prev * 3 + 2]};
-      const Vec3 P1 = {cornerPos[next * 3], cornerPos[next * 3 + 1], cornerPos[next * 3 + 2]};
-      const Vec3 d0 = normalize(P0 - P), d1 = normalize(P1 - P);
-      const float sinA = cross(d0, d1).length();
-      float tparam = sinA > 1e-6f ? width / sinA : width * 1e3f;
-      if (clamp_overlap) {
-        const float limit = 0.45f * minf((P0 - P).length(), (P1 - P).length());
-        if (tparam > limit) tparam = limit;
-      }
-      const Vec3 q = P + (d0 + d1) * tparam;
-      if (nextV >= g_s.vcap) return -2;
-      writePos(g_s.outPos, nextV, q);
-      if (g_s.hasUv) {
-        const uint32_t srcVert = loopVerts[c];
-        g_s.outUv[nextV * 2] = buv[srcVert * 2];
-        g_s.outUv[nextV * 2 + 1] = buv[srcVert * 2 + 1];
-      }
-      cornerOut[c] = nextV;
-      cornerFace[c] = f;
-      ++nextV;
+      const Vec3 pa = readPos(g_s.inPos, loopVerts[b + i]);
+      const Vec3 pb = readPos(g_s.inPos, loopVerts[b + (i + 1u) % n]);
+      acc.x += (pa.y - pb.y) * (pa.z + pb.z);
+      acc.y += (pa.z - pb.z) * (pa.x + pb.x);
+      acc.z += (pa.x - pb.x) * (pa.y + pb.y);
     }
+    const Vec3 nn = normalize(acc);
+    polyNormal[f * 3] = nn.x; polyNormal[f * 3 + 1] = nn.y; polyNormal[f * 3 + 2] = nn.z;
+  }
+
+  /* cornerOut[c] is the new vertex id for corner c of the flat corner array;
+     cornerFace[c] says which polygon it belongs to. Both are needed by the
+     strip table below and filled in by the corner loop. */
+  uint32_t* cornerOut = modArray<uint32_t>(cornerWrite);
+  uint32_t* cornerFace = modArray<uint32_t>(cornerWrite);
+  if (!cornerOut || !cornerFace) return -2;
+
+  /* cornerFace[c] follows from the loop layout alone: corner c belongs to the
+     polygon whose loop range contains it. Filling it here means the strip
+     table below does not have to wait for the corner loop. */
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    for (uint32_t c = loopStart[f]; c < loopStart[f + 1u]; ++c) cornerFace[c] = f;
   }
 
   /* ---- 4. vertex -> corners, so the strips can find their faces ---- */
@@ -3837,35 +5082,6 @@ FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_over
   for (uint32_t i = 0; i < v; ++i) cornerStart[i + 1u] += cornerStart[i];
   for (uint32_t i = 0; i < v; ++i) cornerAtV[i] = cornerStart[i];
   for (uint32_t c = 0; c < cornerWrite; ++c) cornerList[cornerAtV[loopVerts[c]]++] = c;
-
-  uint32_t outT = 0;
-  auto putTri = [&](uint32_t a, uint32_t b, uint32_t c) {
-    if (outT >= g_s.tcap) return false;
-    g_s.outIdx[outT * 3] = a;
-    g_s.outIdx[outT * 3 + 1] = b;
-    g_s.outIdx[outT * 3 + 2] = c;
-    ++outT;
-    return true;
-  };
-  auto fan = [&](const uint32_t* ids, uint32_t n) {
-    for (uint32_t i = 1; i + 1u < n; ++i) {
-      if (!putTri(ids[0], ids[i], ids[i + 1u])) return false;
-    }
-    return true;
-  };
-
-  /* ---- 5. the shrunken faces ---- */
-  uint32_t* ids = modArray<uint32_t>(64u);
-  const uint32_t idsCap = 64u;
-  if (!ids) return -2;
-  for (uint32_t f = 0; f < faceCount; ++f) {
-    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
-    const uint32_t n = e - b;
-    if (n < 3u) continue;
-    if (n > idsCap) return -2;
-    for (uint32_t i = 0; i < n; ++i) ids[i] = cornerOut[b + i];
-    if (!fan(ids, n)) return -2;
-  }
 
   /* ---- 6. the strips ---- */
   /* Every boundary edge of every face, with the two faces that own it. */
@@ -3926,6 +5142,125 @@ FE_EXPORT int32_t fe_mod_bevel(float width, int32_t segments, int32_t clamp_over
     ++stripCount;
   }
   if (!stripCount) return -4;
+
+  /* ---- 3. the corner offsets ---- */
+  /* vertex -> (face, slot) is needed to find the two faces of an edge. */
+  uint32_t nextV = 0;
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+    const uint32_t n = e - b;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t c = b + i;
+      const uint32_t prev = b + (i + n - 1u) % n;
+      const uint32_t next = b + (i + 1u) % n;
+      const Vec3 P = {cornerPos[c * 3], cornerPos[c * 3 + 1], cornerPos[c * 3 + 2]};
+      const Vec3 P0 = {cornerPos[prev * 3], cornerPos[prev * 3 + 1], cornerPos[prev * 3 + 2]};
+      const Vec3 P1 = {cornerPos[next * 3], cornerPos[next * 3 + 1], cornerPos[next * 3 + 2]};
+      const Vec3 d0 = normalize(P0 - P), d1 = normalize(P1 - P);
+      const float sinA = cross(d0, d1).length();
+      /* Upstream's Offset Type: the slider means a different distance each
+         way, and all four reduce to the same inset parameter t.
+           Offset  - the distance from the original edge
+           Width   - the width of the bevel face itself
+           Depth   - how far the bevel cuts into the corner
+           Percent - a fraction of the shorter neighbouring edge */
+      float want = width;
+      if (offset_type == 1 || offset_type == 2) {
+        /* Upstream converts Width and Depth with the edge's face angle
+           (`edge_face_angle`, the angle between the two polygons that share the
+           edge), not the angle between the edges meeting at this corner. Take
+           the mean of the two edges that touch the corner. */
+        float faceAngle = 0.0f;
+        uint32_t found = 0u;
+        for (uint32_t side = 0; side < 2u; ++side) {
+          const uint32_t otherC = side == 0u ? next : prev;
+          const uint32_t slot = splitEdgeSlot(be, loopVerts[c], loopVerts[otherC], false, 0u, nullptr);
+          if (slot == 0xFFFFFFFFu || !edgeLive[slot]) continue;
+          const uint32_t fa = edgeFaceA[slot], fb = edgeFaceB[slot];
+          const float dot = clampf(polyNormal[fa * 3] * polyNormal[fb * 3] +
+                                   polyNormal[fa * 3 + 1] * polyNormal[fb * 3 + 1] +
+                                   polyNormal[fa * 3 + 2] * polyNormal[fb * 3 + 2], -1.0f, 1.0f);
+          faceAngle += cornerAngle(dot);
+          ++found;
+        }
+        if (found) faceAngle /= static_cast<float>(found);
+        else if (sinA > 1e-6f) faceAngle = atan2f(sinA, Vec3::dot(d0, d1));
+        const float halfA = faceAngle * 0.5f;
+        if (offset_type == 1) {                   /* Width */
+          want = width / maxf(absf(2.0f * sinf(halfA)), 1e-4f);
+        } else {                                  /* Depth */
+          want = width / maxf(absf(cosf(halfA)), 0.05f);
+        }
+      } else if (offset_type == 3) {              /* Percent */
+        want = (width / 100.0f) * minf((P0 - P).length(), (P1 - P).length());
+      }
+      float tparam = sinA > 1e-6f ? want / sinA : want * 1e3f;
+      if (clamp_overlap) {
+        const float limit = 0.45f * minf((P0 - P).length(), (P1 - P).length());
+        if (tparam > limit) tparam = limit;
+      }
+      /* Limit Method: Angle bevels only the edges sharper than the slider, and
+         a corner whose edge is not beveled stays where it was. */
+      if (limit_method == 1) {
+        bool sharp = false;
+        for (uint32_t side = 0; side < 2u && !sharp; ++side) {
+          const uint32_t otherC = side == 0u ? next : prev;
+          const uint32_t otherV = loopVerts[otherC];
+          const uint32_t slot = splitEdgeSlot(be, loopVerts[c], otherV, false, 0u, nullptr);
+          if (slot == 0xFFFFFFFFu || !edgeLive[slot]) continue;
+          const uint32_t fa = edgeFaceA[slot], fb = edgeFaceB[slot];
+          const float na[3] = {polyNormal[fa * 3], polyNormal[fa * 3 + 1], polyNormal[fa * 3 + 2]};
+          const float nb[3] = {polyNormal[fb * 3], polyNormal[fb * 3 + 1], polyNormal[fb * 3 + 2]};
+          const float dot = clampf(na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2], -1.0f, 1.0f);
+          const float angle = 180.0f - atan2f(sqrtf(maxf(0.0f, 1.0f - dot * dot)), dot) * kRad2Deg;
+          if (angle > angle_limit) sharp = true;
+        }
+        if (!sharp) tparam = 0.0f;
+      }
+      const Vec3 q = P + (d0 + d1) * tparam;
+      if (nextV >= g_s.vcap) return -2;
+      writePos(g_s.outPos, nextV, q);
+      if (g_s.hasUv) {
+        const uint32_t srcVert = loopVerts[c];
+        g_s.outUv[nextV * 2] = buv[srcVert * 2];
+        g_s.outUv[nextV * 2 + 1] = buv[srcVert * 2 + 1];
+      }
+      cornerOut[c] = nextV;
+      cornerFace[c] = f;
+      ++nextV;
+    }
+  }
+
+  uint32_t outT = 0;
+  auto putTri = [&](uint32_t a, uint32_t b, uint32_t c) {
+    if (outT >= g_s.tcap) return false;
+    g_s.outIdx[outT * 3] = a;
+    g_s.outIdx[outT * 3 + 1] = b;
+    g_s.outIdx[outT * 3 + 2] = c;
+    ++outT;
+    return true;
+  };
+  auto fan = [&](const uint32_t* ids, uint32_t n) {
+    for (uint32_t i = 1; i + 1u < n; ++i) {
+      if (!putTri(ids[0], ids[i], ids[i + 1u])) return false;
+    }
+    return true;
+  };
+
+  /* ---- 5. the shrunken faces ---- */
+  uint32_t* ids = modArray<uint32_t>(64u);
+  const uint32_t idsCap = 64u;
+  if (!ids) return -2;
+  for (uint32_t f = 0; f < faceCount; ++f) {
+    const uint32_t b = loopStart[f], e = loopStart[f + 1u];
+    const uint32_t n = e - b;
+    if (n < 3u) continue;
+    if (n > idsCap) return -2;
+    for (uint32_t i = 0; i < n; ++i) ids[i] = cornerOut[b + i];
+    if (!fan(ids, n)) return -2;
+  }
+
+  /* ---- 6. the strips (table built above, before the corner offsets) ---- */
 
   /* The inner ring levels, stored contiguously per edge so the vertex patch
      can splice them into its ring. */
@@ -4322,7 +5657,7 @@ FE_EXPORT int32_t fe_mod_screw(float angle, float screw_ofs, int32_t iterations,
 
 FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
                                           int32_t axis_mask, int32_t preserve_volume,
-                                          int32_t normalized) {
+                                          int32_t normalized, int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
   const uint32_t v = g_s.vc, t = g_s.tc;
   if (!v || !t) return -3;
@@ -4438,19 +5773,29 @@ FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float la
   /* ---- the per-vertex normalisation, before anything is assembled ---- */
   const float absLambda = absf(lambda);
   const float absBorder = absf(lambda_border);
+  /* MOD_laplaciansmooth.cc builds the system once, at iter 0, and every row of
+     a weighted vertex is scaled by wpaint - including the diagonal:
+       vweights[i] = -|lambda| * wpaint / w
+       vlengths[i] = -|lambda_border| * wpaint * 2 / w
+       diag        = 1 + |lambda| * wpaint   (or |lambda_border| * wpaint * 2)
+     A zero weight therefore leaves the row as the identity, and the vertex
+     does not move. */
+  float* wpaint = modArray<float>(v);
+  if (!wpaint) return -2;
+  for (uint32_t i = 0; i < v; ++i) wpaint[i] = deformWeight(i, invert_vgroup);
   for (uint32_t i = 0; i < v; ++i) {
     if (zero[i]) { vwt[i] = 0.0f; vlen[i] = 0.0f; continue; }
     if (isRing(i)) {
       if (normalized) {
-        vwt[i] = vwt[i] == 0.0f ? 0.0f : -absLambda / vwt[i];
+        vwt[i] = vwt[i] == 0.0f ? 0.0f : -absLambda * wpaint[i] / vwt[i];
       } else {
         const float w = vwt[i] * ringArea[i];
-        vwt[i] = w == 0.0f ? 0.0f : -absLambda / (4.0f * w);
+        vwt[i] = w == 0.0f ? 0.0f : -absLambda * wpaint[i] / (4.0f * w);
       }
       vlen[i] = 0.0f;
     } else {
       vwt[i] = 0.0f;
-      vlen[i] = vlen[i] == 0.0f ? 0.0f : -absBorder * 2.0f / vlen[i];
+      vlen[i] = vlen[i] == 0.0f ? 0.0f : -absBorder * 2.0f * wpaint[i] / vlen[i];
     }
   }
 
@@ -4529,10 +5874,10 @@ FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float la
   for (uint32_t i = 0; i < v; ++i) {
     if (zero[i]) { addEntry(i, i, 1.0f); }
     else if (isRing(i)) {
-      addEntry(i, i, normalized ? 1.0f + absLambda
-                                : 1.0f + (ringArea[i] > 0.0f ? absLambda / (4.0f * ringArea[i]) : 0.0f));
+      addEntry(i, i, normalized ? 1.0f + absLambda * wpaint[i]
+                                : 1.0f + (ringArea[i] > 0.0f ? absLambda * wpaint[i] / (4.0f * ringArea[i]) : 0.0f));
     } else {
-      addEntry(i, i, 1.0f + absBorder * 2.0f);
+      addEntry(i, i, 1.0f + absBorder * 2.0f * wpaint[i]);
     }
   }
 
@@ -4632,6 +5977,12 @@ FE_EXPORT int32_t fe_mod_laplacian_smooth(int32_t repeat, float lambda, float la
       if (!solveAxis(axisBuf)) return -2;
       for (uint32_t i = 0; i < v; ++i) {
         if (zero[i]) continue;
+        /* A zero weight makes the row the identity, so the direct solve
+           upstream runs pins the vertex where it is. This stack solves the
+           normal equations instead, which would let a neighbour's row drag an
+           unweighted vertex along; pin it here, which is exactly the identity
+           row's answer. */
+        if (wpaint[i] <= 0.0f) continue;
         const float lam = isRing(i) ? (lambda >= 0.0f ? 1.0f : -1.0f)
                                     : (lambda_border >= 0.0f ? 1.0f : -1.0f);
         pos[i * 3 + axis] += lam * (x[i] - pos[i * 3 + axis]);

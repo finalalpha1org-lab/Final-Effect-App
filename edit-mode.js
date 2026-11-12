@@ -2559,6 +2559,19 @@
     openSheet,
     closeSheet,
     stats: () => ({ ...stats }),
+    /* Which object the kernel currently holds, so the app can tell whether a
+       selection it is about to read belongs to the mesh it is weighting. */
+    target: () => state.target || null,
+    /* One byte per vertex of the cage mesh, in the same order the object's
+       base geometry uses. null when Edit Mode is not running or the kernel has
+       nothing loaded - the caller has to say so rather than weight nothing. */
+    selectedVertices() {
+      const exp = exportsOf();
+      if (!state.active || !exp || typeof exp.fe_edit_vert_sel_ptr !== 'function') return null;
+      const count = exp.fe_edit_vert_count();
+      if (!count) return null;
+      return new Uint8Array(memory(), exp.fe_edit_vert_sel_ptr(), count).slice();
+    },
     setProportional(enabled) {
       state.propEnabled = !!enabled;
       applyProportional();

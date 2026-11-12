@@ -20,6 +20,13 @@ All heavy numerical, animation, rendering, sculpting, and performance systems li
 - **C++20 Export & Packaging Kernels (`cpp/src/fe_export.cpp`, `cpp/src/fe_volatlas.cpp`, `cpp/src/fe_writer.cpp`, `cpp/src/fe_render_math.cpp`)**:
   - World-space mesh baking for the exporters (single and instanced, inverse-transpose normals, shared index buffer), the Wavefront OBJ/MTL text writers with the six-decimal OBJ number form, the PNG-sequence CRC-32, the density/temperature volume atlas (packing, library header walk, trilinear read, ping-pong playback), the TAA Halton jitter and reprojection, and the Planck + CIE 1931 blackbody ramp. The JavaScript bodies they replaced stay in place as fallbacks and as the oracle for `tests/cpp-export-parity.test.mjs`, which compares kernel and fallback byte for byte.
 - **C++20 Edit Mode Kernel (`cpp/src/fe_editmesh.cpp`, `cpp/src/fe_editmesh_tools.cpp`)**: real vertex / edge / face editing — extrude, inset, subdivide, bevel, poke, duplicate, split, fill, bridge, merge, weld, collapse, bisect, symmetrize, loop select, proportional editing, snap, and a 48-step undo pool, all in C++ with a triangle-soup topology core. See `docs/EDIT-MODE.md`.
+- **Modifiers**: Array, Bevel, Boolean, Build, Decimate, Edge Split, Mirror, Screw,
+  Solidify, Subdivision Surface, Triangulate, Weld, Wireframe, and the deform set,
+  each carrying Blender's own settings — see `docs/MODIFIER-PARITY.md` for the
+  property-by-property audit. Vertex groups are a real data layer now: ten
+  modifiers read one weight per vertex the way their own Blender source does.
+  What is still blocked is named there too — per-face material indices,
+  per-edge flags and object frames.
 - **Thin HTML/JS Presentation Layer (`index.html`, `fe-cpp-engine.js`, `edit-mode.js`)**:
   - The Landscaping Studio was removed in a previous build and its home card is locked. Its C++ kernels (terrain, ocean, flora, climate, LoD, impostors, surface) and its JavaScript page are gone from the tree rather than left unreachable; the studio is being rebuilt from zero.
   - Responsive Portrait & Landscape touch UI, installable offline-capable **PWA (`manifest.webmanifest`, `sw.js`)**, and **Capacitor (`capacitor.config.json`)** configuration for native Android/iOS packaging.

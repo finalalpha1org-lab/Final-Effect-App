@@ -309,3 +309,53 @@ test('without a face list the modifier still returns a usable triangle mesh', ()
   assert.equal(out.attributes.position.count, 36);
   assert.ok(out.attributes.normal, 'normals survive the fallback');
 });
+
+test('Min Vertices leaves a small face on the triangles it arrived with', () => {
+  const { exp } = core();
+  polyEngine(exp);
+  const geometry = octagonGeometry();
+  /* The octagon's own triangulation is a fan through the centre vertex, and
+     the poly layer sees one face of eight corners. With Min Vertices above
+     eight, the modifier must not touch it: the centre vertex survives and the
+     six-fan comes back unchanged. */
+  const fan = triangulateGeometry(geometry, { ngonMethod: 'Ear Clip', minVertices: 9 });
+  assert.equal(trianglesOf(fan).length, 8, 'the eight input triangles are kept');
+  const touched = trianglesOf(fan);
+  assert.ok(touched.some((tri) => tri.some((p) => Math.hypot(p[0], p[1]) < 1e-6)),
+    'the centre corner of the original fan is still there');
+
+  /* At the threshold - and at the default 4 - the face is cut. */
+  for (const minVertices of [8, 4]) {
+    const cut = trianglesOf(triangulateGeometry(geometry, { ngonMethod: 'Ear Clip', minVertices }));
+    assert.equal(cut.length, 6, `Min Vertices ${minVertices} triangulates the eight-corner cap`);
+    for (const tri of cut) {
+      for (const p of tri) assert.ok(Math.hypot(p[0], p[1]) > 0.5, 'the centre vertex is gone');
+    }
+  }
+});
+
+test('Min Vertices splits a mesh of quads and n-gons by face size', () => {
+  const { exp } = core();
+  polyEngine(exp);
+  /* One box (six quads) plus one octagon cap: with Min Vertices 5 the quads
+     keep their own diagonals and only the octagon is re-tessellated. */
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const cap = octagonGeometry();
+  const positions = [...box.attributes.position.array, ...cap.attributes.position.array.map((v, i) => (i % 3 === 2 ? v - 3 : v))];
+  const boxTris = [...box.index.array];
+  const capTris = [...cap.index.array].map((i) => i + box.attributes.position.count);
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  merged.setIndex([...boxTris, ...capTris]);
+  merged.userData.feFaces = [
+    ...[0, 1, 2, 3].map(() => null).slice(0, 0),
+    ...[[0, 2, 6, 4], [1, 3, 7, 5], [0, 1, 5, 4], [2, 3, 7, 6], [0, 1, 3, 2], [4, 5, 7, 6]],
+    Array.from({ length: 8 }, (_, i) => box.attributes.position.count + 1 + i),
+  ];
+  merged.userData.feFaceVerts = positions.length / 3;
+  const out = trianglesOf(triangulateGeometry(merged, { ngonMethod: 'Ear Clip', minVertices: 5 }));
+  /* Six quads stay two triangles each (12), the octagon becomes six. */
+  assert.equal(out.length, 18, 'quads are untouched, the n-gon is cut');
+  const capAreaOut = out.filter((tri) => tri.every((p) => p[2] < -2)).reduce((sum, tri) => sum + triArea(tri), 0);
+  assert.ok(Math.abs(capAreaOut - (8 / 2) * Math.sin(Math.PI / 4)) < 1e-5, 'the cap still covers its area');
+});

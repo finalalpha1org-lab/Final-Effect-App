@@ -95,7 +95,7 @@ Our build is freestanding:
 zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
 ```
 
-0 imports, 1 737 174 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+0 imports, 1 858 534 byte artifact, ~53 MiB boot budget, iPhone first. Anything
 that is linked in has to work with no libc, no threads and no filesystem.
 
 Take the bevel, the operator every modeller reaches for first:
@@ -155,12 +155,14 @@ header comment says which.
 | --- | --- | --- | --- |
 | `cpp/src/fe_polyfill.cpp` | `blenlib/intern/polyfill_2d.cc` + `polyfill_2d_beautify.cc` | the ear-clipping loop, `BLI_polyfill_beautify_quad_rotate_calc_ex` and its rotation | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_decimate_collapse()` | `bmesh/tools/bmesh_decimate_collapse.cc` | quadric build (including the boundary-plane weighting), target-coordinate optimisation, edge cost, link condition, degenerate-flip test | GPL-2.0-or-later |
-| `cpp/src/fe_modifiers.cpp` → `fe_mod_solidify()` | `modifiers/intern/MOD_solidify_extrude.cc` (+ `MOD_solidify.cc`) | the thickness/offset split, angle-weighted vertex normals, reversed inner copy, rim quads, and the Even Thickness correction | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_solidify()` | `modifiers/intern/MOD_solidify_extrude.cc` (+ `MOD_solidify.cc`) | the thickness/offset split, angle-weighted vertex normals, reversed inner copy, rim quads, the Even Thickness correction, the Flip Normals layer swap (`INIT_VERT_ARRAY_OFFSETS`) and Rim Only | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_mirror()` | `blenkernel/intern/mesh_mirror.cc` + `bmesh/tools/bmesh_bisect_plane.cc` | the bisect-before-mirror pass: the plane per axis, the flipped side test, the threshold, the cut of a straddling triangle and the mirrored copy with reversed winding | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_weld()` (Connected) | `geometry/intern/mesh_merge_verts.cc` | `mesh_merge_by_distance_connected`: the edge collapse, the weighted cluster centre and the selection rule | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_wireframe()` | `bmesh/tools/bmesh_wireframe.cc` (+ `MOD_wireframe.cc`) | the per-corner inset frame, its two quads, the boundary strips and the Even Offset rule | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_array_ex()` | `modifiers/intern/MOD_array.cc` | the cumulative offset matrix, the Fit Length count arithmetic, the UV offset and the seam merge | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_simple_deform()` | `modifiers/intern/MOD_simpledeform.cc` | the four deformations, the axis remap table, the normalised limits and axis_limit's dcut correction | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_boolean()` | `blenlib/intern/mesh_boolean.cc` (+ `MOD_boolean.cc`) | the BVH pair search, the triangle cut and the parity inside test | GPL-2.0-or-later |
-| `cpp/src/fe_modifiers.cpp` → `fe_mod_bevel()` | `bmesh/tools/bmesh_bevel.cc` (+ `MOD_bevel.cc`) | the n-gon rebuild, the corner inset, the edge strip with its arc, the vertex patch and Clamp Overlap | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_bevel()` | `bmesh/tools/bmesh_bevel.cc` (+ `MOD_bevel.cc`) | the n-gon rebuild, the corner inset, the edge strip with its arc, the vertex patch, Clamp Overlap, the four Offset Types (the `2 sin(theta/2)` / `cos(theta/2)` conversions) and the Angle Limit | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_build()` | `modifiers/intern/MOD_build.cc` | the fraction, the seeded shuffle and the face/vertex compaction | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_screw()` | `modifiers/intern/MOD_screw.cc` | the profile sweep, the step_tot arithmetic, the closing ring and the Merge weld | GPL-2.0-or-later |
 | `cpp/src/fe_modifiers.cpp` → `fe_mod_laplacian_smooth()` | `modifiers/intern/MOD_laplaciansmooth.cc` | the cotangent ring operator, the boundary umbrella, the vweights normalisation, the zerola pinning and the least-squares solve (CG on the normal equations in place of Eigen) | GPL-2.0-or-later |
