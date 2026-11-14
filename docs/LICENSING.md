@@ -81,6 +81,120 @@ pasting the implementation.
 matching Blender's shortcuts, units and camera framing — none of that is
 restricted.
 
+## What a copied file actually costs, measured
+
+The permission question is answered above. The question that actually decides
+how this suite gets built is a different one: *can a file from the Blender tree
+be compiled into `wasm/fe_core_engine.wasm`?* Measured on 2026-10-23 against
+`blender/blender@main`, because "we will copy the code" is a plan only if the
+code survives contact with our build.
+
+Our build is freestanding:
+
+```
+zig c++ -std=c++20 -target wasm32-freestanding -nostdlib -fno-builtin ...
+```
+
+0 imports, 1 885 030 byte artifact, ~53 MiB boot budget, iPhone first. Anything
+that is linked in has to work with no libc, no threads and no filesystem.
+
+Take the bevel, the operator every modeller reaches for first:
+
+| What you would need | Measured |
+| --- | --- |
+| `bmesh/operators/bmo_bevel.cc` (the operator entry point) | 96 lines, 3 697 bytes |
+| `bmesh/tools/bmesh_bevel.cc` (the actual algorithm) | **8 485 lines**, 282 426 bytes |
+| Its includes | `MEM_guardedalloc` (guarded malloc), `DNA_*` (Blender's data model), `BLI_*` (Blender's utility library: `Vector`, `Map`, `Set`, `alloca`, memarena, math), `BKE_curveprofile`, `BKE_customdata`, `BKE_deform` |
+| BMesh core (`source/blender/bmesh/`) | 150 files, **2.56 MiB** of source |
+| BLI (`source/blender/blenlib/`) | 516 files, **6.73 MiB** of source |
+| Blender kernel (`source/blender/blenkernel/`) | 591 files, **12.22 MiB** of source |
+
+A depth-first walk of the include graph from the bevel alone had already reached
+70 files and 17 555 lines before the walk was capped, and every one of them wants
+`malloc`, `printf` or `std::`. That is not "copy a function". It is: bring a
+malloc, a threading layer and Blender's own data model into the wasm, compile a
+large part of BMesh and BLI with it, and carry the result on a phone - against a
+suite that today boots in 53 MiB with 0 imports and a 1.40 MB artifact.
+
+The same holds for the other tempting pieces: the Exact boolean solver is built
+on GMP and MPFR (both need a real allocator and 64-bit arithmetic), EEVEE wants
+OpenGL 4.3 compute, and Cycles is a multi-megabyte C++ program with a tile
+scheduler.
+
+### So what we do instead
+
+**Blender is the reference, and our kernels are ours.** The algorithm is not the
+copyrightable part - the implementation is. Reading `bmesh_bevel.cc` to learn how
+a bevel offsets a corner, and then writing a freestanding kernel that produces
+the same shape, is both legal and the only thing that fits the build. This is not
+theory: `cpp/src/fe_poly.cpp` (the face law) was written from the same
+measurement Blender and `buildQuadGroups` use, and it reproduces Blender's face
+counts exactly - a cube is 6 quads and 12 edges, a 32-side cylinder is 32 quads
+and 2 n-gons - while the artifact stays freestanding.
+
+Concretely:
+
+| Piece | Where it comes from |
+| --- | --- |
+| Face law (quads, n-gons, wireframe, outlines) | Ours, `cpp/src/fe_poly.cpp`, measured against Blender's semantics |
+| Edit tools (extrude, inset, bevel, loop cut, slide, pole fill) | Ours, `cpp/src/fe_editmesh*.cpp` |
+| Modifier stack | Ours, `cpp/src/fe_modifiers.cpp`, except Decimate's collapse, Solidify's shell, Wireframe's frame, Array's offset matrix, Simple Deform's four deformations and Edge Split's fan split (below) |
+| Boolean | Ours (the mesh-arrangement approach); **not** `three-csg-ts` in JavaScript |
+| Path tracing | Ours, `cpp/src/fe_renderer.cpp` |
+| Small pure-data tables (a colour-space matrix, a socket enum, a curve preset) | Copied from Blender where it is genuinely a table: keep the header, add the `NOTICE` entry |
+
+### What has actually been pasted
+
+Three upstream files so far, and the reason each one compiles is the same: it is
+an **algorithm over plain data**, not a slice of Blender's application. None of
+them links `BLI_*`, `BKE_*` or BMesh; where the original calls one of those, the
+call is replaced by the smallest thing that does the same job, and the file's own
+header comment says which.
+
+| Ours | Upstream | Copied | Licence |
+| --- | --- | --- | --- |
+| `cpp/src/fe_polyfill.cpp` | `blenlib/intern/polyfill_2d.cc` + `polyfill_2d_beautify.cc` | the ear-clipping loop, `BLI_polyfill_beautify_quad_rotate_calc_ex` and its rotation | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_decimate_collapse()` | `bmesh/tools/bmesh_decimate_collapse.cc` | quadric build (including the boundary-plane weighting), target-coordinate optimisation, edge cost, link condition, degenerate-flip test | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_solidify()` | `modifiers/intern/MOD_solidify_extrude.cc` (+ `MOD_solidify.cc`) | the thickness/offset split, angle-weighted vertex normals, reversed inner copy, rim quads, the Even Thickness correction, the Flip Normals layer swap (`INIT_VERT_ARRAY_OFFSETS`) and Rim Only | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_mirror()` | `blenkernel/intern/mesh_mirror.cc` + `bmesh/tools/bmesh_bisect_plane.cc` | the bisect-before-mirror pass: the plane per axis, the flipped side test, the threshold, the cut of a straddling triangle and the mirrored copy with reversed winding | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_weld()` (Connected) | `geometry/intern/mesh_merge_verts.cc` | `mesh_merge_by_distance_connected`: the edge collapse, the weighted cluster centre and the selection rule | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_wireframe()` | `bmesh/tools/bmesh_wireframe.cc` (+ `MOD_wireframe.cc`) | the per-corner inset frame, its two quads, the boundary strips and the Even Offset rule | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_array_ex()` | `modifiers/intern/MOD_array.cc` | the cumulative offset matrix, the Fit Length count arithmetic, the UV offset and the seam merge | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_simple_deform()` | `modifiers/intern/MOD_simpledeform.cc` | the four deformations, the axis remap table, the normalised limits and axis_limit's dcut correction | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_boolean()` | `blenlib/intern/mesh_boolean.cc` (+ `MOD_boolean.cc`) | the BVH pair search, the triangle cut and the parity inside test | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_bevel()` | `bmesh/tools/bmesh_bevel.cc` (+ `MOD_bevel.cc`) | the n-gon rebuild, the corner inset, the edge strip with its arc, the vertex patch, Clamp Overlap, the four Offset Types (the `2 sin(theta/2)` / `cos(theta/2)` conversions) and the Angle Limit | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_build()` | `modifiers/intern/MOD_build.cc` | the fraction, the seeded shuffle and the face/vertex compaction | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_screw()` | `modifiers/intern/MOD_screw.cc` | the profile sweep, the step_tot arithmetic, the closing ring and the Merge weld | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_laplacian_smooth()` | `modifiers/intern/MOD_laplaciansmooth.cc` | the cotangent ring operator, the boundary umbrella, the vweights normalisation, the zerola pinning and the least-squares solve (CG on the normal equations in place of Eigen) | GPL-2.0-or-later |
+| `cpp/src/fe_modifiers.cpp` → `fe_mod_edge_split()` | `modifiers/intern/MOD_edgesplit.cc` + `bmesh/tools/bmesh_edgesplit.cc` | the seam threshold and BM_vert_separate_hflag's fan split, as one vertex per fan | GPL-2.0-or-later |
+
+What was *not* copied in each case is the thing that would have pulled BMesh in:
+`BLI_edgehash`/`BLI_heap` become an open-addressing table and a binary heap in
+the same file, `BMesh`'s custom-data interpolation is dropped (the decimator
+keeps the surviving vertex's UV and lets the shading be recomputed), and the
+symmetry KD-tree pass is not ported. The decimator works on a flat
+`(position, index)` buffer, which is what the modifier stack already sends to
+every kernel.
+
+That is the boundary this repository holds: a file qualifies if it can be lifted
+on its own and still be correct. Bevel (8 485 lines pulling in `BLI_Map`,
+`MEM_guardedalloc`, `BKE_curveprofile`) and the Exact boolean (GMP/MPFR) do not
+qualify, and are written from scratch here with Blender's behaviour as the
+reference.
+
+If a future decision is ever made to take a whole Blender subsystem rather than
+reimplement it, the price is known in advance: a C/C++ runtime inside the wasm
+(wasi-libc or an equivalent shim), threads, and a much larger artifact - which
+is a different product decision, not a copy-paste.
+
+### "It is tested, so it has no bugs" is not a property of pasted code
+
+Blender's code is well tested - *inside Blender*. Its guarantees come from the
+pipeline around it: `BMesh` with its custom-data layers, the operator flags, the
+evaluated-mesh cache. A file dropped into a program that does not have those
+things has not inherited the testing; it has inherited the assumptions. The bugs
+that follow would be ours, in a language and a build nobody upstream ever ran.
+
 ## Rules, and they are cheap to follow
 
 1. Never copy a file from the Blender tree without keeping its copyright header

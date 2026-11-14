@@ -587,22 +587,120 @@ FE_EXPORT uint32_t fe_mod_normals_ptr(void);
 FE_EXPORT void     fe_mod_set_counts(uint32_t vert_count, uint32_t tri_count);
 FE_EXPORT uint32_t fe_mod_in_nrm_ptr(void);
 FE_EXPORT uint32_t fe_mod_face_smooth_ptr(void);
+/* The active vertex group: one float per input vertex, written through
+ * fe_mod_vgroup_ptr() before the kernel runs. fe_mod_set_vgroup(0) means "no
+ * group", which every kernel reads as a factor of one. */
+FE_EXPORT uint32_t fe_mod_vgroup_ptr(void);
+FE_EXPORT uint32_t fe_mod_set_vgroup(uint32_t count);
 FE_EXPORT uint32_t fe_mod_set_face_smooth(uint32_t count);
 FE_EXPORT uint32_t fe_mod_derive_face_smooth(void);
 FE_EXPORT int32_t  fe_mod_shade(void);
-FE_EXPORT int32_t  fe_mod_weld(float epsilon);
-FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving, int32_t boundary_mode);
-FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon);
-FE_EXPORT int32_t  fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness);
-FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction);
-FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t axis, float phase);
-FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size);
+FE_EXPORT int32_t  fe_mod_weld(float epsilon, int32_t mode, int32_t invert_vgroup);
+FE_EXPORT int32_t  fe_mod_smooth(uint32_t iterations, float factor, int32_t volume_preserving,
+                                int32_t boundary_mode, int32_t invert_vgroup);
+FE_EXPORT int32_t  fe_mod_mirror(uint32_t axis_mask, int32_t clipping, float merge_epsilon,
+                                uint32_t bisect_mask, uint32_t bisect_flip_mask,
+                                float bisect_threshold, int32_t use_mirror_u, int32_t use_mirror_v,
+                                float mirror_offset_u, float mirror_offset_v, int32_t use_mirror_udim);
+/* thickness_clamp and use_angle_clamp are the RNA's thickness_clamp /
+ * use_thickness_angle_clamp (MOD_solidify_extrude.cc clamp block). */
+FE_EXPORT int32_t  fe_mod_solidify(float thickness, float offset, int32_t rim, int32_t even_thickness,
+                                  int32_t flip_normals, int32_t rim_only, float thickness_clamp,
+                                  int32_t use_angle_clamp, float thickness_vgroup_fac,
+                                  int32_t invert_vgroup);
+/* Wireframe, ported from bmesh/tools/bmesh_wireframe.cc (BM_mesh_wireframe):
+ * the per-corner inset frame plus its two quads, the boundary strips, and the
+ * Even Offset rule. offset is Blender's Offset slider (0 = centred). */
+FE_EXPORT int32_t  fe_mod_wireframe(float thickness, float offset, int32_t replace_original,
+                                    int32_t boundary, int32_t even_offset, int32_t relative_offset,
+                                    float thickness_vgroup_fac, int32_t invert_vgroup);
+/* Edge Split, ported from modifiers/intern/MOD_edgesplit.cc and
+ * bmesh/tools/bmesh_edgesplit.cc: split_angle is in radians, -1 for "off".
+ * Edges sharper than split_angle, and every edge with 3+ faces, become seams. */
+FE_EXPORT int32_t  fe_mod_edge_split(float split_angle, int32_t use_angle, int32_t use_sharp);
+/* Laplacian Smooth, ported from modifiers/intern/MOD_laplaciansmooth.cc:
+   repeat passes of the cotangent Laplacian system, solved as a least-squares
+   problem. axis_mask is 1|2|4 for X|Y|Z; lambda is the ring weight and
+   lambda_border the boundary one, exactly the two sliders upstream shows. */
+/* Boolean, from mesh_boolean.cc: op is 0 = Difference (A - B), 1 = Union,
+   2 = Intersection. B is the mesh uploaded through fe_mod_target_begin(). */
+FE_EXPORT int32_t  fe_mod_boolean(int32_t op, int32_t use_self, int32_t hole_tolerant);
+FE_EXPORT uint32_t fe_mod_target_uv_ptr(void);
+/* Bevel, ported from bmesh/tools/bmesh_bevel.cc: coplanar triangles are welded
+   into n-gon faces first, then every edge is bevelled by `width` with
+   `segments` steps along a circular profile. clamp_overlap keeps the offsets
+   from crossing; profile 0.5 is round. */
+FE_EXPORT int32_t  fe_mod_bevel(float width, int32_t segments, int32_t clamp_overlap, float profile,
+                                int32_t offset_type, int32_t limit_method, float angle_limit);
+/* Build, ported from modifiers/intern/MOD_build.cc: reveals `progress` of the
+   faces (0..1), in order or from a seeded shuffle, and compacts the rest. */
+FE_EXPORT int32_t  fe_mod_build(float progress, int32_t reverse, int32_t randomize, int32_t seed);
+/* Screw, ported from modifiers/intern/MOD_screw.cc: the mesh's edges are the
+   profile, swept into a surface of revolution. angle and screw_ofs are per
+   iteration, steps is the sub-step count and axis is 0/1/2 for X/Y/Z. */
+FE_EXPORT int32_t  fe_mod_screw(float angle, float screw_ofs, int32_t iterations, int32_t steps,
+                                int32_t axis, int32_t use_merge, float merge_dist,
+                                int32_t normal_flip, int32_t smooth_shade);
+FE_EXPORT int32_t  fe_mod_laplacian_smooth(int32_t repeat, float lambda, float lambda_border,
+                                           int32_t axis_mask, int32_t preserve_volume,
+                                           int32_t normalized, int32_t invert_vgroup);
+FE_EXPORT int32_t  fe_mod_displace(float strength, float midlevel, float frequency, uint32_t seed, uint32_t octaves, uint32_t direction, int32_t invert_vgroup);
+/* Wave, ported from modifiers/intern/MOD_wave.cc (waveModifier_do): a
+ * travelling gaussian. `plane` is MOD_WAVE_X (0), MOD_WAVE_Y (1) or
+ * MOD_WAVE_X|Y (2, circles); the vertex moves along local Z unless use_normal
+ * sends it along its normal. narrowness/falloff/lifetime/damping/time_offset/
+ * start_x/start_y are the RNA properties of the same names. */
+FE_EXPORT int32_t  fe_mod_wave(float height, float width, float speed, float time, uint32_t plane, float phase,
+                               int32_t invert_vgroup, float narrowness, float time_offset, float lifetime,
+                               float damping, float start_x, float start_y, float falloff, int32_t cyclic,
+                               int32_t use_normal);
+/* Cast, ported from modifiers/intern/MOD_cast.cc (sphere_do / cuboid_do).
+ * axis_mask is MOD_CAST_X|Y|Z; `radius` is a limit, not a scale; `size` is the
+ * distance the cast pulls to; size_from_radius is use_radius_as_size;
+ * use_transform is use_transform; has_object says the relative matrix carries
+ * the control object's location. */
+FE_EXPORT int32_t  fe_mod_cast(uint32_t shape, float factor, float radius, float size,
+                               int32_t invert_vgroup, uint32_t axis_mask,
+                               int32_t size_from_radius, int32_t use_transform,
+                               int32_t has_object);
 FE_EXPORT int32_t  fe_mod_twist(float strength, uint32_t axis);
+/* Simple Deform, ported from modifiers/intern/MOD_simpledeform.cc.
+ * mode 0 = Twisting, 1 = Bending, 2 = Taper, 3 = Stretch. deform_axis 0/1/2 =
+ * X/Y/Z. limit_lo/hi are Blender's normalised 0..1 limits. lock_axis is the
+ * bit mask 1|2|4 for X|Y|Z and is ignored for Bending, exactly as upstream. */
+FE_EXPORT int32_t  fe_mod_simple_deform(uint32_t mode, uint32_t deform_axis,
+                                        float factor, float limit_lo, float limit_hi,
+                                        uint32_t lock_axis, int32_t invert_vgroup);
 FE_EXPORT int32_t  fe_mod_array(uint32_t count, float ox, float oy, float oz, float rx, float ry, float rz, float rotate_per_step_deg);
+/* Array, ported from modifiers/intern/MOD_array.cc: the cumulative offset
+ * matrix, the Fit Length / Fit Curve count arithmetic, the UV offset per copy
+ * and the seam merge. offset_type bit 0 = constant offset, bit 1 = relative. */
+FE_EXPORT int32_t  fe_mod_array_ex(uint32_t count, uint32_t fit_type, float fit_length,
+                                   uint32_t offset_type,
+                                   float cx, float cy, float cz,
+                                   float rx, float ry, float rz,
+                                   float rot_x_deg, float rot_y_deg, float rot_z_deg,
+                                   uint32_t merge, float merge_dist,
+                                   float uv_u, float uv_v, int32_t use_object_offset);
 /* Returns the number of levels built (0 = nothing to do, negative = a
  * session error); mode 0 is Catmull-Clark, 1 is Simple. */
 FE_EXPORT int32_t  fe_mod_subdivide(uint32_t levels, uint32_t simple);
 FE_EXPORT int32_t  fe_mod_decimate(float ratio, int32_t preserve_boundary);
+/* Collapse decimation, ported from bmesh/tools/bmesh_decimate_collapse.cc:
+ * quadric error, boundary-preserving planes, link-condition and flip checks.
+ * Same signature and return codes as fe_mod_decimate above. */
+FE_EXPORT int32_t  fe_mod_decimate_collapse(float ratio, int32_t preserve_boundary,
+                                           int32_t use_symmetry, int32_t symmetry_axis,
+                                           float vweight_factor, int32_t invert_vgroup);
+/* Decimate's other two decimate_type values:
+ *   Un-Subdivide (bmesh_decimate_unsubdivide.cc) - dissolve the vertices a
+ *     subdivision created, `iterations` times.
+ *   Planar (bmesh_decimate_dissolve.cc) - merge faces that are coplanar within
+ *     angle_limit into one, then tessellate that face back into triangles. */
+FE_EXPORT int32_t  fe_mod_decimate_unsubdivide(uint32_t iterations);
+/* dissolve_boundaries is RNA's use_dissolve_boundaries: join the boundary
+ * edges that run straight through a vertex. */
+FE_EXPORT int32_t  fe_mod_decimate_planar(float angle_limit_deg, int32_t dissolve_boundaries);
 
 /* ---- Session deformation kernels: FFD lattice, armature skinning, surface
  * deform and shrinkwrap. JS only copies buffers; all vertex maths runs here.
@@ -641,7 +739,17 @@ FE_EXPORT int32_t  fe_mod_armature(float influence, int32_t preserve_volume, flo
 
 /* Nearest-surface / above-surface / outside-surface shrinkwrap projection.
  * mode: 0 = On Surface, 1 = Above Surface, 2 = Outside Surface. */
-FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset);
+/* Shrinkwrap, ported from MOD_shrinkwrap.cc + blenkernel/intern/shrinkwrap.cc.
+ * method 0 = NEAREST_SURFACEPOINT, 1 = PROJECT. axis_mask is 1|2|4 for
+ * X|Y|Z and 0 for "along the vertex normal" (MOD_SHRINKWRAP_PROJECT_OVER_*).
+ * cull_face is 0 off / 1 front / 2 back, invert_cull swaps it for the negative
+ * direction, allow_pos / allow_neg are the two direction toggles, and
+ * project_limit is the max distance a projection may travel (0 = no limit). */
+FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset, uint32_t method,
+                                    uint32_t axis_mask, float project_limit,
+                                    uint32_t cull_face, int32_t invert_cull,
+                                    int32_t allow_pos, int32_t allow_neg,
+                                    int32_t invert_vgroup);
 
 /* ---- World-space mesh baking + packaging CRC (cpp/src/fe_export.cpp) ----
  * The exporters bake every mesh (and every instanced copy) into world space
@@ -720,6 +828,24 @@ FE_EXPORT int32_t fe_taa_project(const double* matrix16, double x, double y, dou
 FE_EXPORT int32_t fe_color_blackbody_rgb(double kelvin, double* out3);
 FE_EXPORT int32_t fe_color_blackbody_lut(double min_k, double max_k, uint32_t count,
                                          uint8_t* out_rgba);
+
+/* ---- Triangulate (BLI_polyfill port, cpp/src/fe_polyfill.cpp) ---- */
+FE_EXPORT int32_t fe_polyfill_begin(void);
+FE_EXPORT uint32_t fe_polyfill_max_vertices(void);
+FE_EXPORT uint32_t fe_polyfill_max_corners(void);
+FE_EXPORT uint32_t fe_polyfill_max_faces(void);
+FE_EXPORT uint32_t fe_polyfill_max_face_verts(void);
+FE_EXPORT float* fe_polyfill_positions_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_ring_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_start_ptr(void);
+FE_EXPORT uint32_t* fe_polyfill_tris_ptr(void);
+FE_EXPORT uint32_t fe_polyfill_quad_count(void);
+FE_EXPORT uint32_t fe_polyfill_ngon_count(void);
+FE_EXPORT int32_t fe_polyfill_build(uint32_t vertex_count, uint32_t face_count, uint32_t corner_count,
+                                    uint32_t quad_method, uint32_t ngon_method);
+/* 1 = run the beauty pass after triangulating (polyfill_2d_beautify.cc), 0 = the
+ * raw ear clip. Beauty is what the Triangulate modifier's default method uses. */
+FE_EXPORT uint32_t fe_polyfill_set_beauty(uint32_t enabled);
 
 /* ---- Heavy 3D Workspace Geometry Kernels (QEM Decimation & Spatial Shrinkwrap) ---- */
 #ifdef __cplusplus

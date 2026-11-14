@@ -59,7 +59,7 @@ it.
 | --- | --- |
 | Timeline, keys, Catmull-Rom curves, dope/curve editing | built |
 | Onion skin, keyframe stepping, bake | built |
-| Edit Mode (46 tools), sculpt, 24 modifiers | built |
+| Edit Mode (46 tools), sculpt, 29 modifiers | built |
 | Physics: cloth, soft body, fluid, smoke | built, parameterised by 0–1 sliders |
 | Simulation bake → playback | built, not yet a workflow |
 | **Skeleton, bind pose, skin weights, skinning** | **built this turn** (`docs/SKELETON.md`) |

@@ -2,6 +2,12 @@
 (function installSimulationEngine(global) {
   const MAX_PARTICLES = 768;
   const CPP_ULTRA_MAX_PARTICLES = 960;
+  /* FLIP is a grid solver: it needs a handful of particles per cell to see the
+     body it is projecting, and a lattice that thin is what the PBF budget above
+     cannot give it. A 25^3 lattice is 16k particles, a 16^3 grid, and about
+     four particles per cell - the density the projection is stable at. */
+  const FLIP_MAX_PARTICLES = 16384;
+  const FLIP_RESOLUTION_PARAM = 200;
   const MAX_SURFACE_VERTS = 49152;
   const MAX_SURFACE_INDICES = 147456;
   const DEFORMABLE_FIXED_STEP = 1 / 120;
@@ -485,12 +491,12 @@
     ]);
   }
 
-  function lattice(bounds, params, liquid, useCppBudget = false) {
+  function lattice(bounds, params, liquid, useCppBudget = false, particleCap = 0) {
     const sx = bounds[3] - bounds[0], sy = bounds[4] - bounds[1], sz = bounds[5] - bounds[2];
     const maxDim = Math.max(sx, sy, sz, 0.25);
     const resolution = clamp(Math.round(number(params, 'Resolution', 80) / 8), 4, 12);
     const scaledRes = (liquid && useCppBudget) ? Math.round(resolution * 1.25) : resolution;
-    const cap = (liquid && useCppBudget) ? CPP_ULTRA_MAX_PARTICLES : MAX_PARTICLES;
+    const cap = particleCap > 0 ? particleCap : ((liquid && useCppBudget) ? CPP_ULTRA_MAX_PARTICLES : MAX_PARTICLES);
     let nx = Math.max(3, Math.round(scaledRes * sx / maxDim));
     let ny = Math.max(3, Math.round(scaledRes * sy / maxDim));
     let nz = Math.max(3, Math.round(scaledRes * sz / maxDim));
@@ -810,6 +816,9 @@
       this.wasm = null;
       this.arena = null;
       this.isCppBackend = false;
+      /* The FLIP grid is one set of buffers inside the engine; the domain that
+         owns it is the one that bound it last. */
+      this.flipOwner = null;
       this.loadError = null;
       this.ready = this.loadWasm().then(() => { this.updateStatusBadge(); return true; }).catch((error) => {
         this.loadError = error;
@@ -1308,15 +1317,53 @@
       this.simMeshes.set(mesh.uuid, record);
     }
 
+    /* One FLIP grid lives in the engine, so the domain that owns it is the one
+       that stepped last. Re-binding is a full re-init (the grid buffers are
+       allocated once), so it is keyed on the resolution and the box and only
+       happens when the domain actually changes underneath it. */
+    bindFlipGrid(record) {
+      const wasm = this.wasm;
+      if (!record?.useFlip || typeof wasm?.fe_flip_begin !== 'function') return false;
+      const b = this.arena.f32(record.boundsPtr, 6);
+      const maxDim = Math.max(b[3] - b[0], b[4] - b[1], b[5] - b[2], 1e-3);
+      const resolution = clamp(Math.round(maxDim / Math.max(record.flipCellTarget || 0.1, 1e-3)), 8, 48);
+      const key = `${resolution}|${Array.from(b, v => v.toFixed(4)).join(',')}`;
+      if (record.flipGridKey === key && this.flipOwner === record) return true;
+      if (wasm.fe_flip_begin(resolution, record.boundsPtr) !== 0) return false;
+      record.flipGridKey = key;
+      record.flipResolution = resolution;
+      record.flipCellSize = wasm.fe_flip_cell_size();
+      this.flipOwner = record;
+      return true;
+    }
+
+    /* A liquid preset is a ratio and a viscosity, not a colour. Water keeps
+       almost all of the particle velocity (0.97 of it), honey hands most of it
+       to the grid and diffuses what is left. */
+    liquidPresetPhysics(preset) {
+      if (preset === 'Honey') return { ratio: 0.92, viscosity: 0.6, tension: 0.6 };
+      if (preset === 'Slime') return { ratio: 0.95, viscosity: 0.12, tension: 1.0 };
+      if (preset === 'Oil') return { ratio: 0.95, viscosity: 0.02, tension: 0.35 };
+      return { ratio: 0.97, viscosity: 0.004, tension: 1.0 };
+    }
+
     createLiquidParticles(mesh, params, record) {
       const box = record.bounds;
-      const fluid = lattice(box, params, true, this.isCppBackend);
+      /* FLIP, when the engine ships it, runs on a real grid and needs a real
+         particle budget: four per cell is where the projection holds a resting
+         body still. The lattice for it is denser than the PBF default, and the
+         fallbacks below keep working unchanged on a device without the kernel. */
+      const flipReady = this.isCppBackend && typeof this.wasm?.fe_flip_begin === 'function';
+      const fluid = flipReady
+        ? lattice(box, { ...params, Resolution: FLIP_RESOLUTION_PARAM }, true, true, FLIP_MAX_PARTICLES)
+        : lattice(box, params, true, this.isCppBackend);
       const count = fluid.positions.length / 3;
       if (record.role === 'Flow') fluid.positions = this.sampleMeshSurface(mesh, count, fluid.positions);
       if (count < 2) throw new Error('Liquid domain generated fewer than two particles');
       const arena = this.arena;
       record.kind = 'sph';
       record.count = count;
+      record.useFlip = flipReady && count <= 65536;
       record.smoothingLength = fluid.smoothingLength;
       record.mass = fluid.mass;
       record.radius = fluid.radius;
@@ -1326,6 +1373,9 @@
       record.pressurePtr = arena.allocF32(count);
       record.forcePtr = arena.allocF32(count * 3);
       record.foamEnergyPtr = arena.allocF32(count);
+      record.flipMetricsPtr = arena.allocF32(8);
+      record.flipCellTarget = fluid.spacing * 1.6;
+      record.flipGridKey = '';
       record.activePtr = arena.allocU8(count);
       record.activeMask = new Uint8Array(count).fill(1);
       record.flowAges = new Float32Array(count);
@@ -1970,7 +2020,43 @@ void main(){
       const tensionScale = liquidPreset === 'Honey' ? 0.55 : liquidPreset === 'Slime' ? 0.9 : liquidPreset === 'Oil' ? 0.3 : 1;
       let rc = 0;
 
-      if (record.kind === 'sph') {
+      if (record.kind === 'sph' && record.useFlip && this.bindFlipGrid(record)) {
+        /* FLIP: one global projection over the whole body, so a thin sheet
+           survives and the volume is conserved instead of being squeezed out
+           particle by particle. The particle-to-grid-to-particle loop, the
+           vorticity confinement and the foam are all inside the kernel; the
+           collision and effector passes stay here because they belong to the
+           scene, not to the liquid. */
+        this.prepareLiquidFlow(record, dt);
+        const physics = this.liquidPresetPhysics(liquidPreset);
+        const gravity = number(params, 'Gravity', 9.8);
+        rc = this.wasm.fe_flip_step(
+          record.positionPtr, record.velocityPtr, record.activePtr, record.foamEnergyPtr,
+          record.count, dt,
+          0, -gravity, 0,
+          physics.ratio,
+          physics.viscosity,
+          clamp(number(params, 'Vorticity Confinement', number(params, 'Turbulence', 0.14)), 0, 2),
+          clamp(number(params, 'Surface Tension', 0.25) * physics.tension * 0.2, 0, 2),
+          clamp(number(params, 'Bounce', 0.3), 0, 1),
+          clamp(number(params, 'Damping', 0.03), 0, 0.9),
+          record.flowBehavior === 'Outflow' ? 1 : 0,
+          record.flipMetricsPtr
+        );
+        if (rc >= 0) {
+          const m = this.arena.f32(record.flipMetricsPtr, 8);
+          record.flipMetrics = {
+            cellSize: m[0], liquidCells: m[1], cfl: m[2],
+            divergenceBefore: m[3], divergenceAfter: m[4],
+            iterations: m[6], volume: m[7]
+          };
+          this.resolveParticleCollisions(record, dt);
+          this.resolveEffectors(record, dt);
+        }
+        if (record.visual?.material?.userData?.liquidUniforms) {
+          record.visual.material.userData.liquidUniforms.uSimTime.value = this.simClock;
+        }
+      } else if (record.kind === 'sph') {
         this.prepareLiquidFlow(record, dt);
         if (this.isCppBackend && typeof this.wasm.fe_sim_liquid_pbf_step === 'function') {
           /* Real-time C++20 Spatial-Hashed PBF + Tensile Correction + XSPH + Vorticity + Whitewater */

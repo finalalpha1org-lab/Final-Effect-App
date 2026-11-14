@@ -24,6 +24,15 @@ inline bool  isfinitef(float x) { return __builtin_isfinite(x); }
 inline float minf(float a, float b) { return a < b ? a : b; }
 inline float maxf(float a, float b) { return a > b ? a : b; }
 inline float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
+/* C's fmodf: the remainder keeps the sign of the dividend. Needed because
+   MOD_wave.cc's cyclic mode wraps with fmodf, whose result for a negative
+   amplitude differs from a floor-modulo by a whole period. */
+inline float fmodf(float a, float b) {
+  if (b == 0.0f) return 0.0f;
+  const float r = a - b * floorf(a / b);
+  if (r != 0.0f && ((a < 0.0f) != (b < 0.0f))) return r - b;
+  return r;
+}
 inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 inline float smoothstepf(float e0, float e1, float x) {
   const float d = e1 - e0;

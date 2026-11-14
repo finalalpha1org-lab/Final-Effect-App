@@ -43,7 +43,8 @@
     animation: ['fe_anim_insert_keyframe', 'fe_anim_evaluate_channel', 'fe_anim_bake_samples'],
     render: ['fe_render_trace_samples', 'fe_render_resolve_rgba8', 'fe_render_denoise', 'fe_render_update_convergence'],
     volumetrics: ['fe_vol_init', 'fe_vol_step', 'fe_vol_surface', 'fe_vol_stats_ptr', 'fe_vol_density_ptr', 'fe_vol_grid_size'],
-    modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap'],
+    modifiers: ['fe_mod_begin', 'fe_mod_subdivide', 'fe_mod_lattice_apply', 'fe_mod_shrinkwrap',
+      'fe_mod_vgroup_ptr', 'fe_mod_set_vgroup'],
     simulation: ['fe_sim_bake_compress', 'fe_sim_xpbd_deformable_step', 'fe_sim_liquid_pbf_step', 'fe_sim_pyro_step'],
     /* What the exporters, the sequence packer, the volume atlas and the TAA /
        fire-colour maths call through the bridge. If one of these is missing the
@@ -53,7 +54,14 @@
       'fe_volatlas_frame_at', 'fe_volatlas_parse_library',
       'fe_writer_obj_mesh', 'fe_writer_mtl_material'],
     renderMaths: ['fe_taa_halton', 'fe_taa_jitter', 'fe_taa_project',
-      'fe_color_blackbody_rgb', 'fe_color_blackbody_lut']
+      'fe_color_blackbody_rgb', 'fe_color_blackbody_lut'],
+    /* The face law (cpp/src/fe_poly.cpp): what Object Mode's wireframe, See
+       through and the selection outline are built from. Edit Mode has asked the
+       engine for its faces for a while; an artifact without these is the one
+       where the two views disagree, so the benchmark names it. */
+    faces: ['fe_poly_begin', 'fe_poly_build', 'fe_poly_face_count',
+      'fe_poly_face_start_ptr', 'fe_poly_face_ring_ptr', 'fe_poly_edge_ptr',
+      'fe_poly_kind_counts_ptr', 'fe_poly_weld_rep_ptr']
   });
 
   function describeArtifact(exportsObject, byteLength = 0) {

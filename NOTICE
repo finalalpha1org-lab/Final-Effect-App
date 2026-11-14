@@ -31,8 +31,202 @@ wrangler (Cloudflare Workers)   Apache-2.0 / MIT
 
 Copied Blender source
 ---------------------
-Nothing from the Blender tree has been copied into this repository yet. When it
-is, the rule is: keep the original copyright header on every file, add an entry
-to this NOTICE naming the file, the upstream commit and the licence, and do not
-use the Blender or Cycles trademarks to imply endorsement. docs/LICENSING.md
-has the component-by-component table.
+Two files carry Blender code (nine upstream sources). The rule for any other: keep the
+original copyright header on every file, add an entry here naming the file, the
+upstream commit and the licence, and do not use the Blender or Cycles
+trademarks to imply endorsement. docs/LICENSING.md has the
+component-by-component table.
+
+cpp/src/fe_polyfill.cpp
+  Ported from  source/blender/blenlib/intern/polyfill_2d.cc
+               source/blender/blenlib/intern/polyfill_2d_beautify.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the ear-clipping triangulator behind Blender's Triangulate
+               modifier, and the BLI_polyfill_calc entry point; plus the
+               beauty pass from polyfill_2d_beautify.cc -
+               BLI_polyfill_beautify_quad_rotate_calc_ex, its half-edge
+               rotation and edge-crease test - which is what the Triangulate
+               modifier's "Beauty" method (the default) now runs. The KD-tree
+               and BLI_heap live in BLI_ghash / BLI_edgehash upstream and are
+               replaced by an open-addressing table here; the file's own header
+               comment says what replaced them and why.
+
+cpp/src/fe_modifiers.cpp - fe_mod_decimate_collapse()
+  Ported from  source/blender/bmesh/tools/bmesh_decimate_collapse.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the edge-collapse decimator behind Blender's Decimate modifier:
+               bm_decim_build_quadrics (face planes plus
+               BOUNDARY_PRESERVE_WEIGHT = 100 boundary planes),
+               bm_decim_calc_target_co_db (BLI_quadric_optimize with
+               OPTIMIZE_EPS, midpoint fallback), bm_decim_build_edge_cost_single
+               (|q1 + q2| evaluated at the target, COST_INVALID for edges that
+               cannot collapse yet), bm_edge_collapse_is_degenerate_topology
+               (the link condition) and bm_edge_collapse_is_degenerate_flip.
+               Not ported: BMesh custom-data interpolation (vertex groups, shape
+               keys, UV corners), the USE_SYMMETRY KD-tree pass and Blender's
+               dissolve-based mode. The kernel works on a flat triangle buffer,
+               so BMesh itself is not linked.
+
+cpp/src/fe_modifiers.cpp - fe_mod_solidify()
+  Ported from  source/blender/modifiers/intern/MOD_solidify.cc
+               source/blender/modifiers/intern/MOD_solidify_extrude.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the Extrude-mode shell: the ofs_orig / ofs_new split of the
+               Thickness and Offset sliders, the angle-weighted vertex normals
+               it offsets along, the reversed-winding inner copy, the rim quads
+               on boundary edges, and MOD_SOLIDIFY_EVEN - the
+               shell_v3v3_normalized_to_dist() = 1/|dot(vert normal, face
+               normal)| correction accumulated over the corner angles. Not
+               ported: the Non Manifold mode (MOD_solidify_nonmanifold.cc, a
+               different algorithm), vertex groups, material offsets, the
+               bevel-convex edge weight, the degenerate-length clamp and
+               complex mode.
+
+cpp/src/fe_modifiers.cpp - fe_mod_wireframe()
+  Ported from  source/blender/bmesh/tools/bmesh_wireframe.cc
+               source/blender/modifiers/intern/MOD_wireframe.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         BM_mesh_wireframe: the per-corner inset along
+               BM_loop_calc_face_tangent(), the two quads per corner that make
+               the square strut, the ofs_orig / ofs_new vertex duplication,
+               shell_angle_to_dist() for Even Offset, and the boundary strips
+               from bm_vert_boundary_tangent() with its
+               BM_edge_calc_face_tangent() flip test. Not ported: crease
+               weights, vertex groups, relative offset, material offsets and
+               the n-gon paths - all of them read BMesh custom data.
+
+cpp/src/fe_modifiers.cpp - fe_mod_array_ex()
+  Ported from  source/blender/modifiers/intern/MOD_array.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         arrayModifier_doArray: the offset matrix accumulated from the
+               constant and relative offsets, the running
+               mul_m4_m4m4(current_offset, current_offset, offset) per copy,
+               the Fit Length / Fit Curve count arithmetic
+               ((length + 1e-6f) / len_v3(offset[3]) + 1), the UV offset per
+               copy and the dm_mvert_map_doubles() seam weld. Not ported: the
+               start/end cap objects and the material index offsets - this
+               pipeline carries neither.
+
+cpp/src/fe_modifiers.cpp - fe_mod_simple_deform()
+  Ported from  source/blender/modifiers/intern/MOD_simpledeform.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         simpleDeform_taper / _twist / _stretch / _bend, the axis remap
+               table, the normalised limit arithmetic that turns the sliders
+               into smd_limit[] and smd_factor, and axis_limit() with its dcut
+               correction. Not ported: vertex-group weighting and the Origin
+               object's space transform.
+
+cpp/src/fe_modifiers.cpp - fe_mod_boolean()
+  Ported from  source/blender/blenlib/intern/mesh_boolean.cc
+               (BLI_mesh_boolean) and source/blender/modifiers/intern/MOD_boolean.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the three passes the float solver performs: the BVH pair search
+               (upstream's KDopBVH holds the same data), the cut along the
+               segment where two triangles meet, and the parity test that says
+               which pieces are inside. Coplanar faces - two cubes sharing a
+               wall - are separated by a 1.5e-4 rad rotation of the operand,
+               which is how this port resolves what upstream's exact solver
+               settles with rationals. Not ported: self-intersection, the
+               hole-tolerant winding numbers and material transfer.
+
+cpp/src/fe_modifiers.cpp - fe_mod_bevel()
+  Ported from  source/blender/bmesh/tools/bmesh_bevel.cc
+               (BM_mesh_bevel) and source/blender/modifiers/intern/MOD_bevel.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         the construction BM_mesh_bevel performs, in its order: the
+               corner inset along both edges by width / sin(corner angle), the
+               strip between the two faces that share each edge, the circular
+               arc across that strip when the segment count is above one, the
+               vertex patch that closes the corner, and Clamp Overlap. Upstream
+               bevels n-gon faces, so coplanar triangles are first welded into
+               the polygons a modeller would see - otherwise a cube bevels
+               along its diagonals. Not ported: vertex/edge weights, the custom
+               profile curve and the miter modes, none of which this pipeline
+               has data for.
+
+cpp/src/fe_modifiers.cpp - fe_mod_build()
+  Ported from  source/blender/modifiers/intern/MOD_build.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         build_face_mesh(): the frac = (time - start) / length clamp and
+               its reversal, "keep faces * frac faces", the seeded shuffle
+               (splitmix64 here, BLI_array_randomize upstream - not bit for
+               bit identical) and the vertex/face compaction. The frame is
+               replaced by the fraction itself, because this modifier stack is
+               evaluated on demand rather than per frame.
+
+cpp/src/fe_modifiers.cpp - fe_mod_screw()
+  Ported from  source/blender/modifiers/intern/MOD_screw.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         screwModifier_do(): the profile sweep, the step_tot arithmetic
+               ((steps + 1) * iterations - (iterations - 1)), the step_angle
+               and per-step screw offset, the `close` branch that joins the
+               last ring back to the first, and the mesh_remove_doubles() the
+               Merge option performs. Not ported: the object-as-axis transform
+               and upstream's per-loop UV layout - this pipeline carries one UV
+               per vertex.
+
+cpp/src/fe_modifiers.cpp - fe_mod_laplacian_smooth()
+  Ported from  source/blender/modifiers/intern/MOD_laplaciansmooth.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         init_laplacian_matrix(), fill_laplacian_matrix() and
+               validate_solution(): the cotangent ring operator, the
+               scale-dependent umbrella on boundary vertices, the vweights /
+               vlengths normalisation, the min_area zerola pinning, the signed
+               blend-back of the solution and volume_preservation(). Upstream
+               solves the least-squares system with Eigen's
+               LeastSquaresConjugateGradient; that solver is not linkable from a
+               freestanding module, so the same normal equations are solved
+               with conjugate gradients and a Jacobi preconditioner instead.
+               Not ported: vertex-group weighting.
+
+cpp/src/fe_modifiers.cpp - fe_mod_edge_split()
+  Ported from  source/blender/modifiers/intern/MOD_edgesplit.cc and
+               source/blender/bmesh/tools/bmesh_edgesplit.cc
+  Upstream     blender/blender @ e240930f046045145f0e03ba237caa7192ccf449
+  Copyright    2005-2023 Blender Authors
+  Licence      GPL-2.0-or-later (this repository distributes it under
+               GPL-3.0-or-later, which the "or later" clause permits)
+  What         doEdgeSplit()'s seam rule - the cosf(split_angle + 1.75e-7)
+               threshold, the "3 or more faces" case and the split-everything
+               case - then BM_mesh_edgesplit() / BM_vert_separate_hflag() in
+               the form a triangle buffer needs: the faces around each vertex
+               are grouped into the fans still joined by unsplit edges, and
+               every fan gets its own copy of that vertex and its UV. Not
+               ported literally: MOD_EDGESPLIT_FROMFLAG's sharp edges, because
+               this pipeline stores one smooth flag per face, not per edge. The
+               Sharp Edges option splits at the shading boundary instead - the
+               edge between a flat face and a smooth one - which is the sharp
+               edge such a mesh actually carries.

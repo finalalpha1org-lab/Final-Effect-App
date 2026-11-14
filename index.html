@@ -1246,7 +1246,12 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   position: fixed;
   top: auto;
   right: 0;
-  bottom: 0;
+  /* The Move / Rotate / Scale sheet used to sit flush on the bottom edge and
+     cover the model, the gizmo and the floor the object was being moved onto.
+     It is lifted by a thumb's width above the home indicator instead, small
+     enough that the sheet keeps its place, so what the finger is moving stays
+     in sight while the tool is open. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 42px);
   left: 0;
   z-index: 1000;
   display: flex;
@@ -1262,9 +1267,8 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   background: rgba(17, 20, 28, 0.98);
   backdrop-filter: blur(12px);
   border: 1px solid #34394d;
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  border-radius: 14px;
+  box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55), 0 14px 34px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1283,6 +1287,27 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   font-weight: 600;
   font-size: 12px;
 }
+/* Which axis the gizmo is locked to, in the title bar. The restriction is a
+   property of the gizmo, and a user who cannot see it anywhere but in a select
+   that may be scrolled out of a short sheet reads the locked axes as broken
+   ones. Tap = back to all axes. */
+.panel-axis-chip {
+  margin-left: auto;
+  margin-right: 10px;
+  flex: none;
+  background: #2a2110;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 999px;
+  color: #fcd34d;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  padding: 3px 9px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.panel-axis-chip[hidden] { display: none; }
+.panel-axis-chip:active { background: #3a2d14; }
 .panel-close {
   background: none;
   border: none;
@@ -1296,7 +1321,9 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  /* The sheet no longer touches the bottom edge, so the home-indicator inset
+     belongs to the container above and not twice inside the body. */
+  padding: 10px 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1318,6 +1345,31 @@ button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}
   padding: 5px 8px;
   color: #edf1ff;
   font-size: 11px;
+}
+/* The per-axis rows put their number box beside the slider rather than inside
+   a .panel-field, so the rule above never reached it: iOS fell back to its own
+   white field and the value was pale-on-white on a dark sheet. Scoped to the
+   number boxes only - the slider beside it keeps its own .axis-slider look. */
+.panel-field-row input[type="number"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  background: #202432;
+  border: 1px solid #353b50;
+  border-radius: 6px;
+  padding: 5px 4px;
+  color: #edf1ff;
+  -webkit-text-fill-color: #edf1ff;
+  font-size: 11px;
+  text-align: center;
+  opacity: 1;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.panel-field-row input[type="number"]::-webkit-inner-spin-button,
+.panel-field-row input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .panel-field-row {
   display: grid;
@@ -2127,6 +2179,9 @@ body.anim-graph-mode #anim-graph-channel{display:inline-flex}
 }
 .sheet-grip:hover span,
 .sheet-grip:active span { background: #93a0b8; width: 54px; }
+/* The transform cards are not docked to an edge, so their handle sits above the
+   title bar and takes the header's colour rather than the sheet's. */
+.floating-panel > .sheet-grip { background: #1e2230; margin: 0 0 2px; }
 .sheet-dragging { cursor: grabbing; }
 .sheet-dragging .sheet-grip span { background: var(--ac, #6366f1); width: 54px; }
 .sheet-snap { transition: height .2s cubic-bezier(.22, .61, .36, 1); }
@@ -3008,6 +3063,29 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
     </div>
     <!-- Properties / Stack -->
     <div class="properties" style="background:#13151c;border-left:1px solid #282c3c;padding:12px;overflow:auto;border-radius:8px;">
+      <!-- Vertex groups. Blender's modifiers name a group; the button below is
+           this app's Weight Paint: name it, paint a weight, press Assign. -->
+      <div id="vertex-groups-card" class="mod-card" style="margin-bottom:10px;">
+        <div class="mod-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div class="mod-title">Vertex Groups</div>
+          <button class="icon-btn" type="button" id="vg-toggle" onclick="toggleVertexGroupCard()" title="Show vertex groups">▾</button>
+        </div>
+        <div id="vertex-groups-body" style="display:none;padding:10px 12px;flex-direction:column;gap:8px;">
+          <div style="display:flex;gap:6px;">
+            <input id="vg-name" placeholder="Group name" style="flex:1;min-width:0;background:#111;border:1px solid #333;color:#fff;padding:6px 8px;border-radius:6px;font-size:12px;outline:none;">
+            <button class="btn" type="button" onclick="createVertexGroupFromInput()" title="Create the group, all weights zero">Create</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:#94a3b8;">
+            <span style="flex:none;">Weight</span>
+            <input id="vg-weight" type="range" min="0" max="1" step="0.05" value="1" style="flex:1;">
+            <span id="vg-weight-value" style="flex:none;width:34px;text-align:right;color:#e2e8f0;">1.00</span>
+          </label>
+          <div id="vertex-groups-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <div style="font-size:10px;color:#777;line-height:1.4;">
+            Select vertices in Edit Mode, then Assign. Weights follow the cage mesh, so every modifier below reads the same painted vertices.
+          </div>
+        </div>
+      </div>
       <div style="font-weight:700;font-size:12px;color:#94a3b8;margin-bottom:10px;text-transform:uppercase;">Modifier Stack</div>
       <div id="stack" class="stack">
         <div id="empty" class="empty" style="color:#777;text-align:center;padding:24px 10px;font-size:12px;">
@@ -3486,6 +3564,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-move" style="display:none;">
           <div class="panel-header">
             <span>✋ Move Axis Tool</span>
+            <button class="panel-axis-chip" type="button" id="move-axis-chip" hidden onclick="releaseAxisRestriction('move')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('move')">✕</button>
           </div>
           <div class="panel-body">
@@ -3512,6 +3591,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-rotate" style="display:none;">
           <div class="panel-header">
             <span>🔄 Rotate Axis Tool</span>
+            <button class="panel-axis-chip" type="button" id="rotate-axis-chip" hidden onclick="releaseAxisRestriction('rotate')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('rotate')">✕</button>
           </div>
           <div class="panel-body">
@@ -3538,6 +3618,7 @@ button .ico-wrap, .tag .ico-wrap{pointer-events:none}
         <div class="floating-panel" id="panel-scale" style="display:none;">
           <div class="panel-header">
             <span>🔍 Scale Tool</span>
+            <button class="panel-axis-chip" type="button" id="scale-axis-chip" hidden onclick="releaseAxisRestriction('scale')" title="The gizmo is locked to this axis. Tap to unlock it."></button>
             <button class="panel-close" onclick="closeFloatingPanel('scale')">✕</button>
           </div>
           <div class="panel-body">
@@ -6257,42 +6338,60 @@ function closeAllFloatingPanels() {
 }
 window.closeAllFloatingPanels = closeAllFloatingPanels;
 
+/* The axis restriction is a property of the GIZMO, not of the numbers.
+ *
+ * It used to disable the other two rows outright - slider, number box and key
+ * button - so picking "X Axis Only" left a panel where Y and Z could not move
+ * the object at all, and the select that caused it scrolls out of a short
+ * sheet. That is what "some axes won't move it" was. Blender draws the same
+ * line in the same place: an axis constraint applies to the interactive grab
+ * (here, the gizmo handles), while the numeric fields stay absolute and keep
+ * working on every axis.
+ *
+ * So the rows are never disabled. The locked state is shown where it cannot be
+ * missed - a chip in the panel's own title bar - and the chip unlocks the
+ * gizmo with one tap. `releaseAxisRestriction` is the other half of that. */
 function updateAxisRestrictionUI(type, value) {
   const panel = getPanel(type);
   if (!panel) return;
-  const inputX = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-x');
-  const inputY = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-y');
-  const inputZ = panel.querySelector('#num-' + (type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move') + '-z');
+  const prefix = type === 'scale' ? 'scale' : type === 'rotate' ? 'rot' : 'move';
+  const locked = value === 'x' || value === 'y' || value === 'z' ? value : 'all';
 
-  const showX = (value === 'all' || value === 'x');
-  const showY = (value === 'all' || value === 'y');
-  const showZ = (value === 'all' || value === 'z');
+  /* Whatever an earlier build (or a restored session) left behind, the rows of
+     this panel are usable right now. */
+  const rows = panel.querySelectorAll('.panel-field-row');
+  if (rows && rows.forEach) {
+    rows.forEach(row => {
+      if (!row || !row.querySelectorAll) return;
+      row.style.opacity = '';
+      row.querySelectorAll('input, button').forEach(el => { el.disabled = false; });
+    });
+  }
+  ['x', 'y', 'z'].forEach(axis => {
+    const box = panel.querySelector('#num-' + prefix + '-' + axis);
+    if (box) box.disabled = false;
+  });
 
-  if (inputX) {
-    inputX.disabled = !showX;
-    const row = inputX.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showX ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showX; });
-    }
+  const chip = panel.querySelector('.panel-axis-chip');
+  if (chip) {
+    chip.hidden = locked === 'all';
+    chip.textContent = locked === 'all' ? '' : locked.toUpperCase() + ' axis';
+    chip.setAttribute('aria-label', locked === 'all'
+      ? 'Gizmo unlocked'
+      : 'Gizmo locked to the ' + locked.toUpperCase() + ' axis - tap for all axes');
   }
-  if (inputY) {
-    inputY.disabled = !showY;
-    const row = inputY.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showY ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showY; });
-    }
-  }
-  if (inputZ) {
-    inputZ.disabled = !showZ;
-    const row = inputZ.closest('.panel-field-row');
-    if (row) {
-      row.style.opacity = showZ ? '1.0' : '0.45';
-      row.querySelectorAll('input, button').forEach(el => { el.disabled = !showZ; });
-    }
-  }
+  panel.dataset.gizmoAxis = locked;
 }
+
+/* One tap on the chip: the gizmo gets its three axes back, the select follows,
+   and the panel stays open. */
+function releaseAxisRestriction(type) {
+  const id = '#' + type + '-axis-select';
+  const select = getScreenElement(id) || getPanel(type)?.querySelector(id);
+  if (select) select.value = 'all';
+  updateAxisRestriction(type, 'all');
+}
+window.releaseAxisRestriction = releaseAxisRestriction;
 
 function updateAxisRestriction(type, value) {
   const eng = FE.engines?.core;
@@ -6784,13 +6883,42 @@ function keyAxisGroup(kind) {
 window.keyAxisGroup = keyAxisGroup;
 
 /* Keep the sliders on the object's real transform, the same way the number
-   boxes are kept, and never fight the control the finger is on. */
+   boxes are kept, and never fight the control the finger is on.
+   A slider's range is a working range, not a limit on the object. The Move
+   sliders run over +-20 m and the Scale sliders over 0.05-5x; a model that is
+   already further out than that (typed in, animated, or imported) pins the
+   thumb against the end of the track, and the next drag on that axis snaps the
+   object back to the limit instead of moving it - which reads as "this axis
+   does not work". So the track widens to hold the object's real value, and
+   goes back to the range the markup declares once the object returns to it. */
+const feSliderRanges = new WeakMap();
+function feSliderFitValue(el, value) {
+  let design = feSliderRanges.get(el);
+  if (!design) {
+    design = { min: parseFloat(el.min), max: parseFloat(el.max) };
+    if (!isFinite(design.min)) design.min = 0;
+    if (!isFinite(design.max)) design.max = 1;
+    feSliderRanges.set(el, design);
+  }
+  const step = parseFloat(el.step) || 0.1;
+  const pad = Math.max((design.max - design.min) * 0.1, Math.abs(value) * 0.1, step * 10);
+  const round = (n) => Math.round(n / step) * step;
+  const lowFloor = design.min < 0 ? -Infinity : Math.max(0.01, Number.MIN_VALUE);
+  let min = design.min, max = design.max;
+  if (value < design.min) min = Math.max(lowFloor, round(value - pad));
+  if (value > design.max) max = round(value + pad);
+  if (el.min !== String(min)) el.min = String(min);
+  if (el.max !== String(max)) el.max = String(max);
+}
+
 function syncAxisSliders(name) {
   const target = getActiveObjectMesh();
   if (!target) return;
   const set = (id, value) => {
     const el = document.getElementById(id);
-    if (el && document.activeElement !== el && isFinite(value)) el.value = String(value);
+    if (!el || document.activeElement === el || !isFinite(value)) return;
+    feSliderFitValue(el, value);
+    el.value = String(value);
   };
   if (name === 'move') {
     set('slider-move-x', target.position.x);
@@ -7051,7 +7179,12 @@ window.addEventListener('DOMContentLoaded', () => {
 (function installSheetGrips() {
   const SHEET_IDS = [
     'camera-sheet', 'light-sheet', 'add-3d-sheet',
-    'modifiers-sheet', 'animation-sheet', 'edit-sheet'
+    'modifiers-sheet', 'animation-sheet', 'edit-sheet',
+    /* The Move / Rotate / Scale sheets of the Edit sub-toolbar are the panels
+       the user is looking at the model through while moving it. They are short
+       cards with no way to grow, so a row of tools could sit over the very
+       object being placed; the same handle gives them a little more room. */
+    'panel-move', 'panel-rotate', 'panel-scale', 'panel-transform'
   ];
   const MAX_FRACTION = 0.92;
   /* Some panels are a strip of tools rather than a workspace: dragged open they
@@ -7059,6 +7192,12 @@ window.addEventListener('DOMContentLoaded', () => {
      panel at the bottom of Edit Mode has to do. Kept in step with the sheet's
      own max-height in the stylesheet. */
   const SHEET_CEILING = { 'edit-sheet': 0.34 };
+  /* The transform cards only need enough travel to lift their rows off the
+     model, so they are given a fixed headroom rather than a share of the
+     screen: "a little higher", not a full-screen sheet. */
+  const SHEET_HEADROOM = {
+    'panel-move': 150, 'panel-rotate': 150, 'panel-scale': 150, 'panel-transform': 190
+  };
   const naturals = new WeakMap();
   let drag = null;
 
@@ -7096,6 +7235,8 @@ window.addEventListener('DOMContentLoaded', () => {
   /* How tall this sheet is allowed to get. A capped sheet still has to open
      wider than it rests, or the handle would do nothing at all. */
   function ceilingFor(sheet, natural) {
+    const headroom = SHEET_HEADROOM[sheet.id];
+    if (headroom) return Math.min(tallHeight(), natural + headroom);
     const cap = SHEET_CEILING[sheet.id];
     if (!cap) return Math.max(tallHeight(), natural + 80);
     return Math.max(Math.round(viewHeight() * cap), natural);
@@ -8289,7 +8430,41 @@ FE.register('core',{
     grid.material.transparent = true;
     grid.material.opacity = 0.85;
     grid.material.depthWrite = false;
+    /* ---- Floor you can see through -------------------------------------
+       Seen from just above it, the far half of a 50 m grid compresses into a
+       band of lines a few pixels deep. That band is drawn in front of every
+       pixel below y = 0, so an object moved under the grid sank into a wall of
+       lines and read as gone - the model was still there, it was the floor
+       that had closed over it. Blender fades its grid with distance for this
+       reason; the same fade is applied in the grid's own shader, and the two
+       uniforms follow the camera every frame (see the viewport loop) so the
+       floor under the user stays solid while the far field dissolves. If the
+       shader anchors ever move in a three.js upgrade the patch is skipped and
+       the grid keeps its old look - a grid without a fade is still a grid. */
+    const gridFade = { start: { value: 22 }, end: { value: 36 } };
+    grid.material.userData.feGridFade = gridFade;
+    try {
+      const fadeVert = '#include <project_vertex>', fadeFrag = '#include <dithering_fragment>';
+      if (THREE.ShaderLib?.basic?.vertexShader?.includes(fadeVert) && THREE.ShaderLib?.basic?.fragmentShader?.includes(fadeFrag)) {
+        grid.material.onBeforeCompile = (shader) => {
+          shader.uniforms.feGridFadeStart = gridFade.start;
+          shader.uniforms.feGridFadeEnd = gridFade.end;
+          shader.vertexShader = 'varying float vFeGridDepth;\n' + shader.vertexShader.replace(
+            fadeVert,
+            fadeVert + '\n\tvFeGridDepth = - mvPosition.z;'
+          );
+          shader.fragmentShader =
+            'uniform float feGridFadeStart;\nuniform float feGridFadeEnd;\nvarying float vFeGridDepth;\n' +
+            shader.fragmentShader.replace(
+              fadeFrag,
+              fadeFrag + '\n\tgl_FragColor.a *= 1.0 - smoothstep( feGridFadeStart, feGridFadeEnd, vFeGridDepth );'
+            );
+        };
+        grid.material.needsUpdate = true;
+      }
+    } catch (_) { /* leave the plain grid in place */ }
     grid.visible = GLOBAL_SETTINGS.grid;
+    this.grid = grid;
 
     const cursor3d = createBlender3DCursorObject();
     sc.add(grid, cursor3d, amb, hemiLight, d, fillLight);
@@ -8888,6 +9063,18 @@ FE.register('core',{
       }
 
       const activeCam = isCameraView ? this.sceneCamera : this.viewportCamera;
+      /* Grid fade follows the camera (see where the grid is built): the floor
+         stays solid underfoot and dissolves before its far edge can pile up
+         into a wall of lines in front of anything below y = 0. */
+      const gridFade = this.grid?.material?.userData?.feGridFade;
+      if (gridFade && activeCam) {
+        const camDist = Math.hypot(activeCam.position.x, activeCam.position.y, activeCam.position.z);
+        const fadeStart = Math.max(10, camDist + 8);
+        if (gridFade.start.value !== fadeStart) {
+          gridFade.start.value = fadeStart;
+          gridFade.end.value = fadeStart + 16;
+        }
+      }
       const renderStart=performance.now();
       /* Temporal AA: jittered scene pass + reprojected history. Created lazily
          and always guarded - any failure falls back to a direct render. */
@@ -10218,134 +10405,19 @@ function feWireframeKeepsTriangleWireframe(mesh) {
 
 /* The wireframe of one mesh, with the diagonal of every quad left out.
 
-   Edit Mode hides a quad's diagonal by *topology* (buildQuadGroups() in
-   cpp/src/fe_editmesh.cpp) because an angle is the one thing a deformation
-   changes: bend a quad by ten degrees and an angle rule calls its diagonal a
-   crease, which is why wireframe mode grew triangles across faces the moment
-   the mesh was edited. The object-mode overlay has to agree with what Edit Mode
-   draws, so it pairs triangles the same way - the shared edge is a diagonal
-   when it is the longest side of both triangles and the two triangles fold by
-   less than 45 degrees - and keeps the old coplanar rule for everything else. */
+   The faces come from the engine (`fe_poly_build`, cpp/src/fe_poly.cpp) - the
+   same measurement Edit Mode's cage is built from (buildQuadGroups in
+   cpp/src/fe_editmesh.cpp). This function used to carry a second, JavaScript
+   measurement of the same law as a fallback, and two measurements of one law
+   drift: a quad that had been bent stopped looking like a quad to one of them
+   and grew a diagonal down the middle of the face, which is exactly the bug the
+   face law exists to prevent. So there is one measurement now, and a mesh the
+   engine declines (over its triangle budget, or with no engine at all) falls
+   through to three.js' own angle-based EdgesGeometry at the call site - a coarser
+   answer, but not a second definition of the law. */
 function feBuildQuadWireGeometry(geometry) {
-  /* The polygon model answers first: it holds the mesh's actual faces (quads and
-     n-gons), so the lines it draws are the model's own edges and nothing else -
-     no diagonal down the middle of a face, whether the geometry is indexed or
-     not. The table below is the older measurement of the same thing and stays as
-     a fallback for shapes the face builder declines (over its triangle budget). */
-  if (window.FEPoly && typeof window.FEPoly.buildWireGeometry === 'function') {
-    try {
-      const fromFaces = window.FEPoly.buildWireGeometry(geometry);
-      if (fromFaces) return fromFaces;
-    } catch (_) { /* fall through to the edge table */ }
-  }
-  const position = geometry?.attributes?.position;
-  if (!position) return null;
-  const index = geometry.index;
-  const triCount = index ? Math.floor(index.count / 3) : Math.floor(position.count / 3);
-  if (triCount < 1 || triCount > 60000) return null;     /* a phone does not need this for a sculpture */
-  const positions = position.array;
-  const indices = index ? index.array : null;
-  const corner = (t, k) => (indices ? indices[t * 3 + k] : t * 3 + k);
-
-  /* A mesh can be non-indexed - a Boolean or modifier result, a decimated model,
-     most glTF exports: every triangle carries its own three vertices, so two
-     triangles that share an edge share a *position* but not an index. Keyed by
-     index, no edge is ever found shared, no pair is ever called coplanar, and
-     the whole triangulation gets drawn - the diagonal down the middle of a flat
-     face the user pointed at, a line that is not an edge of the model at all.
-     Canonical ids by position fix that for the table below only: indexed meshes
-     keep their indices, non-indexed ones are welded by position. */
-  let canon = null;
-  let rep = null;
-  if (!indices) {
-    canon = new Int32Array(position.count);
-    const first = [];
-    const seen = new Map();
-    for (let i = 0; i < position.count; i++) {
-      const key = positions[i * 3].toFixed(4) + ',' + positions[i * 3 + 1].toFixed(4) + ',' + positions[i * 3 + 2].toFixed(4);
-      let id = seen.get(key);
-      if (id === undefined) { id = first.length; first.push(i); seen.set(key, id); }
-      canon[i] = id;
-    }
-    rep = Int32Array.from(first);
-  }
-  const cid = (i) => (canon ? canon[i] : i);
-  const slot = (id) => (rep ? rep[id] : id);
-
-  const normals = new Float32Array(triCount * 3);
-  for (let t = 0; t < triCount; t++) {
-    const a = corner(t, 0), b = corner(t, 1), c = corner(t, 2);
-    const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
-    const ux = positions[b * 3] - ax, uy = positions[b * 3 + 1] - ay, uz = positions[b * 3 + 2] - az;
-    const vx = positions[c * 3] - ax, vy = positions[c * 3 + 1] - ay, vz = positions[c * 3 + 2] - az;
-    normals[t * 3] = uy * vz - uz * vy;
-    normals[t * 3 + 1] = uz * vx - ux * vz;
-    normals[t * 3 + 2] = ux * vy - uy * vx;
-  }
-  const length2 = (i, j) => {
-    const dx = positions[i * 3] - positions[j * 3];
-    const dy = positions[i * 3 + 1] - positions[j * 3 + 1];
-    const dz = positions[i * 3 + 2] - positions[j * 3 + 2];
-    return dx * dx + dy * dy + dz * dz;
-  };
-
-  /* edge key: vertex indices are well under 2^21, so this stays exact. */
-  const edges = new Map();
-  for (let t = 0; t < triCount; t++) {
-    for (let k = 0; k < 3; k++) {
-      const a = cid(corner(t, k)), b = cid(corner(t, (k + 1) % 3));
-      const lo = a < b ? a : b, hi = a < b ? b : a;
-      const key = lo * 2097152 + hi;
-      let record = edges.get(key);
-      if (!record) { record = { a: lo, b: hi, t0: t, t1: -1 }; edges.set(key, record); }
-      else if (record.t1 === -1 && record.t0 !== t) record.t1 = t;
-      else if (record.t0 !== t && record.t1 !== t) record.t1 = -2;   /* non-manifold: keep it */
-    }
-  }
-
-  /* Which edges are internal structure. Two sources, both measured rather than
-     guessed:
-       1. the quad pairing the kernel made from this mesh when it first had it,
-          handed over in `userData` (see edit-mode.js, stashQuadDiagonals);
-       2. the edges two faces share that are within FE_WIREFRAME_EDGE_ANGLE of
-          each other, i.e. the flat interior of a surface.
-     Deriving quads from the *current* shape - the longest side of both
-     triangles - was the wrong trade twice over: a quad that has been bent stops
-     looking like a quad and grew a triangle down the middle of the face again,
-     while a sphere's own adjacent triangles look exactly like quads, so its
-     wireframe lost a third of its edges. The pairing is trusted only where it
-     was measured. */
-  function keyOf(a, b) { return a < b ? a * 2097152 + b : b * 2097152 + a; }
-  const hidden = new Set();
-  const stash = geometry.userData?.feQuadDiagonals;
-  if (Array.isArray(stash) && stash.length && geometry.userData?.feQuadDiagonalVerts === position.count) {
-    for (let i = 0; i + 1 < stash.length; i += 2) {
-      const ra = stash[i], rb = stash[i + 1];
-      if (ra >= position.count || rb >= position.count) continue;
-      const a = cid(ra), b = cid(rb);
-      hidden.add(keyOf(a, b));
-    }
-  }
-
-  const cosFlat = Math.cos((FE_WIREFRAME_EDGE_ANGLE * Math.PI) / 180);
-  const out = [];
-  edges.forEach(record => {
-    const { a, b, t0, t1 } = record;
-    if (hidden.has(keyOf(a, b))) return;
-    if (t1 >= 0) {
-      const dot = normals[t0 * 3] * normals[t1 * 3] + normals[t0 * 3 + 1] * normals[t1 * 3 + 1] + normals[t0 * 3 + 2] * normals[t1 * 3 + 2];
-      const l0 = normals[t0 * 3] ** 2 + normals[t0 * 3 + 1] ** 2 + normals[t0 * 3 + 2] ** 2;
-      const l1 = normals[t1 * 3] ** 2 + normals[t1 * 3 + 1] ** 2 + normals[t1 * 3 + 2] ** 2;
-      const length0 = Math.sqrt(length2(slot(a), slot(b)));
-      if (length0 <= 1e-7) return;
-      if (l0 > 0 && l1 > 0 && dot / Math.sqrt(l0 * l1) >= cosFlat) return;   /* coplanar: internal structure */
-    }
-    out.push(positions[slot(a) * 3], positions[slot(a) * 3 + 1], positions[slot(a) * 3 + 2], positions[slot(b) * 3], positions[slot(b) * 3 + 1], positions[slot(b) * 3 + 2]);
-  });
-  if (!out.length) return null;
-  const built = new THREE.BufferGeometry();
-  built.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  return built;
+  if (!window.FEPoly || typeof window.FEPoly.buildWireGeometry !== 'function') return null;
+  try { return window.FEPoly.buildWireGeometry(geometry) || null; } catch (_) { return null; }
 }
 
 function feSyncWireframeOverlay(mesh, record) {
@@ -11464,27 +11536,32 @@ window.addEventListener('keydown', (e) => {
    ========================================================= */
 const modifiersData = {
   Generate: [
-    {name:"Array", fields:[["Count","range",1,10,2,1],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}]]},
-    {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Segments","range",1,12,4,1],["Clamp Overlap","check",true]]},
+    {name:"Array", fields:[["Fit Type","select",["Fixed Count","Fit Length","Fit Curve"]],["Count","range",1,10,2,1],["Length","range",0,50,10,.5,{advanced:true}],["Offset X","range",-5,5,1.8,0.1],["Offset Y","range",-5,5,0,0.1],["Offset Z","range",-5,5,0,0.1],["Relative X","range",-3,3,0,0.1],["Relative Y","range",-3,3,0,0.1],["Relative Z","range",-3,3,0,0.1],["Rotation Per Step","range",-180,180,0,1,{advanced:true}],["Merge","check",false,{advanced:true}],["Merge Distance","range",0,.5,.001,.001,{advanced:true}],["UV Offset U","range",-1,1,0,.05,{advanced:true}],["UV Offset V","range",-1,1,0,.05,{advanced:true}],["Object Offset","check",false,{advanced:true}],["Offset Object","select",[],{advanced:true}]]},
+    {name:"Bevel", fields:[["Amount","range",0,1,.15,.01],["Offset Type","select",["Offset","Width","Depth","Percent"]],["Segments","range",1,12,4,1],["Limit Method","select",["None","Angle"],{advanced:true}],["Angle Limit","range",0,180,30,1,{advanced:true}],["Clamp Overlap","check",true],["Profile","range",.05,.95,.5,.05,{advanced:true}]]},
     {name:"Boolean", fields:[["Operation","select",["Difference","Union","Intersection"]],["Operand Object","select",[]]]},
-    {name:"Decimate", fields:[["Ratio","range",0.01,1,0.5,.01],["Preserve Boundaries","check",true,{advanced:true}]]},
-    {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}]]},
-    {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}]]},
+    {name:"Build", fields:[["Progress","range",0,1,.5,.01],["Reverse","check",false,{advanced:true}],["Randomize","check",true],["Seed","range",0,999,0,1,{advanced:true}]]},
+    {name:"Edge Split", fields:[["Split Angle","range",0,180,30,1],["Use Angle","check",true,{advanced:true}],["Sharp Edges","check",false,{advanced:true}]]},
+    {name:"Decimate", fields:[["Type","select",["Collapse","Un-Subdivide","Planar"]],["Ratio","range",0.01,1,0.5,.01],["Iterations","range",1,6,1,1,{advanced:true}],["Angle Limit","range",0,180,5,1,{advanced:true}],["Preserve Boundaries","check",true,{advanced:true}],["Symmetry","check",false,{advanced:true}],["Symmetry Axis","select",["X","Y","Z"],{advanced:true}],["All Boundaries","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Group Factor","range",0,10,0,.1,{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Mirror", fields:[["X Axis","check",true],["Y Axis","check",false],["Z Axis","check",false],["Bisect X","check",false],["Bisect Y","check",false],["Bisect Z","check",false],["Flip X","check",false,{advanced:true}],["Flip Y","check",false,{advanced:true}],["Flip Z","check",false,{advanced:true}],["Bisect Threshold","range",0,.05,.0001,.0001,{advanced:true}],["Clipping","check",false],["Merge Distance","range",0,.05,.001,.001,{advanced:true}],["Mirror U","check",false,{advanced:true}],["Mirror V","check",false,{advanced:true}],["Mirror UDIM","check",false,{advanced:true}],["U Offset","range",-1,1,0,.05,{advanced:true}],["V Offset","range",-1,1,0,.05,{advanced:true}]]},
+    {name:"Screw", fields:[["Angle","range",0,720,360,5],["Screw","range",-2,2,0,.05],["Iterations","range",1,10,1,1],["Steps","range",2,64,16,1],["Axis","select",["X","Y","Z"]],["Merge","check",true],["Merge Distance","range",0,.1,.001,.001,{advanced:true}],["Normal Flip","check",false,{advanced:true}],["Smooth Shade","check",false,{advanced:true}]]},
+    {name:"Solidify", fields:[["Thickness","range",-1,1,.1,.01],["Offset","range",-1,1,-1,.01],["Rim Fill","check",true,{advanced:true}],["Even Thickness","check",true,{advanced:true}],["Flip Normals","check",false,{advanced:true}],["Rim Only","check",false,{advanced:true}],["Thickness Clamp","range",0,2,0,.05,{advanced:true}],["Angle Clamp","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Group Factor","range",0,1,1,.05,{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Subdivision Surface", fields:[["Subdivision Type","select",["Catmull-Clark","Simple"]],["Viewport Levels","range",0,10,2,1]]},
-    {name:"Triangulate", fields:[["Keep Normals","check",true]]},
-    {name:"Weld", fields:[["Distance","range",0,.1,.02,.001]]},
-    {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Replace Original","check",true]]}
+    {name:"Triangulate", fields:[["Quad Method","select",["Beauty","Shortest Diagonal","Ear Clip","Fixed"]],["Ngon Method","select",["Beauty","Ear Clip","Fan"]],["Minimum Vertices","range",3,12,4,1,{advanced:true}],["Keep Normals","check",true]]},
+    {name:"Weld", fields:[["Distance","range",0,.1,.02,.001],["Mode","select",["All","Connected"]],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Wireframe", fields:[["Thickness","range",0,.2,.03,.005],["Offset","range",-1,1,0,.05,{advanced:true}],["Replace Original","check",true],["Boundary","check",true,{advanced:true}],["Even Offset","check",true,{advanced:true}],["Relative Offset","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Group Factor","range",0,1,1,.05,{advanced:true}],["Invert Group","check",false,{advanced:true}]]}
   ],
   Deform: [
     {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
-    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0.1,4,1,.05,{advanced:true}]]},
-    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}]]},
+    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0,4,1,.05,{advanced:true}],["X","check",true,{advanced:true}],["Y","check",true,{advanced:true}],["Z","check",true,{advanced:true}],["Size From Radius","check",false,{advanced:true}],["Object Center","select",[],{advanced:true}],["Use Transform","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
-    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
-    {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}]]},
+    {name:"Laplacian Smooth", fields:[["Repeat","range",1,10,1,1],["Lambda","range",0,1,.3,.01],["Lambda Border","range",0,1,.3,.01,{advanced:true}],["X","check",true],["Y","check",true],["Z","check",true],["Preserve Volume","check",false,{advanced:true}],["Normalized","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Simple Deform", fields:[["Mode","select",["Twist","Bend","Taper","Stretch"]],["Deform Axis","select",["X","Y","Z"]],["Angle","range",-720,720,45,1],["Factor","range",-2,2,.5,.01],["Limit Lower","range",0,1,0,.01,{advanced:true}],["Limit Upper","range",0,1,1,.01,{advanced:true}],["Lock X","check",false,{advanced:true}],["Lock Y","check",false,{advanced:true}],["Lock Z","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Wrap Method","select",["Nearest Surface Point","Project"]],["Target Object","select",[]],["Project X","check",false,{advanced:true}],["Project Y","check",false,{advanced:true}],["Project Z","check",true,{advanced:true}],["Positive","check",true,{advanced:true}],["Negative","check",true,{advanced:true}],["Limit","range",0,10,0,.01,{advanced:true}],["Cull Face","select",["Off","Front","Back"],{advanced:true}],["Invert Cull","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01]]},
     {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1],["Axis","select",["Y","X","Z"],{advanced:true}]]},
-    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0,10,2.5,.1],["Time","range",0,10,0,.1],["Axis","select",["Y","X","Z"],{advanced:true}],["Phase","range",0,6.28,0,.01,{advanced:true}]]}
+    {name:"Wave", fields:[["Speed","range",-5,5,1.5,.1],["Height","range",0,5,.6,.1],["Width","range",0.01,10,1,.01],["Narrowness","range",0,5,1,.05,{advanced:true}],["Time","range",0,100,0,.1,{advanced:true}],["Time Offset","range",0,100,0,.1,{advanced:true}],["Lifetime","range",0,100,0,.1,{advanced:true}],["Damping","range",0,60,10,.5,{advanced:true}],["Start X","range",-10,10,0,.1,{advanced:true}],["Start Y","range",-10,10,0,.1,{advanced:true}],["Falloff","range",0,20,0,.1,{advanced:true}],["Cyclic","check",false,{advanced:true}],["Use Normal","check",false,{advanced:true}],["Axis","select",["X","Y","Radial"],{advanced:true}],["Object Center","select",[],{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]}
   ],
   Normals: [
     {name:"Weighted Normal", fields:[["Weight","range",0,100,50,1],["Keep Sharp","check",true]]}
@@ -11625,11 +11702,200 @@ function applyModifierGeometryStage(input, operation) {
   if (output && output !== input) input.dispose();
   return output || input;
 }
+/* ---- Vertex groups -------------------------------------------------------
+   Blender keeps a named weight per vertex on the mesh, painted in Weight Paint
+   or assigned from the selection, and a modifier names the group it reads. The
+   same shape fits here with none of Blender's data blocks: `vertexGroups` on
+   the object is a plain map from name to one float per base vertex, and a
+   modifier that carries a "Vertex Group" field names one of them.
+
+   The weights are stored against the *cage* - the mesh the stack is built from
+   - so a modifier further down the stack, whose input has already been rebuilt
+   by the modifiers above it, gets them carried across by position with
+   carryVertexWeights(). That is the same interpolation Blender's custom data
+   does, and it is why a Solidify followed by a Displace still weighs the same
+   vertices the user painted. */
+function vertexGroupMap(obj) {
+  if (!obj) return {};
+  if (!obj.userData.vertexGroups) obj.userData.vertexGroups = {};
+  return obj.userData.vertexGroups;
+}
+
+function vertexGroupNames(obj) {
+  return Object.keys(vertexGroupMap(obj));
+}
+
+/* The mesh a group's weights are indexed against: the same cage Edit Mode
+   uploads, so a selection made there and a weight stored here name the same
+   vertex. */
+function vertexGroupCage(obj) {
+  const cage = obj?.userData?.feEditCage;
+  if (cage?.attributes?.position) return cage;
+  return obj?.userData?.baseGeometry || obj?.geometry || null;
+}
+
+function ensureVertexGroup(obj, name, fill = 0) {
+  const map = vertexGroupMap(obj);
+  const base = vertexGroupCage(obj);
+  const count = base?.attributes?.position?.count || 0;
+  if (!name || !count) return null;
+  if (!map[name] || map[name].length !== count) {
+    const next = new Float32Array(count);
+    if (map[name] && fill === 0) next.set(map[name].subarray(0, Math.min(count, map[name].length)));
+    else if (fill === 1) next.fill(1);
+    map[name] = next;
+  }
+  return map[name];
+}
+
+function deleteVertexGroup(obj, name) {
+  const map = vertexGroupMap(obj);
+  if (map[name]) delete map[name];
+  /* A modifier that named the deleted group falls back to "None" rather than
+     silently doing nothing with a name that no longer exists. */
+  if (Array.isArray(modStack)) modStack.forEach(mod => {
+    if (mod.values?.["Vertex Group"] === name) mod.values["Vertex Group"] = "None";
+  });
+}
+
+/* ---- Vertex group panel -------------------------------------------------- */
+
+function toggleVertexGroupCard() {
+  const body = document.getElementById('vertex-groups-body');
+  if (!body) return;
+  const open = body.style.display !== 'flex';
+  body.style.display = open ? 'flex' : 'none';
+  const toggle = document.getElementById('vg-toggle');
+  if (toggle) toggle.textContent = open ? '▴' : '▾';
+  if (open) renderVertexGroupList();
+}
+
+function vertexGroupWeight() {
+  const input = document.getElementById('vg-weight');
+  return input ? Math.max(0, Math.min(1, parseFloat(input.value) || 0)) : 1;
+}
+
+function createVertexGroupFromInput() {
+  const input = document.getElementById('vg-name');
+  const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+  if (!obj) { FE.toast('Select a mesh first.'); return; }
+  const name = (input?.value || '').trim();
+  if (!name) { FE.toast('Name the vertex group first.'); return; }
+  if (vertexGroupMap(obj)[name]) { FE.toast(`"${name}" already exists on ${obj.name || 'this mesh'}.`); return; }
+  ensureVertexGroup(obj, name, 0);
+  if (input) input.value = '';
+  renderVertexGroupList();
+  /* Dropdowns that were rendered before the group existed have to rebuild. */
+  if (typeof renderModifierStack === 'function') renderModifierStack();
+  FE.toast(`Vertex group "${name}" created.`);
+}
+
+function assignVertexGroupWeight(name) {
+  const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+  if (!obj) return;
+  const weights = ensureVertexGroup(obj, name, 0);
+  if (!weights) { FE.toast('This mesh has no vertices to weigh.'); return; }
+  const edit = globalThis.FEEditMode;
+  const selection = edit && typeof edit.isActive === 'function' && edit.isActive() && edit.target?.() === obj
+    ? edit.selectedVertices?.() : null;
+  if (!selection || selection.length !== weights.length) {
+    FE.toast('Open Edit Mode on this mesh, select vertices, then Assign.');
+    return;
+  }
+  const w = vertexGroupWeight();
+  let touched = 0;
+  for (let i = 0; i < weights.length; i++) if (selection[i]) { weights[i] = w; touched++; }
+  if (!touched) { FE.toast('Nothing is selected.'); return; }
+  obj.userData.forceModUpdate = true;
+  updateModifiersOnScene();
+  renderVertexGroupList();
+  FE.toast(`${touched} vertices at weight ${w.toFixed(2)}.`);
+}
+
+function clearVertexGroupWeight(name) {
+  const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+  const weights = obj ? vertexGroupMap(obj)[name] : null;
+  if (!weights) return;
+  const edit = globalThis.FEEditMode;
+  const selection = edit && typeof edit.isActive === 'function' && edit.isActive() && edit.target?.() === obj
+    ? edit.selectedVertices?.() : null;
+  if (selection && selection.length === weights.length) {
+    for (let i = 0; i < weights.length; i++) if (selection[i]) weights[i] = 0;
+  } else {
+    weights.fill(0);
+  }
+  obj.userData.forceModUpdate = true;
+  updateModifiersOnScene();
+  renderVertexGroupList();
+}
+
+function dropVertexGroup(name) {
+  const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+  if (!obj) return;
+  deleteVertexGroup(obj, name);
+  obj.userData.forceModUpdate = true;
+  updateModifiersOnScene();
+  renderVertexGroupList();
+  if (typeof renderModifierStack === 'function') renderModifierStack();
+}
+
+function renderVertexGroupList() {
+  const list = document.getElementById('vertex-groups-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+  const names = obj ? vertexGroupNames(obj) : [];
+  if (!names.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'font-size:11px;color:#777;';
+    empty.textContent = 'No groups on this mesh yet.';
+    list.appendChild(empty);
+    return;
+  }
+  names.forEach(name => {
+    const weights = vertexGroupMap(obj)[name];
+    let painted = 0;
+    for (let i = 0; i < weights.length; i++) if (weights[i] > 0) painted++;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#cbd5e1;';
+    const title = document.createElement('span');
+    title.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    title.textContent = `${name} · ${painted}/${weights.length}`;
+    const assign = document.createElement('button');
+    assign.className = 'btn'; assign.type = 'button'; assign.textContent = 'Assign';
+    assign.onclick = () => assignVertexGroupWeight(name);
+    const clear = document.createElement('button');
+    clear.className = 'btn'; clear.type = 'button'; clear.textContent = 'Clear';
+    clear.onclick = () => clearVertexGroupWeight(name);
+    const drop = document.createElement('button');
+    drop.className = 'icon-btn'; drop.type = 'button'; drop.textContent = '✕'; drop.title = 'Delete group';
+    drop.onclick = () => dropVertexGroup(name);
+    row.append(title, assign, clear, drop);
+    list.appendChild(row);
+  });
+}
+
+/* The weights a modifier should read, already carried onto its input mesh. */
+function modifierGroupWeights(name, geometry, obj) {
+  if (!name || name === "None" || !geometry) return null;
+  const weights = vertexGroupMap(obj)[name];
+  if (!weights || !weights.length) return null;
+  const count = geometry.attributes?.position?.count || 0;
+  if (weights.length === count) return weights;
+  const base = obj?.userData?.baseGeometry;
+  if (!base) return null;
+  const api = modifierGeometryApi();
+  return typeof api.carryVertexWeights === 'function' ? api.carryVertexWeights(weights, base, geometry) : null;
+}
+
 function modifierRelativeMatrix(sourceObj, targetObj) {
   sourceObj.updateWorldMatrix?.(true, false); targetObj.updateWorldMatrix?.(true, false);
   return new THREE.Matrix4().copy(sourceObj.matrixWorld).invert().multiply(targetObj.matrixWorld);
 }
-function applyBevelModifier(geometry, amount, segments, clampOverlap=true) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap }); }
+function applyBevelModifier(geometry, amount, segments, clampOverlap=true, profile=0.5, extra={}) { return modifierGeometryApi().bevelGeometry(geometry, { width:amount, segments, clampOverlap, profile, ...extra }); }
+function bevelOptions(p) { return { offsetType:p["Offset Type"]??"Offset", limitMethod:p["Limit Method"]??"None", angleLimit:Number(p["Angle Limit"]??30) }; }
+function applySolidifyModifierEx(geometry, p, obj = null) { return modifierGeometryApi().solidifyGeometry(geometry, Number(p["Thickness"]??.1), Number(p["Offset"]??-1), { rim:p["Rim Fill"]!==false, evenThickness:p["Even Thickness"]!==false, flipNormals:p["Flip Normals"]===true, rimOnly:p["Rim Only"]===true, thicknessClamp:Number(p["Thickness Clamp"]??0), useAngleClamp:p["Angle Clamp"]===true, vertexWeights:modifierGroupWeights(p["Vertex Group"], geometry, obj || (typeof getActiveObjectMesh==='function'?getActiveObjectMesh():null)), thicknessVertexGroup:Number(p["Group Factor"]??1), invertVertexGroup:p["Invert Group"]===true }); }
+function applyWeldModifierEx(geometry, p, obj = null) { return modifierGeometryApi().weldGeometry(geometry, Number(p["Distance"]??.02), { mode:p["Mode"]??"All", vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true }); }
 function applySubdivisionModifier(geometry, levels, simple=false) { return modifierGeometryApi().subdivideLoop(geometry, levels, { simple }); }
 function applySolidifyModifier(geometry, thickness, offset, rim=true, evenThickness=true) { return modifierGeometryApi().solidifyGeometry(geometry, thickness, offset, { rim, evenThickness }); }
 /* Re-applies the per-face shading a mesh was left with. Called whenever a
@@ -11652,21 +11918,139 @@ function applyBooleanModifier(targetObj, geometry, params) {
   const relative = modifierRelativeMatrix(targetObj, operand);
   return modifierGeometryApi().booleanGeometry(geometry, operand.geometry, relative.elements, params.Operation || 'Difference');
 }
-function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep }); }
-function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e-6) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping, mergeDistance }); }
-function applyDecimateModifier(geometry, ratio, preserveBoundary=true) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary }); }
-function applyTriangulateModifier(geometry, keepNormals=true) { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals }); }
+function applyArrayModifier(geometry, count, ox, oy, oz, rx=0, ry=0, rz=0, rotationPerStep=0, extra={}) { return modifierGeometryApi().arrayGeometry(geometry, { count, offset:[ox,oy,oz], relative:[rx,ry,rz], rotationPerStep, ...extra }); }
+function arrayModifierOptions(p, targetObj = null) {
+  /* use_object_offset: MOD_array.cc multiplies the step matrix by
+     inverse(object) * offset_object, so the whole relative transform between
+     the two objects is the offset. */
+  let objectOffset = null;
+  if (p["Object Offset"] === true && targetObj) {
+    const offsetObj = getAllSceneMeshes().find(mesh => mesh.uuid === p["Offset Object"] && mesh !== targetObj && mesh.isMesh);
+    if (offsetObj) objectOffset = modifierRelativeMatrix(targetObj, offsetObj).elements;
+  }
+  return {
+    fitType: p["Fit Type"] || "Fixed Count", fitLength: Number(p.Length ?? 10),
+    merge: p.Merge === true, mergeDistance: Number(p["Merge Distance"] ?? 0.001),
+    uvOffset: [Number(p["UV Offset U"] ?? 0), Number(p["UV Offset V"] ?? 0)],
+    objectOffset
+  };
+}
+function applyMirrorModifier(geometry, x, y, z, clipping=false, mergeDistance=1e-6, extra={}) { return modifierGeometryApi().mirrorGeometry(geometry, { axes:[x,y,z], clipping, mergeDistance, ...extra }); }
+function mirrorOptions(p) {
+  return { bisectAxes:[p["Bisect X"]===true, p["Bisect Y"]===true, p["Bisect Z"]===true],
+    bisectFlip:[p["Flip X"]===true, p["Flip Y"]===true, p["Flip Z"]===true],
+    bisectThreshold:Number(p["Bisect Threshold"]??1e-4),
+    useMirrorU:p["Mirror U"]===true, useMirrorV:p["Mirror V"]===true,
+    useMirrorUdim:p["Mirror UDIM"]===true,
+    mirrorOffsetU:Number(p["U Offset"]??0), mirrorOffsetV:Number(p["V Offset"]??0) };
+}
+function decimateOptions(p, geometry = null, obj = null) {
+  return { decimateType:p["Type"]??"Collapse", iterations:Number(p["Iterations"]??1),
+    angleLimit:Number(p["Angle Limit"]??5), useSymmetry:p["Symmetry"]===true,
+    symmetryAxis:p["Symmetry Axis"]??"X", dissolveBoundaries:p["All Boundaries"]===true,
+    vertexWeights:geometry ? modifierGroupWeights(p["Vertex Group"], geometry, obj) : null,
+    vertexGroupFactor:Number(p["Group Factor"]??0),
+    invertVertexGroup:p["Invert Group"]===true };
+}
+function applyDecimateModifier(geometry, ratio, preserveBoundary=true, extra={}) { return modifierGeometryApi().decimateGeometry(geometry, ratio, 65000, { preserveBoundary, ...extra }); }
+function applyTriangulateModifier(geometry, keepNormals=true, quadMethod='Shortest Diagonal', ngonMethod='Ear Clip', minVertices=4) { return modifierGeometryApi().triangulateGeometry(geometry, { keepNormals, quadMethod, ngonMethod, minVertices }); }
 function applyWeldModifier(geometry, distance) { return modifierGeometryApi().weldGeometry(geometry, distance); }
-function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal }); }
+function applySimpleDeformModifier(geometry, options) { return modifierGeometryApi().simpleDeformGeometry(geometry, options); }
+function applyEdgeSplitModifier(geometry, splitAngle, useAngle=true, useSharp=false) { return modifierGeometryApi().edgeSplitGeometry(geometry, { splitAngle, useAngle, useSharp }); }
+function applyLaplacianSmoothModifier(geometry, options) { return modifierGeometryApi().laplacianSmoothGeometry(geometry, options); }
+function applyScrewModifier(geometry, options) { return modifierGeometryApi().screwGeometry(geometry, options); }
+function applyBuildModifier(geometry, options) { return modifierGeometryApi().buildGeometry(geometry, options); }
+function buildOptions(p) {
+  return { progress:Number(p["Progress"]??0.5), reverse:p["Reverse"]===true, randomize:p["Randomize"]!==false, seed:Number(p["Seed"]??0) };
+}
+function screwOptions(p) {
+  return { angle:Number(p["Angle"]??360), screwOffset:Number(p["Screw"]??0), iterations:Number(p["Iterations"]??1),
+    steps:Number(p["Steps"]??16), axis:{X:0,Y:1,Z:2}[p["Axis"]??"Z"] ?? 2, useMerge:p["Merge"]===true,
+    mergeDistance:Number(p["Merge Distance"]??0.001), normalFlip:p["Normal Flip"]===true,
+    smoothShade:p["Smooth Shade"]===true };
+}
+function laplacianSmoothOptions(p, geometry = null, obj = null) {
+  return { repeat:Number(p["Repeat"]??1), lambda:Number(p["Lambda"]??0.3), lambdaBorder:Number(p["Lambda Border"]??0.3),
+    axes:[p["X"]!==false, p["Y"]!==false, p["Z"]!==false], preserveVolume:p["Preserve Volume"]===true, normalized:p["Normalized"]===true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
+}
+function simpleDeformOptions(p, geometry = null, obj = null) {
+  return {
+    mode: p.Mode || "Twist", axis: p["Deform Axis"] || "Z",
+    angle: Number(p.Angle ?? 45), factor: Number(p.Factor ?? 0.5),
+    limitLower: Number(p["Limit Lower"] ?? 0), limitUpper: Number(p["Limit Upper"] ?? 1),
+    lockX: p["Lock X"] === true, lockY: p["Lock Y"] === true, lockZ: p["Lock Z"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true
+  };
+}
+function wireframeOptions(p, geometry, obj = null) {
+  return { offset: parseFloat(p["Offset"] ?? 0), boundary: p["Boundary"] !== false, evenOffset: p["Even Offset"] !== false,
+    relativeOffset: p["Relative Offset"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj),
+    thicknessVertexGroup: Number(p["Group Factor"] ?? 1), invertVertexGroup: p["Invert Group"] === true };
+}
+function applyWireframeModifier(geometry, thickness=0.03, replaceOriginal=true, options={}) { return modifierGeometryApi().wireframeGeometry3D(geometry, { thickness, replaceOriginal, ...options }); }
+function displaceOptions(p, geometry, obj = null) {
+  return { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10),
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
+}
 function applyDisplaceModifier(geometry, strength, midlevel, frequency=1, options={}) { return modifierGeometryApi().displaceGeometry(geometry, { strength, midlevel, frequency, ...options }); }
+function waveOptions(p, geometry, obj = null) {
+  /* MOD_wave.cc: when objectcenter is set, startx/starty come from the control
+     object's location in the modified object's local space -
+       invert_m4_m4(world_to_object, ob->object_to_world);
+       mul_m4_m4m4(mat, world_to_object, objectcenter->object_to_world);
+       startx = mat[3][0]; starty = mat[3][1];
+     - and they replace whatever the start position in the panel holds. */
+  let startX = Number(p["Start X"] ?? 0), startY = Number(p["Start Y"] ?? 0);
+  const centerId = p["Object Center"];
+  if (centerId && obj && typeof getAllSceneMeshes === 'function') {
+    const center = getAllSceneMeshes().find(mesh => mesh.uuid === centerId && mesh.isMesh);
+    if (center) {
+      const m = modifierRelativeMatrix(obj, center).elements;
+      startX = m[12]; startY = m[13];
+    }
+  }
+  return { axis: p["Axis"] || "X",
+    narrowness: Number(p["Narrowness"] ?? 1), timeOffset: Number(p["Time Offset"] ?? 0),
+    lifetime: Number(p["Lifetime"] ?? 0), damping: Number(p["Damping"] ?? 10),
+    startX, startY,
+    falloff: Number(p["Falloff"] ?? 0), cyclic: p["Cyclic"] === true, useNormal: p["Use Normal"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
+}
 function applyWaveModifier(geometry, speed, height, width, time=0, options={}) { return modifierGeometryApi().waveGeometry(geometry, { speed, height, width, time, ...options }); }
-function applyCastModifier(geometry, shape, factor, radius, size=1) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size }); }
+function castOptions(p, geometry, obj = null) {
+  /* MOD_cast.cc takes its centre from a control object when one is assigned:
+     the object's location in the modified object's local space. */
+  let objectCenter = null, objectMatrix = null;
+  const centerId = p["Object Center"];
+  if (centerId && obj && typeof getAllSceneMeshes === 'function') {
+    const center = getAllSceneMeshes().find(mesh => mesh.uuid === centerId && mesh.isMesh);
+    if (center) { const m = modifierRelativeMatrix(obj, center).elements; objectCenter = [m[12], m[13], m[14]]; objectMatrix = Array.from(m); }
+  }
+  return { shape: p["Shape"] || "Sphere", factor: parseFloat(p["Factor"] || 1), radius: parseFloat(p["Radius"] || 1),
+    size: parseFloat(p["Size"] ?? 1),
+    useX: p["X"] !== false, useY: p["Y"] !== false, useZ: p["Z"] !== false,
+    useRadiusAsSize: p["Size From Radius"] === true, objectCenter, objectMatrix,
+    useTransform: p["Use Transform"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
+}
+function applyCastModifier(geometry, shape, factor, radius, size=1, extra={}) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size, ...extra }); }
 function applySmoothModifier(geometry, factor, iterations, options={}) { return modifierGeometryApi().smoothGeometry(geometry, { factor, iterations, ...options }); }
 function applyWarpModifier(geometry, strength, axis='Y') { return modifierGeometryApi().twistGeometry(geometry, strength, axis); }
-function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode) {
+function shrinkwrapOptions(p, geometry, obj = null) {
+  return { wrapMethod: p["Wrap Method"] || "Nearest Surface Point",
+    projectX: p["Project X"] === true, projectY: p["Project Y"] === true, projectZ: p["Project Z"] !== false,
+    positive: p["Positive"] !== false, negative: p["Negative"] !== false,
+    projectLimit: Number(p["Limit"] ?? 0), cullFace: p["Cull Face"] || "Off",
+    invertCull: p["Invert Cull"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj),
+    invertVertexGroup: p["Invert Group"] === true };
+}
+function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode, options = {}) {
   if (!targetObj?.geometry) throw new Error('Shrinkwrap needs a different mesh selected as Target Object.');
   const relative = modifierRelativeMatrix(sourceObj, targetObj);
-  return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode);
+  return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode, options);
 }
 function applyLatticeFfdModifier(geometry, targetObj, mod) {
   const p = mod.values || {};
@@ -11822,6 +12206,9 @@ function bindSurfaceDeformTarget(targetObj, mod) {
 
 function modifierDependencyRef(mod) {
   if (mod.name === 'Boolean') return mod.values?.['Operand Object'];
+  if (mod.name === 'Array' && mod.values?.['Object Offset'] === true) return mod.values?.['Offset Object'];
+  if (mod.name === 'Wave') return mod.values?.['Object Center'];
+  if (mod.name === 'Cast') return mod.values?.['Object Center'];
   if (mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') return mod.values?.['Target Object'];
   if (mod.name === 'Lattice') return mod.values?.['Cage Object'];
   if (mod.name === 'Armature') return mod.values?.['Rig Object'];
@@ -11978,16 +12365,14 @@ function updateModifiersOnScene(targetOverride) {
 
     if (mod.name === "Bevel") {
       const amt = parseFloat(p["Amount"] ?? 0.15);
-      if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false));
+      if (amt > 0.001) currentGeo = applyModifierGeometryStage(currentGeo, () => applyBevelModifier(currentGeo, amt, parseInt(p["Segments"] ?? 4, 10), p["Clamp Overlap"] !== false, Number(p["Profile"] ?? 0.5), bevelOptions(p)));
     } else if (mod.name === "Subdivision Surface") {
       const lvl = parseInt(p["Viewport Levels"] ?? 2, 10);
       const simple = p["Subdivision Type"] === "Simple";
       currentGeo = applyModifierGeometryStage(currentGeo, () => applySubdivisionModifier(currentGeo, lvl, simple));
       subdivisionNote = currentGeo?.userData?.feSubdivision || null;
     } else if (mod.name === "Solidify") {
-      const th = parseFloat(p["Thickness"] ?? 0.1);
-      const off = parseFloat(p["Offset"] ?? -1);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applySolidifyModifier(currentGeo, th, off, p["Rim Fill"] !== false, p["Even Thickness"] !== false));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySolidifyModifierEx(currentGeo, p));
     } else if (mod.name === "Boolean") {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyBooleanModifier(targetObj, currentGeo, p));
     } else if (mod.name === "Array") {
@@ -11995,42 +12380,53 @@ function updateModifiersOnScene(targetOverride) {
       const ox = parseFloat(p["Offset X"] ?? 1.8);
       const oy = parseFloat(p["Offset Y"] ?? 0);
       const oz = parseFloat(p["Offset Z"] ?? 0);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0), parseFloat(p["Rotation Per Step"] ?? 0)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyArrayModifier(currentGeo, count, ox, oy, oz, parseFloat(p["Relative X"] ?? 0), parseFloat(p["Relative Y"] ?? 0), parseFloat(p["Relative Z"] ?? 0), parseFloat(p["Rotation Per Step"] ?? 0), arrayModifierOptions(p, targetObj)));
     } else if (mod.name === "Mirror") {
       const xA = p["X Axis"] ?? true;
       const yA = p["Y Axis"] ?? false;
       const zA = p["Z Axis"] ?? false;
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyMirrorModifier(currentGeo, xA, yA, zA, p["Clipping"] === true, parseFloat(p["Merge Distance"] ?? 1e-6)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyMirrorModifier(currentGeo, xA, yA, zA, p["Clipping"] === true, parseFloat(p["Merge Distance"] ?? 1e-6), mirrorOptions(p)));
     } else if (mod.name === "Decimate") {
       const ratio = parseFloat(p["Ratio"] || 0.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio, p["Preserve Boundaries"] !== false));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDecimateModifier(currentGeo, ratio, p["Preserve Boundaries"] !== false, decimateOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Triangulate") {
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyTriangulateModifier(currentGeo, p["Keep Normals"] !== false, p["Quad Method"] || "Beauty", p["Ngon Method"] || "Beauty", Number(p["Minimum Vertices"] ?? 4)));
     } else if (mod.name === "Weld") {
       const dist = parseFloat(p["Distance"] || 0.02);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWeldModifier(currentGeo, dist));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWeldModifierEx(currentGeo, p, targetObj));
     } else if (mod.name === "Wireframe") {
       const th = parseFloat(p["Thickness"] ?? 0.03);
       const replaceOriginal = p["Replace Original"] !== false;
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWireframeModifier(currentGeo, th, replaceOriginal));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWireframeModifier(currentGeo, th, replaceOriginal, wireframeOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Displace") {
       const str = parseFloat(p["Strength"] ?? 0.35);
       const mid = parseFloat(p["Midlevel"] ?? 0.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), { direction: p["Direction"] || "Normal", octaves: parseInt(p["Octaves"] ?? 2, 10), seed: parseInt(p["Seed"] ?? 0, 10) }));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyDisplaceModifier(currentGeo, str, mid, parseFloat(p["Frequency"] ?? 1), displaceOptions(p, currentGeo, targetObj)));
+    } else if (mod.name === "Build") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyBuildModifier(currentGeo, buildOptions(p)));
+    } else if (mod.name === "Screw") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyScrewModifier(currentGeo, screwOptions(p)));
+    } else if (mod.name === "Laplacian Smooth") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyLaplacianSmoothModifier(currentGeo, laplacianSmoothOptions(p, currentGeo, targetObj)));
+    } else if (mod.name === "Edge Split") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyEdgeSplitModifier(currentGeo,
+        parseFloat(p["Split Angle"] ?? 30), p["Use Angle"] !== false, p["Sharp Edges"] === true));
+    } else if (mod.name === "Simple Deform") {
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySimpleDeformModifier(currentGeo, simpleDeformOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Wave") {
       const speed = parseFloat(p["Speed"] ?? 1.5);
       const height = parseFloat(p["Height"] ?? 0.6);
-      const width = parseFloat(p["Width"] ?? 2.5);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWaveModifier(currentGeo, speed, height, width, parseFloat(p["Time"] ?? 0), { axis: p["Axis"] || "Y", phase: parseFloat(p["Phase"] ?? 0) }));
+      const width = parseFloat(p["Width"] ?? 1);
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyWaveModifier(currentGeo, speed, height, parseFloat(p["Width"] ?? 1), parseFloat(p["Time"] ?? 0), waveOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Cast") {
       const shape = p["Shape"] || "Sphere";
       const factor = parseFloat(p["Factor"] || 1);
       const rad = parseFloat(p["Radius"] || 1);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyCastModifier(currentGeo, shape, factor, rad, parseFloat(p["Size"] ?? 1)));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyCastModifier(currentGeo, shape, factor, rad, parseFloat(p["Size"] ?? 1), castOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Smooth") {
       const factor = parseFloat(p["Factor"] || 0.6);
       const iter = parseInt(p["Iterations"] || 3, 10);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applySmoothModifier(currentGeo, factor, iter, { preserveVolume: p["Preserve Volume"] === true, boundary: p["Boundary"] || "Smooth" }));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applySmoothModifier(currentGeo, factor, iter, { preserveVolume: p["Preserve Volume"] === true, boundary: p["Boundary"] || "Smooth", vertexWeights: modifierGroupWeights(p["Vertex Group"], currentGeo, targetObj), invertVertexGroup: p["Invert Group"] === true }));
     } else if (mod.name === "Warp") {
       const str = parseFloat(p["Strength"] || 1.2);
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyWarpModifier(currentGeo, str, p["Axis"] || "Y"));
@@ -12041,7 +12437,7 @@ function updateModifiersOnScene(targetOverride) {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyLatticeFfdModifier(currentGeo, targetObj, mod));
     } else if (mod.name === "Shrinkwrap") {
       const target = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface'));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface', shrinkwrapOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Armature") {
       if (!p['Rig Object']) {
         throw new Error('Armature needs a rig/bone-weight or bind-target workflow; click "Create & Bind Armature Rig" or select a Rig Object.');
@@ -12269,6 +12665,7 @@ function addModifierToStack(category, definition) {
     if (type === 'range') values[label] = rest[2];
     else if (type === 'check') values[label] = rest[0];
     else if (type === 'select') values[label] = rest[0][0];
+    else if (type === 'vgroup') values[label] = 'None';
   });
 
   if (definition.name === "Fluid") {
@@ -12283,6 +12680,8 @@ function addModifierToStack(category, definition) {
     applyFluidPreset({ values }, "Water");
   }
   if (definition.name === 'Boolean') values['Operand Object'] = '';
+  if (definition.name === 'Array') values['Offset Object'] = '';
+  if (definition.name === 'Wave' || definition.name === 'Cast') values['Object Center'] = '';
   if (definition.name === 'Shrinkwrap' || definition.name === 'Surface Deform') values['Target Object'] = '';
   if (definition.name === 'Lattice') values['Cage Object'] = '';
   if (definition.name === 'Armature') values['Rig Object'] = ''; 
@@ -12468,10 +12867,34 @@ function createModifierField(mod, index, field) {
       scheduleModifierUpdate(targetObj, true);
     };
     wrapper.appendChild(labelEl);
+  } else if (type === "vgroup") {
+    /* The group names live on the active object, not in the registry, so this
+       list is built at render time. "None" is Blender's empty group name. */
+    labelEl.textContent = label;
+    const select = document.createElement("select");
+    const obj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+    const names = ["None", ...vertexGroupNames(obj)];
+    names.forEach(name => {
+      const opt = document.createElement("option");
+      opt.textContent = name;
+      opt.value = name;
+      if ((mod.values[label] ?? "None") === name) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.onchange = () => {
+      mod.values[label] = select.value;
+      const targetObj = typeof getActiveObjectMesh === 'function' ? getActiveObjectMesh() : null;
+      if (targetObj) targetObj.userData.forceModUpdate = true;
+      updateModifiersOnScene();
+    };
+    wrapper.append(labelEl, select);
   } else if (type === "select") {
     labelEl.textContent = label;
     const select = document.createElement("select");
     const isObjectTarget = (mod.name === 'Boolean' && label === 'Operand Object')
+      || (mod.name === 'Array' && label === 'Offset Object')
+      || (mod.name === 'Wave' && label === 'Object Center')
+      || (mod.name === 'Cast' && label === 'Object Center')
       || ((mod.name === 'Shrinkwrap' || mod.name === 'Surface Deform') && label === 'Target Object')
       || (mod.name === 'Lattice' && label === 'Cage Object')
       || (mod.name === 'Armature' && label === 'Rig Object');
@@ -12505,25 +12928,30 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       if (!mod.enabled) continue;
       const p=mod.values||{};
       const stage=(fn)=>{geometry=applyModifierGeometryStage(geometry,()=>fn(geometry))};
-      if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false)); }
+      if(mod.name==='Bevel') { if(Number(p.Amount??.15)>.001)stage(g=>applyBevelModifier(g,Number(p.Amount??.15),Number(p.Segments??4),p['Clamp Overlap']!==false,Number(p.Profile??.5),bevelOptions(p))); }
       else if(mod.name==='Subdivision Surface')stage(g=>applySubdivisionModifier(g,Number(p['Viewport Levels']??2),p['Subdivision Type']==='Simple'));
-      else if(mod.name==='Solidify')stage(g=>applySolidifyModifier(g,Number(p.Thickness??.1),Number(p.Offset??-1),p['Rim Fill']!==false,p['Even Thickness']!==false));
+      else if(mod.name==='Solidify')stage(g=>applySolidifyModifierEx(g,p,targetObj));
       else if(mod.name==='Boolean')stage(g=>applyBooleanModifier(targetObj,g,p));
-      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0)));
-      else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true,Number(p['Merge Distance']??1e-6)));
-      else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false));
-      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false));
-      else if(mod.name==='Weld')stage(g=>applyWeldModifier(g,Number(p.Distance??.02)));
-      else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false));
-      else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),{direction:p.Direction||'Normal',octaves:Number(p.Octaves??2),seed:Number(p.Seed??0)}));
-      else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??2.5),Number(p.Time??0),{axis:p.Axis||'Y',phase:Number(p.Phase??0)}));
-      else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1)));
-      else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth'}));
+      else if(mod.name==='Array')stage(g=>applyArrayModifier(g,Number(p.Count??2),Number(p['Offset X']??1.8),Number(p['Offset Y']??0),Number(p['Offset Z']??0),Number(p['Relative X']??0),Number(p['Relative Y']??0),Number(p['Relative Z']??0),Number(p['Rotation Per Step']??0),arrayModifierOptions(p,targetObj)));
+      else if(mod.name==='Mirror')stage(g=>applyMirrorModifier(g,p['X Axis']??true,p['Y Axis']??false,p['Z Axis']??false,p.Clipping===true,Number(p['Merge Distance']??1e-6),mirrorOptions(p)));
+      else if(mod.name==='Decimate')stage(g=>applyDecimateModifier(g,Number(p.Ratio??.5),p['Preserve Boundaries']!==false,decimateOptions(p,g,targetObj)));
+      else if(mod.name==='Triangulate')stage(g=>applyTriangulateModifier(g,p['Keep Normals']!==false,p['Quad Method']||'Beauty',p['Ngon Method']||'Beauty',Number(p['Minimum Vertices']??4)));
+      else if(mod.name==='Weld')stage(g=>applyWeldModifierEx(g,p));
+      else if(mod.name==='Wireframe')stage(g=>applyWireframeModifier(g,Number(p.Thickness??.03),p['Replace Original']!==false,wireframeOptions(p,g,targetObj)));
+      else if(mod.name==='Displace')stage(g=>applyDisplaceModifier(g,Number(p.Strength??.35),Number(p.Midlevel??.5),Number(p.Frequency??1),displaceOptions(p,g,targetObj)));
+      else if(mod.name==='Wave')stage(g=>applyWaveModifier(g,Number(p.Speed??1.5),Number(p.Height??.6),Number(p.Width??1),Number(p.Time??0),waveOptions(p,g,targetObj)));
+      else if(mod.name==='Cast')stage(g=>applyCastModifier(g,p.Shape||'Sphere',Number(p.Factor??1),Number(p.Radius??1),Number(p.Size??1),castOptions(p,g,targetObj)));
+      else if(mod.name==='Simple Deform')stage(g=>applySimpleDeformModifier(g,simpleDeformOptions(p,g,targetObj)));
+      else if(mod.name==='Edge Split')stage(g=>applyEdgeSplitModifier(g,Number(p['Split Angle']??30),p['Use Angle']!==false,p['Sharp Edges']===true));
+      else if(mod.name==='Laplacian Smooth')stage(g=>applyLaplacianSmoothModifier(g,laplacianSmoothOptions(p,g,targetObj)));
+      else if(mod.name==='Screw')stage(g=>applyScrewModifier(g,screwOptions(p)));
+      else if(mod.name==='Build')stage(g=>applyBuildModifier(g,buildOptions(p)));
+      else if(mod.name==='Smooth')stage(g=>applySmoothModifier(g,Number(p.Factor??.6),Number(p.Iterations??3),{preserveVolume:p['Preserve Volume']===true,boundary:p.Boundary||'Smooth',vertexWeights:modifierGroupWeights(p['Vertex Group'],g,targetObj),invertVertexGroup:p['Invert Group']===true}));
       else if(mod.name==='Warp')stage(g=>applyWarpModifier(g,Number(p.Strength??1.2),p.Axis||'Y'));
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));
       else if(mod.name==='Armature')stage(g=>applyArmatureSkinModifier(g,targetObj,mod));
       else if(mod.name==='Surface Deform')stage(g=>applySurfaceDeformModifier(g,targetObj,mod));
-      else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface'))}
+      else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface',shrinkwrapOptions(p,g,targetObj)))}
       else if(mod.name==='Weighted Normal')stage(g=>modifierGeometryApi().weightedNormalGeometry(g,{weight:Number(p.Weight??50),keepSharp:p['Keep Sharp']!==false}));
       else throw new Error(`${mod.name} cannot be applied as a static mesh modifier in this runtime.`);
     }
@@ -12842,6 +13270,7 @@ function openModifiersModal() {
     if (!targetObj.userData.modStack) targetObj.userData.modStack = [];
     modStack = targetObj.userData.modStack;
     renderModifierStack();
+    if (document.getElementById('vertex-groups-body')?.style.display === 'flex') renderVertexGroupList();
   }
   FE.toast('Modifiers Tool Panel Active');
 }
