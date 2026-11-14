@@ -192,7 +192,12 @@ edges to collapse, so the toggle would be dead).
 ### Cast — `MOD_cast.cc`
 ✅ `cast_type` (Sphere / Cylinder / Cuboid), `factor`, `radius`, `size`,
 `use_radius_as_size`, `use_x` / `use_y` / `use_z`, `vertex_group` +
-`invert_vertex_group`, and `object` (`objectcenter`).
+`invert_vertex_group`, `object` (`objectcenter`), and `use_transform`.
+
+`use_transform` is the pair `mat = inverse(ctrl) * ob` / `imat = inverse(mat)`
+from `MOD_cast.cc`: the vertex is carried into the control object's frame, cast
+there, and carried back. A stretched or rotated control object therefore casts
+into its own box or sphere, not an axis-aligned one around its origin.
 
 The kernel is `sphere_do()` and `cuboid_do()`. Three things the old version
 had wrong are now upstream's:

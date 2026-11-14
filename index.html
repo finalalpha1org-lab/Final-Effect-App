@@ -11552,7 +11552,7 @@ const modifiersData = {
   ],
   Deform: [
     {name:"Armature", fields:[["Rig Object","select",[]],["Bone Influence","range",0,1,1,.01],["Preserve Volume","check",true],["Root Bend","range",-90,90,0,1],["Mid Bend","range",-90,90,22,1],["Tip Bend","range",-90,90,32,1],["Twist","range",-90,90,0,1]]},
-    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0,4,1,.05,{advanced:true}],["X","check",true,{advanced:true}],["Y","check",true,{advanced:true}],["Z","check",true,{advanced:true}],["Size From Radius","check",false,{advanced:true}],["Object Center","select",[],{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
+    {name:"Cast", fields:[["Shape","select",["Sphere","Cylinder","Cuboid"]],["Factor","range",0,1,1,.01],["Radius","range",0,10,1,.1],["Size","range",0,4,1,.05,{advanced:true}],["X","check",true,{advanced:true}],["Y","check",true,{advanced:true}],["Z","check",true,{advanced:true}],["Size From Radius","check",false,{advanced:true}],["Object Center","select",[],{advanced:true}],["Use Transform","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Displace", fields:[["Strength","range",-2,2,.35,.01],["Midlevel","range",0,1,.5,.01],["Frequency","range",.1,10,1,.1],["Direction","select",["Normal","X","Y","Z"],{advanced:true}],["Octaves","range",1,6,2,1,{advanced:true}],["Seed","range",0,999,0,1,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Laplacian Smooth", fields:[["Repeat","range",1,10,1,1],["Lambda","range",0,1,.3,.01],["Lambda Border","range",0,1,.3,.01,{advanced:true}],["X","check",true],["Y","check",true],["Z","check",true],["Preserve Volume","check",false,{advanced:true}],["Normalized","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
@@ -12022,16 +12022,17 @@ function applyWaveModifier(geometry, speed, height, width, time=0, options={}) {
 function castOptions(p, geometry, obj = null) {
   /* MOD_cast.cc takes its centre from a control object when one is assigned:
      the object's location in the modified object's local space. */
-  let objectCenter = null;
+  let objectCenter = null, objectMatrix = null;
   const centerId = p["Object Center"];
   if (centerId && obj && typeof getAllSceneMeshes === 'function') {
     const center = getAllSceneMeshes().find(mesh => mesh.uuid === centerId && mesh.isMesh);
-    if (center) { const m = modifierRelativeMatrix(obj, center).elements; objectCenter = [m[12], m[13], m[14]]; }
+    if (center) { const m = modifierRelativeMatrix(obj, center).elements; objectCenter = [m[12], m[13], m[14]]; objectMatrix = Array.from(m); }
   }
   return { shape: p["Shape"] || "Sphere", factor: parseFloat(p["Factor"] || 1), radius: parseFloat(p["Radius"] || 1),
     size: parseFloat(p["Size"] ?? 1),
     useX: p["X"] !== false, useY: p["Y"] !== false, useZ: p["Z"] !== false,
-    useRadiusAsSize: p["Size From Radius"] === true, objectCenter,
+    useRadiusAsSize: p["Size From Radius"] === true, objectCenter, objectMatrix,
+    useTransform: p["Use Transform"] === true,
     vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj), invertVertexGroup: p["Invert Group"] === true };
 }
 function applyCastModifier(geometry, shape, factor, radius, size=1, extra={}) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size, ...extra }); }

@@ -565,3 +565,62 @@ test('Cast is weighted and can be centred on a control object', () => {
     assert.ok(worst < 1e-4, `the cast is centred on the control object (worst ${worst})`);
   });
 });
+
+test('Cast use_transform casts in the control object’s frame', () => {
+  withCore(() => {
+    /* A stretch, not a rotation: a box turned by a quarter turn is the same
+       box, so it could not tell the two paths apart. With use_transform the
+       cast is the control object's own box, stretched with it. */
+    const rel = new THREE.Matrix4().makeTranslation(2, 0, 0)
+      .multiply(new THREE.Matrix4().makeScale(2, 1, 1));
+    const elements = Array.from(rel.elements);
+    const source = new THREE.IcosahedronGeometry(1, 1);
+    const size = 1, centre = new THREE.Vector3(2, 0, 0);
+
+    const onBox = (geometry, matrix, offset) => {
+      const p = geometry.attributes.position;
+      let worst = 0, moved = 0;
+      const inv = matrix ? matrix.clone().invert() : null;
+      for (let i = 0; i < p.count; i++) {
+        const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i));
+        if (inv) v.applyMatrix4(inv); else v.sub(offset);
+        /* cuboid_do() puts every vertex on the box surface, so the largest
+           of its three coordinates is exactly the box half-extent. */
+        const extent = Math.max(Math.abs(v.x), Math.abs(v.y), Math.abs(v.z));
+        worst = Math.max(worst, Math.abs(extent - size));
+        if (v.length() === 0) worst = Infinity;
+      }
+      if (matrix) {
+        const src = source.attributes.position;
+        for (let i = 0; i < p.count; i++) {
+          if (Math.hypot(p.getX(i) - src.getX(i), p.getY(i) - src.getY(i), p.getZ(i) - src.getZ(i)) > 1e-3) moved++;
+        }
+      }
+      return { worst, moved };
+    };
+
+    const plain = castGeometry(source, {
+      shape: 'Cuboid', factor: 1, radius: 0, size, objectCenter: [2, 0, 0], objectMatrix: elements
+    });
+    const turned = castGeometry(source, {
+      shape: 'Cuboid', factor: 1, radius: 0, size, objectCenter: [2, 0, 0], objectMatrix: elements, useTransform: true
+    });
+
+    /* Without the transform the box is the control object's centre with the
+       plain half-extent, in object space. */
+    const a = onBox(plain, null, centre);
+    assert.ok(a.worst < 1e-4, `plain cast lands on the axis-aligned box, worst ${a.worst}`);
+
+    /* With it the box is the control object's own box, so the same vertices
+       read back through the matrix lie on the same ±1 box. A stretched box
+       reaches x = 0 and the plain one never does. */
+    const b = onBox(turned, rel, centre);
+    assert.ok(b.worst < 1e-4, `use_transform lands on the turned box, worst ${b.worst}`);
+    const ax = plain.attributes.position, bx = turned.attributes.position;
+    let moved = 0;
+    for (let i = 0; i < ax.count; i++) {
+      if (Math.hypot(ax.getX(i) - bx.getX(i), ax.getY(i) - bx.getY(i), ax.getZ(i) - bx.getZ(i)) > 1e-3) moved++;
+    }
+    assert.ok(moved > ax.count / 2, `the frame turns the cast, ${moved}/${ax.count} vertices differ`);
+  });
+});

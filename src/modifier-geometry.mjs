@@ -1514,21 +1514,36 @@ export function simpleDeformGeometry(geometry, {
 export function castGeometry(geometry, {
   shape = 'Sphere', factor = 1, radius = 1, size = 1, vertexWeights = null,
   invertVertexGroup = false, useX = true, useY = true, useZ = true,
-  useRadiusAsSize = false, objectCenter = null
+  useRadiusAsSize = false, objectCenter = null, useTransform = false, objectMatrix = null
 } = {}) {
   const shapeIndex = { Sphere: 0, Cylinder: 1, Cuboid: 2 }[shape] ?? 0;
   const flags = (useX ? 1 : 0) | (useY ? 2 : 0) | (useZ ? 4 : 0);
   const center = objectCenter && objectCenter.length >= 3 ? objectCenter : null;
+  /* use_transform casts in the control object's frame: the kernel is handed the
+     object-to-control matrix (modifierRelativeMatrix) and uses it both ways,
+     which is invert_m4_m4 + mul_m4_m4m4 twice in MOD_cast.cc. */
+  const useTf = !!(useTransform && objectMatrix && objectMatrix.length >= 16);
+  const rel = useTf ? new THREE.Matrix4().fromArray(Array.from(objectMatrix)) : null;
+  const sessionMatrixElements = useTf
+    ? Array.from(objectMatrix)
+    : [1,0,0,0, 0,1,0,0, 0,0,1,0, center ? center[0] : 0, center ? center[1] : 0, center ? center[2] : 0, 1];
   const viaCpp = runCppKernel(geometry, null,
     exp => exp.fe_mod_cast(shapeIndex, Number(factor) || 0, Number(radius) || 0, Number(size) || 0,
-      invertVertexGroup ? 1 : 0, flags, useRadiusAsSize ? 1 : 0, 0, center ? 1 : 0),
-    center ? (exp) => writeSessionMatrix(exp, [1,0,0,0, 0,1,0,0, 0,0,1,0, center[0], center[1], center[2], 1]) : undefined,
+      invertVertexGroup ? 1 : 0, flags, useRadiusAsSize ? 1 : 0,
+      useTf ? 1 : 0, (useTf || center) ? 1 : 0),
+    (useTf || center) ? (exp) => writeSessionMatrix(exp, sessionMatrixElements) : undefined,
     vertexWeights);
   if (viaCpp) return viaCpp;
 
   /* JS fallback: the same two functions. */
   const g = geometry.clone(), p = assertPositions(g);
-  const c = center ? new THREE.Vector3(center[0], center[1], center[2]) : new THREE.Vector3();
+  /* The same two frames in the fallback: with use_transform the whole cast
+     happens in the control object's space, so the copy is moved there, cast,
+     and moved back. Without it, the control object only supplies a centre. */
+  const useTfFallback = !!(useTransform && rel);
+  const toCtrl = useTfFallback ? rel.clone().invert() : null;
+  if (useTfFallback) g.applyMatrix4(toCtrl);
+  const c = useTfFallback ? new THREE.Vector3() : (center ? new THREE.Vector3(center[0], center[1], center[2]) : new THREE.Vector3());
   const cylinder = shape === 'Cylinder';
   let mask = flags;
   if (cylinder) mask &= ~4;
@@ -1595,6 +1610,7 @@ export function castGeometry(geometry, {
     }
   }
   p.needsUpdate = true;
+  if (useTfFallback) g.applyMatrix4(rel);
   g.computeVertexNormals();
   return updateBounds(g);
 }
