@@ -739,7 +739,17 @@ FE_EXPORT int32_t  fe_mod_armature(float influence, int32_t preserve_volume, flo
 
 /* Nearest-surface / above-surface / outside-surface shrinkwrap projection.
  * mode: 0 = On Surface, 1 = Above Surface, 2 = Outside Surface. */
-FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset);
+/* Shrinkwrap, ported from MOD_shrinkwrap.cc + blenkernel/intern/shrinkwrap.cc.
+ * method 0 = NEAREST_SURFACEPOINT, 1 = PROJECT. axis_mask is 1|2|4 for
+ * X|Y|Z and 0 for "along the vertex normal" (MOD_SHRINKWRAP_PROJECT_OVER_*).
+ * cull_face is 0 off / 1 front / 2 back, invert_cull swaps it for the negative
+ * direction, allow_pos / allow_neg are the two direction toggles, and
+ * project_limit is the max distance a projection may travel (0 = no limit). */
+FE_EXPORT int32_t  fe_mod_shrinkwrap(uint32_t mode, float offset, uint32_t method,
+                                    uint32_t axis_mask, float project_limit,
+                                    uint32_t cull_face, int32_t invert_cull,
+                                    int32_t allow_pos, int32_t allow_neg,
+                                    int32_t invert_vgroup);
 
 /* ---- World-space mesh baking + packaging CRC (cpp/src/fe_export.cpp) ----
  * The exporters bake every mesh (and every instanced copy) into world space

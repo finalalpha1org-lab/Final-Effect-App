@@ -1627,14 +1627,29 @@ export function twistGeometry(geometry,strength=1.2,axis='Y'){
     else {const a=z*strength*.5,c=Math.cos(a),s=Math.sin(a);p.setXYZ(i,x*c-y*s,x*s+y*c,z)}}
   p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)}
 
-export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',maxPairs=50000000){
+/* Shrinkwrap, ported from MOD_shrinkwrap.cc + blenkernel/intern/shrinkwrap.cc
+   (cpp/src/fe_modifiers.cpp). wrapMethod 'Project' is
+   shrinkwrap_calc_normal_projection(): a ray cast along an axis or the vertex
+   normal, positive and/or negative, with a limit and back-face culling.
+   'Nearest Surface Point' is BKE_shrinkwrap_find_nearest_surface(). Both end in
+   the same snap, and both blend by the vertex group weight. */
+export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElements,offset=0,mode='On Surface',
+                                   { wrapMethod='Nearest Surface Point', projectX=false, projectY=false,
+                                     projectZ=false, positive=true, negative=true, projectLimit=0,
+                                     cullFace='Off', invertCull=false, vertexWeights=null,
+                                     invertVertexGroup=false }={}, maxPairs=50000000){
   assertPositions(geometry);assertPositions(targetGeometry);
   const count=geometry.attributes.position.count,triangles=sourceIndices(targetGeometry).length/3;
-  if(count*triangles>maxPairs)throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`);
+  const projecting = wrapMethod === 'Project';
+  if(!projecting && count*triangles>maxPairs)throw new Error(`Shrinkwrap would require ${count*triangles} point/triangle tests; reduce mesh density or use a BVH target`);
   const modeIndex=mode==='Above Surface'?1:(mode==='Outside Surface'?2:0);
+  const axisMask=(projectX?1:0)|(projectY?2:0)|(projectZ?4:0);
+  const cullIndex={Off:0,Front:1,Back:2}[cullFace] ?? 0;
   const viaCpp=runCppKernel(geometry,null,
-    exp=>exp.fe_mod_shrinkwrap(modeIndex,Number(offset)||0),
-    exp=>uploadTargetMesh(exp,targetGeometry,relativeMatrixElements));
+    exp=>exp.fe_mod_shrinkwrap(modeIndex,Number(offset)||0,projecting?1:0,axisMask,
+      Math.max(0,Number(projectLimit)||0),cullIndex,invertCull?1:0,
+      positive?1:0,negative?1:0,invertVertexGroup?1:0),
+    exp=>uploadTargetMesh(exp,targetGeometry,relativeMatrixElements), vertexWeights);
   if(viaCpp)return viaCpp;
   const target=ensureNormalsAndUv(targetGeometry),tp=target.attributes.position,ti=sourceIndices(target);
   const matrix=new THREE.Matrix4().fromArray(Array.from(relativeMatrixElements||new THREE.Matrix4().elements)),tris=[];
@@ -1650,8 +1665,50 @@ export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElement
   if(!tris.length){target.dispose();throw new Error('Shrinkwrap target has no non-degenerate triangles')}
 
   const g=geometry.clone(),p=g.attributes.position,q=new THREE.Vector3(),best=new THREE.Vector3(),candidate=new THREE.Vector3(),normal=new THREE.Vector3();
+  if(projecting && axisMask===0 && !g.attributes.normal) g.computeVertexNormals();
+  const srcNrm=g.attributes.normal;
+  const wAt=i=>vertexWeights&&vertexWeights.length===p.count?(invertVertexGroup?1-vertexWeights[i]:vertexWeights[i]):1;
+  const axis=new THREE.Vector3(projectX?1:0,projectY?1:0,projectZ?1:0);
+  if(axis.lengthSq()>0) axis.normalize();
+  const ray=new THREE.Ray(), hitPoint=new THREE.Vector3(), limitSq=(Number(projectLimit)||0)>0?Number(projectLimit)**2:0;
   for(let i=0;i<p.count;i++){
     q.set(p.getX(i),p.getY(i),p.getZ(i));
+    const weight=wAt(i); if(weight===0) continue;
+    const snapTo=(hit,hitNormal)=>{
+      const target=hit.clone();
+      if(mode==='Outside Surface'&&q.clone().sub(hit).dot(hitNormal)<0) hitNormal.negate();
+      if(mode==='Above Surface'){
+        if(q.clone().sub(hit).dot(hitNormal)<(Number(offset)||0)) target.addScaledVector(hitNormal,Number(offset)||0);
+        else return null;
+      } else target.addScaledVector(hitNormal,Number(offset)||0);
+      return q.clone().lerp(target,weight);
+    };
+    if(projecting){
+      const dir=axisMask!==0?axis.clone():new THREE.Vector3(srcNrm.getX(i),srcNrm.getY(i),srcNrm.getZ(i)).normalize();
+      if(dir.lengthSq()<1e-12) continue;
+      let bestT=Infinity,bestN=null;
+      for(const sign of [positive?1:0, negative?-1:0]){
+        if(!sign) continue;
+        ray.set(q,dir.clone().multiplyScalar(sign));
+        for(const item of tris){
+          const hit=ray.intersectTriangle(item.triangle.a,item.triangle.b,item.triangle.c,false,hitPoint);
+          if(!hit) continue;
+          const dist=hit.distanceTo(q);
+          if(dist<=1e-6) continue;
+          if(cullFace!=='Off'){
+            const front=dir.clone().multiplyScalar(sign).dot(item.normal)<=0;
+            let cull=cullFace==='Front'?!front:front;
+            if(sign<0&&invertCull) cull=!cull;
+            if(cull) continue;
+          }
+          if(dist<bestT){bestT=dist;bestN=item.normal.clone();best.copy(hit)}
+        }
+      }
+      if(bestN===null) continue;
+      if(limitSq&&best.distanceToSquared(q)>limitSq) continue;
+      const moved=snapTo(best,bestN); if(moved) p.setXYZ(i,moved.x,moved.y,moved.z);
+      continue;
+    }
     /* Exact nearest-triangle scan. The old spatial hash could miss the closest
        face when the query sat more than three cells away from the surface, so
        the reference path is exhaustive and deterministic. */
@@ -1660,18 +1717,7 @@ export function shrinkwrapGeometry(geometry,targetGeometry,relativeMatrixElement
       item.triangle.closestPointToPoint(q,candidate);
       const d=candidate.distanceToSquared(q);if(d<bestD){bestD=d;best.copy(candidate);normal.copy(item.normal)}
     }
-    const delta=q.clone().sub(best);
-    if(mode==='Outside Surface'&&delta.dot(normal)<0)normal.negate();
-    if(mode==='Above Surface'){
-      const signed=delta.dot(normal);
-      const minClearance=Number(offset)||0;
-      if(signed<minClearance){
-        const push=best.clone().addScaledVector(normal,minClearance);
-        p.setXYZ(i,push.x,push.y,push.z);
-      }
-      continue;
-    }
-    best.addScaledVector(normal,offset);p.setXYZ(i,best.x,best.y,best.z);
+    const moved=snapTo(best,normal.clone()); if(moved) p.setXYZ(i,moved.x,moved.y,moved.z);
   }
   target.dispose();p.needsUpdate=true;g.computeVertexNormals();return updateBounds(g)
 }

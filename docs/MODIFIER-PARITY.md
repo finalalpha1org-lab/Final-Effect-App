@@ -244,13 +244,26 @@ vertex between where it was and where the deform puts it.
 
 ⛔ `origin` (O).
 
-### Shrinkwrap — `MOD_shrinkwrap.cc`
-✅ `wrap_method`, `wrap_mode`, `target`, `offset`.
+### Shrinkwrap — `MOD_shrinkwrap.cc` + `blenkernel/intern/shrinkwrap.cc`
+✅ `wrap_method` (Nearest Surface Point / Project), `wrap_mode` (On Surface /
+Above Surface / Outside Surface), `target`, `offset`, `project_limit`,
+`use_project_x/y/z` (or the vertex normal when none is set),
+`use_negative_direction`, `use_positive_direction`, `cull_face` (Off / Front /
+Back), `use_invert_cull`, `vertex_group` + `invert_vertex_group`.
 
-❌ `project_limit`, `subsurf_levels`, `use_project_x/y/z`,
-`use_negative_direction`, `use_positive_direction`, `use_invert_cull`.
+The Project method is `shrinkwrap_calc_normal_projection()`: a BVH ray cast
+(`bvhRaycast()`, this file's tree) in the positive and/or the negative
+direction, taking the closest hit, dropping hits further out than
+`project_limit`, culling by `dot(ray_dir, hit_normal)`, then the same
+`snap_point_to_surface` the nearest path uses and the same
+`lerp(co, hit, weight)`.
 
-⛔ `vertex_group` (V), `auxiliary_target` (O).
+❌ `subsurf_levels`: it is a legacy property that no longer affects the
+evaluated mesh in 4.x - the target is already evaluated by the depsgraph -
+so there is nothing for it to do here either.
+
+⛔ `auxiliary_target` (O: a second target surface, and the session carries one
+target buffer).
 
 ### Smooth — `MOD_smooth.cc`
 ✅ `factor`, `iterations`, boundary handling as a Smooth / Fixed choice.

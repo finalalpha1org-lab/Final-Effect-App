@@ -90,6 +90,12 @@ struct ModSession {
 
 ModSession g_s;
 
+inline float deformWeight(uint32_t i, int32_t invert) {
+  if (!g_s.vgOn) return 1.0f;
+  float w = g_s.vg[i];
+  return invert ? 1.0f - w : w;
+}
+
 inline uint32_t hashU32(uint32_t x) {
   x ^= x >> 16;
   x *= 0x7feb352du;
@@ -991,59 +997,6 @@ int32_t armatureApply(float influence, int32_t preserveVolume, float bendDeg, fl
   return commit(v, t);
 }
 
-int32_t shrinkwrapApply(uint32_t mode, float offset) {
-  if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx || !g_s.tgtWorld) return -3;
-  const uint32_t tv = g_s.tgtCounts[0], tt = g_s.tgtCounts[1];
-  if (tv < 3u || tt == 0u) return -3;
-  transformTargetWorld();
-
-  float* normals = modArray<float>(tt * 3u);
-  float* scales = modArray<float>(tt);
-  if (!normals || !scales) return -2;
-  uint32_t validTris = 0;
-  for (uint32_t tri = 0; tri < tt; ++tri) {
-    const uint32_t ia = g_s.tgtIdx[tri * 3u], ib = g_s.tgtIdx[tri * 3u + 1u], ic = g_s.tgtIdx[tri * 3u + 2u];
-    if (ia >= tv || ib >= tv || ic >= tv) { scales[tri] = 0.0f; continue; }
-    const Vec3 a = readPos(g_s.tgtWorld, ia), b = readPos(g_s.tgtWorld, ib), c = readPos(g_s.tgtWorld, ic);
-    const Vec3 cr = cross(b - a, c - a);
-    const float len = length(cr);
-    if (len <= 1e-10f) { scales[tri] = 0.0f; continue; }
-    writePos(normals, tri, cr * (1.0f / len));
-    scales[tri] = sqrtf(len * 0.5f);
-    validTris++;
-  }
-  if (!validTris) return -4;
-
-  for (uint32_t v = 0; v < g_s.vc; ++v) {
-    const Vec3 q = readPos(g_s.inPos, v);
-    float bestD = 1e30f;
-    Vec3 best{0.0f, 0.0f, 0.0f};
-    uint32_t bestTri = 0xFFFFFFFFu;
-    for (uint32_t tri = 0; tri < tt; ++tri) {
-      if (scales[tri] <= 0.0f) continue;
-      const Vec3 a = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u]);
-      const Vec3 b = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 1u]);
-      const Vec3 c = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 2u]);
-      if (triangleBoxDistanceSq(q, a, b, c) > bestD) continue;
-      const Vec3 cp = closestPointTriangle(q, a, b, c);
-      const float d = length_sq(q - cp);
-      if (d < bestD) { bestD = d; best = cp; bestTri = tri; }
-    }
-    if (bestTri == 0xFFFFFFFFu) { writePos(g_s.outPos, v, q); continue; }
-    Vec3 n = readPos(normals, bestTri);
-    const Vec3 delta = q - best;
-    if (mode == 2u && dot(delta, n) < 0.0f) n = n * -1.0f;
-    if (mode == 1u) {
-      if (dot(delta, n) < offset) writePos(g_s.outPos, v, best + n * offset);
-      else writePos(g_s.outPos, v, q);
-    } else {
-      writePos(g_s.outPos, v, best + n * offset);
-    }
-  }
-  computeNormals(g_s.outPos, g_s.inIdx, g_s.vc, g_s.tc, g_s.nrm);
-  return commit(g_s.vc, g_s.tc);
-}
-
 int32_t surfaceDeformBind() {
   if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx || !g_s.tgtWorld) return -3;
   const uint32_t tv = g_s.tgtCounts[0], tt = g_s.tgtCounts[1];
@@ -1326,6 +1279,196 @@ uint32_t bvhHits(const BoolBvh& b, const float* pos, const uint32_t* idx, const 
   return hits;
 }
 
+/* Nearest hit along a ray, with the hit face's normal.
+   BKE_shrinkwrap_project_normal() is a BVH ray cast; this is the same query on
+   this file's tree, returning the closest triangle rather than counting
+   crossings. */
+bool bvhRaycast(const BoolBvh& b, const float* pos, const uint32_t* idx,
+                const Vec3& o, const Vec3& d, float& tOut, Vec3& nOut) {
+  bool found = false;
+  float best = 1e30f;
+  uint32_t stack[64];
+  uint32_t sp = 0;
+  stack[sp++] = 0u;
+  while (sp) {
+    const uint32_t n = stack[--sp];
+    if (!boxHit(b.lo + n * 3u, b.hi + n * 3u, o, d, best)) continue;
+    if (b.start[n] != 0xFFFFFFFFu) {
+      for (uint32_t i = 0; i < b.count[n]; ++i) {
+        const uint32_t t = b.order[b.start[n] + i];
+        const Vec3 a = readPos(pos, idx[t * 3]), bb = readPos(pos, idx[t * 3 + 1]), c = readPos(pos, idx[t * 3 + 2]);
+        float tt;
+        if (!rayTri(o, d, a, bb, c, tt) || tt >= best) continue;
+        const Vec3 cr = cross(bb - a, c - a);
+        const float len = length(cr);
+        if (len <= 1e-20f) continue;
+        best = tt;
+        nOut = cr * (1.0f / len);
+        found = true;
+      }
+      continue;
+    }
+    if (sp + 2u < 64u) {
+      stack[sp++] = n + 1u;
+      stack[sp++] = b.right[n];
+    }
+  }
+  if (found) tOut = best;
+  return found;
+}
+
+/* Shrinkwrap, ported from MOD_shrinkwrap.cc and BKE_shrinkwrap (blenkernel/
+   intern/shrinkwrap.cc).
+ *
+ * Two wrap methods, and they are two different searches:
+ *
+ *   NEAREST_SURFACEPOINT  the closest point on the target surface
+ *                         (BKE_shrinkwrap_find_nearest_surface)
+ *   PROJECT               a ray cast from the vertex along an axis or its own
+ *                         normal, in the positive and/or negative direction,
+ *                         with a limit and back-face culling
+ *                         (shrinkwrap_calc_normal_projection)
+ *
+ * Both end in the same snap (`BKE_shrinkwrap_snap_point_to_surface`), which is
+ * what Snap Mode selects, and both blend by the vertex group weight:
+ * `interp_v3_v3v3(co, co, hit, weight)`.
+ */
+int32_t shrinkwrapApply(uint32_t mode, float offset, uint32_t method,
+                        uint32_t axis_mask, float project_limit,
+                        uint32_t cull_face, int32_t invert_cull,
+                        int32_t allow_pos, int32_t allow_neg, int32_t invert_vgroup) {
+  if (!g_s.tgtCounts || !g_s.tgtPos || !g_s.tgtIdx || !g_s.tgtWorld) return -3;
+  const uint32_t tv = g_s.tgtCounts[0], tt = g_s.tgtCounts[1];
+  if (tv < 3u || tt == 0u) return -3;
+  const uint32_t v = g_s.vc, t = g_s.tc;
+  if (!v || !t) return -3;
+  transformTargetWorld();
+
+  const bool project = method == 1u;
+  BoolBvh tree;
+  if (project && !bvhBuild(tree, g_s.tgtWorld, g_s.tgtIdx, tt)) return -2;
+
+  /* The source's own normals are the projection direction when no axis is
+     chosen, which is what MOD_SHRINKWRAP_PROJECT_OVER_NORMAL asks for. */
+  if (project && axis_mask == 0u) computeNormals(g_s.inPos, g_s.inIdx, v, t, g_s.nrm);
+
+  /* A ray with a direction of zero (a vertex normal that cancels, or an empty
+     axis mask) has nothing to cast, so the vertex is left alone. */
+  Vec3 axis(0.0f, 0.0f, 0.0f);
+  if (project && axis_mask != 0u) {
+    if (axis_mask & 1u) axis.x = 1.0f;
+    if (axis_mask & 2u) axis.y = 1.0f;
+    if (axis_mask & 4u) axis.z = 1.0f;
+    axis = normalize(axis);
+  }
+  const bool do_pos = !project || allow_pos != 0;
+  const bool do_neg = !project || allow_neg != 0;
+  if (project && !do_pos && !do_neg) return 0;   /* nothing to do, upstream returns */
+
+  const float limit_sq = project_limit > 0.0f ? project_limit * project_limit : 0.0f;
+
+  /* The nearest-surface path keeps its own scan; the projection path uses the
+     tree. Both walk every vertex once. */
+  float* normals = nullptr;
+  float* scales = nullptr;
+  if (!project) {
+    normals = modArray<float>(tt * 3u);
+    scales = modArray<float>(tt);
+    if (!normals || !scales) return -2;
+    uint32_t validTris = 0;
+    for (uint32_t tri = 0; tri < tt; ++tri) {
+      const uint32_t ia = g_s.tgtIdx[tri * 3u], ib = g_s.tgtIdx[tri * 3u + 1u], ic = g_s.tgtIdx[tri * 3u + 2u];
+      if (ia >= tv || ib >= tv || ic >= tv) { scales[tri] = 0.0f; continue; }
+      const Vec3 a = readPos(g_s.tgtWorld, ia), b = readPos(g_s.tgtWorld, ib), c = readPos(g_s.tgtWorld, ic);
+      const Vec3 cr = cross(b - a, c - a);
+      const float len = length(cr);
+      if (len <= 1e-10f) { scales[tri] = 0.0f; continue; }
+      writePos(normals, tri, cr * (1.0f / len));
+      scales[tri] = sqrtf(len * 0.5f);
+      validTris++;
+    }
+    if (!validTris) return -4;
+  }
+
+  /* BKE_shrinkwrap_snap_point_to_surface's three modes, on a hit point and its
+     own normal: On Surface lands on it (plus the offset along the normal),
+     Above Surface only lifts a vertex that is closer than the offset, and
+     Outside Surface turns the normal around when the vertex is inside. */
+  auto snap = [&](const Vec3& q, const Vec3& hitPoint, Vec3 hitNormal) -> Vec3 {
+    const Vec3 delta = q - hitPoint;
+    if (mode == 2u && Vec3::dot(delta, hitNormal) < 0.0f) hitNormal = hitNormal * -1.0f;
+    if (mode == 1u) {
+      if (Vec3::dot(delta, hitNormal) < offset) return hitPoint + hitNormal * offset;
+      return q;
+    }
+    return hitPoint + hitNormal * offset;
+  };
+
+  for (uint32_t i = 0; i < v; ++i) {
+    const Vec3 q = readPos(g_s.inPos, i);
+    const float weight = deformWeight(i, invert_vgroup);
+    if (weight == 0.0f) { writePos(g_s.outPos, i, q); continue; }
+
+    Vec3 hitPoint(0.0f, 0.0f, 0.0f);
+    Vec3 hitNormal(0.0f, 0.0f, 1.0f);
+    bool have = false;
+
+    if (!project) {
+      float bestD = 1e30f;
+      uint32_t bestTri = 0xFFFFFFFFu;
+      for (uint32_t tri = 0; tri < tt; ++tri) {
+        if (scales[tri] <= 0.0f) continue;
+        const Vec3 a = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u]);
+        const Vec3 b = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 1u]);
+        const Vec3 c = readPos(g_s.tgtWorld, g_s.tgtIdx[tri * 3u + 2u]);
+        if (triangleBoxDistanceSq(q, a, b, c) > bestD) continue;
+        const Vec3 cp = closestPointTriangle(q, a, b, c);
+        const float d = length_sq(q - cp);
+        if (d < bestD) { bestD = d; hitPoint = cp; bestTri = tri; }
+      }
+      if (bestTri != 0xFFFFFFFFu) { hitNormal = readPos(normals, bestTri); have = true; }
+    }
+    else {
+      const Vec3 dir = axis_mask != 0u ? axis : normalize(readPos(g_s.nrm, i));
+      if (length_sq(dir) < 1e-20f) { writePos(g_s.outPos, i, q); continue; }
+      float bestT = 1e30f;
+      Vec3 bestN(0.0f, 0.0f, 1.0f);
+      for (uint32_t s = 0; s < 2u; ++s) {
+        if (s == 0u && !do_pos) continue;
+        if (s == 1u && !do_neg) continue;
+        const Vec3 rayDir = s == 0u ? dir : dir * -1.0f;
+        float tt_hit;
+        Vec3 n;
+        if (!bvhRaycast(tree, g_s.tgtWorld, g_s.tgtIdx, q, rayDir, tt_hit, n)) continue;
+        /* Back-face culling (MOD_SHRINKWRAP_CULL_TARGET_*): a hit whose face
+           turns away from the ray direction is dropped. The negative
+           direction swaps front and back, which invert_cull undoes. */
+        if (cull_face != 0u) {
+          const bool front = Vec3::dot(rayDir, n) <= 0.0f;   /* the face looks back at us */
+          bool cull = false;
+          if (cull_face == 1u) cull = !front;                /* keep front faces */
+          else if (cull_face == 2u) cull = front;            /* keep back faces */
+          if (s == 1u && invert_cull) cull = !cull;
+          if (cull) continue;
+        }
+        if (tt_hit < bestT) { bestT = tt_hit; bestN = n; have = true; }
+      }
+      if (!have) { writePos(g_s.outPos, i, q); continue; }
+      hitPoint = q + (axis_mask != 0u ? axis : normalize(readPos(g_s.nrm, i))) * bestT;
+      hitNormal = bestN;
+      /* project_limit is measured from the vertex, in our own space. */
+      if (limit_sq != 0.0f && length_sq(hitPoint - q) > limit_sq) { writePos(g_s.outPos, i, q); continue; }
+    }
+
+    if (!have) { writePos(g_s.outPos, i, q); continue; }
+    const Vec3 target = snap(q, hitPoint, hitNormal);
+    writePos(g_s.outPos, i, lerpv(q, target, weight));
+  }
+
+  computeNormals(g_s.outPos, g_s.inIdx, v, t, g_s.nrm);
+  return commit(v, t);
+}
+
 /* The segment where two triangles meet, or false when they do not. */
 bool triTriSegment(const Vec3& a0, const Vec3& a1, const Vec3& a2,
                    const Vec3& b0, const Vec3& b1, const Vec3& b2, Vec3& s0, Vec3& s1) {
@@ -1598,12 +1741,6 @@ FE_EXPORT uint32_t fe_mod_set_vgroup(uint32_t count) {
   }
   g_s.vgOn = 1;
   return 1;
-}
-
-inline float deformWeight(uint32_t i, int32_t invert) {
-  if (!g_s.vgOn) return 1.0f;
-  float w = g_s.vg[i];
-  return invert ? 1.0f - w : w;
 }
 
 FE_EXPORT uint32_t fe_mod_set_face_smooth(uint32_t count) {
@@ -6429,9 +6566,14 @@ FE_EXPORT int32_t fe_mod_armature(float influence, int32_t preserve_volume, floa
   return armatureApply(influence, preserve_volume, bend_deg, twist_deg);
 }
 
-FE_EXPORT int32_t fe_mod_shrinkwrap(uint32_t mode, float offset) {
+FE_EXPORT int32_t fe_mod_shrinkwrap(uint32_t mode, float offset, uint32_t method,
+                                    uint32_t axis_mask, float project_limit,
+                                    uint32_t cull_face, int32_t invert_cull,
+                                    int32_t allow_pos, int32_t allow_neg,
+                                    int32_t invert_vgroup) {
   if (!g_s.ready) return -1;
-  return shrinkwrapApply(mode, offset);
+  return shrinkwrapApply(mode, offset, method, axis_mask, project_limit,
+                         cull_face, invert_cull, allow_pos, allow_neg, invert_vgroup);
 }
 
 FE_EXPORT int32_t fe_mod_sd_bind(void) {

@@ -11557,7 +11557,7 @@ const modifiersData = {
     {name:"Lattice", fields:[["Cage Object","select",[]],["U Points","range",2,4,2,1],["V Points","range",2,4,2,1],["W Points","range",2,4,2,1],["Strength","range",0,2,1,.01]]},
     {name:"Laplacian Smooth", fields:[["Repeat","range",1,10,1,1],["Lambda","range",0,1,.3,.01],["Lambda Border","range",0,1,.3,.01,{advanced:true}],["X","check",true],["Y","check",true],["Z","check",true],["Preserve Volume","check",false,{advanced:true}],["Normalized","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Simple Deform", fields:[["Mode","select",["Twist","Bend","Taper","Stretch"]],["Deform Axis","select",["X","Y","Z"]],["Angle","range",-720,720,45,1],["Factor","range",-2,2,.5,.01],["Limit Lower","range",0,1,0,.01,{advanced:true}],["Limit Upper","range",0,1,1,.01,{advanced:true}],["Lock X","check",false,{advanced:true}],["Lock Y","check",false,{advanced:true}],["Lock Z","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
-    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Target Object","select",[]] ]},
+    {name:"Shrinkwrap", fields:[["Offset","range",-1,1,0,.01],["Snap Mode","select",["On Surface","Above Surface","Outside Surface"]],["Wrap Method","select",["Nearest Surface Point","Project"]],["Target Object","select",[]],["Project X","check",false,{advanced:true}],["Project Y","check",false,{advanced:true}],["Project Z","check",true,{advanced:true}],["Positive","check",true,{advanced:true}],["Negative","check",true,{advanced:true}],["Limit","range",0,10,0,.01,{advanced:true}],["Cull Face","select",["Off","Front","Back"],{advanced:true}],["Invert Cull","check",false,{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Smooth", fields:[["Factor","range",0,1,.6,.01],["Iterations","range",1,10,3,1],["Preserve Volume","check",false,{advanced:true}],["Boundary","select",["Smooth","Fixed"],{advanced:true}],["Vertex Group","vgroup","None",{advanced:true}],["Invert Group","check",false,{advanced:true}]]},
     {name:"Surface Deform", fields:[["Target Object","select",[]],["Strength","range",0,1,1,.01]]},
     {name:"Warp", fields:[["Strength","range",-5,5,1.2,.1],["Axis","select",["Y","X","Z"],{advanced:true}]]},
@@ -12037,10 +12037,19 @@ function castOptions(p, geometry, obj = null) {
 function applyCastModifier(geometry, shape, factor, radius, size=1, extra={}) { return modifierGeometryApi().castGeometry(geometry, { shape, factor, radius, size, ...extra }); }
 function applySmoothModifier(geometry, factor, iterations, options={}) { return modifierGeometryApi().smoothGeometry(geometry, { factor, iterations, ...options }); }
 function applyWarpModifier(geometry, strength, axis='Y') { return modifierGeometryApi().twistGeometry(geometry, strength, axis); }
-function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode) {
+function shrinkwrapOptions(p, geometry, obj = null) {
+  return { wrapMethod: p["Wrap Method"] || "Nearest Surface Point",
+    projectX: p["Project X"] === true, projectY: p["Project Y"] === true, projectZ: p["Project Z"] !== false,
+    positive: p["Positive"] !== false, negative: p["Negative"] !== false,
+    projectLimit: Number(p["Limit"] ?? 0), cullFace: p["Cull Face"] || "Off",
+    invertCull: p["Invert Cull"] === true,
+    vertexWeights: modifierGroupWeights(p["Vertex Group"], geometry, obj),
+    invertVertexGroup: p["Invert Group"] === true };
+}
+function applyShrinkwrapModifier(geometry, targetObj, sourceObj, offset, mode, options = {}) {
   if (!targetObj?.geometry) throw new Error('Shrinkwrap needs a different mesh selected as Target Object.');
   const relative = modifierRelativeMatrix(sourceObj, targetObj);
-  return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode);
+  return modifierGeometryApi().shrinkwrapGeometry(geometry, targetObj.geometry, relative.elements, offset, mode, options);
 }
 function applyLatticeFfdModifier(geometry, targetObj, mod) {
   const p = mod.values || {};
@@ -12427,7 +12436,7 @@ function updateModifiersOnScene(targetOverride) {
       currentGeo = applyModifierGeometryStage(currentGeo, () => applyLatticeFfdModifier(currentGeo, targetObj, mod));
     } else if (mod.name === "Shrinkwrap") {
       const target = getAllSceneMeshes().find(mesh => mesh.uuid === p['Target Object'] && mesh !== targetObj && mesh.isMesh && !mesh.isInstancedMesh);
-      currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface'));
+      currentGeo = applyModifierGeometryStage(currentGeo, () => applyShrinkwrapModifier(currentGeo, target, targetObj, parseFloat(p["Offset"] ?? 0), p['Snap Mode'] || 'On Surface', shrinkwrapOptions(p, currentGeo, targetObj)));
     } else if (mod.name === "Armature") {
       if (!p['Rig Object']) {
         throw new Error('Armature needs a rig/bone-weight or bind-target workflow; click "Create & Bind Armature Rig" or select a Rig Object.');
@@ -12941,7 +12950,7 @@ function evaluateModifierPrefix(targetObj, modifiers) {
       else if(mod.name==='Lattice')stage(g=>applyLatticeFfdModifier(g,targetObj,mod));
       else if(mod.name==='Armature')stage(g=>applyArmatureSkinModifier(g,targetObj,mod));
       else if(mod.name==='Surface Deform')stage(g=>applySurfaceDeformModifier(g,targetObj,mod));
-      else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface'))}
+      else if(mod.name==='Shrinkwrap'){const t=getAllSceneMeshes().find(o=>o.uuid===p['Target Object']&&o!==targetObj);stage(g=>applyShrinkwrapModifier(g,t,targetObj,Number(p.Offset??0),p['Snap Mode']||'On Surface',shrinkwrapOptions(p,g,targetObj)))}
       else if(mod.name==='Weighted Normal')stage(g=>modifierGeometryApi().weightedNormalGeometry(g,{weight:Number(p.Weight??50),keepSharp:p['Keep Sharp']!==false}));
       else throw new Error(`${mod.name} cannot be applied as a static mesh modifier in this runtime.`);
     }

@@ -137,3 +137,92 @@ test('Closed box topology audit reports a manifold and finite triangle count', (
   const box=new THREE.BoxGeometry(1,1,1);const report=validateClosedManifold(box);
   assert.equal(report.triangles,12);assert.equal(report.edges,18);assert.equal(report.vertices,8);
 });
+
+/* ---- Shrinkwrap, the Project method ------------------------------------- */
+
+test('Shrinkwrap Project casts along the chosen axis and lands on the target', () => {
+  const source = new THREE.PlaneGeometry(2, 2, 4, 4);
+  const target = new THREE.PlaneGeometry(4, 4, 2, 2);
+  const at = (z) => new THREE.Matrix4().makeTranslation(0, 0, z).elements;
+
+  /* A ray straight up hits the plane above it. */
+  const up = shrinkwrapGeometry(source, target, at(1), 0, 'On Surface',
+    { wrapMethod: 'Project', projectX: false, projectY: false, projectZ: true });
+  assertFinite(up);
+  const p = up.attributes.position;
+  for (let i = 0; i < p.count; i++) assert.ok(Math.abs(p.getZ(i) - 1) < 1e-5, `vertex ${i} at z ${p.getZ(i)}`);
+
+  /* The same plane below, with only the negative direction allowed. */
+  const down = shrinkwrapGeometry(source, target, at(-1), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, positive: false, negative: true });
+  const q = down.attributes.position;
+  for (let i = 0; i < q.count; i++) assert.ok(Math.abs(q.getZ(i) + 1) < 1e-5, `vertex ${i} at z ${q.getZ(i)}`);
+
+  /* Positive is off, so the plane above is unreachable. */
+  const oneWay = shrinkwrapGeometry(source, target, at(1), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, positive: false, negative: true });
+  const r = oneWay.attributes.position;
+  for (let i = 0; i < r.count; i++) assert.ok(Math.abs(r.getZ(i)) < 1e-6, 'nothing is up there');
+});
+
+test('Shrinkwrap Project honours the limit, the axes and face culling', () => {
+  const source = new THREE.PlaneGeometry(2, 2, 4, 4);
+  const target = new THREE.PlaneGeometry(4, 4, 2, 2);
+  const at = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z).elements;
+
+  /* Far away with a limit shorter than the distance: nothing moves. */
+  const limited = shrinkwrapGeometry(source, target, at(0, 0, 10), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, projectLimit: 1 });
+  const l = limited.attributes.position;
+  for (let i = 0; i < l.count; i++) assert.ok(Math.abs(l.getZ(i)) < 1e-6, 'the limit keeps the projection from travelling');
+
+  /* Inside the limit it lands. */
+  const inside = shrinkwrapGeometry(source, target, at(0, 0, .5), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, projectLimit: 1 });
+  const ins = inside.attributes.position;
+  for (let i = 0; i < ins.count; i++) assert.ok(Math.abs(ins.getZ(i) - .5) < 1e-5, 'inside the limit, it lands');
+
+  /* Axis selection: a plane standing in YZ is reached along X only. */
+  const wall = new THREE.PlaneGeometry(4, 4, 2, 2).applyMatrix4(new THREE.Matrix4().makeRotationY(Math.PI / 2));
+  const alongX = shrinkwrapGeometry(source, wall, at(2, 0, 0), 0, 'On Surface',
+    { wrapMethod: 'Project', projectX: true, projectY: false, projectZ: false });
+  const ax = alongX.attributes.position;
+  let landed = 0;
+  for (let i = 0; i < ax.count; i++) if (Math.abs(ax.getX(i) - 2) < 1e-5) landed++;
+  assert.ok(landed > 20, `most vertices reach the wall, ${landed} did`);
+  /* And the Z axis alone never reaches it. */
+  const alongZ = shrinkwrapGeometry(source, wall, at(2, 0, 0), 0, 'On Surface',
+    { wrapMethod: 'Project', projectX: false, projectY: false, projectZ: true });
+  const az = alongZ.attributes.position, sp = source.attributes.position;
+  for (let i = 0; i < az.count; i++) {
+    assert.ok(Math.abs(az.getX(i) - sp.getX(i)) < 1e-6 && Math.abs(az.getZ(i) - sp.getZ(i)) < 1e-6,
+      'a Z ray does not find a wall along X');
+  }
+
+  /* The target faces +Z. A ray going +Z meets its back face: keeping front
+     faces only culls it, keeping back faces keeps it. */
+  const front = shrinkwrapGeometry(source, target, at(0, 0, 1), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, cullFace: 'Front' });
+  const f = front.attributes.position;
+  for (let i = 0; i < f.count; i++) assert.ok(Math.abs(f.getZ(i)) < 1e-6, 'the back face is culled');
+  const back = shrinkwrapGeometry(source, target, at(0, 0, 1), 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, cullFace: 'Back' });
+  const b = back.attributes.position;
+  for (let i = 0; i < b.count; i++) assert.ok(Math.abs(b.getZ(i) - 1) < 1e-5, 'keeping back faces lets it land');
+});
+
+test('Shrinkwrap blends onto the surface by the vertex group weight', () => {
+  const source = new THREE.PlaneGeometry(2, 2, 4, 4);
+  const target = new THREE.PlaneGeometry(4, 4, 2, 2);
+  const matrix = new THREE.Matrix4().makeTranslation(0, 0, 1).elements;
+  const weights = new Float32Array(source.attributes.position.count).fill(.5);
+  const out = shrinkwrapGeometry(source, target, matrix, 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, vertexWeights: weights });
+  const p = out.attributes.position;
+  for (let i = 0; i < p.count; i++) assert.ok(Math.abs(p.getZ(i) - .5) < 1e-5,
+    `a half weight lands halfway (vertex ${i} at ${p.getZ(i)})`);
+  const inverted = shrinkwrapGeometry(source, target, matrix, 0, 'On Surface',
+    { wrapMethod: 'Project', projectZ: true, vertexWeights: weights, invertVertexGroup: true });
+  const q = inverted.attributes.position;
+  for (let i = 0; i < q.count; i++) assert.ok(Math.abs(q.getZ(i) - .5) < 1e-5, 'and so does one half of the invert');
+});
